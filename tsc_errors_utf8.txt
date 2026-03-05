@@ -1,0 +1,6 @@
+﻿supabase/functions/send-push-notification/index.ts(1,23): error TS2307: Cannot find module 'https://deno.land/std@0.168.0/http/server.ts' or its corresponding type declarations.
+supabase/functions/send-push-notification/index.ts(2,30): error TS2307: Cannot find module 'https://esm.sh/@supabase/supabase-js@2' or its corresponding type declarations.
+supabase/functions/send-push-notification/index.ts(4,14): error TS7006: Parameter 'req' implicitly has an 'any' type.
+supabase/functions/send-push-notification/index.ts(14,13): error TS2304: Cannot find name 'Deno'.
+supabase/functions/send-push-notification/index.ts(15,13): error TS2304: Cannot find name 'Deno'.
+supabase/functions/send-push-notification/index.ts(63,53): error TS18046: 'error' is of type 'unknown'.
