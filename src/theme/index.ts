@@ -1,47 +1,57 @@
 export const Colors = {
-    // Core brand
-    primary: '#a269ff',
-    primaryLight: '#c49cff',
-    primaryDark: '#7c3cff',
-    primaryGlow: 'rgba(162, 105, 255, 0.2)',
+    // Core brand — more vibrant tech feel
+    primary: '#a66eff',      // Radiant Cosmic Purple
+    primaryLight: '#c59dff', 
+    primaryDark: '#7938ff',
+    primaryGlow: 'rgba(166, 110, 255, 0.22)',
+    accent: '#00f2ff',       // Tech Cyan
 
-    // Backgrounds — light theme
-    background: '#f7f5ff',
+    // Backgrounds — sleek and airy
+    background: '#f8f9ff',   // Very light icy blue
     surface: '#ffffff',
     card: '#ffffff',
-    cardAlt: '#f0eaff',
-    border: 'rgba(162, 105, 255, 0.18)',
-    borderLight: 'rgba(162, 105, 255, 0.09)',
+    cardAlt: '#f4f0ff',
+    border: 'rgba(166, 110, 255, 0.14)',
+    borderLight: 'rgba(166, 110, 255, 0.07)',
 
-    // Text
-    textPrimary: '#18122b',
-    textSecondary: '#4a3e6a',
-    textMuted: '#9b8fc0',
-    textAccent: '#a269ff',
+    // Text — high contrast
+    textPrimary: '#0f0a1d',
+    textSecondary: '#3e345e',
+    textMuted: '#948cb3',
+    textAccent: '#8a4dff',
 
-    // Capsule Types
-    eventCap: '#e84545',
-    eventCapLight: 'rgba(232, 69, 69, 0.08)',
-    instaCap: '#a269ff',
-    instaCapLight: 'rgba(162, 105, 255, 0.1)',
-    legacyCap: '#d4a017',
-    legacyCapLight: 'rgba(212, 160, 23, 0.1)',
+    // Capsule Types — modern tech palette
+    eventCap: '#ff4d4d',     // Electric Red
+    eventCapLight: 'rgba(255, 77, 77, 0.08)',
+    instaCap: '#a66eff',
+    instaCapLight: 'rgba(166, 110, 255, 0.12)',
+    legacyCap: '#ffb300',    // Cyber Gold
+    legacyCapLight: 'rgba(255, 179, 0, 0.1)',
 
     // Status
-    success: '#22c55e',
+    success: '#10b981',
     warning: '#f59e0b',
     error: '#ef4444',
-    info: '#3b82f6',
+    info: '#0ea5e9',
 
-    // UI
+    // UI & Glassmorphism
     tabBar: '#ffffff',
-    tabBarBorder: 'rgba(162, 105, 255, 0.12)',
-    overlay: 'rgba(24, 18, 43, 0.5)',
-    glass: 'rgba(255, 255, 255, 0.88)',
+    tabBarBorder: 'rgba(166, 110, 255, 0.1)',
+    overlay: 'rgba(15, 10, 29, 0.55)',
+    glass: 'rgba(255, 255, 255, 0.82)',
+    glassDark: 'rgba(15, 10, 29, 0.75)',
 
-    // Shadows & dividers
-    shadow: 'rgba(162, 105, 255, 0.12)',
-    divider: 'rgba(162, 105, 255, 0.1)',
+    // Branding / Dividers
+    shadow: 'rgba(166, 110, 255, 0.12)',
+    divider: 'rgba(166, 110, 255, 0.08)',
+};
+
+export const Gradients = {
+    primary: ['#a66eff', '#7938ff'] as const,
+    cosmic: ['#7938ff', '#a66eff', '#00f2ff'] as const,
+    glass: ['rgba(255, 255, 255, 0.65)', 'rgba(255, 255, 255, 0.3)'] as const,
+    dark: ['#1c1433', '#0f0a1d'] as const,
+    surface: ['#ffffff', '#f8f9ff'] as const,
 };
 
 export const Fonts = {
@@ -62,10 +72,11 @@ export const Spacing = {
 };
 
 export const BorderRadius = {
-    sm: 8,
-    md: 12,
-    lg: 16,
-    xl: 24,
+    xs: 6,
+    sm: 10,
+    md: 14,
+    lg: 20,
+    xl: 28,
     full: 999,
 };
 
@@ -73,45 +84,48 @@ import { Platform } from 'react-native';
 
 export const Shadow = Platform.select({
     web: {
-        primary: { boxShadow: '0px 4px 16px rgba(162, 105, 255, 0.18)' },
-        card: { boxShadow: '0px 2px 12px rgba(162, 105, 255, 0.08)' },
-        subtle: { boxShadow: '0px 1px 6px rgba(0, 0, 0, 0.06)' },
-        lg: { boxShadow: '0px 8px 30px rgba(0, 0, 0, 0.12)' },
+        primary: { boxShadow: '0px 8px 24px rgba(166, 110, 255, 0.22)' },
+        card: { boxShadow: '0px 4px 16px rgba(166, 110, 255, 0.12)' },
+        subtle: { boxShadow: '0px 2px 8px rgba(0, 0, 0, 0.04)' },
+        lg: { boxShadow: '0px 12px 40px rgba(0, 0, 0, 0.08)' },
     },
-    default: {
+    ios: {
         primary: {
-            shadowColor: '#a269ff',
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.18,
-            shadowRadius: 16,
-            elevation: 6,
+            shadowColor: '#7938ff',
+            shadowOffset: { width: 0, height: 8 },
+            shadowOpacity: 0.22,
+            shadowRadius: 20,
         },
         card: {
-            shadowColor: '#a269ff',
-            shadowOffset: { width: 0, height: 2 },
-            shadowOpacity: 0.08,
-            shadowRadius: 12,
-            elevation: 3,
+            shadowColor: '#a66eff',
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.12,
+            shadowRadius: 14,
         },
         subtle: {
             shadowColor: '#000',
-            shadowOffset: { width: 0, height: 1 },
-            shadowOpacity: 0.06,
-            shadowRadius: 6,
-            elevation: 2,
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.04,
+            shadowRadius: 8,
         },
         lg: {
             shadowColor: '#000',
-            shadowOffset: { width: 0, height: 8 },
-            shadowOpacity: 0.15,
-            shadowRadius: 20,
-            elevation: 10,
+            shadowOffset: { width: 0, height: 12 },
+            shadowOpacity: 0.1,
+            shadowRadius: 24,
         },
+    },
+    android: {
+        primary: { elevation: 8 },
+        card: { elevation: 4 },
+        subtle: { elevation: 2 },
+        lg: { elevation: 12 },
+    },
+    default: {
+        primary: {},
+        card: {},
+        subtle: {},
+        lg: {}
     }
-}) || {
-    primary: {},
-    card: {},
-    subtle: {},
-    lg: {}
-};
+}) as any;
 

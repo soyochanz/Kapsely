@@ -4,12 +4,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors, Fonts, Spacing, Shadow, BorderRadius } from '../theme';
+import InteractiveTour from '../components/InteractiveTour';
 
 const { width } = Dimensions.get('window');
 
 export default function CreateSelectionScreen({ route }: any) {
     const navigation = useNavigation<any>();
-    const { capsuleId } = route.params || {};
+    const { capsuleId, isTutorial } = route.params || {};
 
     return (
         <SafeAreaView style={styles.container}>
@@ -85,6 +86,15 @@ export default function CreateSelectionScreen({ route }: any) {
                     ))}
                 </View>
             </View>
+
+            {/* Temporary disabled tutorial
+            {isTutorial && !capsuleId && (
+                <InteractiveTour 
+                    step="SELECT_TYPE" 
+                    onDismiss={() => navigation.setParams({ isTutorial: false })}
+                />
+            )}
+            */}
         </SafeAreaView>
     );
 }

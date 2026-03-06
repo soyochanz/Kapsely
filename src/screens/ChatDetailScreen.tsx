@@ -47,6 +47,16 @@ export default function ChatDetailScreen() {
 
         if (msgs) setMessages(msgs);
         setLoading(false);
+
+        // Mark as read
+        const { data: { user: currentUser } } = await supabase.auth.getUser();
+        if (currentUser) {
+            await supabase
+                .from('conversation_participants')
+                .update({ last_read_at: new Date().toISOString() })
+                .eq('conversation_id', conversationId)
+                .eq('user_id', currentUser.id);
+        }
     };
 
     useEffect(() => { loadData(); }, []);

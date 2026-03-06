@@ -5,6 +5,7 @@ import LiveTimer from './LiveTimer';
 import { timerConfigManager, ModelTimerConfig } from '../utils/timerConfig';
 import { MODEL_TINTS } from '../constants/models';
 import Particles from './Particles';
+import CuteFace from './CuteFace';
 
 interface CapsuleWithTimerProps {
     modelKey: string;
@@ -15,9 +16,10 @@ interface CapsuleWithTimerProps {
     configOverride?: ModelTimerConfig; // Used by the calibration tool
     hideTimer?: boolean; // Hide the timer overlay entirely
     capsuleType?: string; // Optional type for specific particles
+    isOpened?: boolean; // New prop for status
 }
 
-export default function CapsuleWithTimer({
+const CapsuleWithTimer = React.memo(({
     modelKey,
     source,
     date,
@@ -25,8 +27,9 @@ export default function CapsuleWithTimer({
     chainId,
     configOverride,
     hideTimer,
-    capsuleType
-}: CapsuleWithTimerProps) {
+    capsuleType,
+    isOpened
+}: CapsuleWithTimerProps) => {
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
     const [config, setConfig] = useState(configOverride || timerConfigManager.getConfig(modelKey));
     const [chainConfig, setChainConfig] = useState(chainId ? timerConfigManager.getChainConfig(modelKey, chainId) : null);
@@ -49,6 +52,8 @@ export default function CapsuleWithTimer({
                 Animated.delay(4800)
             ])
         ).start();
+
+        return () => { };
     }, []);
 
     useEffect(() => {
@@ -90,7 +95,7 @@ export default function CapsuleWithTimer({
         alignItems: 'center' as const,
         justifyContent: 'center' as const,
         overflow: 'hidden' as const,
-        borderRadius: 4, // slight border radius to soften the edges of the reflection
+        borderRadius: 12, // More rounded, diffused look
     } : { opacity: 0 };
 
     // Chain style
@@ -112,6 +117,24 @@ export default function CapsuleWithTimer({
     // Scale font based on timer height
     const baseFontSize = Math.max(10, (height * config.h) * 0.55);
 
+    // Style for the face container
+    const faceX = config.faceX ?? config.x;
+    const faceY = config.faceY ?? (config.y + config.h + 0.046); // fallback center roughly 14px below timer
+    const faceScale = config.faceScale ?? 1;
+    const faceWidth = width * (config.w || 0.3);
+
+    const proportionalScale = width / 300;
+
+    const faceOverlayStyle = (width > 0 && config.showFace !== false) ? {
+        position: 'absolute' as const,
+        left: width * faceX,
+        top: height * faceY,
+        width: 0,
+        height: 0,
+        zIndex: 10,
+        alignItems: 'center' as const,
+        justifyContent: 'center' as const,
+    } : { display: 'none' as const };
 
     const rotateInterp = swingAnim.interpolate({
         inputRange: [-1, 1],
@@ -132,15 +155,20 @@ export default function CapsuleWithTimer({
 
             {/* Shadow: behind everything via zIndex */}
             {width > 0 && (
-                <View style={[
-                    styles.groundShadow,
-                    {
-                        width: width * 0.9,
-                        height: width * 0.9,
-                        bottom: -(width * 0.33), // Adjusted for smaller size
-                    }
-                ]} />
+                <View style={[styles.groundShadow, {
+                    width: width * 0.9,
+                    height: width * 0.9,
+                    bottom: -(width * 0.33),
+                }]} />
             )}
+
+            {/* Cute Face layer (Temporarily Disabled) */}
+            {false && width > 0 && config.showFace !== false && (
+                <View style={[faceOverlayStyle, { zIndex: 10 }]}>
+                    <CuteFace scale={faceScale * proportionalScale} />
+                </View>
+            )}
+
             <Image
                 source={source}
                 style={[styles.image, { zIndex: 1 }]}
@@ -153,6 +181,7 @@ export default function CapsuleWithTimer({
                         modelId={modelKey}
                         configOverride={config}
                         style={{ fontSize: baseFontSize }}
+                        hideLabel={isOpened}
                     />
 
                     {/* Screen Glint Reflection overlay */}
@@ -163,7 +192,7 @@ export default function CapsuleWithTimer({
                         zIndex: 3
                     }}>
                         <LinearGradient
-                            colors={['transparent', 'rgba(255,255,255,0.4)', 'rgba(255,255,255,0.8)', 'transparent']}
+                            colors={['transparent', 'rgba(255,255,255,0.1)', 'rgba(255,255,255,0.25)', 'rgba(255,255,255,0.1)', 'transparent']}
                             start={{ x: 0, y: 0 }}
                             end={{ x: 1, y: 1 }}
                             style={StyleSheet.absoluteFillObject}
@@ -192,7 +221,9 @@ export default function CapsuleWithTimer({
             )}
         </View>
     );
-}
+});
+
+export default CapsuleWithTimer;
 
 const styles = StyleSheet.create({
     container: {

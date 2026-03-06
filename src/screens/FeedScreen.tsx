@@ -14,6 +14,9 @@ import CapsuleTypePill from '../components/CapsuleTypePill';
 import TimelineActivity from '../components/TimelineActivity';
 import { supabase } from '../lib/supabase';
 import { MODEL_IMAGES } from '../constants/models';
+import { timerConfigManager } from '../utils/timerConfig';
+import InteractiveTour, { TutorialStep } from '../components/InteractiveTour';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 type CapsuleType = 'instacap' | 'eventcap' | 'legacycap';
 const { width, height } = Dimensions.get('window');
@@ -41,6 +44,8 @@ export default function FeedScreen() {
 
     const [activeStory, setActiveStory] = useState<any>(null);
     const [activeStoryIndex, setActiveStoryIndex] = useState(0);
+    const [hasUnread, setHasUnread] = useState(false);
+    const [tutorialStep, setTutorialStep] = useState<TutorialStep>('IDLE');
     const isFocused = useIsFocused();
 
     // Story Progress Logic
@@ -109,7 +114,7 @@ export default function FeedScreen() {
             .select(`
                 *,
                 profiles:owner_id (username, display_name, avatar_url),
-                capsules:capsule_id!inner (title, is_public, type, status, opens_at)
+                capsules:capsule_id!inner (title, is_public, type, status, opens_at, model, chain_id)
             `)
             .eq('capsules.is_public', true);
 
@@ -187,6 +192,11 @@ export default function FeedScreen() {
     };
 
     const handleYourCapPress = async () => {
+        if (tutorialStep === 'POST_YOURCAP') {
+            setTutorialStep('FINISHED');
+            AsyncStorage.setItem('hasSeenTutorialV2', 'true');
+        }
+
         if (myStory) {
             setActiveStory(myStory);
             setActiveStoryIndex(0);
@@ -359,7 +369,77 @@ export default function FeedScreen() {
             loadFeed();
             loadStories();
         }
+
+        const checkTutorial = async () => {
+            // Disabled temporarily per user request
+            /*
+            const hasSeen = await AsyncStorage.getItem('hasSeenTutorialV2');
+            if (!hasSeen) {
+                const savedStep = await AsyncStorage.getItem('tutorialStepV2');
+                if (savedStep) {
+                    setTutorialStep(savedStep as TutorialStep);
+                } else if (tutorialStep === 'IDLE') {
+                    setTutorialStep('WELCOME');
+                }
+            }
+            */
+        };
+        if (isFocused) checkTutorial();
     }, [activeTab, activeFilter, currentUserId, isFocused]);
+
+    useEffect(() => {
+        if (tutorialStep !== 'IDLE') {
+            AsyncStorage.setItem('tutorialStepV2', tutorialStep);
+        }
+    }, [tutorialStep]);
+
+    useEffect(() => {
+        const checkUnread = async () => {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) return;
+
+            // Fetch conversations
+            const { data: participants } = await supabase
+                .from('conversation_participants')
+                .select('conversation_id, last_read_at')
+                .eq('user_id', user.id);
+
+            if (!participants || participants.length === 0) {
+                setHasUnread(false);
+                return;
+            }
+
+            let unreadFound = false;
+            for (const p of participants) {
+                const { data: lastMsg } = await supabase
+                    .from('messages')
+                    .select('created_at, sender_id')
+                    .eq('conversation_id', p.conversation_id)
+                    .neq('sender_id', user.id)
+                    .order('created_at', { ascending: false })
+                    .limit(1)
+                    .maybeSingle();
+
+                if (lastMsg) {
+                    if (!p.last_read_at || new Date(lastMsg.created_at) > new Date(p.last_read_at)) {
+                        unreadFound = true;
+                        break;
+                    }
+                }
+            }
+            setHasUnread(unreadFound);
+        };
+
+        checkUnread();
+
+        const channel = supabase.channel('chat_updates')
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, () => {
+                checkUnread();
+            })
+            .subscribe();
+
+        return () => { supabase.removeChannel(channel); };
+    }, [isFocused]);
 
     const onRefresh = () => {
         setRefreshing(true);
@@ -382,16 +462,30 @@ export default function FeedScreen() {
                         <Text style={styles.logoText}>kapsely</Text>
                     </View>
                     <View style={styles.headerActions}>
-                        <TouchableOpacity style={styles.iconBtn} onPress={() => navigation.navigate('CreateSelection')}>
+                        <TouchableOpacity 
+                            style={styles.iconBtn} 
+                            onPress={() => {
+                                if (tutorialStep === 'PRESS_PLUS') {
+                                    setTutorialStep('POST_YOURCAP');
+                                }
+                                navigation.navigate('CreateSelection', { isTutorial: tutorialStep === 'PRESS_PLUS' });
+                            }}
+                        >
                             <Ionicons name="add-circle-outline" size={26} color={Colors.primary} />
                         </TouchableOpacity>
                         <TouchableOpacity style={styles.iconBtn} onPress={() => navigation.navigate('Search')}>
                             <Ionicons name="search-outline" size={22} color={Colors.textPrimary} />
                         </TouchableOpacity>
-                        <TouchableOpacity onPress={() => navigation.navigate('ChatList')}>
-                            <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.notifIcon}>
+                        <TouchableOpacity 
+                            onPress={() => navigation.navigate('ChatList')}
+                            activeOpacity={0.8}
+                        >
+                            <LinearGradient 
+                                colors={[Colors.primary, Colors.primaryDark]} 
+                                style={[styles.notifIcon, hasUnread && styles.notifIconUnread]}
+                            >
                                 <Ionicons name="chatbubble-ellipses" size={16} color="#fff" />
-                                <View style={styles.notifBadge} />
+                                {hasUnread && <View style={styles.notifBadge} />}
                             </LinearGradient>
                         </TouchableOpacity>
                     </View>
@@ -520,7 +614,7 @@ export default function FeedScreen() {
                                 {userCapsules.map(cap => (
                                     <TouchableOpacity key={cap.id} style={styles.pickerItem} onPress={() => handleSelectCapsuleForPicker(cap)}>
                                         <View style={styles.pickerModelWrap}>
-                                            <Image source={{ uri: MODEL_IMAGES[cap.model] }} style={styles.pickerModelImg} resizeMode="contain" />
+                                            <Image source={{ uri: timerConfigManager.getModelImage(cap.model) || MODEL_IMAGES[cap.model] || MODEL_IMAGES.beach }} style={styles.pickerModelImg} resizeMode="contain" />
                                         </View>
                                         <View style={{ flex: 1 }}>
                                             <Text style={styles.pickerItemText}>{cap.title}</Text>
@@ -624,7 +718,7 @@ export default function FeedScreen() {
                                         }}
                                     >
                                         <Image
-                                            source={{ uri: MODEL_IMAGES[activeStory.stories[activeStoryIndex].capsules.model] }}
+                                            source={{ uri: timerConfigManager.getModelImage(activeStory.stories[activeStoryIndex].capsules.model) || MODEL_IMAGES[activeStory.stories[activeStoryIndex].capsules.model] }}
                                             style={styles.floatingModelImg}
                                             resizeMode="contain"
                                         />
@@ -673,6 +767,17 @@ export default function FeedScreen() {
                     </View>
                 )}
             </Modal>
+
+            <InteractiveTour 
+                step={tutorialStep} 
+                onAction={(action) => {
+                    if (action === 'START') setTutorialStep('PRESS_PLUS');
+                }}
+                onDismiss={async () => {
+                    await AsyncStorage.setItem('hasSeenTutorialV2', 'true');
+                    setTutorialStep('FINISHED');
+                }}
+            />
         </View>
     );
 }
@@ -693,10 +798,28 @@ const styles = StyleSheet.create({
     logoText: { color: Colors.textPrimary, fontSize: 20, fontFamily: Fonts.bold, letterSpacing: -0.5 },
     headerActions: { flexDirection: 'row', gap: Spacing.sm, alignItems: 'center' },
     iconBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-    notifIcon: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+    notifIcon: { 
+        width: 36, 
+        height: 36, 
+        borderRadius: 12, 
+        alignItems: 'center', 
+        justifyContent: 'center',
+        ...Shadow.subtle,
+    },
+    notifIconUnread: {
+        transform: [{ scale: 1.05 }],
+    },
     notifBadge: {
-        position: 'absolute', top: 4, right: 4, width: 7, height: 7, borderRadius: 3.5,
-        backgroundColor: Colors.eventCap, borderWidth: 1.5, borderColor: Colors.primary,
+        position: 'absolute', 
+        top: -2, 
+        right: -2, 
+        width: 12, 
+        height: 12, 
+        borderRadius: 6,
+        backgroundColor: Colors.error, 
+        borderWidth: 2, 
+        borderColor: Colors.surface,
+        ...Shadow.primary,
     },
     tabRow: { flexDirection: 'row', paddingHorizontal: Spacing.lg },
     tabItem: { marginRight: Spacing.xl, paddingBottom: 10, position: 'relative' },

@@ -10,6 +10,11 @@ export interface ModelTimerConfig {
     format: 'standard' | 'days';
     curvature: number; // -10 to 10
     themeColor: string;
+    // Cute Face Config
+    faceX?: number;
+    faceY?: number;
+    faceScale?: number;
+    showFace?: boolean;
 }
 
 export interface ModelChainConfig {
@@ -25,32 +30,33 @@ export interface ChainItem {
     name: string;
     image_url: string;
     thumbnail_url?: string;
+    is_active: boolean;
 }
 
 export const DEFAULT_CONFIGS: Record<string, ModelTimerConfig> = {
-    beach: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#0ea5e9' },
-    burger: { x: 0.35, y: 0.52, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#e67e22' },
-    cake: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ec4899' },
-    china: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ff4757' },
-    choco: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#5d4037' },
-    disco: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#a269ff' },
-    dragon: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ff1493' },
-    dubai: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#d4a017' },
-    galaxy: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#4b0082' },
-    greenlime: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#6abf69' },
-    h2o: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#00d2ff' },
-    lava: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ff4500' },
-    orange: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ff8c00' },
-    pink: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ff69b4' },
-    poke: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ff0000' },
-    rocket: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#708090' },
-    star: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ffd700' },
-    travel: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#2ed573' },
-    cottoncandy: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ffacf5' },
-    cookies: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#c56cf0' },
-    glowjelly: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#a29bfe' },
-    shark: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#2f3542' },
-    dog: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ffa502' },
+    beach: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#0ea5e9', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    burger: { x: 0.35, y: 0.52, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#e67e22', faceX: 0.5, faceY: 0.64, faceScale: 1, showFace: true },
+    cake: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ec4899', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    china: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ff4757', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    choco: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#5d4037', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    disco: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#a269ff', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    dragon: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ff1493', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    dubai: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#d4a017', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    galaxy: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#4b0082', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    greenlime: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#6abf69', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    h2o: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#00d2ff', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    lava: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ff4500', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    orange: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ff8c00', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    pink: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ff69b4', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    poke: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ff0000', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    rocket: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#708090', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    star: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ffd700', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    travel: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#2ed573', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    cottoncandy: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ffacf5', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    cookies: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#c56cf0', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    glowjelly: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#a29bfe', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    shark: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#2f3542', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    dog: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ffa502', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
 };
 
 class TimerConfigManager {
@@ -117,7 +123,21 @@ class TimerConfigManager {
 
     async saveModel(model: any) {
         try {
-            const { error } = await supabase.from('models').upsert(model);
+            const { error } = await supabase.from('models').upsert({
+                id: model.id,
+                label: model.label,
+                image: model.image,
+                image_open: model.image_open,
+                image_cover: model.image_cover,
+                category: model.category,
+                tint: model.tint,
+                is_active: model.is_active,
+                is_event: model.is_event || false,
+                event_start: model.event_start || null,
+                event_end: model.event_end || null,
+                event_title: model.event_title || null,
+                event_description: model.event_description || null
+            });
             if (error) throw error;
             await this.refresh();
             return true;
@@ -127,8 +147,18 @@ class TimerConfigManager {
         }
     }
 
+    getModelImage(modelId: string): string {
+        const model = this.models.find(m => m.id === modelId);
+        return model?.image || '';
+    }
+
+    getModelImageOpen(modelId: string): string {
+        const model = this.models.find(m => m.id === modelId);
+        return model?.image_open || '';
+    }
+
     getConfig(modelId: string): ModelTimerConfig {
-        return this.configs[modelId] || this.configs['classic'];
+        return this.configs[modelId] || this.configs['beach'] || Object.values(this.configs)[0];
     }
 
     async saveConfig(modelId: string, config: ModelTimerConfig) {

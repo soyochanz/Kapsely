@@ -18,6 +18,7 @@ import { MODEL_IMAGES, MODEL_TINTS, MODEL_IMAGES_OPEN } from '../constants/model
 import LiveTimer from '../components/LiveTimer';
 import CapsuleWithTimer from '../components/CapsuleWithTimer';
 import VerifiedBadge from '../components/VerifiedBadge';
+import { timerConfigManager } from '../utils/timerConfig';
 
 type ProfileTab = 'all' | 'opened' | 'sealed';
 
@@ -27,17 +28,137 @@ const TYPE_CONFIG: Record<string, { icon: string; color: string; label: string }
     legacycap: { icon: 'time', color: Colors.legacyCap, label: 'Legacy' },
 };
 
+const STICKER_POSITIONS = [
+    { top: 5, left: 10, size: 85, rotation: '-12deg' },      // 1: Top Left
+    { top: 20, left: 90, size: 115, rotation: '8deg' },     // 2: Large Center-Left
+    { top: -10, right: 125, size: 75, rotation: '-15deg' },  // 3: Top Center-Right
+    { top: 5, right: 0, size: 95, rotation: '15deg' },       // 4: Top Right
+    { top: 70, right: 40, size: 65, rotation: '-8deg' },     // 5: Middle Right
+    { bottom: 5, right: 10, size: 105, rotation: '12deg' },  // 6: Bottom Right
+    { top: 35, left: width * 0.42, size: 90, rotation: '4deg' }, // 7: Center-ish
+];
+
+// Extract capsule rendering to a memoized component for fluidity
+const ProfileCapsuleCell = React.memo(({
+    cap,
+    navigation,
+    isOwnProfile,
+    isSealed,
+    cfg,
+    coverUrl,
+    itemsCount,
+    likesCount,
+    commentsCount,
+    setPickerCapsuleId,
+    themeColor,
+    capsuleMediaMap
+}: any) => {
+    return (
+        <TouchableOpacity
+            style={styles.sealedCell}
+            onPress={() => navigation.navigate('CapsuleDetail', { capsuleId: cap.id })}
+            onLongPress={() => !isSealed && isOwnProfile && capsuleMediaMap[cap.id]?.length > 1 && setPickerCapsuleId(cap.id)}
+            delayLongPress={400}
+        >
+            <View style={styles.sealedCellInner}>
+                <View style={styles.modelContainer}>
+                    {isSealed ? (
+                        <CapsuleWithTimer
+                            modelKey={cap.model}
+                            source={{ uri: timerConfigManager.getModelImage(cap.model) || MODEL_IMAGES[cap.model] || MODEL_IMAGES.beach }}
+                            date={cap.opens_at}
+                            chainId={cap.chain_id}
+                            capsuleType={cap.type}
+                            style={styles.sealedImgLarge}
+                        />
+                    ) : (
+                        <View style={styles.sealedImgLarge}>
+                            {coverUrl ? (
+                                <Image source={{ uri: coverUrl }} style={styles.gridImgFull} resizeMode="cover" />
+                            ) : (
+                                <CapsuleWithTimer
+                                    modelKey={cap.model}
+                                    source={{ uri: timerConfigManager.getModelImageOpen(cap.model) || MODEL_IMAGES_OPEN[cap.model] || MODEL_IMAGES[cap.model] || MODEL_IMAGES.beach }}
+                                    date={cap.opens_at}
+                                    chainId={cap.chain_id}
+                                    capsuleType={cap.type}
+                                    style={styles.gridImg}
+                                    hideTimer={true}
+                                />
+                            )}
+                        </View>
+                    )}
+
+                    <View style={[styles.cornerTypeIcon, { backgroundColor: cfg.color }]}>
+                        <Ionicons name={cfg.icon as any} size={10} color="#fff" />
+                    </View>
+
+                    {cap.is_shared && (
+                        <View style={styles.sharedBadge}>
+                            <Ionicons name="people" size={10} color="#fff" />
+                            <Text style={styles.sharedBadgeText}>Shared</Text>
+                        </View>
+                    )}
+
+                    {isSealed && (
+                        <View style={styles.sealedBadgeSmall}>
+                            <Ionicons name="lock-closed" size={10} color="#fff" />
+                        </View>
+                    )}
+                </View>
+
+                {isSealed ? (
+                    <LiveTimer date={cap.opens_at} modelId={cap.model} style={styles.sealedTimer} />
+                ) : (
+                    <Text style={[styles.sealedTimer, { color: Colors.textMuted }]}>Opened</Text>
+                )}
+
+                <Text style={styles.sealedTitle} numberOfLines={1}>{cap.title}</Text>
+
+                <View style={[styles.membersList, !cap.is_shared && { opacity: 0 }]} pointerEvents={!cap.is_shared ? "none" : "auto"}>
+                    <View style={styles.avatarStack}>
+                        {cap.owner_avatar_url ? (
+                            <Image source={{ uri: cap.owner_avatar_url }} style={styles.stackAvatar} />
+                        ) : (
+                            <View style={[styles.stackAvatar, { backgroundColor: Colors.border, alignItems: 'center', justifyContent: 'center' }]}>
+                                <Ionicons name="person" size={10} color={Colors.textMuted} />
+                            </View>
+                        )}
+                    </View>
+                    <Text style={styles.membersCountText}>
+                        {cap.total_members || 1} {cap.total_members === 1 ? 'member' : 'members'}
+                    </Text>
+                </View>
+
+                <View style={styles.sealedMetaRow}>
+                    <View style={styles.sealedMetaItem}>
+                        <Ionicons name="images-outline" size={12} color={Colors.textMuted} />
+                        <Text style={styles.sealedMetaText}>{itemsCount}</Text>
+                    </View>
+                    <View style={styles.sealedMetaItem}>
+                        <Ionicons name="heart-outline" size={12} color={Colors.textMuted} />
+                        <Text style={styles.sealedMetaText}>{likesCount}</Text>
+                    </View>
+                    <View style={styles.sealedMetaItem}>
+                        <Ionicons name="chatbubble-outline" size={12} color={Colors.textMuted} />
+                        <Text style={styles.sealedMetaText}>{commentsCount}</Text>
+                    </View>
+                </View>
+            </View>
+        </TouchableOpacity>
+    );
+});
+
 export default function ProfileScreen() {
     const navigation = useNavigation<any>();
     const route = useRoute();
     // Target user ID from route params (if navigating to another profile)
     // We check both params and the route name to be sure
     const targetUserId = (route.params as any)?.targetUserId;
-    const isOwnProfile = !targetUserId;
-
     // We'll use a local ID for the profile we want to load
     const [profileId, setProfileId] = useState<string | null>(targetUserId || null);
     const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+    const [isOwnProfile, setIsOwnProfileState] = useState(true); // Default to true, re-evaluate in loadData
 
     const [activeTab, setActiveTab] = useState<ProfileTab>('all');
     const [profile, setProfile] = useState<any>(null);
@@ -61,44 +182,42 @@ export default function ProfileScreen() {
     const [showVerificationFeedback, setShowVerificationFeedback] = useState(false);
     const feedbackAnim = useRef(new Animated.Value(0)).current;
 
+    const [profileStickers, setProfileStickers] = useState<any[]>([]);
+
+    useEffect(() => {
+        // Quick check for own profile based on session
+        const checkOwn = async () => {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (session?.user?.id) {
+                setCurrentUserId(session.user.id);
+                if (targetUserId) {
+                    setIsOwnProfileState(targetUserId === session.user.id);
+                } else {
+                    setIsOwnProfileState(true);
+                }
+            }
+        };
+        checkOwn();
+    }, [targetUserId]);
+
     const loadData = async () => {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return;
-        setCurrentUserId(user.id);
+        const myId = user.id;
+        setCurrentUserId(myId);
 
-        // If no target provided, we are on our own profile (tab)
-        const idToLoad = targetUserId || user.id;
+        // If no target provided or it is my own ID, we are on our own profile
+        const idToLoad = targetUserId || myId;
         setProfileId(idToLoad);
+        const own = idToLoad === myId;
+        setIsOwnProfileState(own);
 
-        console.log('ProfileScreen: loading profile for', idToLoad, 'targetUserId was:', targetUserId);
+        console.log('ProfileScreen: loading profile for', idToLoad, 'isOwn:', own);
 
-        const [profileRes, capsRes, sharedRes, followersRes, followingRes, followCheck] = await Promise.all([
+        const [profileRes, capsRes, followersRes, followingRes, followCheck] = await Promise.all([
             supabase.from('profiles').select('*').eq('id', idToLoad).single(),
-            supabase.from('capsules')
-                .select(`
-                    *,
-                    capsule_items(count),
-                    likes(count),
-                    comments(count),
-                    owner:profiles!capsules_owner_id_fkey(username, avatar_url),
-                    invited:profiles!capsules_invited_user_id_fkey(username, avatar_url)
-                `)
-                .or(`owner_id.eq.${idToLoad},and(invited_user_id.eq.${idToLoad},invite_status.eq.accepted)`)
-                .order('created_at', { ascending: false }),
-            supabase.from('capsule_invites')
-                .select(`
-                    capsule_id,
-                    capsules:capsule_id(
-                        *,
-                        capsule_items(count),
-                        likes(count),
-                        comments(count),
-                        owner:profiles!capsules_owner_id_fkey(username, avatar_url),
-                        invited:profiles!capsules_invited_user_id_fkey(username, avatar_url)
-                    )
-                `)
-                .eq('user_id', idToLoad)
-                .eq('status', 'accepted'),
+            // Query capsules where user is owner, invited directly, OR in capsule_invites
+            supabase.rpc('get_user_capsules_v2', { target_user_id: idToLoad }),
             supabase.from('follows').select('*', { count: 'exact', head: true }).eq('following_id', idToLoad),
             supabase.from('follows').select('*', { count: 'exact', head: true }).eq('follower_id', idToLoad),
             targetUserId ? supabase.from('follows').select('*').eq('follower_id', user.id).eq('following_id', targetUserId).single() : { data: null }
@@ -106,26 +225,21 @@ export default function ProfileScreen() {
 
         if (profileRes.data) setProfile(profileRes.data);
         if (capsRes.data) {
-            const ownAndOldShared = capsRes.data || [];
-            const newShared = (sharedRes.data || []).map((s: any) => s.capsules).filter(Boolean);
+            const all = capsRes.data || [];
 
-            // Merge uniquely
-            const all = [...ownAndOldShared];
-            newShared.forEach(ns => {
-                if (!all.some(c => c.id === ns.id)) {
-                    all.push(ns);
-                }
-            });
+            // Filter viewable based on privacy and relationships
+            const viewable = own
+                ? all
+                : all.filter((c: any) => c.is_public || c.owner_id === user.id || c.is_participant);
 
-            const viewable = isOwnProfile ? all : all.filter(c => c.is_public || c.invited_user_id === user.id || (sharedRes.data || []).some((s: any) => s.capsule_id === c.id));
             let opened = viewable.filter((c: any) => c.status === 'opened');
             const sealed = viewable.filter((c: any) => c.status === 'sealed');
 
             // Auto-delete empty opened capsules after 24h
-            if (isOwnProfile) {
+            if (own) {
                 const nowMs = Date.now();
                 const toDelete = opened.filter((c: any) => {
-                    const itemCount = c.capsule_items?.[0]?.count || 0;
+                    const itemCount = c.capsule_items_count || 0;
                     if (itemCount === 0) {
                         const openedSinceMs = nowMs - new Date(c.opens_at).getTime();
                         if (openedSinceMs > 24 * 3600 * 1000) {
@@ -136,7 +250,7 @@ export default function ProfileScreen() {
                 });
 
                 if (toDelete.length > 0) {
-                    opened = opened.filter(c => !toDelete.includes(c));
+                    opened = opened.filter((c: any) => !toDelete.includes(c));
                     for (const c of toDelete) {
                         await supabase.from('capsules').delete().eq('id', c.id);
                         await supabase.from('notifications').insert({
@@ -180,10 +294,33 @@ export default function ProfileScreen() {
         setIsFollowing(!!followCheck.data);
         setLoading(false);
         setRefreshing(false);
+        
+        // Load stickers
+        const { data: stks } = await supabase
+            .from('profile_stickers')
+            .select('*, stickers(*)')
+            .eq('user_id', idToLoad);
+        if (stks) setProfileStickers(stks);
     };
 
     useEffect(() => {
         loadData();
+
+        // Listen for capsule status changes (unsealing)
+        const channel = supabase
+            .channel('profile_capsules')
+            .on('postgres_changes', {
+                event: 'UPDATE',
+                schema: 'public',
+                table: 'capsules'
+            }, () => {
+                loadData();
+            })
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
     }, [targetUserId, route.params]);
 
     useFocusEffect(
@@ -307,19 +444,40 @@ export default function ProfileScreen() {
                 >
                     <View style={styles.bannerCircle1} />
                     <View style={styles.bannerCircle2} />
-                    <View style={styles.bannerActions}>
-                        {targetUserId && (
-                            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-                                <Ionicons name="chevron-back" size={24} color="#fff" />
-                            </TouchableOpacity>
-                        )}
-                        <View style={{ flex: 1 }} />
-                        {isOwnProfile && (
-                            <TouchableOpacity style={styles.settingsBtn} onPress={() => setShowSettings(true)}>
-                                <Ionicons name="settings-outline" size={22} color="#fff" />
-                            </TouchableOpacity>
-                        )}
-                    </View>
+                        {/* Stickers Overlay */}
+                        <View style={[StyleSheet.absoluteFill, { overflow: 'visible' }]} pointerEvents="none">
+                            {profileStickers.map((ps: any) => {
+                                const posConfig = STICKER_POSITIONS[ps.position - 1] || STICKER_POSITIONS[0];
+                                const { size, rotation, ...pos } = posConfig;
+                                return ( ps.stickers?.image_url && (
+                                    <Image 
+                                        key={ps.id}
+                                        source={{ uri: ps.stickers.image_url }}
+                                        style={[
+                                            styles.bannerSticker, 
+                                            pos, 
+                                            { width: size, height: size, transform: [{ rotate: rotation }] }
+                                        ]}
+                                        resizeMode="contain"
+                                    />
+                                ));
+                            })}
+                        </View>
+
+                        <View style={styles.bannerActions}>
+                            {targetUserId && (
+                                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+                                    <Ionicons name="chevron-back" size={24} color="#fff" />
+                                </TouchableOpacity>
+                            )}
+                            
+                            <View style={{ flex: 1 }} />
+                            {isOwnProfile && (
+                                <TouchableOpacity style={styles.settingsBtn} onPress={() => setShowSettings(true)}>
+                                    <Ionicons name="settings-outline" size={22} color="#fff" />
+                                </TouchableOpacity>
+                            )}
+                        </View>
                 </LinearGradient>
 
                 <View style={styles.avatarSection}>
@@ -371,11 +529,39 @@ export default function ProfileScreen() {
                             <View style={styles.lofiDivider} />
                             <Text style={[styles.lofiText, { color: Colors.textMuted }]}>member since {joinYear}</Text>
                         </View>
+
+                        {/* Favorites Section */}
+                        {(profile?.favorite_movie || profile?.favorite_song) && (
+                            <View style={styles.favoritesCard}>
+                                {profile?.favorite_movie && (
+                                    <View style={styles.favoriteItem}>
+                                        <View style={[styles.favIconBox, { backgroundColor: '#FFEDF6' }]}>
+                                            <Ionicons name="film" size={14} color="#F72585" />
+                                        </View>
+                                        <View>
+                                            <Text style={styles.favLabel}>FAVORITE MOVIE</Text>
+                                            <Text style={styles.favValue}>{profile.favorite_movie}</Text>
+                                        </View>
+                                    </View>
+                                )}
+                                {profile?.favorite_song && (
+                                    <View style={[styles.favoriteItem, profile?.favorite_movie && { marginTop: 12 }]}>
+                                        <View style={[styles.favIconBox, { backgroundColor: '#E0F2FE' }]}>
+                                            <Ionicons name="musical-notes" size={14} color="#0EA5E9" />
+                                        </View>
+                                        <View>
+                                            <Text style={styles.favLabel}>FAVORITE SONG</Text>
+                                            <Text style={styles.favValue}>{profile.favorite_song}</Text>
+                                        </View>
+                                    </View>
+                                )}
+                            </View>
+                        )}
                     </View>
 
                     <View style={styles.actionButtons}>
                         {isOwnProfile ? (
-                            <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                            <View style={{ flex: 1, flexDirection: 'row', gap: 8, alignItems: 'center' }}>
                                 <TouchableOpacity style={styles.pillActionBtn} onPress={() => setShowEdit(true)} activeOpacity={0.8}>
                                     <LinearGradient colors={[Colors.primary, Colors.primaryDark]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.pillGradient}>
                                         <Ionicons name="create-outline" size={16} color="#fff" />
@@ -443,119 +629,23 @@ export default function ProfileScreen() {
                         {(activeTab === 'all'
                             ? [...openedCaps, ...sealedCaps].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
                             : activeTab === 'opened' ? openedCaps : sealedCaps
-                        ).map((cap) => {
-                            const isSealed = cap.status === 'sealed';
-                            const cfg = TYPE_CONFIG[cap.type as keyof typeof TYPE_CONFIG] || TYPE_CONFIG.legacycap;
-                            const coverUrl = coverMap[cap.id];
-
-                            // Get counts from nested objects
-                            const itemsCount = cap.capsule_items?.[0]?.count || 0;
-                            const likesCount = cap.likes?.[0]?.count || 0;
-                            const commentsCount = cap.comments?.[0]?.count || 0;
-
-                            return (
-                                <TouchableOpacity
-                                    key={cap.id}
-                                    style={styles.sealedCell}
-                                    onPress={() => navigation.navigate('CapsuleDetail', { capsuleId: cap.id })}
-                                    onLongPress={() => !isSealed && isOwnProfile && capsuleMediaMap[cap.id]?.length > 1 && setPickerCapsuleId(cap.id)}
-                                    delayLongPress={400}
-                                >
-                                    <View style={styles.sealedCellInner}>
-                                        <View style={styles.modelContainer}>
-                                            {isSealed ? (
-                                                <CapsuleWithTimer
-                                                    modelKey={cap.model}
-                                                    source={{ uri: MODEL_IMAGES[cap.model] }}
-                                                    date={cap.opens_at}
-                                                    chainId={cap.chain_id}
-                                                    capsuleType={cap.type}
-                                                    style={styles.sealedImgLarge}
-                                                />
-                                            ) : (
-                                                <View style={styles.sealedImgLarge}>
-                                                    {coverUrl ? (
-                                                        <Image source={{ uri: coverUrl }} style={styles.gridImgFull} resizeMode="cover" />
-                                                    ) : (
-                                                        <CapsuleWithTimer
-                                                            modelKey={cap.model}
-                                                            source={{ uri: MODEL_IMAGES_OPEN[cap.model] || MODEL_IMAGES[cap.model] }}
-                                                            date={cap.opens_at}
-                                                            chainId={cap.chain_id}
-                                                            capsuleType={cap.type}
-                                                            style={styles.gridImg}
-                                                            hideTimer={true}
-                                                        />
-                                                    )}
-                                                </View>
-                                            )}
-
-                                            <View style={[styles.cornerTypeIcon, { backgroundColor: cfg.color }]}>
-                                                <Ionicons name={cfg.icon as any} size={10} color="#fff" />
-                                            </View>
-
-                                            {cap.is_shared && (
-                                                <View style={styles.sharedBadge}>
-                                                    <Ionicons name="people" size={10} color="#fff" />
-                                                    <Text style={styles.sharedBadgeText}>Shared</Text>
-                                                </View>
-                                            )}
-
-                                            {isSealed && (
-                                                <View style={styles.sealedBadgeSmall}>
-                                                    <Ionicons name="lock-closed" size={10} color="#fff" />
-                                                </View>
-                                            )}
-                                        </View>
-
-                                        {isSealed ? (
-                                            <LiveTimer date={cap.opens_at} modelId={cap.model} style={styles.sealedTimer} />
-                                        ) : (
-                                            <Text style={[styles.sealedTimer, { color: Colors.textMuted }]}>Opened</Text>
-                                        )}
-
-                                        <Text style={styles.sealedTitle} numberOfLines={1}>{cap.title}</Text>
-
-                                        <View style={[styles.membersList, !cap.is_shared && { opacity: 0 }]} pointerEvents={!cap.is_shared ? "none" : "auto"}>
-                                            <View style={styles.avatarStack}>
-                                                {cap.owner?.avatar_url ? (
-                                                    <Image source={{ uri: cap.owner.avatar_url }} style={styles.stackAvatar} />
-                                                ) : (
-                                                    <View style={[styles.stackAvatar, { backgroundColor: Colors.border, alignItems: 'center', justifyContent: 'center' }]}>
-                                                        <Ionicons name="person" size={10} color={Colors.textMuted} />
-                                                    </View>
-                                                )}
-                                                {cap.invited?.avatar_url ? (
-                                                    <Image source={{ uri: cap.invited.avatar_url }} style={[styles.stackAvatar, { marginLeft: -8, borderWidth: 2, borderColor: Colors.surface }]} />
-                                                ) : cap.invited?.username ? (
-                                                    <View style={[styles.stackAvatar, { backgroundColor: Colors.border, alignItems: 'center', justifyContent: 'center', marginLeft: -8, borderWidth: 2, borderColor: Colors.surface }]}>
-                                                        <Ionicons name="person" size={10} color={Colors.textMuted} />
-                                                    </View>
-                                                ) : null}
-                                            </View>
-                                            <Text style={styles.membersCountText}>
-                                                {cap.invited ? `2 members` : `1 member`}
-                                            </Text>
-                                        </View>
-
-                                        <View style={styles.sealedMetaRow}>
-                                            <View style={styles.sealedMetaItem}>
-                                                <Ionicons name="images-outline" size={12} color={Colors.textMuted} />
-                                                <Text style={styles.sealedMetaText}>{itemsCount}</Text>
-                                            </View>
-                                            <View style={styles.sealedMetaItem}>
-                                                <Ionicons name="heart-outline" size={12} color={Colors.textMuted} />
-                                                <Text style={styles.sealedMetaText}>{likesCount}</Text>
-                                            </View>
-                                            <View style={styles.sealedMetaItem}>
-                                                <Ionicons name="chatbubble-outline" size={12} color={Colors.textMuted} />
-                                                <Text style={styles.sealedMetaText}>{commentsCount}</Text>
-                                            </View>
-                                        </View>
-                                    </View>
-                                </TouchableOpacity>
-                            );
-                        })}
+                        ).map((cap) => (
+                            <ProfileCapsuleCell
+                                key={cap.id}
+                                cap={cap}
+                                navigation={navigation}
+                                isOwnProfile={isOwnProfile}
+                                isSealed={cap.status === 'sealed'}
+                                cfg={TYPE_CONFIG[cap.type as keyof typeof TYPE_CONFIG] || TYPE_CONFIG.legacycap}
+                                coverUrl={coverMap[cap.id]}
+                                itemsCount={cap.capsule_items_count ?? (cap.capsule_items?.[0]?.count || 0)}
+                                likesCount={cap.likes_count ?? (cap.likes?.[0]?.count || 0)}
+                                commentsCount={cap.comments_count ?? (cap.comments?.[0]?.count || 0)}
+                                setPickerCapsuleId={setPickerCapsuleId}
+                                themeColor="#a269ff"
+                                capsuleMediaMap={capsuleMediaMap}
+                            />
+                        ))}
                         {((activeTab === 'opened' && openedCaps.length === 0) || (activeTab === 'sealed' && sealedCaps.length === 0)) && (
                             <View style={styles.emptyState}>
                                 <Text style={styles.emptyTitle}>No capsules found</Text>
@@ -666,8 +756,47 @@ const styles = StyleSheet.create({
     centered: { justifyContent: 'center', alignItems: 'center' },
     scrollContent: { paddingBottom: 100 },
     banner: { height: 160 },
-    bannerCircle1: { position: 'absolute', top: -30, right: -20, width: 120, height: 120, borderRadius: 60, backgroundColor: 'rgba(255,255,255,0.08)' },
-    bannerCircle2: { position: 'absolute', bottom: -10, left: 30, width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(255,255,255,0.05)' },
+    bannerCircle1: { position: 'absolute', top: -30, right: -20, width: 120, height: 120, borderRadius: 60, backgroundColor: 'rgba(255,255,255,0.12)' },
+    bannerCircle2: { position: 'absolute', bottom: -10, left: 30, width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(255,255,255,0.08)' },
+    favoritesCard: {
+        marginTop: 15,
+        backgroundColor: Colors.surface,
+        borderRadius: 20,
+        padding: 16,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        ...Shadow.subtle,
+    },
+    bannerSticker: {
+        position: 'absolute',
+        width: 44,
+        height: 44,
+        zIndex: 5,
+    },
+    favoriteItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    favIconBox: {
+        width: 32,
+        height: 32,
+        borderRadius: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    favLabel: {
+        fontSize: 9,
+        fontFamily: Fonts.bold,
+        color: Colors.textMuted,
+        letterSpacing: 1,
+    },
+    favValue: {
+        fontSize: 14,
+        fontFamily: Fonts.medium,
+        color: Colors.textPrimary,
+        marginTop: 1,
+    },
     bannerActions: { paddingTop: 50, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center' },
     backBtn: { width: 40, height: 40, justifyContent: 'center' },
     settingsBtn: { width: 40, height: 40, justifyContent: 'center', alignItems: 'flex-end' },

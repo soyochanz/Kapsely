@@ -149,11 +149,13 @@ const styles = StyleSheet.create({
         marginBottom: 80, // Above typical bottom bars
         ...Platform.select({
             web: { boxShadow: '0px 4px 10px rgba(0, 0, 0, 0.3)' },
-            default: {
+            ios: {
                 shadowColor: '#000',
                 shadowOffset: { width: 0, height: 4 },
                 shadowOpacity: 0.3,
                 shadowRadius: 10,
+            },
+            android: {
                 elevation: 10,
             }
         }),

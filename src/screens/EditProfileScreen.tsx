@@ -2,8 +2,10 @@ import React, { useState, useEffect } from 'react';
 import {
     View, Text, StyleSheet, ScrollView, TouchableOpacity,
     TextInput, StatusBar, SafeAreaView, Image, ActivityIndicator,
-    Alert, Modal, Pressable, Platform,
+    Alert, Modal, Pressable, Platform, Dimensions,
 } from 'react-native';
+
+const { width } = Dimensions.get('window');
 import * as FileSystem from 'expo-file-system/legacy';
 import { decode } from 'base64-arraybuffer';
 import { Ionicons } from '@expo/vector-icons';
@@ -49,6 +51,12 @@ export default function EditProfileScreen({ onClose }: Props) {
     const [userId, setUserId] = useState<string | null>(null);
     const [initialAvatarUrl, setInitialAvatarUrl] = useState<string | null>(null);
 
+    // Profile Stickers State
+    const [profileStickers, setProfileStickers] = useState<(any | null)[]>([null, null, null, null, null, null, null]);
+    const [allStickers, setAllStickers] = useState<any[]>([]);
+    const [showStickerPicker, setShowStickerPicker] = useState(false);
+    const [activeSlot, setActiveSlot] = useState<number | null>(null);
+
     // ── Load current profile ──────────────────────────────────────────────────
     useEffect(() => {
         (async () => {
@@ -66,8 +74,56 @@ export default function EditProfileScreen({ onClose }: Props) {
                 setInitialAvatarUrl(data.avatar_url ?? null);
             }
             setLoading(false);
+            
+            // Load stickers
+            loadProfileStickers(user.id);
+            const { data: stks } = await supabase.from('stickers').select('*').eq('is_active', true);
+            if (stks) setAllStickers(stks);
         })();
     }, []);
+
+    const loadProfileStickers = async (uid: string) => {
+        const { data } = await supabase
+            .from('profile_stickers')
+            .select('*, stickers(*)')
+            .eq('user_id', uid);
+        
+        if (data) {
+            const slots = [null, null, null, null, null, null, null];
+            data.forEach((ps: any) => {
+                if (ps.position >= 1 && ps.position <= 7) {
+                    slots[ps.position - 1] = ps.stickers;
+                }
+            });
+            setProfileStickers(slots);
+        }
+    };
+
+    const handleSelectSticker = async (sticker: any) => {
+        if (activeSlot === null || !userId) return;
+        
+        try {
+            const pos = activeSlot + 1;
+            if (sticker === null) {
+                // Remove sticker
+                await supabase.from('profile_stickers').delete().eq('user_id', userId).eq('position', pos);
+            } else {
+                // Upsert sticker
+                const { error } = await supabase.from('profile_stickers').upsert({
+                    user_id: userId,
+                    sticker_id: sticker.id,
+                    position: pos,
+                    updated_at: new Date().toISOString()
+                }, { onConflict: 'user_id,position' });
+                if (error) throw error;
+            }
+            
+            loadProfileStickers(userId);
+            setShowStickerPicker(false);
+        } catch (e: any) {
+            Alert.alert('Error', e.message);
+        }
+    };
 
     // ── Avatar pick + crop ────────────────────────────────────────────────────
     const pickAvatar = async () => {
@@ -77,17 +133,16 @@ export default function EditProfileScreen({ onClose }: Props) {
         const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ImagePicker.MediaTypeOptions.Images,
             allowsEditing: true,   // built-in crop/adjust
-            aspect: [1, 1],
             quality: 0.85,
         });
 
         if (!result.canceled && result.assets[0]) {
             const asset = result.assets[0];
-            // Resize to 400×400
+            // Resize to a more optimized size (300px is plenty for avatars)
             const manipulated = await ImageManipulator.manipulateAsync(
                 asset.uri,
-                [{ resize: { width: 400, height: 400 } }],
-                { compress: 0.5, format: ImageManipulator.SaveFormat.JPEG }
+                [{ resize: { width: 300 } }],
+                { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
             );
             setAvatarUri(manipulated.uri);
         }
@@ -239,7 +294,7 @@ export default function EditProfileScreen({ onClose }: Props) {
                             <Ionicons name="camera" size={14} color="#fff" />
                         </View>
                     </TouchableOpacity>
-                    <Text style={styles.avatarHint}>Tap to change photo · Square crop applied</Text>
+                    <Text style={styles.avatarHint}>Tap to change photo · Adjust image to fit</Text>
                 </View>
 
                 {/* Fields */}
@@ -277,6 +332,35 @@ export default function EditProfileScreen({ onClose }: Props) {
                     <Text style={styles.sectionLabel}>🎵 Favorite Song</Text>
                     <TextInput style={styles.input} value={favoriteSong} onChangeText={setFavoriteSong}
                         placeholder="e.g. Bohemian Rhapsody – Queen" placeholderTextColor={Colors.textMuted} />
+                </View>
+
+                {/* Profile Stickers Section */}
+                <View style={styles.section}>
+                    <View style={styles.sectionHeaderRow}>
+                        <Text style={styles.sectionLabel}>Profile Stickers</Text>
+                        <Ionicons name="sparkles" size={14} color={favoriteColor} />
+                    </View>
+                    <Text style={styles.sectionHint}>Add up to 7 stickers to your profile banner</Text>
+                    
+                    <View style={styles.stickerGrid}>
+                        {profileStickers.map((stk, i) => (
+                            <TouchableOpacity 
+                                key={i} 
+                                style={styles.stickerSlot} 
+                                onPress={() => {
+                                    setActiveSlot(i);
+                                    setShowStickerPicker(true);
+                                }}
+                            >
+                                {stk ? (
+                                    <Image source={{ uri: stk.image_url }} style={styles.slotStickerImg} resizeMode="contain" />
+                                ) : (
+                                    <Ionicons name="add" size={20} color={Colors.textMuted} />
+                                )}
+                                <View style={styles.slotNumber}><Text style={styles.slotNumberText}>{i + 1}</Text></View>
+                            </TouchableOpacity>
+                        ))}
+                    </View>
                 </View>
 
                 {/* Logout Button */}
@@ -330,6 +414,44 @@ export default function EditProfileScreen({ onClose }: Props) {
                             onPress={() => setShowColorPicker(false)} activeOpacity={0.85}>
                             <Text style={styles.modalConfirmText}>Confirm Color</Text>
                         </TouchableOpacity>
+                    </Pressable>
+                </Pressable>
+            </Modal>
+
+            {/* Sticker Picker Modal */}
+            <Modal visible={showStickerPicker} transparent animationType="slide" onRequestClose={() => setShowStickerPicker(false)}>
+                <Pressable style={styles.modalOverlay} onPress={() => setShowStickerPicker(false)}>
+                    <Pressable style={styles.modalSheet}>
+                        <View style={styles.modalHandle} />
+                        <View style={styles.modalHeaderRow}>
+                            <Text style={styles.modalTitle}>Select a Sticker</Text>
+                            <TouchableOpacity onPress={() => setShowStickerPicker(false)}>
+                                <Ionicons name="close" size={24} color={Colors.textPrimary} />
+                            </TouchableOpacity>
+                        </View>
+                        
+                        <ScrollView contentContainerStyle={styles.stickerPickerGrid}>
+                            <TouchableOpacity 
+                                style={styles.stickerOption} 
+                                onPress={() => handleSelectSticker(null)}
+                            >
+                                <View style={[styles.stickerOptionIcon, { backgroundColor: '#f0f0f0' }]}>
+                                    <Ionicons name="trash-outline" size={24} color={Colors.error} />
+                                </View>
+                                <Text style={styles.stickerOptionName}>Remove</Text>
+                            </TouchableOpacity>
+
+                            {allStickers.map(s => (
+                                <TouchableOpacity 
+                                    key={s.id} 
+                                    style={styles.stickerOption}
+                                    onPress={() => handleSelectSticker(s)}
+                                >
+                                    <Image source={{ uri: s.image_url }} style={styles.stickerOptionImg} resizeMode="contain" />
+                                    <Text style={styles.stickerOptionName}>{s.name}</Text>
+                                </TouchableOpacity>
+                            ))}
+                        </ScrollView>
                     </Pressable>
                 </Pressable>
             </Modal>
@@ -470,4 +592,32 @@ const styles = StyleSheet.create({
         borderWidth: 1.5,
         borderColor: '#fff',
     },
+    sectionHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 },
+    sectionHint: { fontSize: 12, color: Colors.textMuted, marginBottom: 15, fontFamily: Fonts.regular },
+    stickerGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, justifyContent: 'center' },
+    stickerSlot: { 
+        width: (width - 100) / 3, 
+        height: 80, 
+        backgroundColor: Colors.background, 
+        borderRadius: 15, 
+        borderWidth: 1.5, 
+        borderColor: Colors.border,
+        borderStyle: 'dashed',
+        alignItems: 'center',
+        justifyContent: 'center',
+        position: 'relative'
+    },
+    slotStickerImg: { width: '80%', height: '80%' },
+    slotNumber: { 
+        position: 'absolute', top: -5, left: -5, 
+        width: 18, height: 18, borderRadius: 9, 
+        backgroundColor: Colors.border, alignItems: 'center', justifyContent: 'center' 
+    },
+    slotNumberText: { fontSize: 9, fontFamily: Fonts.bold, color: Colors.textSecondary },
+    stickerPickerGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 15, paddingVertical: 20 },
+    stickerOption: { width: (width - 80) / 3, alignItems: 'center', gap: 8, marginBottom: 10 },
+    stickerOptionIcon: { width: 60, height: 60, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+    stickerOptionImg: { width: 60, height: 60 },
+    stickerOptionName: { fontSize: 11, fontFamily: Fonts.medium, color: Colors.textPrimary, textAlign: 'center' },
+    modalHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
 });

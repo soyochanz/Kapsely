@@ -43,7 +43,7 @@ export default function UserListScreen() {
     const renderUser = ({ item }: { item: any }) => (
         <TouchableOpacity
             style={styles.userItem}
-            onPress={() => navigation.push('Profile', { targetUserId: item.id })}
+            onPress={() => navigation.push('UserProfile', { targetUserId: item.id })}
         >
             {item.avatar_url ? (
                 <Image source={{ uri: item.avatar_url }} style={styles.avatar} />

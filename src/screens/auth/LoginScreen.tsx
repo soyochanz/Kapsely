@@ -4,9 +4,11 @@ import {
     KeyboardAvoidingView, Platform, ScrollView, StatusBar, Image, ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../../theme';
+import { Colors, Fonts, Spacing, BorderRadius, Shadow, Gradients } from '../../theme';
 import { signIn } from '../../lib/auth';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface Props {
     onNavigateToRegister: () => void;
@@ -29,8 +31,11 @@ export default function LoginScreen({ onNavigateToRegister, onNavigateBack }: Pr
         setError('');
         setLoading(true);
         try {
+            // Save the persistence preference
+            await AsyncStorage.setItem('keep_connected', JSON.stringify(keepConnected));
+            
             await signIn(email.trim().toLowerCase(), password);
-            // Auth state change in App.tsx handles navigation automatically
+            // Persistence is handled by AsyncStorage in supabase.ts
         } catch (e: any) {
             setError(e.message ?? 'Login failed. Please try again.');
         } finally {
@@ -40,46 +45,51 @@ export default function LoginScreen({ onNavigateToRegister, onNavigateBack }: Pr
 
     return (
         <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-            <StatusBar barStyle="dark-content" backgroundColor={Colors.background} />
+            <StatusBar barStyle="light-content" />
 
-            {/* Top purple splash — compact */}
-            <LinearGradient colors={[Colors.primaryDark, Colors.primary]}
-                start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.topSplash}>
+            <LinearGradient
+                colors={Gradients.dark as any}
+                style={styles.header}
+                start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+            >
                 <TouchableOpacity onPress={onNavigateBack} style={styles.backBtn} activeOpacity={0.7}>
-                    <Ionicons name="arrow-back" size={24} color="#fff" />
+                    <Ionicons name="chevron-back" size={26} color="#fff" />
                 </TouchableOpacity>
-                <View style={styles.logoRow}>
+
+                <View style={styles.headerContent}>
                     <Image
                         source={{ uri: 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/website/Logomain.png' }}
                         style={styles.headerLogo}
                         resizeMode="contain"
                     />
-                    <Text style={styles.logoText}>kapsely</Text>
+                    <Text style={styles.greeting}>Welcome Back</Text>
+                    <Text style={styles.subGreeting}>Sign in to your account</Text>
                 </View>
-                <Text style={styles.splashTagline}>Seal today. Open the future.</Text>
-                <View style={styles.circle1} />
+
+                {/* Subtle tech pattern */}
+                <View style={styles.techLine} />
             </LinearGradient>
 
-            <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}>
-                <View style={styles.card}>
-                    <Text style={styles.title}>Welcome back</Text>
-                    <Text style={styles.subtitle}>Sign in to your capsules</Text>
-
+            <ScrollView
+                contentContainerStyle={styles.scroll}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+            >
+                <View style={styles.formCard}>
                     {!!error && (
                         <View style={styles.errorBox}>
-                            <Ionicons name="alert-circle-outline" size={16} color={Colors.eventCap} />
+                            <Ionicons name="warning" size={18} color={Colors.error} />
                             <Text style={styles.errorText}>{error}</Text>
                         </View>
                     )}
 
                     <View style={styles.inputGroup}>
-                        <Text style={styles.label}>Email</Text>
-                        <View style={styles.inputWrapper}>
-                            <Ionicons name="mail-outline" size={18} color={Colors.textMuted} style={styles.inputIcon} />
+                        <Text style={styles.inputLabel}>EMAIL ADDRESS</Text>
+                        <View style={styles.inputContainer}>
+                            <Ionicons name="mail-outline" size={20} color={Colors.primary} style={styles.inputIcon} />
                             <TextInput
                                 style={styles.input}
-                                placeholder="your@email.com"
+                                placeholder="name@example.com"
                                 placeholderTextColor={Colors.textMuted}
                                 value={email}
                                 onChangeText={setEmail}
@@ -91,20 +101,20 @@ export default function LoginScreen({ onNavigateToRegister, onNavigateBack }: Pr
                     </View>
 
                     <View style={styles.inputGroup}>
-                        <Text style={styles.label}>Password</Text>
-                        <View style={styles.inputWrapper}>
-                            <Ionicons name="lock-closed-outline" size={18} color={Colors.textMuted} style={styles.inputIcon} />
+                        <Text style={styles.inputLabel}>PASSWORD</Text>
+                        <View style={styles.inputContainer}>
+                            <Ionicons name="lock-closed-outline" size={20} color={Colors.primary} style={styles.inputIcon} />
                             <TextInput
-                                style={[styles.input, { flex: 1 }]}
-                                placeholder="••••••••"
+                                style={[styles.input, { paddingRight: 50 }]}
+                                placeholder="Enter your password"
                                 placeholderTextColor={Colors.textMuted}
                                 value={password}
                                 onChangeText={setPassword}
                                 secureTextEntry={!showPass}
                                 selectionColor={Colors.primary}
                             />
-                            <TouchableOpacity onPress={() => setShowPass(!showPass)} style={styles.eyeBtn}>
-                                <Ionicons name={showPass ? 'eye-off-outline' : 'eye-outline'} size={18} color={Colors.textMuted} />
+                            <TouchableOpacity onPress={() => setShowPass(!showPass)} style={styles.eyeIcon}>
+                                <Ionicons name={showPass ? 'eye-off' : 'eye'} size={20} color={Colors.textMuted} />
                             </TouchableOpacity>
                         </View>
                     </View>
@@ -112,33 +122,38 @@ export default function LoginScreen({ onNavigateToRegister, onNavigateBack }: Pr
                     <TouchableOpacity
                         style={styles.keepRow}
                         onPress={() => setKeepConnected(!keepConnected)}
-                        activeOpacity={0.7}
+                        activeOpacity={0.8}
                     >
                         <View style={[styles.checkbox, keepConnected && styles.checkboxActive]}>
-                            {keepConnected && <Ionicons name="checkmark" size={14} color="#fff" />}
+                            {keepConnected && <Ionicons name="checkmark-sharp" size={14} color="#fff" />}
                         </View>
-                        <Text style={styles.keepText}>Keep me connected</Text>
+                        <Text style={styles.keepText}>Keep me logged in</Text>
                     </TouchableOpacity>
 
-                    <TouchableOpacity onPress={handleLogin} activeOpacity={0.85} disabled={loading}>
-                        <LinearGradient colors={[Colors.primary, Colors.primaryDark]}
-                            start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.btn}>
-                            {loading
-                                ? <ActivityIndicator color="#fff" />
-                                : <Text style={styles.btnText}>Sign In</Text>
-                            }
+                    <TouchableOpacity onPress={handleLogin} activeOpacity={0.9} disabled={loading} style={styles.loginBtnWrapper}>
+                        <LinearGradient
+                            colors={Gradients.primary as any}
+                            start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                            style={styles.loginBtn}
+                        >
+                            {loading ? (
+                                <ActivityIndicator color="#fff" />
+                            ) : (
+                                <View style={styles.btnContent}>
+                                    <Text style={styles.loginBtnText}>LOG IN</Text>
+                                    <Ionicons name="log-in-outline" size={20} color="#fff" />
+                                </View>
+                            )}
                         </LinearGradient>
                     </TouchableOpacity>
 
-                    <View style={styles.dividerRow}>
-                        <View style={styles.dividerLine} />
-                        <Text style={styles.dividerText}>or</Text>
-                        <View style={styles.dividerLine} />
+                    <View style={styles.footer}>
+                        <View style={styles.divider} />
+                        <TouchableOpacity style={styles.registerLink} onPress={onNavigateToRegister}>
+                            <Text style={styles.footerText}>Don't have an account? </Text>
+                            <Text style={styles.regText}>Sign Up</Text>
+                        </TouchableOpacity>
                     </View>
-
-                    <TouchableOpacity style={styles.registerBtn} onPress={onNavigateToRegister} activeOpacity={0.7}>
-                        <Text style={styles.registerBtnText}>Create an account</Text>
-                    </TouchableOpacity>
                 </View>
             </ScrollView>
         </KeyboardAvoidingView>
@@ -146,65 +161,189 @@ export default function LoginScreen({ onNavigateToRegister, onNavigateBack }: Pr
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: Colors.background },
-    topSplash: { height: 140, justifyContent: 'flex-end', paddingHorizontal: Spacing.lg, paddingBottom: 14, overflow: 'hidden' },
-    backBtn: { position: 'absolute', top: 50, left: 16, zIndex: 10, padding: 8 },
-    logoRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-    headerLogo: { width: 22, height: 22, tintColor: '#fff' },
-    logoText: { color: '#fff', fontSize: 22, fontFamily: Fonts.bold, letterSpacing: -0.5 },
-    splashTagline: { color: 'rgba(255,255,255,0.78)', fontSize: 11, fontFamily: Fonts.light, marginTop: 2, marginBottom: 6 },
-    circle1: {
-        position: 'absolute', top: -20, right: -20, width: 110, height: 110,
-        borderRadius: 55, backgroundColor: 'rgba(255,255,255,0.08)',
+    container: {
+        flex: 1,
+        backgroundColor: Colors.background,
     },
-    scroll: { paddingHorizontal: Spacing.md, paddingBottom: 40 },
-    card: {
-        backgroundColor: Colors.surface, borderRadius: BorderRadius.xl,
-        padding: Spacing.lg, marginTop: -18,
+    header: {
+        height: 220,
+        paddingTop: Platform.OS === 'ios' ? 60 : 40,
+        paddingHorizontal: Spacing.xl,
+        overflow: 'hidden',
+    },
+    backBtn: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: Spacing.lg,
+    },
+    headerContent: {
+        zIndex: 5,
+    },
+    greeting: {
+        color: '#fff',
+        fontSize: 32,
+        fontFamily: Fonts.bold,
+        letterSpacing: -1,
+    },
+    subGreeting: {
+        color: 'rgba(255,255,255,0.6)',
+        fontSize: 14,
+        fontFamily: Fonts.medium,
+        marginTop: 4,
+    },
+    techLine: {
+        position: 'absolute',
+        top: 80,
+        right: -50,
+        width: 200,
+        height: 1,
+        backgroundColor: '#fff',
+        opacity: 0.15,
+        transform: [{ rotate: '-45deg' }],
+    },
+    scroll: {
+        paddingHorizontal: Spacing.lg,
+        paddingBottom: 40,
+    },
+    formCard: {
+        backgroundColor: Colors.surface,
+        borderRadius: BorderRadius.xl,
+        padding: Spacing.lg,
+        paddingTop: Spacing.xl,
+        ...Shadow.lg,
+    },
+    errorBox: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 14,
+        backgroundColor: '#fff1f1',
+        borderRadius: BorderRadius.md,
+        borderWidth: 1,
+        borderColor: Colors.error + '22',
+        marginBottom: Spacing.lg,
+        gap: 10,
+    },
+    errorText: {
+        color: Colors.error,
+        fontSize: 13,
+        fontFamily: Fonts.medium,
+        flex: 1,
+    },
+    inputGroup: {
+        marginBottom: Spacing.lg,
+    },
+    inputLabel: {
+        fontSize: 10,
+        fontFamily: Fonts.bold,
+        color: Colors.textMuted,
+        letterSpacing: 2,
+        marginBottom: 8,
+        marginLeft: 4,
+    },
+    inputContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: Colors.background,
+        borderRadius: BorderRadius.lg,
+        borderWidth: 1.5,
+        borderColor: Colors.border,
+        paddingHorizontal: 16,
+    },
+    inputIcon: {
+        marginRight: 12,
+    },
+    input: {
+        flex: 1,
+        height: 56,
+        color: Colors.textPrimary,
+        fontSize: 16,
+        fontFamily: Fonts.medium,
+    },
+    eyeIcon: {
+        position: 'absolute',
+        right: 16,
+    },
+    keepRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: Spacing.xl,
+        gap: 12,
+    },
+    checkbox: {
+        width: 20,
+        height: 20,
+        borderRadius: 6,
+        borderWidth: 2,
+        borderColor: Colors.primary,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    checkboxActive: {
+        backgroundColor: Colors.primary,
+    },
+    keepText: {
+        fontSize: 14,
+        fontFamily: Fonts.medium,
+        color: Colors.textSecondary,
+    },
+    loginBtnWrapper: {
         ...Shadow.primary,
     },
-    title: { color: Colors.textPrimary, fontSize: 24, fontFamily: Fonts.bold, marginBottom: 4 },
-    subtitle: { color: Colors.textMuted, fontSize: 14, fontFamily: Fonts.regular, marginBottom: Spacing.lg },
-    errorBox: {
-        flexDirection: 'row', alignItems: 'center', gap: 8,
-        backgroundColor: Colors.eventCapLight, borderRadius: BorderRadius.md,
-        borderWidth: 1, borderColor: Colors.eventCap + '44',
-        padding: 12, marginBottom: Spacing.md,
+    loginBtn: {
+        height: 60,
+        borderRadius: BorderRadius.xl,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
-    errorText: { color: Colors.eventCap, fontSize: 13, fontFamily: Fonts.medium, flex: 1 },
-    inputGroup: { marginBottom: Spacing.md },
-    label: { color: Colors.textSecondary, fontSize: 12, fontFamily: Fonts.semiBold, letterSpacing: 0.5, marginBottom: 7 },
-    inputWrapper: {
-        flexDirection: 'row', alignItems: 'center',
-        backgroundColor: Colors.cardAlt, borderRadius: BorderRadius.md,
-        borderWidth: 1.5, borderColor: Colors.border,
-        paddingHorizontal: 14, ...Shadow.subtle,
+    btnContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
     },
-    inputIcon: { marginRight: 8 },
-    input: {
-        flex: 1, height: 50, color: Colors.textPrimary,
-        fontSize: 15, fontFamily: Fonts.regular,
+    loginBtnText: {
+        color: '#fff',
+        fontSize: 16,
+        fontFamily: Fonts.bold,
+        letterSpacing: 2,
     },
-    eyeBtn: { padding: 4 },
-    btn: {
-        borderRadius: BorderRadius.lg, paddingVertical: 16,
-        alignItems: 'center', justifyContent: 'center', marginTop: Spacing.sm,
+    btnDot: {
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+        backgroundColor: '#fff',
     },
-    btnText: { color: '#fff', fontSize: 16, fontFamily: Fonts.bold },
-    dividerRow: {
-        flexDirection: 'row', alignItems: 'center', gap: 12,
-        marginVertical: Spacing.md,
+    headerLogo: {
+        width: 40,
+        height: 40,
+        marginBottom: 12,
     },
-    dividerLine: { flex: 1, height: 1, backgroundColor: Colors.divider },
-    dividerText: { color: Colors.textMuted, fontSize: 12, fontFamily: Fonts.medium },
-    keepRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: Spacing.lg, paddingLeft: 2 },
-    checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.background },
-    checkboxActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
-    keepText: { color: Colors.textSecondary, fontSize: 14, fontFamily: Fonts.medium },
-    registerBtn: {
-        borderRadius: BorderRadius.lg, paddingVertical: 15,
-        borderWidth: 1.5, borderColor: Colors.primary,
-        alignItems: 'center', backgroundColor: Colors.instaCapLight,
+    footer: {
+        marginTop: Spacing.xl,
+        alignItems: 'center',
     },
-    registerBtnText: { color: Colors.primary, fontSize: 16, fontFamily: Fonts.semiBold },
+    divider: {
+        width: 40,
+        height: 3,
+        backgroundColor: Colors.border,
+        borderRadius: 1.5,
+        marginBottom: Spacing.xl,
+    },
+    registerLink: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    footerText: {
+        color: Colors.textMuted,
+        fontSize: 14,
+        fontFamily: Fonts.medium,
+    },
+    regText: {
+        color: Colors.primaryDark,
+        fontSize: 14,
+        fontFamily: Fonts.bold,
+    },
 });

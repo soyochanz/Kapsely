@@ -4,6 +4,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
 import { Notification } from '../data/mockNotifications';
 import { useNavigation } from '@react-navigation/native';
+import CapsuleWithTimer from './CapsuleWithTimer';
+import { MODEL_IMAGES } from '../constants/models';
+import { timerConfigManager } from '../utils/timerConfig';
 
 const typeConfig = {
     instacap: { color: Colors.instaCap },
@@ -104,13 +107,27 @@ export default function NotificationItem({ notification, onAcceptInvite, onRejec
             </View>
 
             {!notification.isRead && <View style={styles.unreadDot} />}
+
+            {notification.capsuleModel && (
+                <View style={styles.capsulePreview}>
+                    <CapsuleWithTimer
+                        modelKey={notification.capsuleModel}
+                        source={{ uri: timerConfigManager.getModelImage(notification.capsuleModel) || MODEL_IMAGES[notification.capsuleModel] || MODEL_IMAGES.beach }}
+                        date={notification.capsuleOpensAt || ''}
+                        chainId={notification.capsuleChainId}
+                        capsuleType={notification.capsuleType}
+                        hideTimer
+                        style={styles.notifCapsule}
+                    />
+                </View>
+            )}
         </TouchableOpacity>
     );
 }
 
 const styles = StyleSheet.create({
     row: {
-        flexDirection: 'row', alignItems: 'flex-start',
+        flexDirection: 'row', alignItems: 'center',
         padding: Spacing.md, borderRadius: BorderRadius.md, gap: Spacing.sm,
     },
     unread: { backgroundColor: Colors.primary + '07' },
@@ -152,4 +169,15 @@ const styles = StyleSheet.create({
         flex: 1, alignItems: 'center', borderWidth: 1, borderColor: Colors.borderLight
     },
     rejectBtnText: { color: Colors.textSecondary, fontSize: 13, fontFamily: Fonts.semiBold },
+    capsulePreview: {
+        width: 44,
+        height: 44,
+        marginLeft: 4,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    notifCapsule: {
+        width: 40,
+        height: 40,
+    }
 });

@@ -30,11 +30,13 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         ...Platform.select({
             web: { boxShadow: '0px 2px 4px rgba(58, 123, 213, 0.4)' },
-            default: {
+            ios: {
                 shadowColor: '#3a7bd5',
                 shadowOffset: { width: 0, height: 2 },
                 shadowOpacity: 0.4,
                 shadowRadius: 4,
+            },
+            android: {
                 elevation: 3,
             }
         }),

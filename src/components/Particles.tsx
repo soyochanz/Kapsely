@@ -1,5 +1,5 @@
-﻿import React, { useEffect, useRef } from 'react';
-import { View, StyleSheet, Animated } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { View, StyleSheet, Animated, Platform } from 'react-native';
 
 interface ParticlesProps {
     activeTint: string;
@@ -9,10 +9,10 @@ interface ParticlesProps {
 const Particles: React.FC<ParticlesProps> = ({ activeTint, capsuleType }) => {
     const isEvent = capsuleType === 'eventcap';
     const isLegacy = capsuleType === 'legacycap';
-    
+
     // Create 15-25 particles based on type
     const count = isEvent ? 25 : 15;
-    
+
     const particles = useRef([...Array(count)].map(() => ({
         id: Math.random().toString(),
         left: `${Math.random() * 100}%`,
@@ -46,12 +46,10 @@ const Particles: React.FC<ParticlesProps> = ({ activeTint, capsuleType }) => {
 
                 if (isEvent) {
                     animations.push(
-                        Animated.loop(
-                            Animated.sequence([
-                                Animated.timing(p.scale, { toValue: 1.5, duration: p.duration * 0.5, useNativeDriver: true }),
-                                Animated.timing(p.scale, { toValue: 0.8, duration: p.duration * 0.5, useNativeDriver: true }),
-                            ])
-                        )
+                        Animated.sequence([
+                            Animated.timing(p.scale, { toValue: 1.5, duration: p.duration * 0.5, useNativeDriver: true }),
+                            Animated.timing(p.scale, { toValue: 0.8, duration: p.duration * 0.5, useNativeDriver: true }),
+                        ])
                     );
                 }
 
@@ -83,11 +81,18 @@ const Particles: React.FC<ParticlesProps> = ({ activeTint, capsuleType }) => {
                         borderRadius: (isEvent && i % 2 === 0) ? 2 : p.size / 2,
                         backgroundColor: activeTint,
                         opacity: p.opacity,
-                        shadowColor: activeTint,
-                        shadowOffset: { width: 0, height: 0 },
-                        shadowOpacity: isEvent ? 0.8 : 0.4,
-                        shadowRadius: isEvent ? 6 : 3,
-                        elevation: isEvent ? 4 : 2,
+                        ...Platform.select({
+                            web: { boxShadow: `0px 0px ${isEvent ? 6 : 3}px ${activeTint}` },
+                            ios: {
+                                shadowColor: activeTint,
+                                shadowOffset: { width: 0, height: 0 },
+                                shadowOpacity: isEvent ? 0.8 : 0.4,
+                                shadowRadius: isEvent ? 6 : 3,
+                            },
+                            android: {
+                                elevation: isEvent ? 4 : 2,
+                            }
+                        }),
                         transform: [
                             { translateY: p.translateY },
                             { scale: p.scale },

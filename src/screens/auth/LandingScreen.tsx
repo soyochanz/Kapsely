@@ -1,8 +1,9 @@
 import React, { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Dimensions, Animated, StatusBar, Image } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Dimensions, Animated, StatusBar, Image, Platform } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../../theme';
+import { Colors, Fonts, Spacing, BorderRadius, Shadow, Gradients } from '../../theme';
 
 const { width, height } = Dimensions.get('window');
 
@@ -14,77 +15,96 @@ interface Props {
 export default function LandingScreen({ onNavigateToLogin, onNavigateToRegister }: Props) {
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const translateY = useRef(new Animated.Value(40)).current;
+    const rotateAnim = useRef(new Animated.Value(0)).current;
     const floatAnim = useRef(new Animated.Value(0)).current;
 
     useEffect(() => {
         Animated.parallel([
             Animated.timing(fadeAnim, {
                 toValue: 1,
-                duration: 1000,
-                delay: 150,
+                duration: 800,
+                delay: 100,
                 useNativeDriver: true,
             }),
             Animated.spring(translateY, {
                 toValue: 0,
                 tension: 40,
                 friction: 7,
-                delay: 150,
+                delay: 100,
                 useNativeDriver: true,
             }),
         ]).start();
 
         Animated.loop(
+            Animated.timing(rotateAnim, {
+                toValue: 1,
+                duration: 25000,
+                useNativeDriver: true,
+            })
+        ).start();
+
+        Animated.loop(
             Animated.sequence([
-                Animated.timing(floatAnim, { toValue: 1, duration: 3000, useNativeDriver: true }),
-                Animated.timing(floatAnim, { toValue: 0, duration: 3000, useNativeDriver: true })
+                Animated.timing(floatAnim, { toValue: 1, duration: 4000, useNativeDriver: true }),
+                Animated.timing(floatAnim, { toValue: 0, duration: 4000, useNativeDriver: true })
             ])
         ).start();
     }, []);
 
+    const rotate = rotateAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: ['0deg', '360deg']
+    });
+
     const floatY = floatAnim.interpolate({
         inputRange: [0, 1],
-        outputRange: [0, -15]
+        outputRange: [0, -20]
     });
 
     return (
         <View style={styles.container}>
             <StatusBar barStyle="dark-content" translucent backgroundColor="transparent" />
 
-            {/* Aesthetic Background */}
+            {/* Premium Gradient Background */}
             <LinearGradient
-                colors={['#ffffff', '#fcfaff', '#f3ebff']}
+                colors={['#ffffff', '#f8faff', '#f0f4ff', '#e8eeff']}
                 style={StyleSheet.absoluteFillObject}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
             />
 
-            {/* Glowing Orbs */}
-            <View style={styles.glowCircle1} />
-            <View style={styles.glowCircle2} />
+            {/* Technological Floating Elements */}
+            <Animated.View style={[styles.glowOrb, { transform: [{ rotate }] }]}>
+                <LinearGradient
+                    colors={['rgba(166, 110, 255, 0.25)', 'transparent']}
+                    style={styles.orbInner}
+                />
+            </Animated.View>
 
             <View style={styles.content}>
                 <View style={styles.topSection}>
                     <Animated.View style={[styles.heroIconWrapper, { transform: [{ translateY: floatY }] }]}>
-                        <LinearGradient
-                            colors={[Colors.primary, Colors.primaryLight]}
-                            style={styles.heroIconBg}
-                            start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-                        >
+                        <View style={styles.iconGlow} />
+                        <View style={styles.logoContainer}>
                             <Image
                                 source={{ uri: 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/website/Logomain.png' }}
                                 style={styles.heroLogo}
                                 resizeMode="contain"
                             />
-                        </LinearGradient>
+                        </View>
                     </Animated.View>
 
                     <Animated.View style={[styles.textContainer, { opacity: fadeAnim, transform: [{ translateY }] }]}>
+                        <View style={styles.badge}>
+                            <Text style={styles.badgeText}>TEMPORAL PROTOCOL 2.0</Text>
+                        </View>
                         <Text style={styles.appName}>kapsely</Text>
-                        <Text style={styles.slogan}>The future of sharing.</Text>
+                        <Text style={styles.slogan}>BRIDGE THROUGH TIME</Text>
 
                         <Text style={styles.conceptText}>
-                            Seal your memories in digital capsules today.{"\n"}
-                            Unveil them when the time is right.
+                            The premier digital sanctuary for your future memories. 
+                            <Text style={{ color: Colors.primary, fontFamily: Fonts.bold }}> Secure. </Text>
+                            Timed. Private.
                         </Text>
                     </Animated.View>
                 </View>
@@ -92,18 +112,22 @@ export default function LandingScreen({ onNavigateToLogin, onNavigateToRegister 
                 <Animated.View style={[styles.bottomSection, { opacity: fadeAnim, transform: [{ translateY }] }]}>
                     <TouchableOpacity onPress={onNavigateToRegister} activeOpacity={0.8} style={styles.btnWrapper}>
                         <LinearGradient
-                            colors={[Colors.primary, Colors.primaryDark]}
+                            colors={Gradients.primary as any}
                             start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
                             style={styles.primaryBtn}
                         >
-                            <Text style={styles.primaryBtnText}>Get Started</Text>
-                            <Ionicons name="arrow-forward" size={20} color="white" />
+                            <Text style={styles.primaryBtnText}>Sign Up</Text>
+                            <Ionicons name="arrow-forward" size={18} color="white" />
                         </LinearGradient>
                     </TouchableOpacity>
 
                     <TouchableOpacity onPress={onNavigateToLogin} activeOpacity={0.7} style={styles.secondaryBtn}>
-                        <Text style={styles.secondaryBtnText}>I already have an account</Text>
+                        <BlurView intensity={20} style={styles.blurBtn}>
+                            <Text style={styles.secondaryBtnText}>Log In</Text>
+                        </BlurView>
                     </TouchableOpacity>
+
+                    <Text style={styles.footerNote}>© 2026 KAPSELY INC. // SECURED ENCRYPTION</Text>
                 </Animated.View>
             </View>
         </View>
@@ -115,87 +139,101 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: '#ffffff',
     },
-    glowCircle1: {
+    glowOrb: {
         position: 'absolute',
-        top: -height * 0.1,
-        right: -width * 0.2,
-        width: width * 1.2,
-        height: width * 1.2,
-        borderRadius: width * 0.6,
-        backgroundColor: Colors.primaryGlow,
-        opacity: 0.6,
+        top: -100,
+        right: -150,
+        width: 600,
+        height: 600,
+        borderRadius: 300,
     },
-    glowCircle2: {
-        position: 'absolute',
-        bottom: height * 0.1,
-        left: -width * 0.4,
-        width: width * 1.2,
-        height: width * 1.2,
-        borderRadius: width * 0.6,
-        backgroundColor: Colors.instaCapLight,
-        opacity: 0.5,
+    orbInner: {
+        width: '100%',
+        height: '100%',
+        borderRadius: 300,
     },
     content: {
         flex: 1,
         justifyContent: 'space-between',
         paddingHorizontal: Spacing.xl,
-        paddingTop: height * 0.18,
-        paddingBottom: height * 0.08,
+        paddingTop: height * 0.16,
+        paddingBottom: height * 0.06,
     },
     topSection: {
         alignItems: 'center',
     },
     heroIconWrapper: {
-        ...Shadow.primary,
-        shadowRadius: 30,
         marginBottom: Spacing.xl,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
-    heroIconBg: {
-        width: 110,
-        height: 110,
-        borderRadius: 40,
+    iconGlow: {
+        position: 'absolute',
+        width: 140,
+        height: 140,
+        borderRadius: 70,
+        backgroundColor: Colors.primaryGlow,
+        opacity: 0.8,
+    },
+    logoContainer: {
+        width: 140,
+        height: 140,
         justifyContent: 'center',
         alignItems: 'center',
-        borderWidth: 4,
-        borderColor: '#ffffff',
-        overflow: 'hidden',
     },
     heroLogo: {
-        width: '70%',
-        height: '70%',
+        width: '100%',
+        height: '100%',
     },
     textContainer: {
         alignItems: 'center',
     },
+    badge: {
+        backgroundColor: Colors.border,
+        paddingHorizontal: 12,
+        paddingVertical: 4,
+        borderRadius: BorderRadius.full,
+        marginBottom: 12,
+        borderWidth: 1,
+        borderColor: Colors.borderLight,
+    },
+    badgeText: {
+        fontSize: 10,
+        fontFamily: Fonts.bold,
+        color: Colors.textMuted,
+        letterSpacing: 2.5,
+    },
     appName: {
         color: Colors.textPrimary,
-        fontSize: 52,
+        fontSize: 60,
         fontFamily: Fonts.bold,
-        letterSpacing: -1.8,
-        marginBottom: 2,
+        letterSpacing: -3.5,
+        marginBottom: -4,
     },
     slogan: {
-        color: Colors.primary,
-        fontSize: 18,
-        fontFamily: Fonts.semiBold,
-        letterSpacing: 0.5,
-        marginBottom: Spacing.md,
+        color: Colors.primaryDark,
+        fontSize: 13,
+        fontFamily: Fonts.bold,
+        letterSpacing: 4,
+        marginBottom: Spacing.lg,
     },
     conceptText: {
         color: Colors.textSecondary,
-        fontSize: 15,
+        fontSize: 16,
         fontFamily: Fonts.regular,
         textAlign: 'center',
-        lineHeight: 24,
-        paddingHorizontal: Spacing.lg,
+        lineHeight: 26,
+        paddingHorizontal: Spacing.md,
+        opacity: 0.85,
     },
     bottomSection: {
         width: '100%',
         gap: Spacing.md,
+        alignItems: 'center',
     },
     btnWrapper: {
+        width: '100%',
         ...Shadow.primary,
-        shadowRadius: 12,
     },
     primaryBtn: {
         flexDirection: 'row',
@@ -204,6 +242,8 @@ const styles = StyleSheet.create({
         paddingVertical: 18,
         borderRadius: BorderRadius.xl,
         gap: 12,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.2)',
     },
     primaryBtnText: {
         color: '#FFFFFF',
@@ -212,16 +252,28 @@ const styles = StyleSheet.create({
         letterSpacing: 0.5,
     },
     secondaryBtn: {
-        paddingVertical: 16,
-        alignItems: 'center',
+        width: '100%',
         borderRadius: BorderRadius.xl,
-        backgroundColor: Colors.cardAlt,
-        borderWidth: 1,
-        borderColor: Colors.borderLight,
+        overflow: 'hidden',
+        borderWidth: 1.5,
+        borderColor: Colors.border,
+    },
+    blurBtn: {
+        paddingVertical: 17,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     secondaryBtnText: {
-        color: Colors.primaryDark,
-        fontSize: 15,
+        color: Colors.textPrimary,
+        fontSize: 16,
         fontFamily: Fonts.semiBold,
+    },
+    footerNote: {
+        color: Colors.textMuted,
+        fontSize: 9,
+        fontFamily: Fonts.medium,
+        letterSpacing: 1,
+        marginTop: Spacing.md,
+        opacity: 0.6,
     },
 });

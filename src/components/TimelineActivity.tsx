@@ -6,6 +6,10 @@ import { useNavigation } from '@react-navigation/native';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import LiveTimer from './LiveTimer';
+import CapsuleWithTimer from './CapsuleWithTimer';
+import { timerConfigManager } from '../utils/timerConfig';
+import { MODEL_IMAGES, MODEL_IMAGES_OPEN } from '../constants/models';
+import VerifiedBadge from './VerifiedBadge';
 
 const { width } = Dimensions.get('window');
 
@@ -16,7 +20,7 @@ interface TimelineActivityProps {
 export default function TimelineActivity({ item }: TimelineActivityProps) {
     const navigation = useNavigation<any>();
     const profile = item.profiles || { username: 'user', avatar_url: null };
-    const capsule = item.capsules || { title: 'Capsule', type: 'instacap' };
+    const capsule = Array.isArray(item.capsules) ? item.capsules[0] : (item.capsules || { title: 'Capsule', type: 'instacap', model: 'beach' });
 
     const handlePress = () => {
         navigation.navigate('CapsuleDetail', { capsuleId: item.capsule_id });
@@ -50,11 +54,16 @@ export default function TimelineActivity({ item }: TimelineActivityProps) {
             {/* Background Layer (Media or Gradient) */}
             <View style={styles.backgroundLayer}>
                 {item.media_url && (item.media_type === 'image' || item.media_type === 'video') ? (
-                    <Image
-                        source={{ uri: item.media_url }}
-                        style={styles.backgroundImage}
-                        blurRadius={capsule?.status === 'sealed' ? 15 : 0}
-                    />
+                    <>
+                        <Image
+                            source={{ uri: item.media_url }}
+                            style={styles.backgroundImage}
+                            blurRadius={capsule?.status === 'sealed' ? 20 : 0}
+                        />
+                        {capsule?.status === 'sealed' && (
+                            <BlurView intensity={100} tint="dark" style={StyleSheet.absoluteFill} />
+                        )}
+                    </>
                 ) : (
                     <LinearGradient colors={getTypeColors() as any} style={styles.backgroundGradient} />
                 )}
@@ -66,22 +75,58 @@ export default function TimelineActivity({ item }: TimelineActivityProps) {
 
             {/* Top Info Bar */}
             <View style={styles.topBar}>
-                <View style={styles.userSection}>
-                    {/* Avatar only for Shared Caps (logic for shared_cap can be added later, for now we hide it for activity as requested) */}
-                    {item.is_shared_cap && (
-                        profile.avatar_url ? (
-                            <Image source={{ uri: profile.avatar_url }} style={styles.avatar} />
-                        ) : (
-                            <View style={styles.avatarPlaceholder}>
-                                <Ionicons name="person" size={12} color="#fff" />
-                            </View>
-                        )
+                <TouchableOpacity
+                    style={styles.userSection}
+                    onPress={() => navigation.navigate('UserProfile', { targetUserId: item.owner_id })}
+                >
+                    {profile.avatar_url ? (
+                        <Image source={{ uri: profile.avatar_url }} style={styles.avatar} />
+                    ) : (
+                        <View style={styles.avatarPlaceholder}>
+                            <Ionicons name="person" size={12} color="#fff" />
+                        </View>
                     )}
                     <View>
-                        <Text style={styles.username}>{profile.display_name || profile.username || 'user'}</Text>
+                        <TouchableOpacity 
+                            style={{ flexDirection: 'row', alignItems: 'center' }}
+                            onPress={() => navigation.navigate('UserProfile', { targetUserId: item.owner_id })}
+                        >
+                            <Text style={styles.username}>{profile.display_name || profile.username || 'user'}</Text>
+                            {profile.is_verified && <VerifiedBadge size={14} style={{ marginLeft: 2 }} />}
+                        </TouchableOpacity>
                         <Text style={styles.activityType}>Added {item.media_type || 'content'}</Text>
                     </View>
-                </View>
+                </TouchableOpacity>
+
+                {capsule && (
+                    <View style={styles.topRightContainer}>
+                        <TouchableOpacity
+                            style={styles.capsuleCorner}
+                            onPress={() => navigation.navigate('CapsuleDetail', { capsuleId: item.capsule_id })}
+                        >
+                            <CapsuleWithTimer
+                                modelKey={capsule.model || 'beach'}
+                                source={{ uri: capsule.status === 'opened' ? (timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model as keyof typeof MODEL_IMAGES_OPEN] || MODEL_IMAGES_OPEN.beach) : (timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || MODEL_IMAGES.beach) }}
+                                date={capsule.opens_at}
+                                chainId={capsule.chain_id}
+                                capsuleType={capsule.type}
+                                hideTimer
+                                isOpened={capsule.status === 'opened'}
+                                style={styles.capsuleMini}
+                            />
+                        </TouchableOpacity>
+                        
+                        {capsule.status === 'sealed' && (
+                            <View style={styles.miniTimerContainer}>
+                                <LiveTimer 
+                                    date={capsule.opens_at} 
+                                    modelId={capsule.model}
+                                    style={styles.miniTimerText}
+                                />
+                            </View>
+                        )}
+                    </View>
+                )}
             </View>
 
             {/* Bottom Info Section */}
@@ -173,6 +218,34 @@ const styles = StyleSheet.create({
         fontSize: 10,
         color: 'rgba(255,255,255,0.8)',
         marginTop: -2,
+    },
+    capsuleCorner: {
+        width: 64,
+        height: 64,
+        borderRadius: 32,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(0,0,0,0.3)',
+        overflow: 'hidden',
+    },
+    topRightContainer: {
+        alignItems: 'center',
+    },
+    miniTimerContainer: {
+        marginTop: 4,
+        backgroundColor: 'rgba(0,0,0,0.4)',
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: 12,
+    },
+    miniTimerText: {
+        fontSize: 10,
+        color: '#fff',
+        fontFamily: Fonts.bold,
+    },
+    capsuleMini: {
+        width: 56,
+        height: 56,
     },
     timerChip: {
         flexDirection: 'row',

@@ -8,6 +8,7 @@ interface LiveTimerProps {
     modelId?: string;
     style?: any;
     configOverride?: ModelTimerConfig; // Higher priority for tool preview
+    hideLabel?: boolean; // New prop to hide text (e.g. when opened)
 }
 
 const FONT_MAP: Record<string, string> = {
@@ -17,9 +18,9 @@ const FONT_MAP: Record<string, string> = {
     'serif': Platform.OS === 'ios' ? 'Times New Roman' : 'serif',
 };
 
-export default function LiveTimer({
-    date, modelId, style, configOverride
-}: LiveTimerProps) {
+const LiveTimer = React.memo(({
+    date, modelId, style, configOverride, hideLabel
+}: LiveTimerProps) => {
     const [label, setLabel] = useState('');
     const [savedConfig, setSavedConfig] = useState<ModelTimerConfig | null>(null);
 
@@ -111,12 +112,16 @@ export default function LiveTimer({
         });
     };
 
+    if (hideLabel) return null;
+
     return (
         <View style={styles.curvedContainer}>
             {renderContent()}
         </View>
     );
-}
+});
+
+export default LiveTimer;
 
 const styles = StyleSheet.create({
     curvedContainer: {

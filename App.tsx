@@ -18,6 +18,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Platform } from 'react-native';
 import { registerForPushNotificationsAsync, savePushToken, setupNotificationHandlers } from './src/utils/pushNotifications';
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
 SplashScreen.preventAutoHideAsync();
 
 // Setup handlers outside the component
@@ -30,18 +32,36 @@ export default function App() {
 
   useEffect(() => {
     async function startup() {
-      // Init timer configs
-      await timerConfigManager.init();
+      try {
+        // Init timer configs
+        await timerConfigManager.init();
 
-      // Get session
-      const { data: { session: s } } = await supabase.auth.getSession();
-      setSession(s);
+        // Get session
+        const { data: { session: s }, error } = await supabase.auth.getSession();
+        
+        if (error) {
+          console.error('Auth check error:', error);
+        }
 
-      if (s?.user) {
-        handlePushRegistration(s.user.id);
+        // Check if user wants to stay connected
+        const keepKey = await AsyncStorage.getItem('keep_connected');
+        const shouldKeep = keepKey === null ? true : JSON.parse(keepKey);
+
+        if (s) {
+          if (!shouldKeep) {
+            // User chose NOT to stay logged in, so sign out on fresh start
+            await supabase.auth.signOut();
+            setSession(null);
+          } else {
+            setSession(s);
+            handlePushRegistration(s.user.id);
+          }
+        }
+      } catch (e) {
+        console.error('Startup error:', e);
+      } finally {
+        setAuthChecked(true);
       }
-
-      setAuthChecked(true);
     }
 
     startup();

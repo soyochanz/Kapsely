@@ -12,6 +12,9 @@ export interface Notification {
     capsuleId?: string;
     capsuleTitle?: string;
     capsuleType?: 'eventcap' | 'instacap' | 'legacycap';
+    capsuleModel?: string;
+    capsuleChainId?: string;
+    capsuleOpensAt?: string;
     createdAt?: string;
 }
 

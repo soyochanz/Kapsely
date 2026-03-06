@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, Image, TouchableOpacity, StyleSheet, Dimensions } from 'react-native';
+import { View, Text, Image, TouchableOpacity, StyleSheet, Dimensions, Platform } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts, BorderRadius, Spacing, Shadow } from '../theme';
@@ -21,7 +21,7 @@ const typeConfig = {
     legacycap: { label: 'LegacyCap', color: Colors.legacyCap, bgColor: Colors.legacyCapLight, icon: 'time-outline' },
 };
 
-export default function CapsuleCard({ capsule }: { capsule: any }) {
+const CapsuleCard = React.memo(({ capsule }: { capsule: any }) => {
     const navigation = useNavigation<any>();
     const [isFollowed, setIsFollowed] = useState(false);
     const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -29,7 +29,7 @@ export default function CapsuleCard({ capsule }: { capsule: any }) {
     const [isLiked, setIsLiked] = useState(false);
     const [commentCount, setCommentCount] = useState(0);
     const [postsCount, setPostsCount] = useState(0);
-    const [firstMediaUrl, setFirstMediaUrl] = useState<string | null>(null);
+    const [mediaCollage, setMediaCollage] = useState<any[]>([]);
     const cfg = typeConfig[capsule.type as keyof typeof typeConfig] || typeConfig.legacycap;
     const [themeColor, setThemeColor] = useState<string>(() => {
         const config = timerConfigManager.getConfig(capsule.model);
@@ -76,17 +76,16 @@ export default function CapsuleCard({ capsule }: { capsule: any }) {
                 .eq('capsule_id', capsule.id);
             setPostsCount(countPosts || 0);
 
-            // For opened capsules, fetch first media item to use as thumbnail
+            // For opened capsules, fetch top items for collage
             if (capsule.status === 'opened') {
-                const { data: firstItem } = await supabase
+                const { data: items } = await supabase
                     .from('capsule_items')
                     .select('media_url, media_type')
                     .eq('capsule_id', capsule.id)
                     .in('media_type', ['image', 'video'])
                     .order('created_at', { ascending: true })
-                    .limit(1)
-                    .single();
-                if (firstItem?.media_url) setFirstMediaUrl(firstItem.media_url);
+                    .limit(4);
+                if (items) setMediaCollage(items);
             }
         };
         init();
@@ -171,7 +170,16 @@ export default function CapsuleCard({ capsule }: { capsule: any }) {
                             </TouchableOpacity>
                         )}
                     </View>
-                    <Text style={styles.infoText}>Created {new Date(capsule.created_at).toLocaleDateString()}</Text>
+                    <Text style={styles.infoText}>
+                        {capsule.status === 'opened' ? (
+                            <Text style={{ color: themeColor, fontFamily: Fonts.bold }}>
+                                ✨ Opened this capsule •{' '}
+                            </Text>
+                        ) : (
+                            'Created '
+                        )}
+                        {new Date(capsule.status === 'opened' ? capsule.opens_at : capsule.created_at).toLocaleDateString()}
+                    </Text>
                 </View>
                 <View style={[styles.typePill, { backgroundColor: cfg.bgColor }]}>
                     <Ionicons name={cfg.icon as any} size={10} color={cfg.color} />
@@ -179,19 +187,46 @@ export default function CapsuleCard({ capsule }: { capsule: any }) {
                 </View>
             </View>
 
-            <View style={styles.capsuleVisualContainer}>
-                {capsule.status === 'opened' && firstMediaUrl ? (
-                    // Opened: show first photo as a square thumbnail
-                    <View style={styles.openedThumbnailWrapper}>
-                        <Image
-                            source={{ uri: firstMediaUrl }}
-                            style={styles.openedThumbnail}
-                            resizeMode="cover"
-                        />
-                        {/* Opened badge */}
-                        <View style={[styles.openedBadge, { backgroundColor: themeColor }]}>
-                            <Ionicons name="lock-open-outline" size={10} color="#fff" />
-                            <Text style={styles.openedBadgeText}>Opened</Text>
+            <View style={[styles.capsuleVisualContainer, capsule.status === 'opened' && styles.openedVisualContainer]}>
+                {capsule.status === 'opened' && mediaCollage.length > 0 ? (
+                    <View style={styles.openedRow}>
+                        <View style={styles.collageColumn}>
+                            <View style={[styles.collageGrid, { gap: mediaCollage.length > 1 ? 2 : 0 }]}>
+                                {mediaCollage.map((item, idx) => (
+                                    <Image
+                                        key={idx}
+                                        source={{ uri: item.media_url }}
+                                        style={[
+                                            styles.collageItem,
+                                            mediaCollage.length === 1 && styles.collageItemSingle,
+                                            mediaCollage.length === 2 && styles.collageItemDual,
+                                            mediaCollage.length === 3 && idx === 0 && styles.collageItemTripleLarge
+                                        ]}
+                                        resizeMode="cover"
+                                    />
+                                ))}
+                            </View>
+                            {/* Opened badge */}
+                            <View style={[styles.openedBadgeOverlay, { backgroundColor: themeColor }]}>
+                                <Ionicons name="lock-open-outline" size={10} color="#fff" />
+                                <Text style={styles.openedBadgeText}>Opened</Text>
+                            </View>
+                        </View>
+                        <View style={styles.modelColumn}>
+                            <View style={styles.modelShadowContainer}>
+                                <CapsuleWithTimer
+                                    modelKey={capsule.model}
+                                    source={{
+                                        uri: timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model as keyof typeof MODEL_IMAGES_OPEN] || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || MODEL_IMAGES.beach
+                                    }}
+                                    date={capsule.opens_at}
+                                    capsuleType={capsule.type}
+                                    chainId={capsule.chain_id}
+                                    hideTimer
+                                    style={styles.capsuleSmall}
+                                    isOpened={true}
+                                />
+                            </View>
                         </View>
                     </View>
                 ) : (
@@ -199,14 +234,15 @@ export default function CapsuleCard({ capsule }: { capsule: any }) {
                         modelKey={capsule.model}
                         source={{
                             uri: capsule.status === 'opened'
-                                ? (MODEL_IMAGES_OPEN[capsule.model as keyof typeof MODEL_IMAGES_OPEN] || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || MODEL_IMAGES.beach)
-                                : (MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || MODEL_IMAGES.beach)
+                                ? (timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model as keyof typeof MODEL_IMAGES_OPEN] || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || MODEL_IMAGES.beach)
+                                : (timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || MODEL_IMAGES.beach)
                         }}
                         date={capsule.opens_at}
                         chainId={capsule.chain_id}
                         capsuleType={capsule.type}
                         hideTimer={capsule.status === 'opened'}
                         style={styles.capsulePng}
+                        isOpened={capsule.status === 'opened'}
                     />
                 )}
             </View>
@@ -231,7 +267,9 @@ export default function CapsuleCard({ capsule }: { capsule: any }) {
             </View>
         </TouchableOpacity >
     );
-}
+});
+
+export default CapsuleCard;
 
 const styles = StyleSheet.create({
     cardContainer: {
@@ -276,14 +314,84 @@ const styles = StyleSheet.create({
     actionBtn: { flexDirection: 'row', alignItems: 'center', gap: 6 },
     actionCount: { color: Colors.textMuted, fontSize: 13, fontFamily: Fonts.medium },
 
-    openedThumbnailWrapper: {
-        width: 180, height: 180, borderRadius: 16, overflow: 'hidden', position: 'relative',
+    openedVisualContainer: {
+        paddingVertical: 0,
+        backgroundColor: 'transparent',
+        marginTop: Spacing.sm,
     },
-    openedThumbnail: { width: 180, height: 180, borderRadius: 16 },
-    openedBadge: {
-        position: 'absolute', bottom: 8, left: 8,
-        flexDirection: 'row', alignItems: 'center', gap: 4,
-        paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10,
+    openedRow: {
+        flexDirection: 'row',
+        width: '100%',
+        height: 240,
+        alignItems: 'center',
     },
-    openedBadgeText: { fontSize: 10, fontFamily: Fonts.bold, color: '#fff' },
+    collageColumn: {
+        flex: 1.6,
+        height: '100%',
+        position: 'relative',
+        borderRadius: 20,
+        overflow: 'hidden',
+    },
+    modelColumn: {
+        flex: 1,
+        height: '100%',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginLeft: -45, // Epic overlap effect
+        zIndex: 10,
+    },
+    modelShadowContainer: {
+        // We wrap the capsule in a shadow so the overlap pops
+        ...Platform.select({
+            web: { boxShadow: '0px 8px 30px rgba(0,0,0,0.4)' },
+            ios: {
+                shadowColor: 'rgba(0,0,0,0.4)',
+                shadowOffset: { width: 0, height: 8 },
+                shadowOpacity: 0.3,
+                shadowRadius: 15,
+            },
+            android: {
+                elevation: 10,
+            }
+        })
+    },
+    collageGrid: {
+        flex: 1,
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        borderRadius: 20,
+        overflow: 'hidden',
+    },
+    collageItem: {
+        width: '49.5%',
+        height: '49.5%',
+        backgroundColor: Colors.border,
+    },
+    collageItemSingle: {
+        width: '100%',
+        height: '100%',
+    },
+    collageItemDual: {
+        width: '49.5%',
+        height: '100%',
+    },
+    collageItemTripleLarge: {
+        width: '100%',
+        height: '49.5%',
+    },
+    capsuleSmall: { width: 160, height: 160 },
+    openedBadgeOverlay: {
+        position: 'absolute',
+        top: 12,
+        left: 12,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 14,
+        zIndex: 5,
+        ...Shadow.subtle,
+    },
+    openedBadgeText: { fontSize: 13, fontFamily: Fonts.bold, color: '#fff' },
 });

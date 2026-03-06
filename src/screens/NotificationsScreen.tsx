@@ -22,7 +22,7 @@ export default function NotificationsScreen() {
             .select(`
                 *,
                 sender:sender_id(username, avatar_url),
-                capsules(title, type)
+                capsules(title, type, model, chain_id, opens_at)
             `)
             .eq('user_id', user.id)
             .order('created_at', { ascending: false });
@@ -47,6 +47,9 @@ export default function NotificationsScreen() {
                     capsuleId: n.capsule_id,
                     capsuleTitle: n.capsules?.title,
                     capsuleType: n.capsules?.type,
+                    capsuleModel: n.capsules?.model,
+                    capsuleChainId: n.capsules?.chain_id,
+                    capsuleOpensAt: n.capsules?.opens_at,
                     createdAt: n.created_at,
                     isExpired,
                     expiryDate,

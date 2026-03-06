@@ -9,6 +9,7 @@ import { MODEL_IMAGES } from '../constants/models';
 
 import LiveTimer from '../components/LiveTimer';
 import CapsuleWithTimer from '../components/CapsuleWithTimer';
+import { timerConfigManager } from '../utils/timerConfig';
 
 const TYPE_CONFIG: Record<string, { icon: string; color: string; label: string }> = {
     instacap: { icon: 'camera', color: Colors.instaCap, label: 'Insta' },
@@ -111,7 +112,7 @@ export default function CapsuleSelectorScreen() {
                                     <View style={styles.modelWrapperSmall}>
                                         <CapsuleWithTimer
                                             modelKey={item.model}
-                                            source={{ uri: MODEL_IMAGES[item.model] || MODEL_IMAGES.beach }}
+                                            source={{ uri: timerConfigManager.getModelImage(item.model) || MODEL_IMAGES[item.model] || MODEL_IMAGES.beach }}
                                             date={item.opens_at}
                                             chainId={item.chain_id}
                                             capsuleType={item.type}
