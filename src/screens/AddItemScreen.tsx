@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, TextInput, ActivityIndicator, SafeAreaView, ScrollView, Alert, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Image, TextInput, ActivityIndicator, SafeAreaView, ScrollView, Alert, Platform, Modal } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as FileSystem from 'expo-file-system/legacy';
-import { Audio } from 'expo-av';
+import { Audio, Video, ResizeMode } from 'expo-av';
+import * as VideoThumbnails from 'expo-video-thumbnails';
 import { Colors, Fonts, Spacing, BorderRadius } from '../theme';
 import { supabase } from '../lib/supabase';
 import { decode } from 'base64-arraybuffer';
@@ -24,6 +25,8 @@ export default function AddItemScreen() {
     const [recording, setRecording] = useState<Audio.Recording | null>(null);
     const [isRecording, setIsRecording] = useState(false);
     const [recordedUri, setRecordedUri] = useState<string | null>(null);
+    const [audioDuration, setAudioDuration] = useState<number | null>(null);
+    const [previewVideo, setPreviewVideo] = useState<string | null>(null);
 
     useEffect(() => {
         if (contentType === 'image' || contentType === 'video') {
@@ -51,7 +54,7 @@ export default function AddItemScreen() {
             const processedAssets: any[] = [];
 
             for (const asset of result.assets) {
-                let currentAsset = asset;
+                let currentAsset = { ...asset };
                 if (contentType === 'image') {
                     try {
                         const manipResult = await ImageManipulator.manipulateAsync(
@@ -59,9 +62,17 @@ export default function AddItemScreen() {
                             [{ resize: { width: 1080 } }],
                             { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
                         );
-                        currentAsset = { ...asset, uri: manipResult.uri, width: manipResult.width, height: manipResult.height };
+                        currentAsset = { ...currentAsset, uri: manipResult.uri, width: manipResult.width, height: manipResult.height };
                     } catch (e) {
                         console.log('Error optimizing image:', e);
+                    }
+                } else if (contentType === 'video') {
+                    try {
+                        const { uri: thumbUri } = await VideoThumbnails.getThumbnailAsync(asset.uri, { time: 1000 });
+                        (currentAsset as any).thumbnailUri = thumbUri;
+                        (currentAsset as any).duration = asset.duration; // Store duration (ms)
+                    } catch (e) {
+                        console.log('Error generating thumbnail:', e);
                     }
                 }
                 processedAssets.push(currentAsset);
@@ -103,6 +114,10 @@ export default function AddItemScreen() {
         if (!recording) return;
         try {
             await recording.stopAndUnloadAsync();
+            const status = await recording.getStatusAsync();
+            if (status && 'durationMillis' in status) {
+                setAudioDuration(status.durationMillis);
+            }
             const uri = recording.getURI();
             setRecordedUri(uri);
             setRecording(null);
@@ -127,28 +142,43 @@ export default function AddItemScreen() {
 
             // 1. Handle Audio
             if (contentType === 'audio' && recordedUri) {
-                uploadTasks.push(uploadFile(recordedUri, 'audio', user.id));
+                const audioTask = async () => {
+                    const url = await uploadFile(recordedUri, 'audio', user.id);
+                    return { mediaUrl: url, thumbUrl: null, duration: audioDuration };
+                };
+                uploadTasks.push(audioTask());
             } 
             // 2. Handle Media List (Images/Videos)
             else if (mediaList.length > 0) {
                 for (const media of mediaList) {
-                    uploadTasks.push(uploadFile(media.uri, contentType, user.id));
+                    const uploadPromise = async () => {
+                        const mediaUrl = await uploadFile(media.uri, contentType, user.id);
+                        let thumbUrl = null;
+                        if (contentType === 'video' && media.thumbnailUri) {
+                            thumbUrl = await uploadFile(media.thumbnailUri, 'image', user.id, true);
+                        }
+                        return { mediaUrl, thumbUrl, duration: media.duration };
+                    };
+                    uploadTasks.push(uploadPromise());
                 }
             }
             // 3. Handle Note (no file but data entry)
             else if (contentType === 'note') {
-                uploadTasks.push(Promise.resolve(null));
+                uploadTasks.push(Promise.resolve({ mediaUrl: '', thumbUrl: '', duration: null }));
             }
 
-            const mediaUrls = await Promise.all(uploadTasks);
+            const uploadResults = await Promise.all(uploadTasks);
 
             // Create entries in DB
-            const entries = mediaUrls.map(url => ({
+            const entries = uploadResults.map((res: any) => ({
                 capsule_id: capsuleId,
                 owner_id: user.id,
-                media_url: url,
+                media_url: res.mediaUrl || (contentType === 'note' ? 'text://note' : ''),
+                thumbnail_url: res.thumbUrl || '',
                 media_type: contentType,
-                content: text || null,
+                content: (contentType === 'audio' || contentType === 'video') && res.duration 
+                    ? `${Math.floor(res.duration / 60000)}:${Math.floor((res.duration % 60000) / 1000).toString().padStart(2, '0')}`
+                    : (text || null),
                 caption: caption || null,
             }));
 
@@ -166,10 +196,10 @@ export default function AddItemScreen() {
         }
     };
 
-    const uploadFile = async (uri: string, type: string, userId: string) => {
+    const uploadFile = async (uri: string, type: string, userId: string, isThumbnail = false) => {
         const ext = uri.split('.').pop() || (type === 'audio' ? 'm4a' : 'jpg');
         const fileName = `${userId}/${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
-        const filePath = `items/${fileName}`;
+        const filePath = isThumbnail ? `thumbnails/${fileName}` : `items/${fileName}`;
 
         const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
         const body = decode(base64);
@@ -208,6 +238,8 @@ export default function AddItemScreen() {
                         value={text}
                         onChangeText={setText}
                         autoFocus
+                        autoCorrect={false}
+                        spellCheck={false}
                     />
                 ) : contentType === 'audio' ? (
                     <View style={styles.recordingSection}>
@@ -232,7 +264,17 @@ export default function AddItemScreen() {
                             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.mediaList}>
                                 {mediaList.map((item, index) => (
                                     <View key={index} style={styles.mediaPreviewWrapper}>
-                                        <Image source={{ uri: item.uri }} style={styles.mediaPreview} />
+                                        <Image source={{ uri: item.thumbnailUri || item.uri }} style={styles.mediaPreview} />
+                                        {contentType === 'video' && (
+                                            <TouchableOpacity 
+                                                style={styles.playOverlay} 
+                                                onPress={() => setPreviewVideo(item.uri)}
+                                            >
+                                                <View style={styles.playCircle}>
+                                                    <Ionicons name="play" size={30} color="#fff" />
+                                                </View>
+                                            </TouchableOpacity>
+                                        )}
                                         <TouchableOpacity style={styles.removeBtn} onPress={() => removeMedia(index)}>
                                             <Ionicons name="close-circle" size={24} color="#ff4757" />
                                         </TouchableOpacity>
@@ -244,11 +286,33 @@ export default function AddItemScreen() {
                             </ScrollView>
                         </View>
 
+                        <Modal visible={!!previewVideo} transparent animationType="fade">
+                            <View style={styles.videoModal}>
+                                {previewVideo && (
+                                    <Video
+                                        source={{ uri: previewVideo }}
+                                        rate={1.0}
+                                        volume={1.0}
+                                        isMuted={false}
+                                        resizeMode={ResizeMode.CONTAIN}
+                                        shouldPlay
+                                        useNativeControls
+                                        style={styles.fullVideo}
+                                    />
+                                )}
+                                <TouchableOpacity style={styles.closeVideo} onPress={() => setPreviewVideo(null)}>
+                                    <Ionicons name="close-circle" size={40} color="#fff" />
+                                </TouchableOpacity>
+                            </View>
+                        </Modal>
+
                         <TextInput
                             style={styles.captionInput}
                             placeholder="Add a caption... (optional)"
                             value={caption}
                             onChangeText={setCaption}
+                            autoCorrect={false}
+                            spellCheck={false}
                         />
                     </>
                 )}
@@ -295,4 +359,10 @@ const styles = StyleSheet.create({
     recordingLabel: { fontSize: 16, fontFamily: Fonts.semiBold, color: Colors.textSecondary },
     retryBtn: { padding: 10 },
     retryText: { color: '#ff4757', fontFamily: Fonts.bold },
+
+    playOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.2)' },
+    playCircle: { width: 50, height: 50, borderRadius: 25, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' },
+    videoModal: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
+    fullVideo: { width: '100%', height: '80%' },
+    closeVideo: { position: 'absolute', top: 50, right: 20 },
 });

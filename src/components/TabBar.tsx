@@ -4,6 +4,7 @@ import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors, Fonts } from '../theme';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const TAB_CONFIG = [
     { name: 'Feed', icon: 'home-outline', iconActive: 'home', label: 'Home' },
@@ -80,8 +81,10 @@ export const TAB_BAR_HEIGHT = 84;
 
 export default function TabBar(props: BottomTabBarProps) {
     const { state } = props;
+    const insets = useSafeAreaInsets();
+    
     return (
-        <View style={styles.outerWrapper}>
+        <View style={[styles.outerWrapper, { bottom: (Platform.OS === 'ios' ? 24 : 12) + insets.bottom }]}>
             <View style={styles.bar}>
                 {state.routes.map((route, index) => (
                     <TabItem

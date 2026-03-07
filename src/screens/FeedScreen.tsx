@@ -204,7 +204,7 @@ export default function FeedScreen() {
             if (!currentUserId) return;
 
             // Check if user is in cooldown
-            const { data: profile } = await supabase.from('profiles').select('story_cooldown_until').eq('id', currentUserId).single();
+            const { data: profile } = await supabase.from('profiles').select('story_cooldown_until').eq('id', currentUserId).maybeSingle();
             if (profile?.story_cooldown_until) {
                 const cooldownDate = new Date(profile.story_cooldown_until);
                 if (cooldownDate > new Date()) {
@@ -289,8 +289,9 @@ export default function FeedScreen() {
         const { error } = await supabase.from('capsule_items').insert({
             owner_id: currentUserId,
             capsule_id: item.capsule_id,
-            media_url: item.media_url,
-            media_type: 'image',
+            media_url: item.media_url || `empty-story://${Date.now()}`,
+            media_type: item.media_type || 'image',
+            content_type: item.content_type || 'image',
             is_story: true,
             expires_at: expiresAt.toISOString()
         });

@@ -34,10 +34,7 @@ export interface ChainItem {
 }
 
 export const DEFAULT_CONFIGS: Record<string, ModelTimerConfig> = {
-    beach: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#0ea5e9', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
-    burger: { x: 0.35, y: 0.52, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#e67e22', faceX: 0.5, faceY: 0.64, faceScale: 1, showFace: true },
-    cake: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ec4899', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
-    china: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ff4757', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    basic_red: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ff4757', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
     choco: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#5d4037', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
     disco: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#a269ff', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
     dragon: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ff1493', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
@@ -147,13 +144,17 @@ class TimerConfigManager {
         }
     }
 
+    getModel(modelId: string) {
+        return this.models.find(m => m.id === modelId) || null;
+    }
+
     getModelImage(modelId: string): string {
-        const model = this.models.find(m => m.id === modelId);
+        const model = this.getModel(modelId);
         return model?.image || '';
     }
 
     getModelImageOpen(modelId: string): string {
-        const model = this.models.find(m => m.id === modelId);
+        const model = this.getModel(modelId);
         return model?.image_open || '';
     }
 

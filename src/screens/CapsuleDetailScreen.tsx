@@ -5,7 +5,8 @@ import {
     Modal, FlatList, KeyboardAvoidingView, Platform, Pressable, Share, Linking, SectionList
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Audio } from 'expo-av';
+import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
+import { Video, ResizeMode } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -55,39 +56,56 @@ export default function CapsuleDetailScreen() {
     // Media Viewer state
     const [viewerVisible, setViewerVisible] = useState(false);
     const [initialIndex, setInitialIndex] = useState(0);
+    const [activeViewerIndex, setActiveViewerIndex] = useState(0);
 
     const [isFollowedOwner, setIsFollowedOwner] = useState(false);
+
+    const [showOptions, setShowOptions] = useState(false);
+    const [showQRModal, setShowQRModal] = useState(false);
+
+    const isSealed = capsule?.status === 'sealed';
+    const [modelImg, setModelImg] = useState<string>(() => {
+        if (!capsule) return MODEL_IMAGES.beach;
+        return isSealed
+            ? (timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || MODEL_IMAGES.beach)
+            : (timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model as keyof typeof MODEL_IMAGES_OPEN] || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || MODEL_IMAGES.beach);
+    });
+
+    useEffect(() => {
+        if (!capsule) return;
+        const updateModel = () => {
+            const nextImg = isSealed
+                ? (timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || MODEL_IMAGES.beach)
+                : (timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model as keyof typeof MODEL_IMAGES_OPEN] || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || MODEL_IMAGES.beach);
+            setModelImg(nextImg);
+        };
+        const unsubscribe = timerConfigManager.subscribe(updateModel);
+        updateModel();
+        return unsubscribe;
+    }, [capsule?.model, isSealed]);
 
     const timerRef = useRef<NodeJS.Timeout | null>(null);
     const insets = useSafeAreaInsets();
     const [playingAudio, setPlayingAudio] = useState<string | null>(null);
-    const soundRef = useRef<Audio.Sound | null>(null);
-    const [showOptions, setShowOptions] = useState(false);
-    const [showQRModal, setShowQRModal] = useState(false);
+    const player = useAudioPlayer(playingAudio ? { uri: playingAudio } : null);
+    const playStatus = useAudioPlayerStatus(player);
 
-    // Audio cleanup
-    useEffect(() => { return () => { soundRef.current?.unloadAsync(); }; }, []);
-
-    const toggleAudio = async (url: string) => {
+    const toggleAudio = (url: string) => {
         if (playingAudio === url) {
-            await soundRef.current?.pauseAsync();
-            setPlayingAudio(null);
+            if (playStatus.playing) player.pause();
+            else player.play();
             return;
         }
-        if (soundRef.current) {
-            await soundRef.current.unloadAsync();
-            soundRef.current = null;
-        }
-        try {
-            await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
-            const { sound } = await Audio.Sound.createAsync({ uri: url }, { shouldPlay: true });
-            soundRef.current = sound;
-            setPlayingAudio(url);
-            sound.setOnPlaybackStatusUpdate((s: any) => {
-                if (s.isLoaded && s.didJustFinish) setPlayingAudio(null);
-            });
-        } catch { Alert.alert('Error', 'Could not play audio.'); }
+        setPlayingAudio(url);
     };
+
+    useEffect(() => {
+        if (playingAudio && player) player.play();
+    }, [playingAudio, player]);
+
+    useEffect(() => {
+        if (playStatus.didJustFinish) setPlayingAudio(null);
+    }, [playStatus.didJustFinish]);
 
     const handleFollowToggle = async (targetId: string, isFollowed: boolean, setIsFollowed: (val: boolean) => void) => {
         if (!userId || userId === targetId) return;
@@ -195,11 +213,11 @@ export default function CapsuleDetailScreen() {
         const { data: { user } } = await supabase.auth.getUser();
         setUserId(user?.id ?? null);
         const [capRes, itemsRes, likesRes, commentsRes, myLikeRes, invitesRes] = await Promise.all([
-            supabase.from('capsules').select('*, profiles:owner_id(*)').eq('id', capsuleId).single(),
+            supabase.from('capsules').select('*, profiles:owner_id(*)').eq('id', capsuleId).maybeSingle(),
             supabase.from('capsule_items').select('*, profiles:owner_id(avatar_url, id)').eq('capsule_id', capsuleId).order('created_at', { ascending: true }),
             supabase.from('likes').select('*', { count: 'exact', head: true }).eq('capsule_id', capsuleId),
             supabase.from('comments').select('*, profiles:user_id(*), comment_likes(user_id)').eq('capsule_id', capsuleId).order('created_at', { ascending: false }),
-            user ? supabase.from('likes').select('*').eq('capsule_id', capsuleId).eq('user_id', user.id).single() : { data: null },
+            user ? supabase.from('likes').select('*').eq('capsule_id', capsuleId).eq('user_id', user.id).maybeSingle() : { data: null },
             supabase.from('capsule_invites').select('*, profiles:user_id(*)').eq('capsule_id', capsuleId)
         ]);
         if (capRes.data) {
@@ -340,7 +358,7 @@ export default function CapsuleDetailScreen() {
         if (!comment.trim() || !userId) return;
         const { data } = await supabase.from('comments').insert({
             capsule_id: capsuleId, user_id: userId, content: comment.trim()
-        }).select('*, profiles:user_id(*)').single();
+        }).select('*, profiles:user_id(*)').maybeSingle();
         if (data) {
             setComments([{ ...data, myLike: false, likeCount: 0 }, ...comments]);
             setComment('');
@@ -366,26 +384,25 @@ export default function CapsuleDetailScreen() {
                         setShowOptions(false);
                         setLoading(true);
                         try {
-                            // 1. Fetch all items to get their media URLs
+                            // 1. Fetch all items to get their media and thumbnail URLs
                             const { data: itemsToDelete } = await supabase
                                 .from('capsule_items')
-                                .select('media_url')
+                                .select('media_url, thumbnail_url')
                                 .eq('capsule_id', capsuleId);
 
-                            // 2. Delete media from storage if they exist
+                            // 2. Delete media and thumbnails from storage if they exist
                             if (itemsToDelete && itemsToDelete.length > 0) {
-                                const filesToDelete = itemsToDelete
-                                    .map(item => {
-                                        if (!item.media_url) return null;
-                                        // Extract path from public URL
-                                        // https://.../storage/v1/object/public/capsule-media/items/user_id/filename.ext
-                                        const baseUrl = "https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/capsule-media/";
-                                        if (item.media_url.startsWith(baseUrl)) {
-                                            return item.media_url.replace(baseUrl, "").split('?')[0];
-                                        }
-                                        return null;
-                                    })
-                                    .filter(path => path !== null) as string[];
+                                const filesToDelete: string[] = [];
+                                const baseUrl = "https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/capsule-media/";
+
+                                itemsToDelete.forEach(item => {
+                                    if (item.media_url && item.media_url.startsWith(baseUrl)) {
+                                        filesToDelete.push(item.media_url.replace(baseUrl, "").split('?')[0]);
+                                    }
+                                    if (item.thumbnail_url && item.thumbnail_url.startsWith(baseUrl)) {
+                                        filesToDelete.push(item.thumbnail_url.replace(baseUrl, "").split('?')[0]);
+                                    }
+                                });
 
                                 if (filesToDelete.length > 0) {
                                     await supabase.storage.from('capsule-media').remove(filesToDelete);
@@ -455,11 +472,8 @@ export default function CapsuleDetailScreen() {
         </View>
     );
 
-    const isSealed = capsule.status === 'sealed';
+
     const canBeOpened = capsule.opens_at ? new Date(capsule.opens_at) <= new Date() : true;
-    const modelImg = isSealed
-        ? (timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || MODEL_IMAGES.beach)
-        : (timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model as keyof typeof MODEL_IMAGES_OPEN] || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || MODEL_IMAGES.beach);
     const activeModelTint = (MODEL_TINTS as any)[capsule.model] || '#a269ff';
     const tint = modelTint || activeModelTint;
     const isOwner = userId === capsule.owner_id;
@@ -482,6 +496,7 @@ export default function CapsuleDetailScreen() {
 
     const openViewer = (index: number) => {
         setInitialIndex(index);
+        setActiveViewerIndex(index);
         setViewerVisible(true);
     };
 
@@ -505,7 +520,7 @@ export default function CapsuleDetailScreen() {
     return (
         <View style={styles.container}>
             <StatusBar barStyle="dark-content" />
-            <Animated.View style={[styles.flashOverlay, { opacity: flashAnim }]} pointerEvents="none" />
+            <Animated.View style={[styles.flashOverlay, { opacity: flashAnim, pointerEvents: 'none' }]} />
 
             <View style={styles.header}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
@@ -792,8 +807,21 @@ export default function CapsuleDetailScreen() {
                                                         {item.media_type === 'audio' ? (
                                                             <View style={[styles.gridAudioCell, { backgroundColor: tint + '22' }]}>
                                                                 <Ionicons name={playingAudio === item.media_url ? "pause" : "musical-notes"} size={24} color={tint} />
+                                                            </View>                                                        ) : item.media_type === 'note' ? (
+                                                            <View style={[styles.gridNoteCell, { backgroundColor: tint + '15' }]}>
+                                                                <Ionicons name="document-text-outline" size={24} color={tint} />
+                                                                <Text style={styles.noteSnippet} numberOfLines={4}>{item.content}</Text>
                                                             </View>
-                                                        ) : <Image source={{ uri: item.media_url }} style={styles.gridImage} />}
+                                                        ) : (
+                                                            <>
+                                                                <Image source={{ uri: (item.media_type === 'video' ? item.thumbnail_url : item.media_url) || 'https://via.placeholder.com/150' }} style={styles.gridImage} />
+                                                                {item.media_type === 'video' && (
+                                                                    <View style={styles.gridPlayIcon}>
+                                                                        <Ionicons name="play" size={16} color="#fff" />
+                                                                    </View>
+                                                                )}
+                                                            </>
+                                                        )}
                                                         {item.profiles?.avatar_url && (
                                                             <Image source={{ uri: item.profiles.avatar_url }} style={styles.itemAvatar} />
                                                         )}
@@ -886,11 +914,40 @@ export default function CapsuleDetailScreen() {
                         pagingEnabled
                         initialScrollIndex={initialIndex}
                         getItemLayout={(_, index) => ({ length: width, offset: width * index, index })}
-                        renderItem={({ item }) => (
-                            <View style={styles.viewerSlide}>
-                                <Image source={{ uri: item.media_url }} style={styles.viewerImage} resizeMode="contain" />
-                                {item.caption && <Text style={styles.viewerCaption}>{item.caption}</Text>}
-                            </View>
+                        onMomentumScrollEnd={(e) => {
+                            const index = Math.round(e.nativeEvent.contentOffset.x / width);
+                            setActiveViewerIndex(index);
+                        }}
+                        renderItem={({ item, index }) => (
+                             <View style={styles.viewerSlide}>
+                                 {item.media_type === 'note' ? (
+                                     <View style={styles.viewerNoteContainer}>
+                                         <Ionicons name="document-text-outline" size={40} color={modelTint || Colors.primary} style={{ marginBottom: 20 }} />
+                                         <Text style={styles.viewerNoteText}>{item.content}</Text>
+                                     </View>
+                                 ) : item.media_type === 'audio' ? (
+                                     <View style={styles.viewerNoteContainer}>
+                                         <TouchableOpacity onPress={() => toggleAudio(item.media_url)} style={[styles.recordBtn, { backgroundColor: modelTint || Colors.primary }]}>
+                                             <Ionicons name={playingAudio === item.media_url ? "pause" : "play"} size={40} color="#fff" />
+                                         </TouchableOpacity>
+                                         <Text style={[styles.viewerNoteText, { marginTop: 20 }]}>Voice Note</Text>
+                                     </View>
+                                 ) : item.media_type === 'video' ? (
+                                     <Video
+                                         source={{ uri: item.media_url }}
+                                         rate={1.0}
+                                         volume={1.0}
+                                         isMuted={false}
+                                         resizeMode={ResizeMode.CONTAIN}
+                                         shouldPlay={activeViewerIndex === index && viewerVisible}
+                                         useNativeControls
+                                         style={styles.viewerImage}
+                                     />
+                                 ) : (
+                                     <Image source={{ uri: item.media_url }} style={styles.viewerImage} resizeMode="contain" />
+                                 )}
+                                 {item.caption && <Text style={styles.viewerCaption}>{item.caption}</Text>}
+                             </View>
                         )}
                         keyExtractor={item => item.id}
                     />
@@ -1026,4 +1083,10 @@ const styles = StyleSheet.create({
     eventInfoTitle: { fontSize: 16, fontFamily: Fonts.bold, marginBottom: 5 },
     eventInfoText: { fontSize: 13, color: Colors.textSecondary, textAlign: 'center', fontFamily: Fonts.medium, lineHeight: 18 },
     emptyGridContainer: { marginTop: Spacing.md },
+    gridNoteCell: { width: ITEM_SIZE, height: ITEM_HEIGHT, borderRadius: 8, alignItems: 'center', justifyContent: 'center', padding: 8 },
+    noteSnippet: { fontSize: 10, fontFamily: Fonts.medium, color: Colors.textSecondary, textAlign: 'center', marginTop: 4 },
+    viewerNoteContainer: { width: '85%', padding: 30, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 24, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+    viewerNoteText: { color: '#fff', fontSize: 18, fontFamily: Fonts.regular, textAlign: 'center', lineHeight: 26 },
+    recordBtn: { width: 100, height: 100, borderRadius: 50, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
+    gridPlayIcon: { position: 'absolute', top: 5, right: 5, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 12, padding: 4, width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
 });

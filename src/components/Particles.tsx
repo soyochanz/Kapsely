@@ -68,7 +68,7 @@ const Particles: React.FC<ParticlesProps> = ({ activeTint, capsuleType }) => {
     }, [capsuleType]);
 
     return (
-        <View style={StyleSheet.absoluteFill} pointerEvents="none">
+        <View style={[StyleSheet.absoluteFill, { pointerEvents: 'none' }]}>
             {particles.map((p, i) => (
                 <Animated.View
                     key={p.id}

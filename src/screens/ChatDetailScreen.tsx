@@ -49,13 +49,17 @@ export default function ChatDetailScreen() {
         setLoading(false);
 
         // Mark as read
-        const { data: { user: currentUser } } = await supabase.auth.getUser();
-        if (currentUser) {
-            await supabase
-                .from('conversation_participants')
-                .update({ last_read_at: new Date().toISOString() })
-                .eq('conversation_id', conversationId)
-                .eq('user_id', currentUser.id);
+        try {
+            const { data: { user: currentUser } } = await supabase.auth.getUser();
+            if (currentUser) {
+                await supabase
+                    .from('conversation_participants')
+                    .update({ last_read_at: new Date().toISOString() })
+                    .eq('conversation_id', conversationId)
+                    .eq('user_id', currentUser.id);
+            }
+        } catch (e) {
+            console.warn('Could not update last_read_at:', e);
         }
     };
 
@@ -74,7 +78,11 @@ export default function ChatDetailScreen() {
 
         if (data) {
             setMessages([...messages, data]);
-            await supabase.from('conversations').update({ last_message_at: new Date() }).eq('id', conversationId);
+            try {
+                await supabase.from('conversations').update({ last_message_at: new Date() }).eq('id', conversationId);
+            } catch (e) {
+                console.warn('Could not update last_message_at:', e);
+            }
         }
     };
 

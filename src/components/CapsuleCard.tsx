@@ -30,16 +30,26 @@ const CapsuleCard = React.memo(({ capsule }: { capsule: any }) => {
     const [commentCount, setCommentCount] = useState(0);
     const [postsCount, setPostsCount] = useState(0);
     const [mediaCollage, setMediaCollage] = useState<any[]>([]);
+    const [latestItem, setLatestItem] = useState<any>(null);
+    
     const cfg = typeConfig[capsule.type as keyof typeof typeConfig] || typeConfig.legacycap;
     const [themeColor, setThemeColor] = useState<string>(() => {
         const config = timerConfigManager.getConfig(capsule.model);
         return config?.themeColor || '#a269ff';
+    });
+    const [modelImages, setModelImages] = useState({
+        closed: timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model] || MODEL_IMAGES.beach,
+        open: timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model] || MODEL_IMAGES[capsule.model] || MODEL_IMAGES.beach
     });
 
     useEffect(() => {
         const unsubscribe = timerConfigManager.subscribe(() => {
             const config = timerConfigManager.getConfig(capsule.model);
             setThemeColor(config?.themeColor || '#a269ff');
+            setModelImages({
+                closed: timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model] || MODEL_IMAGES.beach,
+                open: timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model] || MODEL_IMAGES[capsule.model] || MODEL_IMAGES.beach
+            });
         });
         return unsubscribe;
     }, [capsule.model]);
@@ -54,7 +64,7 @@ const CapsuleCard = React.memo(({ capsule }: { capsule: any }) => {
                     .select('*')
                     .eq('capsule_id', capsule.id)
                     .eq('user_id', user.id)
-                    .single();
+                    .maybeSingle();
                 setIsLiked(!!likeData);
                 checkFollow(user.id);
             }
@@ -75,6 +85,16 @@ const CapsuleCard = React.memo(({ capsule }: { capsule: any }) => {
                 .select('*', { count: 'exact', head: true })
                 .eq('capsule_id', capsule.id);
             setPostsCount(countPosts || 0);
+
+            // Fetch latest item for teaser (even if sealed)
+            const { data: latest } = await supabase
+                .from('capsule_items')
+                .select('*')
+                .eq('capsule_id', capsule.id)
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+            if (latest) setLatestItem(latest);
 
             // For opened capsules, fetch top items for collage
             if (capsule.status === 'opened') {
@@ -97,7 +117,7 @@ const CapsuleCard = React.memo(({ capsule }: { capsule: any }) => {
             .select('*')
             .eq('follower_id', uid)
             .eq('following_id', capsule.owner_id)
-            .single();
+            .maybeSingle();
         setIsFollowed(!!data);
     };
 
@@ -188,6 +208,17 @@ const CapsuleCard = React.memo(({ capsule }: { capsule: any }) => {
             </View>
 
             <View style={[styles.capsuleVisualContainer, capsule.status === 'opened' && styles.openedVisualContainer]}>
+                {capsule.status === 'sealed' && latestItem?.media_type === 'video' && latestItem?.thumbnail_url && (
+                    <View style={StyleSheet.absoluteFill}>
+                        <Image 
+                            source={{ uri: latestItem.thumbnail_url }} 
+                            style={styles.blurredBg} 
+                            blurRadius={Platform.OS === 'ios' ? 30 : 15}
+                        />
+                        <View style={styles.darkOverlay} />
+                    </View>
+                )}
+
                 {capsule.status === 'opened' && mediaCollage.length > 0 ? (
                     <View style={styles.openedRow}>
                         <View style={styles.collageColumn}>
@@ -217,7 +248,7 @@ const CapsuleCard = React.memo(({ capsule }: { capsule: any }) => {
                                 <CapsuleWithTimer
                                     modelKey={capsule.model}
                                     source={{
-                                        uri: timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model as keyof typeof MODEL_IMAGES_OPEN] || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || MODEL_IMAGES.beach
+                                        uri: modelImages.open
                                     }}
                                     date={capsule.opens_at}
                                     capsuleType={capsule.type}
@@ -230,26 +261,49 @@ const CapsuleCard = React.memo(({ capsule }: { capsule: any }) => {
                         </View>
                     </View>
                 ) : (
-                    <CapsuleWithTimer
-                        modelKey={capsule.model}
-                        source={{
-                            uri: capsule.status === 'opened'
-                                ? (timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model as keyof typeof MODEL_IMAGES_OPEN] || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || MODEL_IMAGES.beach)
-                                : (timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || MODEL_IMAGES.beach)
-                        }}
-                        date={capsule.opens_at}
-                        chainId={capsule.chain_id}
-                        capsuleType={capsule.type}
-                        hideTimer={capsule.status === 'opened'}
-                        style={styles.capsulePng}
-                        isOpened={capsule.status === 'opened'}
-                    />
+                    <>
+                        <CapsuleWithTimer
+                            modelKey={capsule.model}
+                            source={{
+                                uri: capsule.status === 'opened' ? modelImages.open : modelImages.closed
+                            }}
+                            date={capsule.opens_at}
+                            chainId={capsule.chain_id}
+                            capsuleType={capsule.type}
+                            hideTimer={capsule.status === 'opened'}
+                            style={styles.capsulePng}
+                            isOpened={capsule.status === 'opened'}
+                        />
+                        {capsule.status === 'sealed' && latestItem?.media_type === 'video' && latestItem?.content && (
+                            <View style={styles.durationBadge}>
+                                <Ionicons name="play" size={12} color="#fff" />
+                                <Text style={styles.durationText}>{latestItem.content}</Text>
+                            </View>
+                        )}
+                        {capsule.status === 'sealed' && (
+                            <View style={styles.sealedBadge}>
+                                <Ionicons name="lock-closed" size={10} color="#fff" />
+                                <Text style={styles.sealedBadgeText}>SEALED</Text>
+                            </View>
+                        )}
+                    </>
                 )}
             </View>
 
             <View style={styles.cardFooter}>
                 <Text style={styles.capsuleTitle}>{capsule.title}</Text>
-                <Text style={styles.description} numberOfLines={2}>{capsule.description}</Text>
+                
+                {capsule.status === 'sealed' && latestItem?.media_type === 'video' ? (
+                     <View style={styles.videoStatusRow}>
+                        <View style={styles.videoIconCircle}>
+                            <Ionicons name="videocam" size={14} color={Colors.primary} />
+                        </View>
+                        <Text style={styles.videoStatusText}>New video shared</Text>
+                     </View>
+                ) : (
+                    <Text style={styles.description} numberOfLines={2}>{capsule.description}</Text>
+                )}
+
                 <View style={styles.actions}>
                     <TouchableOpacity style={styles.actionBtn} onPress={handleLike}>
                         <Ionicons name={isLiked ? "heart" : "heart-outline"} size={22} color={isLiked ? "#ff4757" : Colors.textMuted} />
@@ -302,6 +356,70 @@ const styles = StyleSheet.create({
         overflow: 'hidden',
     },
     capsulePng: { width: 180, height: 180 },
+
+    blurredBg: {
+        ...StyleSheet.absoluteFillObject,
+        opacity: 0.6,
+    },
+    darkOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0,0,0,0.3)',
+    },
+    durationBadge: {
+        position: 'absolute',
+        top: 12,
+        left: 12,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        borderRadius: 12,
+        backgroundColor: 'rgba(0,0,0,0.6)',
+    },
+    durationText: {
+        color: '#fff',
+        fontSize: 12,
+        fontFamily: Fonts.bold,
+    },
+    sealedBadge: {
+        position: 'absolute',
+        bottom: 12,
+        right: 12,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 14,
+        backgroundColor: Colors.primary,
+        ...Shadow.subtle,
+    },
+    sealedBadgeText: {
+        fontSize: 11,
+        fontFamily: Fonts.bold,
+        color: '#fff',
+        letterSpacing: 0.5,
+    },
+    videoStatusRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        marginBottom: Spacing.md,
+    },
+    videoIconCircle: {
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        backgroundColor: Colors.primary + '1A',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    videoStatusText: {
+        fontSize: 14,
+        fontFamily: Fonts.semiBold,
+        color: Colors.textPrimary,
+    },
 
     cornerTypeIcon: { position: 'absolute', top: 0, right: 0, width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center', ...Shadow.subtle },
     timerBadge: { marginTop: Spacing.md, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, borderWidth: 1, backgroundColor: Colors.cardAlt },
@@ -395,3 +513,4 @@ const styles = StyleSheet.create({
     },
     openedBadgeText: { fontSize: 13, fontFamily: Fonts.bold, color: '#fff' },
 });
+

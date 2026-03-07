@@ -65,18 +65,15 @@ export default function LandingScreen({ onNavigateToLogin, onNavigateToRegister 
         <View style={styles.container}>
             <StatusBar barStyle="dark-content" translucent backgroundColor="transparent" />
 
-            {/* Premium Gradient Background */}
+            {/* Light Premium Background */}
             <LinearGradient
-                colors={['#ffffff', '#f8faff', '#f0f4ff', '#e8eeff']}
+                colors={['#ffffff', '#f8f9ff', '#f0f4ff']}
                 style={StyleSheet.absoluteFillObject}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
             />
 
-            {/* Technological Floating Elements */}
             <Animated.View style={[styles.glowOrb, { transform: [{ rotate }] }]}>
                 <LinearGradient
-                    colors={['rgba(166, 110, 255, 0.25)', 'transparent']}
+                    colors={['rgba(166, 110, 255, 0.12)', 'transparent']}
                     style={styles.orbInner}
                 />
             </Animated.View>
@@ -96,7 +93,7 @@ export default function LandingScreen({ onNavigateToLogin, onNavigateToRegister 
 
                     <Animated.View style={[styles.textContainer, { opacity: fadeAnim, transform: [{ translateY }] }]}>
                         <View style={styles.badge}>
-                            <Text style={styles.badgeText}>TEMPORAL PROTOCOL 2.0</Text>
+                            <Text style={styles.badgeText}>TEMPORAL PROTOCOL 2.2</Text>
                         </View>
                         <Text style={styles.appName}>kapsely</Text>
                         <Text style={styles.slogan}>BRIDGE THROUGH TIME</Text>
@@ -122,7 +119,7 @@ export default function LandingScreen({ onNavigateToLogin, onNavigateToRegister 
                     </TouchableOpacity>
 
                     <TouchableOpacity onPress={onNavigateToLogin} activeOpacity={0.7} style={styles.secondaryBtn}>
-                        <BlurView intensity={20} style={styles.blurBtn}>
+                        <BlurView intensity={20} tint="light" style={styles.blurBtn}>
                             <Text style={styles.secondaryBtnText}>Log In</Text>
                         </BlurView>
                     </TouchableOpacity>
@@ -189,13 +186,13 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     badge: {
-        backgroundColor: Colors.border,
+        backgroundColor: Colors.borderLight,
         paddingHorizontal: 12,
-        paddingVertical: 4,
+        paddingVertical: 5,
         borderRadius: BorderRadius.full,
         marginBottom: 12,
         borderWidth: 1,
-        borderColor: Colors.borderLight,
+        borderColor: Colors.divider,
     },
     badgeText: {
         fontSize: 10,
@@ -205,7 +202,7 @@ const styles = StyleSheet.create({
     },
     appName: {
         color: Colors.textPrimary,
-        fontSize: 60,
+        fontSize: 64,
         fontFamily: Fonts.bold,
         letterSpacing: -3.5,
         marginBottom: -4,
@@ -224,7 +221,6 @@ const styles = StyleSheet.create({
         textAlign: 'center',
         lineHeight: 26,
         paddingHorizontal: Spacing.md,
-        opacity: 0.85,
     },
     bottomSection: {
         width: '100%',
@@ -262,6 +258,7 @@ const styles = StyleSheet.create({
         paddingVertical: 17,
         alignItems: 'center',
         justifyContent: 'center',
+        backgroundColor: 'rgba(255,255,255,0.5)',
     },
     secondaryBtnText: {
         color: Colors.textPrimary,

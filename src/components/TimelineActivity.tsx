@@ -17,6 +17,28 @@ interface TimelineActivityProps {
     item: any;
 }
 
+const Waveform = ({ active = true }: { active?: boolean }) => {
+    // Stable random-looking heights for the waveform
+    const heights = [18, 32, 24, 38, 28, 35, 22, 16];
+    return (
+        <View style={styles.waveContainer}>
+            {heights.map((h, i) => (
+                <View 
+                    key={i} 
+                    style={[
+                        styles.waveBar, 
+                        { 
+                            height: h,
+                            opacity: active ? 1 : 0.5,
+                            backgroundColor: '#fff'
+                        }
+                    ]} 
+                />
+            ))}
+        </View>
+    );
+};
+
 export default function TimelineActivity({ item }: TimelineActivityProps) {
     const navigation = useNavigation<any>();
     const profile = item.profiles || { username: 'user', avatar_url: null };
@@ -39,11 +61,14 @@ export default function TimelineActivity({ item }: TimelineActivityProps) {
         switch (item.media_type) {
             case 'image': return 'image';
             case 'video': return 'videocam';
-            case 'audio': return 'mic';
+            case 'audio': return 'stats-chart';
             case 'note': return 'document-text';
             default: return 'attach';
         }
     };
+
+    const isAudio = item.media_type === 'audio';
+    const isNote = item.media_type === 'note';
 
     return (
         <TouchableOpacity
@@ -64,6 +89,10 @@ export default function TimelineActivity({ item }: TimelineActivityProps) {
                             <BlurView intensity={100} tint="dark" style={StyleSheet.absoluteFill} />
                         )}
                     </>
+                ) : isAudio ? (
+                    <LinearGradient colors={['#6a11cb', '#2575fc']} style={styles.backgroundGradient} />
+                ) : isNote ? (
+                    <LinearGradient colors={['#f6d365', '#fda085']} style={styles.backgroundGradient} />
                 ) : (
                     <LinearGradient colors={getTypeColors() as any} style={styles.backgroundGradient} />
                 )}
@@ -129,6 +158,28 @@ export default function TimelineActivity({ item }: TimelineActivityProps) {
                 )}
             </View>
 
+            {/* Middle Content Layer for Audio/Note */}
+            {(isAudio || isNote) && (
+                <View style={styles.middleContent}>
+                    {isAudio && (
+                        <View style={styles.audioPreviewWrap}>
+                            <LinearGradient colors={['rgba(255,255,255,0.2)', 'rgba(255,255,255,0.05)']} style={styles.audioMainCircle}>
+                                <Ionicons name="mic-outline" size={32} color="#fff" />
+                            </LinearGradient>
+                            <Waveform />
+                        </View>
+                    )}
+                    {isNote && (
+                        <View style={styles.notePreviewWrap}>
+                            <Ionicons name="document-text-outline" size={40} color="rgba(255,255,255,0.3)" />
+                            <Text style={styles.noteContentText} numberOfLines={5}>
+                                {item.content}
+                            </Text>
+                        </View>
+                    )}
+                </View>
+            )}
+
             {/* Bottom Info Section */}
             <View style={styles.bottomSection}>
                 <BlurView intensity={40} tint="dark" style={styles.glassInfo}>
@@ -142,8 +193,13 @@ export default function TimelineActivity({ item }: TimelineActivityProps) {
                             <Ionicons name={getIcon() as any} size={16} color="#fff" />
                         </View>
                         <Text style={styles.previewText}>
-                            {item.content || `New ${item.media_type || 'item'} shared to this capsule`}
+                            {isAudio ? `Voice Note (${item.content || '--:--'})` : isNote ? 'Written Note' : (item.caption || item.content || `New ${item.media_type} shared`)}
                         </Text>
+                        {isAudio && (
+                            <View style={styles.durationBadge}>
+                                <Text style={styles.durationText}>{item.content || '0:00'}</Text>
+                            </View>
+                        )}
                     </View>
                 </BlurView>
 
@@ -183,6 +239,7 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         alignItems: 'center',
         padding: Spacing.md,
+        zIndex: 5,
     },
     userSection: {
         flexDirection: 'row',
@@ -247,6 +304,53 @@ const styles = StyleSheet.create({
         width: 56,
         height: 56,
     },
+    middleContent: {
+        ...StyleSheet.absoluteFillObject,
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 40,
+    },
+    audioPreviewWrap: {
+        alignItems: 'center',
+        gap: 20,
+    },
+    audioMainCircle: {
+        width: 80,
+        height: 80,
+        borderRadius: 40,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.3)',
+    },
+    waveContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        height: 40,
+    },
+    waveBar: {
+        width: 4,
+        borderRadius: 2,
+    },
+    notePreviewWrap: {
+        width: '100%',
+        padding: 24,
+        borderRadius: 20,
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.2)',
+        alignItems: 'center',
+    },
+    noteContentText: {
+        fontSize: 15,
+        fontFamily: Fonts.medium,
+        color: '#fff',
+        textAlign: 'center',
+        marginTop: 12,
+        fontStyle: 'italic',
+        lineHeight: 22,
+    },
     timerChip: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -308,6 +412,17 @@ const styles = StyleSheet.create({
         fontSize: 13,
         color: 'rgba(255,255,255,0.9)',
         lineHeight: 18,
+    },
+    durationBadge: {
+        backgroundColor: 'rgba(0,0,0,0.4)',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 8,
+    },
+    durationText: {
+        fontSize: 11,
+        fontFamily: Fonts.bold,
+        color: '#fff',
     },
     sealedBadge: {
         position: 'absolute',

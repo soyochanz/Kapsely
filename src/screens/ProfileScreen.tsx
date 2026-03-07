@@ -53,6 +53,24 @@ const ProfileCapsuleCell = React.memo(({
     themeColor,
     capsuleMediaMap
 }: any) => {
+    const [modelImg, setModelImg] = useState(() => {
+        return isSealed
+            ? (timerConfigManager.getModelImage(cap.model) || MODEL_IMAGES[cap.model] || MODEL_IMAGES.beach)
+            : (timerConfigManager.getModelImageOpen(cap.model) || MODEL_IMAGES_OPEN[cap.model] || MODEL_IMAGES[cap.model] || MODEL_IMAGES.beach);
+    });
+
+    useEffect(() => {
+        const updateModel = () => {
+            const nextImg = isSealed
+                ? (timerConfigManager.getModelImage(cap.model) || MODEL_IMAGES[cap.model] || MODEL_IMAGES.beach)
+                : (timerConfigManager.getModelImageOpen(cap.model) || MODEL_IMAGES_OPEN[cap.model] || MODEL_IMAGES[cap.model] || MODEL_IMAGES.beach);
+            setModelImg(nextImg);
+        };
+        const unsubscribe = timerConfigManager.subscribe(updateModel);
+        updateModel();
+        return unsubscribe;
+    }, [cap.model, isSealed]);
+
     return (
         <TouchableOpacity
             style={styles.sealedCell}
@@ -65,7 +83,7 @@ const ProfileCapsuleCell = React.memo(({
                     {isSealed ? (
                         <CapsuleWithTimer
                             modelKey={cap.model}
-                            source={{ uri: timerConfigManager.getModelImage(cap.model) || MODEL_IMAGES[cap.model] || MODEL_IMAGES.beach }}
+                            source={{ uri: modelImg }}
                             date={cap.opens_at}
                             chainId={cap.chain_id}
                             capsuleType={cap.type}
@@ -78,7 +96,7 @@ const ProfileCapsuleCell = React.memo(({
                             ) : (
                                 <CapsuleWithTimer
                                     modelKey={cap.model}
-                                    source={{ uri: timerConfigManager.getModelImageOpen(cap.model) || MODEL_IMAGES_OPEN[cap.model] || MODEL_IMAGES[cap.model] || MODEL_IMAGES.beach }}
+                                    source={{ uri: modelImg }}
                                     date={cap.opens_at}
                                     chainId={cap.chain_id}
                                     capsuleType={cap.type}
@@ -115,7 +133,7 @@ const ProfileCapsuleCell = React.memo(({
 
                 <Text style={styles.sealedTitle} numberOfLines={1}>{cap.title}</Text>
 
-                <View style={[styles.membersList, !cap.is_shared && { opacity: 0 }]} pointerEvents={!cap.is_shared ? "none" : "auto"}>
+                <View style={[styles.membersList, !cap.is_shared && { opacity: 0, pointerEvents: 'none' }]}>
                     <View style={styles.avatarStack}>
                         {cap.owner_avatar_url ? (
                             <Image source={{ uri: cap.owner_avatar_url }} style={styles.stackAvatar} />
@@ -215,12 +233,12 @@ export default function ProfileScreen() {
         console.log('ProfileScreen: loading profile for', idToLoad, 'isOwn:', own);
 
         const [profileRes, capsRes, followersRes, followingRes, followCheck] = await Promise.all([
-            supabase.from('profiles').select('*').eq('id', idToLoad).single(),
+            supabase.from('profiles').select('*').eq('id', idToLoad).maybeSingle(),
             // Query capsules where user is owner, invited directly, OR in capsule_invites
             supabase.rpc('get_user_capsules_v2', { target_user_id: idToLoad }),
             supabase.from('follows').select('*', { count: 'exact', head: true }).eq('following_id', idToLoad),
             supabase.from('follows').select('*', { count: 'exact', head: true }).eq('follower_id', idToLoad),
-            targetUserId ? supabase.from('follows').select('*').eq('follower_id', user.id).eq('following_id', targetUserId).single() : { data: null }
+            targetUserId ? supabase.from('follows').select('*').eq('follower_id', user.id).eq('following_id', targetUserId).maybeSingle() : { data: null }
         ]);
 
         if (profileRes.data) setProfile(profileRes.data);
@@ -445,7 +463,7 @@ export default function ProfileScreen() {
                     <View style={styles.bannerCircle1} />
                     <View style={styles.bannerCircle2} />
                         {/* Stickers Overlay */}
-                        <View style={[StyleSheet.absoluteFill, { overflow: 'visible' }]} pointerEvents="none">
+                        <View style={[StyleSheet.absoluteFill, { overflow: 'visible', pointerEvents: 'none' }]}>
                             {profileStickers.map((ps: any) => {
                                 const posConfig = STICKER_POSITIONS[ps.position - 1] || STICKER_POSITIONS[0];
                                 const { size, rotation, ...pos } = posConfig;

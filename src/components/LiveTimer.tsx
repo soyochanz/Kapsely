@@ -42,31 +42,36 @@ const LiveTimer = React.memo(({
             const now = Date.now();
             const diff = end - now;
 
+            let newLabel = '';
             if (diff <= 0) {
-                setLabel('Ready!');
-                return;
-            }
-
-            const activeFormat = config?.format ?? 'standard';
-            const totalHours = diff / (1000 * 60 * 60);
-            const totalDays = Math.floor(totalHours / 24);
-
-            if (activeFormat === 'days' || totalHours > 72) {
-                if (totalDays > 730) { // More than 24 months
-                    const years = Math.floor(totalDays / 365);
-                    setLabel(`${years} ${years === 1 ? 'year' : 'years'}`);
-                } else if (totalDays > 365) { // More than 1 year (365 days)
-                    const months = Math.floor(totalDays / 30);
-                    setLabel(`${months} ${months === 1 ? 'month' : 'months'}`);
-                } else {
-                    setLabel(`${totalDays} ${totalDays === 1 ? 'day' : 'days'}`);
-                }
+                newLabel = 'Ready!';
             } else {
-                const h = Math.floor(totalHours);
-                const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-                const s = Math.floor((diff % (1000 * 60)) / 1000);
-                setLabel(`${h}:${m < 10 ? '0' + m : m}:${s < 10 ? '0' + s : s}`);
+                const activeFormat = config?.format ?? 'standard';
+                const totalHours = diff / (1000 * 60 * 60);
+                const totalDays = Math.floor(totalHours / 24);
+
+                if (activeFormat === 'days' || totalHours > 72) {
+                    if (totalDays > 730) {
+                        const years = Math.floor(totalDays / 365);
+                        newLabel = `${years} ${years === 1 ? 'year' : 'years'}`;
+                    } else if (totalDays > 365) {
+                        const months = Math.floor(totalDays / 30);
+                        newLabel = `${months} ${months === 1 ? 'month' : 'months'}`;
+                    } else {
+                        newLabel = `${totalDays} ${totalDays === 1 ? 'day' : 'days'}`;
+                    }
+                } else {
+                    const h = Math.floor(totalHours);
+                    const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+                    const s = Math.floor((diff % (1000 * 60)) / 1000);
+                    newLabel = `${h}:${m < 10 ? '0' + m : m}:${s < 10 ? '0' + s : s}`;
+                }
             }
+
+            setLabel(prev => {
+                if (prev === newLabel) return prev;
+                return newLabel;
+            });
         };
 
         update();

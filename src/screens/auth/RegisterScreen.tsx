@@ -1,17 +1,36 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
     View, Text, StyleSheet, TextInput, TouchableOpacity,
     KeyboardAvoidingView, Platform, ScrollView, StatusBar, ActivityIndicator, Image,
+    Animated,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow, Gradients } from '../../theme';
 import { signUp } from '../../lib/auth';
-
 interface Props {
     onNavigateToLogin: () => void;
     onNavigateBack: () => void;
 }
+
+const InputWrapper = ({ label, icon, children, focusedInput, id }: any) => (
+    <View style={styles.inputGroup}>
+        <Text style={styles.inputLabel}>{label.toUpperCase()}</Text>
+        <View style={[
+            styles.inputContainer,
+            focusedInput === id && styles.inputFocused
+        ]}>
+            <Ionicons 
+                name={icon} 
+                size={20} 
+                color={focusedInput === id ? Colors.primary : Colors.textMuted} 
+                style={styles.inputIcon} 
+            />
+            {children}
+        </View>
+    </View>
+);
 
 export default function RegisterScreen({ onNavigateToLogin, onNavigateBack }: Props) {
     const [email, setEmail] = useState('');
@@ -24,17 +43,28 @@ export default function RegisterScreen({ onNavigateToLogin, onNavigateBack }: Pr
     const [showPass, setShowPass] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
+    const [focusedInput, setFocusedInput] = useState<string | null>(null);
+
+    const fadeAnim = React.useRef(new Animated.Value(0)).current;
+    const slideAnim = React.useRef(new Animated.Value(30)).current;
+
+    useEffect(() => {
+        Animated.parallel([
+            Animated.timing(fadeAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
+            Animated.spring(slideAnim, { toValue: 0, tension: 20, friction: 7, useNativeDriver: true })
+        ]).start();
+    }, []);
 
     const validate = (): string | null => {
-        if (!email.trim() || !email.includes('@')) return 'Identity relay requires a valid email.';
-        if (!username.trim()) return 'Unique moniker is required.';
-        if (username.includes(' ')) return 'Monikers cannot contain space-time gaps.';
-        if (username.length < 3) return 'Moniker must be at least 3 chars.';
+        if (!email.trim() || !email.includes('@')) return 'Please enter a valid email address.';
+        if (!username.trim()) return 'Username is required.';
+        if (username.includes(' ')) return 'Usernames cannot contain spaces.';
+        if (username.length < 3) return 'Username must be at least 3 characters.';
         if (!displayName.trim()) return 'Public name is required.';
         const y = parseInt(birthdateYear), m = parseInt(birthdateMonth), d = parseInt(birthdateDay);
-        if (!birthdateYear || !birthdateMonth || !birthdateDay || isNaN(y) || isNaN(m) || isNaN(d)) return 'Temporal origin required.';
-        if (y < 1900 || y > 2013 || m < 1 || m > 12 || d < 1 || d > 31) return 'Temporal origin is invalid.';
-        if (password.length < 6) return 'Passkey must be 6+ characters.';
+        if (!birthdateYear || !birthdateMonth || !birthdateDay || isNaN(y) || isNaN(m) || isNaN(d)) return 'Date of birth is required.';
+        if (y < 1900 || y > 2013 || m < 1 || m > 12 || d < 1 || d > 31) return 'Please enter a valid date of birth.';
+        if (password.length < 6) return 'Password must be at least 6 characters.';
         return null;
     };
 
@@ -53,7 +83,7 @@ export default function RegisterScreen({ onNavigateToLogin, onNavigateBack }: Pr
                 birthdate: isoDate,
             });
         } catch (e: any) {
-            setError(e.message ?? 'Synthesis failed. Try again.');
+            setError(e.message ?? 'Registration failed. Please try again.');
             setLoading(false);
         }
     };
@@ -62,278 +92,303 @@ export default function RegisterScreen({ onNavigateToLogin, onNavigateBack }: Pr
     const strengthColors = ['transparent', Colors.eventCap, Colors.warning, Colors.success];
 
     return (
-        <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-            <StatusBar barStyle="light-content" />
-
+        <View style={styles.container}>
+            <StatusBar barStyle="dark-content" translucent backgroundColor="transparent" />
+            
             <LinearGradient
-                colors={Gradients.dark as any}
-                style={styles.header}
-                start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                colors={['#ffffff', '#f8f9ff', '#f0f4ff']}
+                style={StyleSheet.absoluteFillObject}
+            />
+
+            <KeyboardAvoidingView 
+                style={{ flex: 1 }} 
+                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             >
-                <TouchableOpacity onPress={onNavigateBack} style={styles.backBtn} activeOpacity={0.7}>
-                    <Ionicons name="chevron-back" size={26} color="#fff" />
-                </TouchableOpacity>
-
-                <View style={styles.headerContent}>
-                    <Image
-                        source={{ uri: 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/website/Logomain.png' }}
-                        style={styles.headerLogo}
-                        resizeMode="contain"
-                    />
-                    <Text style={styles.greeting}>Join Kapsely</Text>
-                    <Text style={styles.subGreeting}>Create an account to start sharing</Text>
-                </View>
-
-                {/* Subtle tech pattern */}
-                <View style={[styles.techLine, { right: -60, top: 40, transform: [{ rotate: '15deg' }] }]} />
-            </LinearGradient>
-
-            <ScrollView
-                contentContainerStyle={styles.scroll}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-            >
-                <View style={styles.formCard}>
-                    {!!error && (
-                        <View style={styles.errorBox}>
-                            <Ionicons name="alert-circle" size={18} color={Colors.error} />
-                            <Text style={styles.errorText}>{error}</Text>
-                        </View>
-                    )}
-
-                    {/* Email */}
-                    <View style={styles.inputGroup}>
-                        <Text style={styles.inputLabel}>EMAIL ADDRESS</Text>
-                        <View style={styles.inputContainer}>
-                            <Ionicons name="mail-outline" size={18} color={Colors.primary} style={styles.inputIcon} />
-                            <TextInput
-                                style={styles.input} placeholder="name@example.com"
-                                placeholderTextColor={Colors.textMuted} value={email} onChangeText={setEmail}
-                                keyboardType="email-address" autoCapitalize="none" selectionColor={Colors.primary} />
-                        </View>
-                    </View>
-
-                    {/* Username */}
-                    <View style={styles.inputGroup}>
-                        <Text style={styles.inputLabel}>USERNAME</Text>
-                        <View style={styles.inputContainer}>
-                            <Ionicons name="at-outline" size={18} color={Colors.primary} style={styles.inputIcon} />
-                            <TextInput
-                                style={styles.input} placeholder="alex_88"
-                                placeholderTextColor={Colors.textMuted}
-                                value={username} onChangeText={(v) => setUsername(v.replace(/\s/g, '').toLowerCase())}
-                                autoCapitalize="none" selectionColor={Colors.primary} />
-                        </View>
-                        <Text style={styles.helperText}>Used for your unique profile link</Text>
-                    </View>
-
-                    {/* Display Name */}
-                    <View style={styles.inputGroup}>
-                        <Text style={styles.inputLabel}>FULL NAME</Text>
-                        <View style={styles.inputContainer}>
-                            <Ionicons name="person-outline" size={18} color={Colors.primary} style={styles.inputIcon} />
-                            <TextInput
-                                style={styles.input} placeholder="Alex Smith"
-                                placeholderTextColor={Colors.textMuted} value={displayName} onChangeText={setDisplayName}
-                                selectionColor={Colors.primary} />
-                        </View>
-                    </View>
-
-                    {/* Date of birth */}
-                    <View style={styles.inputGroup}>
-                        <Text style={styles.inputLabel}>DATE OF BIRTH</Text>
-                        <View style={styles.dateRow}>
-                            <View style={[styles.inputContainer, { flex: 1, paddingHorizontal: 0 }]}>
-                                <TextInput style={styles.input} placeholder="DD"
-                                    placeholderTextColor={Colors.textMuted} value={birthdateDay}
-                                    onChangeText={(v) => setBirthdateDay(v.replace(/\D/g, '').slice(0, 2))}
-                                    keyboardType="numeric" maxLength={2} textAlign="center"
-                                    selectionColor={Colors.primary} />
-                            </View>
-                            <View style={[styles.inputContainer, { flex: 1, paddingHorizontal: 0 }]}>
-                                <TextInput style={styles.input} placeholder="MM"
-                                    placeholderTextColor={Colors.textMuted} value={birthdateMonth}
-                                    onChangeText={(v) => setBirthdateMonth(v.replace(/\D/g, '').slice(0, 2))}
-                                    keyboardType="numeric" maxLength={2} textAlign="center"
-                                    selectionColor={Colors.primary} />
-                            </View>
-                            <View style={[styles.inputContainer, { flex: 1.5, paddingHorizontal: 0 }]}>
-                                <TextInput style={styles.input} placeholder="YYYY"
-                                    placeholderTextColor={Colors.textMuted} value={birthdateYear}
-                                    onChangeText={(v) => setBirthdateYear(v.replace(/\D/g, '').slice(0, 4))}
-                                    keyboardType="numeric" maxLength={4} textAlign="center"
-                                    selectionColor={Colors.primary} />
-                            </View>
-                        </View>
-                        <Text style={styles.helperText}>Required to verify age eligibility</Text>
-                    </View>
-
-                    {/* Password */}
-                    <View style={styles.inputGroup}>
-                        <Text style={styles.inputLabel}>PASSWORD</Text>
-                        <View style={styles.inputContainer}>
-                            <Ionicons name="shield-checkmark-outline" size={18} color={Colors.primary} style={styles.inputIcon} />
-                            <TextInput style={[styles.input, { flex: 1 }]} placeholder="Create a strong password"
-                                placeholderTextColor={Colors.textMuted} value={password} onChangeText={setPassword}
-                                secureTextEntry={!showPass} selectionColor={Colors.primary} />
-                            <TouchableOpacity onPress={() => setShowPass((p) => !p)} style={styles.eyeBtn}>
-                                <Ionicons name={showPass ? 'eye-off' : 'eye'} size={18} color={Colors.textMuted} />
-                            </TouchableOpacity>
-                        </View>
-                        {password.length > 0 && (
-                            <View style={styles.strengthRow}>
-                                {[1, 2, 3].map((i) => (
-                                    <View key={i} style={[styles.strengthBar,
-                                    { backgroundColor: passStrength >= i ? strengthColors[passStrength] : Colors.border }
-                                    ]} />
-                                ))}
-                            </View>
-                        )}
-                    </View>
-
-                    <TouchableOpacity onPress={handleRegister} activeOpacity={0.9} disabled={loading} style={styles.regBtnWrapper}>
-                        <LinearGradient
-                            colors={Gradients.primary as any}
-                            start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-                            style={styles.regBtn}
+                <ScrollView
+                    contentContainerStyle={styles.scroll}
+                    keyboardShouldPersistTaps="handled"
+                    showsVerticalScrollIndicator={false}
+                >
+                    <Animated.View style={[styles.content, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
+                        <TouchableOpacity 
+                            onPress={onNavigateBack} 
+                            style={styles.backBtn}
+                            activeOpacity={0.7}
                         >
-                            {loading ? (
-                                <ActivityIndicator color="#fff" />
-                            ) : (
-                                <View style={styles.btnContent}>
-                                    <Text style={styles.regBtnText}>SIGN UP</Text>
-                                    <Ionicons name="arrow-forward" size={18} color="#fff" />
+                            <View style={styles.backBtnInner}>
+                                <Ionicons name="chevron-back" size={24} color={Colors.textPrimary} />
+                            </View>
+                        </TouchableOpacity>
+
+                        <View style={styles.headerHero}>
+                            <Image
+                                source={{ uri: 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/website/Logomain.png' }}
+                                style={styles.logo}
+                                resizeMode="contain"
+                            />
+                            <Text style={styles.greeting}>Create Account</Text>
+                            <Text style={styles.subGreeting}>Join our community of time travelers</Text>
+                        </View>
+
+                        <View style={styles.formCard}>
+                            {!!error && (
+                                <View style={styles.errorBox}>
+                                    <View style={styles.errorIndicator} />
+                                    <Text style={styles.errorText}>{error}</Text>
                                 </View>
                             )}
-                        </LinearGradient>
-                    </TouchableOpacity>
 
-                    <TouchableOpacity style={styles.loginLink} onPress={onNavigateToLogin} activeOpacity={0.7}>
-                        <Text style={styles.loginLinkText}>
-                            Already have an account?{' '}
-                            <Text style={{ color: Colors.primaryDark, fontFamily: Fonts.bold }}>LOG IN</Text>
-                        </Text>
-                    </TouchableOpacity>
-                </View>
-            </ScrollView>
-        </KeyboardAvoidingView>
+                            <InputWrapper label="Email Address" icon="mail-outline" id="email" focusedInput={focusedInput}>
+                                <TextInput
+                                    style={styles.input} placeholder="name@example.com"
+                                    placeholderTextColor={Colors.textMuted} value={email} onChangeText={setEmail}
+                                    keyboardType="email-address" autoCapitalize="none" 
+                                    autoCorrect={false} spellCheck={false}
+                                    selectionColor={Colors.primary} 
+                                    onFocus={() => setFocusedInput('email')} onBlur={() => setFocusedInput(null)}
+                                />
+                            </InputWrapper>
+
+                            <InputWrapper label="Username" icon="at-outline" id="username" focusedInput={focusedInput}>
+                                <TextInput
+                                    style={styles.input} placeholder="alex_88"
+                                    placeholderTextColor={Colors.textMuted}
+                                    value={username} onChangeText={(v) => setUsername(v.replace(/\s/g, '').toLowerCase())}
+                                    autoCapitalize="none" autoCorrect={false} spellCheck={false}
+                                    selectionColor={Colors.primary}
+                                    onFocus={() => setFocusedInput('username')} onBlur={() => setFocusedInput(null)}
+                                />
+                            </InputWrapper>
+
+                            <InputWrapper label="Public Name" icon="person-outline" id="displayName" focusedInput={focusedInput}>
+                                <TextInput
+                                    style={styles.input} placeholder="Alex Smith"
+                                    placeholderTextColor={Colors.textMuted} value={displayName} onChangeText={setDisplayName}
+                                    selectionColor={Colors.primary} autoCorrect={false} spellCheck={false}
+                                    onFocus={() => setFocusedInput('displayName')} onBlur={() => setFocusedInput(null)}
+                                />
+                            </InputWrapper>
+
+                            <View style={styles.inputGroup}>
+                                <Text style={styles.inputLabel}>DATE OF BIRTH</Text>
+                                <View style={styles.dateRow}>
+                                    <View style={[styles.dateInput, focusedInput === 'day' && styles.dateInputFocused]}>
+                                        <TextInput style={styles.input} placeholder="DD"
+                                            placeholderTextColor={Colors.textMuted} value={birthdateDay}
+                                            onChangeText={(v) => setBirthdateDay(v.replace(/\D/g, '').slice(0, 2))}
+                                            keyboardType="numeric" maxLength={2} textAlign="center"
+                                            selectionColor={Colors.primary} onFocus={() => setFocusedInput('day')} onBlur={() => setFocusedInput(null)}
+                                        />
+                                    </View>
+                                    <View style={[styles.dateInput, focusedInput === 'month' && styles.dateInputFocused]}>
+                                        <TextInput style={styles.input} placeholder="MM"
+                                            placeholderTextColor={Colors.textMuted} value={birthdateMonth}
+                                            onChangeText={(v) => setBirthdateMonth(v.replace(/\D/g, '').slice(0, 2))}
+                                            keyboardType="numeric" maxLength={2} textAlign="center"
+                                            selectionColor={Colors.primary} onFocus={() => setFocusedInput('month')} onBlur={() => setFocusedInput(null)}
+                                        />
+                                    </View>
+                                    <View style={[styles.dateInput, { flex: 1.5 }, focusedInput === 'year' && styles.dateInputFocused]}>
+                                        <TextInput style={styles.input} placeholder="YYYY"
+                                            placeholderTextColor={Colors.textMuted} value={birthdateYear}
+                                            onChangeText={(v) => setBirthdateYear(v.replace(/\D/g, '').slice(0, 4))}
+                                            keyboardType="numeric" maxLength={4} textAlign="center"
+                                            selectionColor={Colors.primary} onFocus={() => setFocusedInput('year')} onBlur={() => setFocusedInput(null)}
+                                        />
+                                    </View>
+                                </View>
+                            </View>
+
+                            <View style={styles.inputGroup}>
+                                <Text style={styles.inputLabel}>PASSWORD</Text>
+                                <View style={[styles.inputContainer, focusedInput === 'password' && styles.inputFocused]}>
+                                    <Ionicons name="lock-closed-outline" size={20} color={focusedInput === 'password' ? Colors.primary : Colors.textMuted} style={styles.inputIcon} />
+                                    <TextInput style={styles.input} placeholder="Create a strong password"
+                                        placeholderTextColor={Colors.textMuted} value={password} onChangeText={setPassword}
+                                        secureTextEntry={!showPass} selectionColor={Colors.primary} 
+                                        onFocus={() => setFocusedInput('password')} onBlur={() => setFocusedInput(null)}
+                                    />
+                                    <TouchableOpacity onPress={() => setShowPass((p) => !p)} hitSlop={{top:10, bottom:10, left:10, right:10}}>
+                                        <Ionicons name={showPass ? 'eye-off-outline' : 'eye-outline'} size={20} color={Colors.textMuted} />
+                                    </TouchableOpacity>
+                                </View>
+                                {password.length > 0 && (
+                                    <View style={styles.strengthRow}>
+                                        {[1, 2, 3].map((i) => (
+                                            <View key={i} style={[styles.strengthBar,
+                                            { backgroundColor: passStrength >= i ? strengthColors[passStrength] : Colors.border }
+                                            ]} />
+                                        ))}
+                                    </View>
+                                )}
+                            </View>
+
+                            <TouchableOpacity onPress={handleRegister} activeOpacity={0.9} disabled={loading} style={styles.btnWrapper}>
+                                <LinearGradient
+                                    colors={Gradients.primary as any}
+                                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                                    style={styles.mainBtn}
+                                >
+                                    {loading ? (
+                                        <ActivityIndicator color="#fff" />
+                                    ) : (
+                                        <View style={styles.btnContent}>
+                                            <Text style={styles.btnText}>SIGN UP</Text>
+                                            <Ionicons name="sparkles-outline" size={20} color="#fff" />
+                                        </View>
+                                    )}
+                                </LinearGradient>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity style={styles.loginLink} onPress={onNavigateToLogin} activeOpacity={0.7}>
+                                <Text style={styles.loginLinkText}>
+                                    Already have an account?{' '}
+                                    <Text style={{ color: Colors.primary, fontFamily: Fonts.bold }}>LOG IN</Text>
+                                </Text>
+                            </TouchableOpacity>
+                        </View>
+                        
+                        <Text style={styles.legal}>By signing up, you agree to our Terms and Privacy Policy.</Text>
+                    </Animated.View>
+                </ScrollView>
+            </KeyboardAvoidingView>
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: Colors.background,
+        backgroundColor: '#ffffff',
     },
-    header: {
-        height: 200,
-        paddingTop: Platform.OS === 'ios' ? 60 : 40,
+    scroll: {
+        flexGrow: 1,
         paddingHorizontal: Spacing.xl,
-        overflow: 'hidden',
+        paddingTop: Platform.OS === 'ios' ? 60 : 40,
+        paddingBottom: 40,
+    },
+    content: {
+        flex: 1,
     },
     backBtn: {
-        width: 44,
-        height: 44,
-        borderRadius: 22,
-        backgroundColor: 'rgba(255,255,255,0.1)',
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        overflow: 'hidden',
+        marginBottom: Spacing.xl,
+    },
+    backBtnInner: {
+        flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
-        marginBottom: Spacing.md,
+        backgroundColor: 'rgba(0,0,0,0.04)',
+        borderWidth: 1,
+        borderColor: 'rgba(0,0,0,0.06)',
+        borderRadius: 24,
     },
-    headerContent: {
-        zIndex: 5,
+    headerHero: {
+        alignItems: 'center',
+        marginBottom: Spacing.xl,
+    },
+    logo: {
+        width: 54,
+        height: 54,
+        marginBottom: 16,
     },
     greeting: {
-        color: '#fff',
-        fontSize: 30,
+        fontSize: 32,
         fontFamily: Fonts.bold,
+        color: Colors.textPrimary,
         letterSpacing: -1,
     },
     subGreeting: {
-        color: 'rgba(255,255,255,0.6)',
         fontSize: 14,
         fontFamily: Fonts.medium,
+        color: Colors.textSecondary,
         marginTop: 4,
-    },
-    techLine: {
-        position: 'absolute',
-        width: 300,
-        height: 1,
-        backgroundColor: '#fff',
-        opacity: 0.1,
-    },
-    scroll: {
-        paddingHorizontal: Spacing.lg,
-        paddingBottom: 60,
     },
     formCard: {
         backgroundColor: Colors.surface,
         borderRadius: BorderRadius.xl,
         padding: Spacing.lg,
-        paddingTop: Spacing.xl,
         ...Shadow.lg,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        marginBottom: 20,
     },
     errorBox: {
+        backgroundColor: '#fff1f1',
+        padding: 16,
+        borderRadius: BorderRadius.lg,
         flexDirection: 'row',
         alignItems: 'center',
-        padding: 14,
-        backgroundColor: '#fff1f1',
-        borderRadius: BorderRadius.md,
+        marginBottom: 20,
         borderWidth: 1,
         borderColor: Colors.error + '22',
-        marginBottom: Spacing.lg,
-        gap: 10,
+    },
+    errorIndicator: {
+        width: 4,
+        height: 20,
+        backgroundColor: Colors.error,
+        borderRadius: 2,
+        marginRight: 12,
     },
     errorText: {
         color: Colors.error,
         fontSize: 13,
-        fontFamily: Fonts.medium,
+        fontFamily: Fonts.semiBold,
         flex: 1,
     },
     inputGroup: {
-        marginBottom: Spacing.lg,
+        marginBottom: 18,
     },
     inputLabel: {
-        fontSize: 9,
+        fontSize: 10,
         fontFamily: Fonts.bold,
         color: Colors.textMuted,
-        letterSpacing: 2,
+        letterSpacing: 1.5,
         marginBottom: 8,
         marginLeft: 4,
     },
     inputContainer: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: Colors.background,
+        backgroundColor: '#f9f9ff',
         borderRadius: BorderRadius.lg,
         borderWidth: 1.5,
         borderColor: Colors.border,
         paddingHorizontal: 16,
+        height: 56,
+    },
+    inputFocused: {
+        borderColor: Colors.primary,
+        backgroundColor: '#fbfaff',
     },
     inputIcon: {
-        marginRight: 10,
+        marginRight: 12,
     },
     input: {
         flex: 1,
-        height: 52,
         color: Colors.textPrimary,
         fontSize: 15,
         fontFamily: Fonts.medium,
     },
-    helperText: {
-        color: Colors.textMuted,
-        fontSize: 10,
-        fontFamily: Fonts.regular,
-        marginTop: 6,
-        marginLeft: 4,
-        opacity: 0.8,
-    },
     dateRow: {
         flexDirection: 'row',
-        gap: Spacing.sm,
+        gap: 12,
     },
-    eyeBtn: {
-        padding: 4,
+    dateInput: {
+        flex: 1,
+        backgroundColor: '#f9f9ff',
+        borderRadius: BorderRadius.lg,
+        borderWidth: 1.5,
+        borderColor: Colors.border,
+        height: 56,
+        justifyContent: 'center',
+    },
+    dateInputFocused: {
+        borderColor: Colors.primary,
+        backgroundColor: '#fbfaff',
     },
     strengthRow: {
         flexDirection: 'row',
@@ -347,12 +402,12 @@ const styles = StyleSheet.create({
         flex: 1,
         borderRadius: 2,
     },
-    regBtnWrapper: {
+    btnWrapper: {
         ...Shadow.primary,
         marginTop: 10,
     },
-    regBtn: {
-        height: 58,
+    mainBtn: {
+        height: 60,
         borderRadius: BorderRadius.xl,
         alignItems: 'center',
         justifyContent: 'center',
@@ -362,31 +417,29 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: 12,
     },
-    regBtnText: {
+    btnText: {
         color: '#fff',
-        fontSize: 15,
+        fontSize: 16,
         fontFamily: Fonts.bold,
-        letterSpacing: 1.5,
-    },
-    btnDot: {
-        width: 6,
-        height: 6,
-        borderRadius: 3,
-        backgroundColor: '#fff',
+        letterSpacing: 1.2,
     },
     loginLink: {
         alignItems: 'center',
-        marginTop: Spacing.xl,
+        marginTop: 20,
         paddingVertical: 10,
     },
     loginLinkText: {
         color: Colors.textMuted,
-        fontSize: 13,
+        fontSize: 14,
         fontFamily: Fonts.medium,
     },
-    headerLogo: {
-        width: 44,
-        height: 44,
-        marginBottom: 12,
+    legal: {
+        textAlign: 'center',
+        fontSize: 12,
+        fontFamily: Fonts.regular,
+        color: Colors.textMuted,
+        lineHeight: 18,
+        marginBottom: 20,
+        paddingHorizontal: 20,
     },
 });

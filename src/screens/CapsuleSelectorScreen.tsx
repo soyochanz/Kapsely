@@ -104,43 +104,58 @@ export default function CapsuleSelectorScreen() {
                     data={capsules}
                     keyExtractor={(item) => item.id}
                     contentContainerStyle={styles.list}
-                    renderItem={({ item }) => {
-                        const cfg = TYPE_CONFIG[item.type as keyof typeof TYPE_CONFIG] || TYPE_CONFIG.legacycap;
-                        return (
-                            <TouchableOpacity style={styles.card} onPress={() => handleSelect(item)}>
-                                <View style={styles.cardImageContainer}>
-                                    <View style={styles.modelWrapperSmall}>
-                                        <CapsuleWithTimer
-                                            modelKey={item.model}
-                                            source={{ uri: timerConfigManager.getModelImage(item.model) || MODEL_IMAGES[item.model] || MODEL_IMAGES.beach }}
-                                            date={item.opens_at}
-                                            chainId={item.chain_id}
-                                            capsuleType={item.type}
-                                            style={styles.cardImage}
-                                        />
-                                        {/* Corner Type Icon */}
-                                        <View style={[styles.cornerTypeIconMini, { backgroundColor: cfg.color }]}>
-                                            <Ionicons name={cfg.icon as any} size={8} color="#fff" />
-                                        </View>
-                                    </View>
-                                </View>
-                                <View style={styles.cardInfo}>
-                                    <Text style={styles.cardTitle}>{item.title}</Text>
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                                        <Text style={[styles.cardType, { color: cfg.color }]}>{cfg.label.toUpperCase()}</Text>
-                                        <Text style={styles.dotSeparator}>•</Text>
-                                        <LiveTimer date={item.opens_at} style={styles.cardDate} />
-                                    </View>
-                                </View>
-                                <Ionicons name="chevron-forward" size={20} color={Colors.textMuted} />
-                            </TouchableOpacity>
-                        );
-                    }}
+                    renderItem={({ item }) => <CapsuleEntry item={item} onSelect={handleSelect} />}
                 />
             )}
         </SafeAreaView>
     );
 }
+
+const CapsuleEntry = ({ item, onSelect }: { item: any, onSelect: (cap: any) => void }) => {
+    const cfg = TYPE_CONFIG[item.type as keyof typeof TYPE_CONFIG] || TYPE_CONFIG.legacycap;
+    const [modelImg, setModelImg] = useState(() => {
+        return timerConfigManager.getModelImage(item.model) || MODEL_IMAGES[item.model] || MODEL_IMAGES.beach;
+    });
+
+    useEffect(() => {
+        const updateModel = () => {
+            setModelImg(timerConfigManager.getModelImage(item.model) || MODEL_IMAGES[item.model] || MODEL_IMAGES.beach);
+        };
+        const unsubscribe = timerConfigManager.subscribe(updateModel);
+        updateModel();
+        return unsubscribe;
+    }, [item.model]);
+
+    return (
+        <TouchableOpacity style={styles.card} onPress={() => onSelect(item)}>
+            <View style={styles.cardImageContainer}>
+                <View style={styles.modelWrapperSmall}>
+                    <CapsuleWithTimer
+                        modelKey={item.model}
+                        source={{ uri: modelImg }}
+                        date={item.opens_at}
+                        chainId={item.chain_id}
+                        capsuleType={item.type}
+                        style={styles.cardImage}
+                    />
+                    {/* Corner Type Icon */}
+                    <View style={[styles.cornerTypeIconMini, { backgroundColor: cfg.color }]}>
+                        <Ionicons name={cfg.icon as any} size={8} color="#fff" />
+                    </View>
+                </View>
+            </View>
+            <View style={styles.cardInfo}>
+                <Text style={styles.cardTitle}>{item.title}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={[styles.cardType, { color: cfg.color }]}>{cfg.label.toUpperCase()}</Text>
+                    <Text style={styles.dotSeparator}>•</Text>
+                    <LiveTimer date={item.opens_at} style={styles.cardDate} />
+                </View>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={Colors.textMuted} />
+        </TouchableOpacity>
+    );
+};
 
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: Colors.background },

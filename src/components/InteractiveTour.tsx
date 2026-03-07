@@ -92,7 +92,7 @@ export default function InteractiveTour({ step, onAction, onDismiss }: Interacti
     // --- STEP 2: PRESS PLUS (POINT TO BUTTON) ---
     if (step === 'PRESS_PLUS') {
         return (
-            <View style={styles.pointerOverlay} pointerEvents="box-none">
+            <View style={[styles.pointerOverlay, { pointerEvents: 'box-none' }]}>
                 <View style={styles.hintContainer}>
                     <Animated.View style={[styles.hintBox, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
                         <Text style={styles.hintTitle}>Step 1: Create</Text>
@@ -119,7 +119,7 @@ export default function InteractiveTour({ step, onAction, onDismiss }: Interacti
     // --- STEP 3: SELECT TYPE ---
     if (step === 'SELECT_TYPE') {
         return (
-            <View style={styles.pointerOverlay} pointerEvents="box-none">
+            <View style={[styles.pointerOverlay, { pointerEvents: 'box-none' }]}>
                 <View style={[styles.hintContainer, { top: height * 0.25 }]}>
                     <Animated.View style={[styles.hintBox, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
                         <Text style={styles.hintTitle}>Step 2: Choose</Text>
@@ -134,7 +134,7 @@ export default function InteractiveTour({ step, onAction, onDismiss }: Interacti
     // --- STEP 4: POST YOURCAP ---
     if (step === 'POST_YOURCAP') {
         return (
-            <View style={styles.pointerOverlay} pointerEvents="box-none">
+            <View style={[styles.pointerOverlay, { pointerEvents: 'box-none' }]}>
                 <View style={[styles.hintContainer, { top: height * 0.15 }]}>
                     <Animated.View style={[styles.hintBox, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
                         <Text style={styles.hintTitle}>Step 3: Share</Text>

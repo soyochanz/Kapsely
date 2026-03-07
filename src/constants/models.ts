@@ -2,10 +2,7 @@
 // This file centralizes all 3D model data (image URLs, tints, and categories)
 
 export const CAPSULE_MODELS = [
-    { id: 'beach', label: 'Beach', category: 'Nature', image: 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/models/beachcap.png', image_open: 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/models/beachcap_open.png', tint: '#0ea5e9' },
-    { id: 'burger', label: 'Burger', category: 'Food', image: 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/models/burgercap.png', image_open: 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/models/burgercap_open.png', tint: '#e67e22' },
-    { id: 'cake', label: 'Cake', category: 'Food', image: 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/models/cakecap.png', image_open: 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/models/cakecap_open.png', tint: '#ec4899' },
-    { id: 'china', label: 'China', category: 'Places', image: 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/models/chinacap.png', image_open: 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/models/chinacap_open.png', tint: '#ff4757' },
+    { id: 'basic_red', label: 'Basic Red', category: 'Vibe', image: 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/models/chinacap.png', image_open: 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/models/chinacap_open.png', tint: '#ff4757' },
     { id: 'choco', label: 'Choco', category: 'Food', image: 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/models/chococap.png', image_open: 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/models/chococap_open.png', tint: '#5d4037' },
     { id: 'disco', label: 'Disco', category: 'Vibe', image: 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/models/discocap.png', image_open: 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/models/open/discocapopen.png', tint: '#a269ff' },
     { id: 'dragon', label: 'Dragon', category: 'Vibe', image: 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/models/dragoncap.png', image_open: 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/models/dragoncap_open.png', tint: '#ff1493' },

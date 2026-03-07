@@ -45,7 +45,7 @@ export default function ChatListScreen() {
                         .from('profiles')
                         .select('*')
                         .eq('id', otherPartData.user_id)
-                        .single();
+                        .maybeSingle();
                     otherUserProfile = profile;
                 }
 
@@ -55,7 +55,7 @@ export default function ChatListScreen() {
                     .eq('conversation_id', c.conversation_id)
                     .order('created_at', { ascending: false })
                     .limit(1)
-                    .single();
+                    .maybeSingle();
 
                 return {
                     ...c,

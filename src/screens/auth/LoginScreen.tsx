@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
     View, Text, StyleSheet, TextInput, TouchableOpacity,
     KeyboardAvoidingView, Platform, ScrollView, StatusBar, Image, ActivityIndicator,
+    Animated,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
@@ -20,8 +21,19 @@ export default function LoginScreen({ onNavigateToRegister, onNavigateBack }: Pr
     const [password, setPassword] = useState('');
     const [showPass, setShowPass] = useState(false);
     const [loading, setLoading] = useState(false);
+    const [focusedInput, setFocusedInput] = useState<string | null>(null);
     const [error, setError] = useState('');
     const [keepConnected, setKeepConnected] = useState(true);
+
+    const fadeAnim = React.useRef(new Animated.Value(0)).current;
+    const slideAnim = React.useRef(new Animated.Value(30)).current;
+
+    useEffect(() => {
+        Animated.parallel([
+            Animated.timing(fadeAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
+            Animated.spring(slideAnim, { toValue: 0, tension: 20, friction: 7, useNativeDriver: true })
+        ]).start();
+    }, []);
 
     const handleLogin = async () => {
         if (!email.trim() || !password) {
@@ -31,11 +43,8 @@ export default function LoginScreen({ onNavigateToRegister, onNavigateBack }: Pr
         setError('');
         setLoading(true);
         try {
-            // Save the persistence preference
             await AsyncStorage.setItem('keep_connected', JSON.stringify(keepConnected));
-            
             await signIn(email.trim().toLowerCase(), password);
-            // Persistence is handled by AsyncStorage in supabase.ts
         } catch (e: any) {
             setError(e.message ?? 'Login failed. Please try again.');
         } finally {
@@ -44,257 +53,332 @@ export default function LoginScreen({ onNavigateToRegister, onNavigateBack }: Pr
     };
 
     return (
-        <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-            <StatusBar barStyle="light-content" />
-
+        <View style={styles.container}>
+            <StatusBar barStyle="dark-content" translucent backgroundColor="transparent" />
+            
+            {/* Light Premium Background */}
             <LinearGradient
-                colors={Gradients.dark as any}
-                style={styles.header}
-                start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                colors={['#ffffff', '#f8f9ff', '#f0f4ff']}
+                style={StyleSheet.absoluteFillObject}
+            />
+            
+            <View style={styles.glowOrb1} />
+            <View style={styles.glowOrb2} />
+
+            <KeyboardAvoidingView 
+                style={{ flex: 1 }} 
+                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             >
-                <TouchableOpacity onPress={onNavigateBack} style={styles.backBtn} activeOpacity={0.7}>
-                    <Ionicons name="chevron-back" size={26} color="#fff" />
-                </TouchableOpacity>
-
-                <View style={styles.headerContent}>
-                    <Image
-                        source={{ uri: 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/website/Logomain.png' }}
-                        style={styles.headerLogo}
-                        resizeMode="contain"
-                    />
-                    <Text style={styles.greeting}>Welcome Back</Text>
-                    <Text style={styles.subGreeting}>Sign in to your account</Text>
-                </View>
-
-                {/* Subtle tech pattern */}
-                <View style={styles.techLine} />
-            </LinearGradient>
-
-            <ScrollView
-                contentContainerStyle={styles.scroll}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-            >
-                <View style={styles.formCard}>
-                    {!!error && (
-                        <View style={styles.errorBox}>
-                            <Ionicons name="warning" size={18} color={Colors.error} />
-                            <Text style={styles.errorText}>{error}</Text>
-                        </View>
-                    )}
-
-                    <View style={styles.inputGroup}>
-                        <Text style={styles.inputLabel}>EMAIL ADDRESS</Text>
-                        <View style={styles.inputContainer}>
-                            <Ionicons name="mail-outline" size={20} color={Colors.primary} style={styles.inputIcon} />
-                            <TextInput
-                                style={styles.input}
-                                placeholder="name@example.com"
-                                placeholderTextColor={Colors.textMuted}
-                                value={email}
-                                onChangeText={setEmail}
-                                keyboardType="email-address"
-                                autoCapitalize="none"
-                                selectionColor={Colors.primary}
-                            />
-                        </View>
-                    </View>
-
-                    <View style={styles.inputGroup}>
-                        <Text style={styles.inputLabel}>PASSWORD</Text>
-                        <View style={styles.inputContainer}>
-                            <Ionicons name="lock-closed-outline" size={20} color={Colors.primary} style={styles.inputIcon} />
-                            <TextInput
-                                style={[styles.input, { paddingRight: 50 }]}
-                                placeholder="Enter your password"
-                                placeholderTextColor={Colors.textMuted}
-                                value={password}
-                                onChangeText={setPassword}
-                                secureTextEntry={!showPass}
-                                selectionColor={Colors.primary}
-                            />
-                            <TouchableOpacity onPress={() => setShowPass(!showPass)} style={styles.eyeIcon}>
-                                <Ionicons name={showPass ? 'eye-off' : 'eye'} size={20} color={Colors.textMuted} />
-                            </TouchableOpacity>
-                        </View>
-                    </View>
-
-                    <TouchableOpacity
-                        style={styles.keepRow}
-                        onPress={() => setKeepConnected(!keepConnected)}
-                        activeOpacity={0.8}
-                    >
-                        <View style={[styles.checkbox, keepConnected && styles.checkboxActive]}>
-                            {keepConnected && <Ionicons name="checkmark-sharp" size={14} color="#fff" />}
-                        </View>
-                        <Text style={styles.keepText}>Keep me logged in</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity onPress={handleLogin} activeOpacity={0.9} disabled={loading} style={styles.loginBtnWrapper}>
-                        <LinearGradient
-                            colors={Gradients.primary as any}
-                            start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-                            style={styles.loginBtn}
+                <ScrollView
+                    contentContainerStyle={styles.scroll}
+                    keyboardShouldPersistTaps="handled"
+                    showsVerticalScrollIndicator={false}
+                >
+                    <Animated.View style={[styles.content, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
+                        <TouchableOpacity 
+                            onPress={onNavigateBack} 
+                            style={styles.backBtn}
+                            activeOpacity={0.7}
                         >
-                            {loading ? (
-                                <ActivityIndicator color="#fff" />
-                            ) : (
-                                <View style={styles.btnContent}>
-                                    <Text style={styles.loginBtnText}>LOG IN</Text>
-                                    <Ionicons name="log-in-outline" size={20} color="#fff" />
+                            <View style={styles.backBtnInner}>
+                                <Ionicons name="chevron-back" size={24} color={Colors.textPrimary} />
+                            </View>
+                        </TouchableOpacity>
+
+                        <View style={styles.headerHero}>
+                            <Image
+                                source={{ uri: 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/website/Logomain.png' }}
+                                style={styles.logo}
+                                resizeMode="contain"
+                            />
+                            <Text style={styles.greeting}>Welcome Back</Text>
+                            <Text style={styles.subGreeting}>Sign in to your account</Text>
+                        </View>
+
+                        <View style={styles.formCard}>
+                            {!!error && (
+                                <View style={styles.errorBox}>
+                                    <View style={styles.errorIndicator} />
+                                    <Text style={styles.errorText}>{error}</Text>
                                 </View>
                             )}
-                        </LinearGradient>
-                    </TouchableOpacity>
 
-                    <View style={styles.footer}>
-                        <View style={styles.divider} />
-                        <TouchableOpacity style={styles.registerLink} onPress={onNavigateToRegister}>
-                            <Text style={styles.footerText}>Don't have an account? </Text>
-                            <Text style={styles.regText}>Sign Up</Text>
-                        </TouchableOpacity>
-                    </View>
-                </View>
-            </ScrollView>
-        </KeyboardAvoidingView>
+                            <View style={styles.inputSection}>
+                                <Text style={styles.label}>EMAIL ADDRESS</Text>
+                                <View style={[
+                                    styles.inputContainer,
+                                    focusedInput === 'email' && styles.inputFocused
+                                ]}>
+                                    <Ionicons 
+                                        name="mail-outline" 
+                                        size={20} 
+                                        color={focusedInput === 'email' ? Colors.primary : Colors.textMuted} 
+                                    />
+                                    <TextInput
+                                        style={styles.input}
+                                        placeholder="name@example.com"
+                                        placeholderTextColor={Colors.textMuted}
+                                        value={email}
+                                        onChangeText={setEmail}
+                                        keyboardType="email-address"
+                                        autoCapitalize="none"
+                                        autoCorrect={false}
+                                        spellCheck={false}
+                                        onFocus={() => setFocusedInput('email')}
+                                        onBlur={() => setFocusedInput(null)}
+                                        selectionColor={Colors.primary}
+                                    />
+                                </View>
+                            </View>
+
+                            <View style={styles.inputSection}>
+                                <Text style={styles.label}>PASSWORD</Text>
+                                <View style={[
+                                    styles.inputContainer,
+                                    focusedInput === 'password' && styles.inputFocused
+                                ]}>
+                                    <Ionicons 
+                                        name="lock-closed-outline" 
+                                        size={20} 
+                                        color={focusedInput === 'password' ? Colors.primary : Colors.textMuted} 
+                                    />
+                                    <TextInput
+                                        style={styles.input}
+                                        placeholder="Enter your password"
+                                        placeholderTextColor={Colors.textMuted}
+                                        value={password}
+                                        onChangeText={setPassword}
+                                        secureTextEntry={!showPass}
+                                        autoCorrect={false}
+                                        spellCheck={false}
+                                        onFocus={() => setFocusedInput('password')}
+                                        onBlur={() => setFocusedInput(null)}
+                                        selectionColor={Colors.primary}
+                                    />
+                                    <TouchableOpacity 
+                                        onPress={() => setShowPass(!showPass)} 
+                                        hitSlop={{top:10, bottom:10, left:10, right:10}}
+                                    >
+                                        <Ionicons 
+                                            name={showPass ? 'eye-off-outline' : 'eye-outline'} 
+                                            size={20} 
+                                            color={Colors.textMuted} 
+                                        />
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+
+                            <View style={styles.optionsRow}>
+                                <TouchableOpacity 
+                                    style={styles.checkbox} 
+                                    onPress={() => setKeepConnected(!keepConnected)}
+                                    activeOpacity={0.8}
+                                >
+                                    <View style={[styles.check, keepConnected && styles.checkActive]}>
+                                        {keepConnected && <Ionicons name="checkmark" size={12} color="#fff" />}
+                                    </View>
+                                    <Text style={styles.checkLabel}>Keep me logged in</Text>
+                                </TouchableOpacity>
+                                
+                                <TouchableOpacity>
+                                    <Text style={styles.forgotText}>Forgot Password?</Text>
+                                </TouchableOpacity>
+                            </View>
+
+                            <TouchableOpacity 
+                                activeOpacity={0.9} 
+                                onPress={handleLogin} 
+                                disabled={loading}
+                                style={styles.btnWrapper}
+                            >
+                                <LinearGradient
+                                    colors={Gradients.primary as any}
+                                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                                    style={styles.mainBtn}
+                                >
+                                    {loading ? (
+                                        <ActivityIndicator color="#fff" />
+                                    ) : (
+                                        <View style={styles.btnContent}>
+                                            <Text style={styles.btnText}>LOG IN</Text>
+                                            <Ionicons name="log-in-outline" size={20} color="#fff" />
+                                        </View>
+                                    )}
+                                </LinearGradient>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity 
+                                style={styles.registerLink} 
+                                onPress={onNavigateToRegister}
+                                activeOpacity={0.7}
+                            >
+                                <Text style={styles.footerText}>Don't have an account? </Text>
+                                <Text style={styles.registerText}>Sign Up</Text>
+                            </TouchableOpacity>
+                        </View>
+                        
+                        <Text style={styles.legal}>© 2026 KAPSELY INC. // SECURED ENCRYPTION</Text>
+                    </Animated.View>
+                </ScrollView>
+            </KeyboardAvoidingView>
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: Colors.background,
+        backgroundColor: '#ffffff',
     },
-    header: {
-        height: 220,
-        paddingTop: Platform.OS === 'ios' ? 60 : 40,
+    scroll: {
+        flexGrow: 1,
         paddingHorizontal: Spacing.xl,
-        overflow: 'hidden',
+        paddingTop: Platform.OS === 'ios' ? 60 : 40,
+        paddingBottom: 40,
+    },
+    content: {
+        flex: 1,
     },
     backBtn: {
-        width: 44,
-        height: 44,
-        borderRadius: 22,
-        backgroundColor: 'rgba(255,255,255,0.1)',
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        overflow: 'hidden',
+        marginBottom: Spacing.xl,
+    },
+    backBtnInner: {
+        flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
-        marginBottom: Spacing.lg,
+        backgroundColor: 'rgba(0,0,0,0.04)',
+        borderWidth: 1,
+        borderColor: 'rgba(0,0,0,0.06)',
+        borderRadius: 24,
     },
-    headerContent: {
-        zIndex: 5,
+    headerHero: {
+        alignItems: 'center',
+        marginBottom: Spacing.xxl,
+    },
+    logo: {
+        width: 64,
+        height: 64,
+        marginBottom: 20,
     },
     greeting: {
-        color: '#fff',
-        fontSize: 32,
+        fontSize: 34,
         fontFamily: Fonts.bold,
+        color: Colors.textPrimary,
         letterSpacing: -1,
     },
     subGreeting: {
-        color: 'rgba(255,255,255,0.6)',
-        fontSize: 14,
+        fontSize: 15,
         fontFamily: Fonts.medium,
-        marginTop: 4,
-    },
-    techLine: {
-        position: 'absolute',
-        top: 80,
-        right: -50,
-        width: 200,
-        height: 1,
-        backgroundColor: '#fff',
-        opacity: 0.15,
-        transform: [{ rotate: '-45deg' }],
-    },
-    scroll: {
-        paddingHorizontal: Spacing.lg,
-        paddingBottom: 40,
+        color: Colors.textSecondary,
+        marginTop: 6,
     },
     formCard: {
         backgroundColor: Colors.surface,
         borderRadius: BorderRadius.xl,
         padding: Spacing.lg,
-        paddingTop: Spacing.xl,
         ...Shadow.lg,
+        borderWidth: 1,
+        borderColor: Colors.border,
     },
     errorBox: {
+        backgroundColor: '#fff1f1',
+        padding: 16,
+        borderRadius: BorderRadius.lg,
         flexDirection: 'row',
         alignItems: 'center',
-        padding: 14,
-        backgroundColor: '#fff1f1',
-        borderRadius: BorderRadius.md,
+        marginBottom: 20,
         borderWidth: 1,
         borderColor: Colors.error + '22',
-        marginBottom: Spacing.lg,
-        gap: 10,
+    },
+    errorIndicator: {
+        width: 4,
+        height: 20,
+        backgroundColor: Colors.error,
+        borderRadius: 2,
+        marginRight: 12,
     },
     errorText: {
         color: Colors.error,
         fontSize: 13,
-        fontFamily: Fonts.medium,
+        fontFamily: Fonts.semiBold,
         flex: 1,
     },
-    inputGroup: {
-        marginBottom: Spacing.lg,
+    inputSection: {
+        marginBottom: 20,
     },
-    inputLabel: {
+    label: {
         fontSize: 10,
         fontFamily: Fonts.bold,
         color: Colors.textMuted,
-        letterSpacing: 2,
-        marginBottom: 8,
+        letterSpacing: 1.5,
+        marginBottom: 10,
         marginLeft: 4,
     },
     inputContainer: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: Colors.background,
+        backgroundColor: '#f9f9ff',
         borderRadius: BorderRadius.lg,
         borderWidth: 1.5,
         borderColor: Colors.border,
         paddingHorizontal: 16,
+        height: 60,
     },
-    inputIcon: {
-        marginRight: 12,
+    inputFocused: {
+        borderColor: Colors.primary,
+        backgroundColor: '#fbfaff',
     },
     input: {
         flex: 1,
-        height: 56,
         color: Colors.textPrimary,
         fontSize: 16,
         fontFamily: Fonts.medium,
+        marginLeft: 12,
     },
-    eyeIcon: {
-        position: 'absolute',
-        right: 16,
-    },
-    keepRow: {
+    optionsRow: {
         flexDirection: 'row',
+        justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: Spacing.xl,
-        gap: 12,
+        marginTop: 4,
+        marginBottom: 28,
     },
     checkbox: {
-        width: 20,
-        height: 20,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+    },
+    check: {
+        width: 22,
+        height: 22,
         borderRadius: 6,
         borderWidth: 2,
-        borderColor: Colors.primary,
+        borderColor: Colors.border,
         alignItems: 'center',
         justifyContent: 'center',
     },
-    checkboxActive: {
+    checkActive: {
         backgroundColor: Colors.primary,
+        borderColor: Colors.primary,
     },
-    keepText: {
+    checkLabel: {
+        color: Colors.textSecondary,
         fontSize: 14,
         fontFamily: Fonts.medium,
-        color: Colors.textSecondary,
     },
-    loginBtnWrapper: {
+    forgotText: {
+        color: Colors.primary,
+        fontSize: 13,
+        fontFamily: Fonts.semiBold,
+    },
+    btnWrapper: {
         ...Shadow.primary,
     },
-    loginBtn: {
-        height: 60,
+    mainBtn: {
+        height: 64,
         borderRadius: BorderRadius.xl,
         alignItems: 'center',
         justifyContent: 'center',
@@ -302,48 +386,56 @@ const styles = StyleSheet.create({
     btnContent: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 12,
+        gap: 14,
     },
-    loginBtnText: {
+    btnText: {
         color: '#fff',
         fontSize: 16,
         fontFamily: Fonts.bold,
-        letterSpacing: 2,
-    },
-    btnDot: {
-        width: 6,
-        height: 6,
-        borderRadius: 3,
-        backgroundColor: '#fff',
-    },
-    headerLogo: {
-        width: 40,
-        height: 40,
-        marginBottom: 12,
-    },
-    footer: {
-        marginTop: Spacing.xl,
-        alignItems: 'center',
-    },
-    divider: {
-        width: 40,
-        height: 3,
-        backgroundColor: Colors.border,
-        borderRadius: 1.5,
-        marginBottom: Spacing.xl,
+        letterSpacing: 1,
     },
     registerLink: {
+        marginTop: 24,
         flexDirection: 'row',
+        justifyContent: 'center',
         alignItems: 'center',
+        paddingVertical: 10,
     },
     footerText: {
         color: Colors.textMuted,
         fontSize: 14,
         fontFamily: Fonts.medium,
     },
-    regText: {
-        color: Colors.primaryDark,
+    registerText: {
+        color: Colors.primary,
         fontSize: 14,
         fontFamily: Fonts.bold,
+    },
+    legal: {
+        textAlign: 'center',
+        marginTop: 40,
+        fontSize: 9,
+        fontFamily: Fonts.medium,
+        color: Colors.textMuted,
+        letterSpacing: 1,
+        opacity: 0.6,
+    },
+    glowOrb1: {
+        position: 'absolute',
+        top: -100,
+        left: -100,
+        width: 300,
+        height: 300,
+        borderRadius: 150,
+        backgroundColor: 'rgba(121, 56, 255, 0.05)',
+    },
+    glowOrb2: {
+        position: 'absolute',
+        bottom: 50,
+        right: -150,
+        width: 400,
+        height: 400,
+        borderRadius:200,
+        backgroundColor: 'rgba(0, 242, 255, 0.03)',
     },
 });

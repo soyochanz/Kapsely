@@ -1,10 +1,12 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
     View, Text, StyleSheet, ScrollView, TouchableOpacity,
     TextInput, StatusBar, SafeAreaView, Dimensions, Switch,
     Image, Pressable, PanResponder, Animated, Alert, ActivityIndicator, Easing, Modal,
-    Platform, KeyboardAvoidingView, Keyboard
+    Platform, KeyboardAvoidingView, Keyboard,
 } from 'react-native';
+import * as NavigationBar from 'expo-navigation-bar';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Slider from '@react-native-community/slider';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -864,7 +866,7 @@ export default function CapsuleCreationScreen() {
     const scrollRef = useRef<ScrollView>(null);
     const [currentStep, setCurrentStep] = useState<Step>('type');
     const [selectedType, setSelectedType] = useState<CapsuleType | null>(null);
-    const [selectedModel, setSelectedModel] = useState('beach');
+    const [selectedModel, setSelectedModel] = useState('basic_red');
     const [hasLegacyCap, setHasLegacyCap] = useState(false);
     const [modelSearch, setModelSearch] = useState('');
     const [modelCategory, setModelCategory] = useState('All');
@@ -924,12 +926,13 @@ export default function CapsuleCreationScreen() {
         return availableModels.find(m => m.is_event && isEventActive(m.event_start, m.event_end));
     }, [availableModels]);
 
-    const capsuleTypes: {
-        id: CapsuleType; title: string; tagline: string; description: string;
-        color: string; bgColor: string; icon: string;
-        rules: { icon: string; text: string }[]; limit: string;
-        disabled?: boolean;
-    }[] = [
+    const capsuleTypes = useMemo(() => {
+        const types: {
+            id: CapsuleType; title: string; tagline: string; description: string;
+            color: string; bgColor: string; icon: string;
+            rules: { icon: string; text: string }[]; limit: string;
+            disabled?: boolean;
+        }[] = [
             {
                 id: 'legacycap', title: 'LegacyCap', tagline: 'The capsule of your life',
                 description: 'The most exclusive and symbolic capsule in Kapsely. A message to your future self — identity, legacy, permanence.',
@@ -968,16 +971,28 @@ export default function CapsuleCreationScreen() {
                 disabled: !activeEvent,
             },
         ];
+        return types;
+    }, [activeEvent, hasLegacyCap]);
+
+    const activeCfg = useMemo(() => {
+        return selectedType ? capsuleTypes.find((t: any) => t.id === selectedType) : null;
+    }, [selectedType, capsuleTypes]);
 
     const stepIndex = STEPS.indexOf(currentStep);
-    const activeCfg = selectedType ? capsuleTypes.find((t: any) => t.id === selectedType) : null;
-    const activeModel = availableModels.find((m: any) => m.id === selectedModel) ?? availableModels[0] ?? CAPSULE_MODELS[0];
+    const activeModel = availableModels.find((m: any) => m.id === selectedModel) 
+        ? availableModels.find((m: any) => m.id === selectedModel)
+        : (CAPSULE_MODELS as any).find((m: any) => m.id === selectedModel) ?? CAPSULE_MODELS[0];
 
     const [activeThemeColor, setActiveThemeColor] = useState(() => {
         return timerConfigManager.getConfig(selectedModel)?.themeColor || (activeCfg?.color ?? Colors.primary);
     });
 
     useEffect(() => {
+        if (Platform.OS === 'android') {
+            NavigationBar.setVisibilityAsync('hidden');
+            NavigationBar.setBehaviorAsync('inset-touch');
+        }
+
         // Hide bottom tab bar while creating a capsule
         const parent = navigation.getParent();
         if (parent) {
@@ -1027,7 +1042,8 @@ export default function CapsuleCreationScreen() {
     }, [selectedModel, activeCfg]);
 
     useEffect(() => {
-        if (userSearchQuery.trim().length > 1) {
+        const query = userSearchQuery.trim();
+        if (query.length > 0) {
             const delayDebounceFn = setTimeout(() => {
                 searchUsers();
             }, 300);
@@ -1038,18 +1054,30 @@ export default function CapsuleCreationScreen() {
     }, [userSearchQuery]);
 
     const searchUsers = async () => {
+        const query = userSearchQuery.trim();
+        if (!query) return;
+
         setSearchingUsers(true);
-        const { data } = await supabase
+        const { data: { user } } = await supabase.auth.getUser();
+
+        let dbQuery = supabase
             .from('profiles')
             .select('*')
-            .or(`username.ilike.%${userSearchQuery}%,display_name.ilike.%${userSearchQuery}%`)
+            .or(`username.ilike.%${query}%,display_name.ilike.%${query}%`)
             .limit(10);
+
+        if (user) {
+            dbQuery = dbQuery.neq('id', user.id);
+        }
+
+        const { data } = await dbQuery;
         if (data) setUserSearchResults(data);
         setSearchingUsers(false);
     };
 
     useEffect(() => {
-        if (capAngelSearchQuery.trim().length > 1) {
+        const query = capAngelSearchQuery.trim();
+        if (query.length > 0) {
             const delayDebounceFn = setTimeout(() => {
                 searchCapAngels();
             }, 300);
@@ -1060,12 +1088,23 @@ export default function CapsuleCreationScreen() {
     }, [capAngelSearchQuery]);
 
     const searchCapAngels = async () => {
+        const query = capAngelSearchQuery.trim();
+        if (!query) return;
+
         setSearchingCapAngel(true);
-        const { data } = await supabase
+        const { data: { user } } = await supabase.auth.getUser();
+
+        let dbQuery = supabase
             .from('profiles')
             .select('*')
-            .or(`username.ilike.%${capAngelSearchQuery}%,display_name.ilike.%${capAngelSearchQuery}%`)
+            .or(`username.ilike.%${query}%,display_name.ilike.%${query}%`)
             .limit(10);
+
+        if (user) {
+            dbQuery = dbQuery.neq('id', user.id);
+        }
+
+        const { data } = await dbQuery;
         if (data) setCapAngelSearchResults(data);
         setSearchingCapAngel(false);
     };
@@ -1145,12 +1184,32 @@ export default function CapsuleCreationScreen() {
 
     const stepLabels = ['Type', 'Content', 'Schedule', 'Angel', 'Review'];
 
-    // ── Compute final duration in days ────────────────────────────────────────
+    // ── Compute final opening date ──────────────────────────────────────────
     const finalDays: number | null =
         selectedType === 'legacycap' ? 365 * 5 :
             selectedType === 'eventcap' ? null :
                 showCustomSlider ? customDays :
                     selectedPreset;
+
+    const openingDate = useMemo(() => {
+        if (selectedType === 'eventcap' && activeEvent) {
+            return activeEvent.event_end;
+        }
+        if (finalDays) {
+            // Use date at start of current minute to keep it stable enough for UI but accurate
+            const today = new Date();
+            today.setSeconds(0, 0);
+            return new Date(today.getTime() + finalDays * 86400000).toISOString();
+        }
+        // Use a stable dummy date for preview if nothing is selected yet
+        return new Date(Date.now() + 365 * 86400000).toISOString();
+    }, [selectedType, activeEvent, finalDays]);
+
+    const displayOpeningDate = useMemo(() => {
+        return new Date(openingDate).toLocaleDateString('en-US', { 
+            year: 'numeric', month: 'long', day: 'numeric' 
+        });
+    }, [openingDate]);
 
     // ── Seal capsule → save to Supabase ───────────────────────────────────────
     const sealCapsule = async () => {
@@ -1169,19 +1228,19 @@ export default function CapsuleCreationScreen() {
 
         setSealing(true);
 
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) {
-            Alert.alert('Error', 'You must be logged in to create a capsule.');
-            setSealing(false);
-            return;
-        }
-        if (!selectedType) {
-            Alert.alert('Error', 'Please select a capsule type.');
-            setSealing(false);
-            return;
-        }
-
         try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) {
+                Alert.alert('Error', 'You must be logged in to create a capsule.');
+                setSealing(false);
+                return;
+            }
+            if (!selectedType) {
+                Alert.alert('Error', 'Please select a capsule type.');
+                setSealing(false);
+                return;
+            }
+
             // Check legacy cap limit (1 per account)
             if (selectedType === 'legacycap') {
                 const { count, error: countError } = await supabase
@@ -1199,12 +1258,12 @@ export default function CapsuleCreationScreen() {
                 }
             }
 
-            // invitedUsers handling moved to capsule_invites table
-
             const opensAt = selectedType === 'eventcap' && activeEvent
                 ? activeEvent.event_end
                 : finalDays ? new Date(Date.now() + finalDays * 86400000).toISOString() : null;
-            const { data: newCapsule, error } = await supabase.from('capsules').insert({
+
+            // Prepare the insert object - removing redundant/suspect columns that might be missing from DB
+            const insertData: any = {
                 owner_id: user.id,
                 type: selectedType,
                 model: selectedModel,
@@ -1212,31 +1271,33 @@ export default function CapsuleCreationScreen() {
                 description,
                 event_code: eventCode || null,
                 is_shared: isShared,
-                invite_handle: invitedUsers.length > 0 ? invitedUsers[0].username : null,
-                invited_user_id: invitedUsers.length > 0 ? invitedUsers[0].id : null,
-                invite_status: invitedUsers.length > 0 ? 'pending' : 'none',
-                cap_angel: capAngel,
-                cap_angel_id: selectedCapAngel?.id || null,
-                cap_angel_handle: capAngelHandle || null,
                 duration_days: finalDays,
                 opens_at: opensAt,
                 is_public: isPublic,
                 status: 'sealed',
                 chain_id: selectedChainId || null,
-            }).select().single();
+            };
+
+            const { data: newCapsule, error } = await supabase
+                .from('capsules')
+                .insert(insertData)
+                .select()
+                .single();
 
             if (error) {
-                setSealing(false);
+                console.error('Sealing error (capsule):', error);
                 throw error;
             }
 
+            // invitedUsers handling (via capsule_invites table)
             if (invitedUsers.length > 0 && newCapsule) {
                 const inviteData = invitedUsers.map(u => ({
                     capsule_id: newCapsule.id,
                     user_id: u.id,
                     status: 'pending'
                 }));
-                await supabase.from('capsule_invites').insert(inviteData);
+                const { error: inviteError } = await supabase.from('capsule_invites').insert(inviteData);
+                if (inviteError) console.warn('Invite insertion error:', inviteError);
 
                 const notifs = invitedUsers.map(u => ({
                     user_id: u.id,
@@ -1290,7 +1351,7 @@ export default function CapsuleCreationScreen() {
 
                     // reset
                     setCurrentStep('type'); setSelectedType(null); setTitle(''); setDescription('');
-                    setSelectedModel('beach'); setSelectedPreset(null); setShowCustomSlider(false);
+                    setSelectedModel('basic_red'); setSelectedPreset(null); setShowCustomSlider(false);
                     setIsPublic(true); setCapAngel(false); setIsShared(false); setInvitedUsers([]);
                     setCapAngelHandle(''); setSelectedCapAngel(null); setCapAngelSearchQuery(''); setCapAngelSearchResults([]);
                     setModelSearch(''); setModelCategory('All');
@@ -1303,6 +1364,7 @@ export default function CapsuleCreationScreen() {
             });
 
         } catch (e: any) {
+            console.error('Final seal stage error:', e);
             Alert.alert('Error', e.message ?? 'Could not save capsule.');
             setSealing(false);
         }
@@ -1458,7 +1520,7 @@ export default function CapsuleCreationScreen() {
                                 <CapsuleWithTimer
                                     modelKey={selectedModel}
                                     source={{ uri: activeModel.image }}
-                                    date={finalDays ? addDays(finalDays).toISOString() : new Date().toISOString()}
+                                    date={openingDate}
                                     chainId={selectedChainId}
                                     capsuleType={selectedType || undefined}
                                     style={styles.heroImage}
@@ -1512,9 +1574,9 @@ export default function CapsuleCreationScreen() {
 
 
             <KeyboardAvoidingView 
-                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
                 style={{ flex: 1 }}
-                keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+                keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}
             >
                 <ScrollView 
                     ref={scrollRef}
@@ -1735,6 +1797,12 @@ export default function CapsuleCreationScreen() {
                                     </View>
                                 )}
 
+                                {userSearchQuery.length > 0 && userSearchResults.length === 0 && !searchingUsers && (
+                                    <View style={[styles.searchResults, { padding: 15, alignItems: 'center' }]}>
+                                        <Text style={{ color: Colors.textMuted, fontSize: 13, fontFamily: Fonts.medium }}>No users found for "{userSearchQuery}"</Text>
+                                    </View>
+                                )}
+
                                 <Text style={styles.helperText}>Invite other players to add memories together</Text>
                             </View>
                         )}
@@ -1751,7 +1819,8 @@ export default function CapsuleCreationScreen() {
                                 value={title}
                                 onChangeText={setTitle}
                                 maxLength={30}
-                                onFocus={() => scrollRef.current?.scrollTo({ y: 300, animated: true })}
+                                autoCorrect={false}
+                                spellCheck={false}
                             />
                         </View>
 
@@ -1763,8 +1832,8 @@ export default function CapsuleCreationScreen() {
                                 value={description} onChangeText={setDescription}
                                 multiline numberOfLines={4}
                                 selectionColor={activeThemeColor}
-                                onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}
-                                onFocus={() => scrollRef.current?.scrollToEnd({ animated: true })}
+                                autoCorrect={false}
+                                spellCheck={false}
                             />
                         </View>
 
@@ -1805,7 +1874,7 @@ export default function CapsuleCreationScreen() {
                                 <View style={{ flex: 1 }}>
                                     <Text style={[styles.fixedDateLabel, { color: Colors.legacyCap }]}>Fixed Opening: 5 Years</Text>
                                     <Text style={styles.fixedDateSub}>
-                                        Opens on {addDays(365 * 5).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+                                        Opens on {displayOpeningDate}
                                     </Text>
                                 </View>
                             </View>
@@ -1875,7 +1944,7 @@ export default function CapsuleCreationScreen() {
                                         <View>
                                             <Text style={styles.selectedDateLabel}>Opening date</Text>
                                             <Text style={[styles.selectedDateValue, { color: Colors.instaCap }]}>
-                                                {addDays(showCustomSlider ? customDays : selectedPreset!).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+                                                {displayOpeningDate}
                                             </Text>
                                         </View>
                                     </View>
@@ -1964,7 +2033,7 @@ export default function CapsuleCreationScreen() {
                                                 </ScrollView>
                                             </View>
                                         )}
-                                        {capAngelSearchQuery.length > 2 && capAngelSearchResults.length === 0 && !searchingCapAngel && (
+                                        {capAngelSearchQuery.length > 0 && capAngelSearchResults.length === 0 && !searchingCapAngel && (
                                             <View style={[styles.autocompleteDropdown, { padding: 15, alignItems: 'center' }]}>
                                                 <Text style={{ color: Colors.textMuted, fontSize: 13, fontFamily: Fonts.medium }}>No users found for "{capAngelSearchQuery}"</Text>
                                             </View>
@@ -2002,7 +2071,7 @@ export default function CapsuleCreationScreen() {
                                 <CapsuleWithTimer
                                     modelKey={selectedModel}
                                     source={{ uri: activeModel.image }}
-                                    date={finalDays ? addDays(finalDays).toISOString() : new Date().toISOString()}
+                                    date={openingDate}
                                     chainId={selectedChainId}
                                     capsuleType={selectedType || undefined}
                                     style={styles.reviewHeroImg}

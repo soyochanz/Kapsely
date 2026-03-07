@@ -74,7 +74,7 @@ const ChocolateDrip = ({ width, height }: { width: number, height: number }) => 
     }, []);
 
     return (
-        <View style={StyleSheet.absoluteFill} pointerEvents="none">
+        <View style={[StyleSheet.absoluteFill, { pointerEvents: 'none' }]}>
             {drips.map((d) => (
                 <Animated.View
                     key={d.id}
