@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import {
-    View, Text, StyleSheet, ScrollView, SafeAreaView, TouchableOpacity, StatusBar, ActivityIndicator,
-} from 'react-native';
+import { Platform, View, Text, StyleSheet, ScrollView, TouchableOpacity, StatusBar, ActivityIndicator, } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts, Spacing, BorderRadius } from '../theme';
 import SwipeableNotificationItem from '../components/SwipeableNotificationItem';
 import { Notification } from '../data/mockNotifications';
 import { supabase } from '../lib/supabase';
+import { clearBadgeCount } from '../utils/pushNotifications';
 
 export default function NotificationsScreen() {
+    const insets = useSafeAreaInsets();
     const [notifications, setNotifications] = useState<Notification[]>([]);
     const [loading, setLoading] = useState(true);
     const [scrollEnabled, setScrollEnabled] = useState(true);
@@ -19,11 +20,7 @@ export default function NotificationsScreen() {
 
         const { data, error } = await supabase
             .from('notifications')
-            .select(`
-                *,
-                sender:sender_id(username, avatar_url),
-                capsules(title, type, model, chain_id, opens_at)
-            `)
+            .select('*, sender:sender_id(username, avatar_url), capsules(title, type, model, chain_id, opens_at, owner_id)')
             .eq('user_id', user.id)
             .order('created_at', { ascending: false });
 
@@ -45,11 +42,13 @@ export default function NotificationsScreen() {
                     time: formatTime(n.created_at),
                     isRead: n.is_read,
                     capsuleId: n.capsule_id,
+                    conversationId: n.conversation_id,
                     capsuleTitle: n.capsules?.title,
                     capsuleType: n.capsules?.type,
                     capsuleModel: n.capsules?.model,
                     capsuleChainId: n.capsules?.chain_id,
                     capsuleOpensAt: n.capsules?.opens_at,
+                    capsuleOwnerId: n.capsules?.owner_id,
                     createdAt: n.created_at,
                     isExpired,
                     expiryDate,
@@ -62,6 +61,23 @@ export default function NotificationsScreen() {
 
     useEffect(() => {
         loadNotifications();
+        if (Platform.OS !== 'web') clearBadgeCount();
+
+        // Subscribe to real-time notifications
+        const channel = supabase
+            .channel('notifications_realtime')
+            .on('postgres_changes', {
+                event: 'INSERT',
+                schema: 'public',
+                table: 'notifications'
+            }, () => {
+                loadNotifications();
+            })
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
     }, []);
 
     const formatTime = (dateStr: string) => {
@@ -101,6 +117,17 @@ export default function NotificationsScreen() {
             supabase.from('capsule_invites').update({ status: 'accepted' }).eq('capsule_id', n.capsuleId).eq('user_id', user.id),
             handleDelete(n.id)
         ]);
+
+        // Notify owner
+        if (n.capsuleOwnerId && n.capsuleOwnerId !== user.id) {
+            await supabase.from('notifications').insert({
+                user_id: n.capsuleOwnerId,
+                sender_id: user.id,
+                type: 'system',
+                capsule_id: n.capsuleId,
+                message: `accepted your invite to "${n.capsuleTitle || 'a capsule'}"`,
+            });
+        }
     };
 
     const handleRejectInvite = async (n: Notification) => {
@@ -145,8 +172,8 @@ export default function NotificationsScreen() {
 
     return (
         <View style={styles.container}>
-            <StatusBar barStyle="dark-content" backgroundColor={Colors.surface} />
-            <SafeAreaView>
+            <StatusBar barStyle="dark-content" backgroundColor={Colors.background} />
+            <View style={{ paddingTop: insets.top + 15 }}>
                 <View style={styles.header}>
                     <View>
                         <Text style={styles.headerTitle}>Notifications</Text>
@@ -159,7 +186,7 @@ export default function NotificationsScreen() {
                         <Text style={styles.markAllText}>Mark all read</Text>
                     </TouchableOpacity>
                 </View>
-            </SafeAreaView>
+            </View>
 
             {/* Swipe hint banner */}
             <View style={styles.hintBar}>
@@ -205,8 +232,7 @@ const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: Colors.background },
     header: {
         flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-        paddingHorizontal: Spacing.md, paddingVertical: Spacing.md,
-        backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.border,
+        paddingHorizontal: Spacing.md, paddingBottom: 15,
     },
     headerTitle: { color: Colors.textPrimary, fontSize: 22, fontFamily: Fonts.bold },
     headerSubtitle: { color: Colors.primary, fontSize: 12, fontFamily: Fonts.medium, marginTop: 2 },
