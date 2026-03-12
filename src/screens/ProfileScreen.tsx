@@ -2,11 +2,14 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
     View, Text, StyleSheet, ScrollView, TouchableOpacity,
     Image, StatusBar, Dimensions, ActivityIndicator, Modal, RefreshControl,
-    Linking, Alert, Pressable, Animated, Easing, Platform
+    Linking, Alert, Pressable, Animated, Easing, Platform, FlatList
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { BlurView } from 'expo-blur';
+import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
 import { supabase } from '../lib/supabase';
 import EditProfileScreen from './EditProfileScreen';
@@ -19,23 +22,23 @@ import LiveTimer from '../components/LiveTimer';
 import CapsuleWithTimer from '../components/CapsuleWithTimer';
 import VerifiedBadge from '../components/VerifiedBadge';
 import { timerConfigManager } from '../utils/timerConfig';
+import StoryViewer from '../components/StoryViewer';
+
 
 type ProfileTab = 'all' | 'opened' | 'sealed';
 
-const TYPE_CONFIG: Record<string, { icon: string; color: string; label: string }> = {
-    instacap: { icon: 'camera', color: Colors.instaCap, label: 'Insta' },
-    eventcap: { icon: 'calendar', color: Colors.eventCap, label: 'Event' },
-    legacycap: { icon: 'time', color: Colors.legacyCap, label: 'Legacy' },
-};
+const TYPE_CONFIG = (t: any): Record<string, { icon: string; color: string; label: string }> => ({
+    instacap: { icon: 'camera', color: Colors.instaCap, label: t('create.instacap_label') },
+    eventcap: { icon: 'calendar', color: Colors.eventCap, label: t('create.eventcap_label') },
+    legacycap: { icon: 'time', color: Colors.legacyCap, label: t('create.legacycap_label') },
+});
 
 const STICKER_POSITIONS = [
-    { top: 5, left: 10, size: 85, rotation: '-12deg' },      // 1: Top Left
-    { top: 20, left: 90, size: 115, rotation: '8deg' },     // 2: Large Center-Left
-    { top: -10, right: 125, size: 75, rotation: '-15deg' },  // 3: Top Center-Right
-    { top: 5, right: 0, size: 95, rotation: '15deg' },       // 4: Top Right
-    { top: 70, right: 40, size: 65, rotation: '-8deg' },     // 5: Middle Right
-    { bottom: 5, right: 10, size: 105, rotation: '12deg' },  // 6: Bottom Right
-    { top: 35, left: width * 0.42, size: 90, rotation: '4deg' }, // 7: Center-ish
+    { top: 40, left: 20, size: 70, rotation: '-15deg' },   // 1: Top Left
+    { top: 25, left: width * 0.4, size: 90, rotation: '5deg' },  // 2: Top Center
+    { top: 45, right: 30, size: 75, rotation: '12deg' },   // 3: Top Right
+    { top: 120, left: 35, size: 65, rotation: '-8deg' },  // 4: Bottom Left
+    { top: 115, right: 40, size: 85, rotation: '18deg' },  // 5: Bottom Right
 ];
 
 // Extract capsule rendering to a memoized component for fluidity
@@ -51,19 +54,20 @@ const ProfileCapsuleCell = React.memo(({
     commentsCount,
     setPickerCapsuleId,
     themeColor,
-    capsuleMediaMap
+    capsuleMediaMap,
+    t
 }: any) => {
     const [modelImg, setModelImg] = useState(() => {
         return isSealed
-            ? (timerConfigManager.getModelImage(cap.model) || MODEL_IMAGES[cap.model] || MODEL_IMAGES.beach)
-            : (timerConfigManager.getModelImageOpen(cap.model) || MODEL_IMAGES_OPEN[cap.model] || MODEL_IMAGES[cap.model] || MODEL_IMAGES.beach);
+            ? (timerConfigManager.getModelImage(cap.model) || MODEL_IMAGES[cap.model] || (MODEL_IMAGES as any).basicred_kap)
+            : (timerConfigManager.getModelImageOpen(cap.model) || MODEL_IMAGES_OPEN[cap.model] || MODEL_IMAGES[cap.model] || (MODEL_IMAGES as any).basicred_kap);
     });
 
     useEffect(() => {
         const updateModel = () => {
             const nextImg = isSealed
-                ? (timerConfigManager.getModelImage(cap.model) || MODEL_IMAGES[cap.model] || MODEL_IMAGES.beach)
-                : (timerConfigManager.getModelImageOpen(cap.model) || MODEL_IMAGES_OPEN[cap.model] || MODEL_IMAGES[cap.model] || MODEL_IMAGES.beach);
+                ? (timerConfigManager.getModelImage(cap.model) || MODEL_IMAGES[cap.model] || (MODEL_IMAGES as any).basicred_kap)
+                : (timerConfigManager.getModelImageOpen(cap.model) || MODEL_IMAGES_OPEN[cap.model] || MODEL_IMAGES[cap.model] || (MODEL_IMAGES as any).basicred_kap);
             setModelImg(nextImg);
         };
         const unsubscribe = timerConfigManager.subscribe(updateModel);
@@ -73,9 +77,15 @@ const ProfileCapsuleCell = React.memo(({
 
     return (
         <TouchableOpacity
-            style={styles.sealedCell}
-            onPress={() => navigation.navigate('CapsuleDetail', { capsuleId: cap.id })}
-            onLongPress={() => !isSealed && isOwnProfile && capsuleMediaMap[cap.id]?.length > 1 && setPickerCapsuleId(cap.id)}
+            style={[styles.sealedCell, !cap.isAccessible && { opacity: 0.9 }]}
+            onPress={() => {
+                if (!cap.isAccessible) {
+                    Alert.alert(t('profile.private_capsule'), t('profile.private_capsule_msg'));
+                    return;
+                }
+                navigation.navigate('CapsuleDetail', { capsuleId: cap.id });
+            }}
+            onLongPress={() => cap.isAccessible && !isSealed && isOwnProfile && capsuleMediaMap[cap.id]?.length > 1 && setPickerCapsuleId(cap.id)}
             delayLongPress={400}
         >
             <View style={styles.sealedCellInner}>
@@ -88,6 +98,7 @@ const ProfileCapsuleCell = React.memo(({
                             chainId={cap.chain_id}
                             capsuleType={cap.type}
                             style={styles.sealedImgLarge}
+                            hideParticles
                         />
                     ) : (
                         <View style={styles.sealedImgLarge}>
@@ -102,6 +113,7 @@ const ProfileCapsuleCell = React.memo(({
                                     capsuleType={cap.type}
                                     style={styles.gridImg}
                                     hideTimer={true}
+                                    hideParticles
                                 />
                             )}
                         </View>
@@ -114,7 +126,7 @@ const ProfileCapsuleCell = React.memo(({
                     {cap.is_shared && (
                         <View style={styles.sharedBadge}>
                             <Ionicons name="people" size={10} color="#fff" />
-                            <Text style={styles.sharedBadgeText}>Shared</Text>
+                            <Text style={styles.sharedBadgeText}>{t('common.shared')}</Text>
                         </View>
                     )}
 
@@ -123,15 +135,22 @@ const ProfileCapsuleCell = React.memo(({
                             <Ionicons name="lock-closed" size={10} color="#fff" />
                         </View>
                     )}
+
+
                 </View>
 
                 {isSealed ? (
                     <LiveTimer date={cap.opens_at} modelId={cap.model} style={styles.sealedTimer} />
                 ) : (
-                    <Text style={[styles.sealedTimer, { color: Colors.textMuted }]}>Opened</Text>
+                    <Text style={[styles.sealedTimer, { color: Colors.textMuted }]}>{t('common.opened')}</Text>
                 )}
 
-                <Text style={styles.sealedTitle} numberOfLines={1}>{cap.title}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Text style={styles.sealedTitle} numberOfLines={1}>{cap.title}</Text>
+                    {!cap.isAccessible && (
+                        <Ionicons name="lock-closed" size={14} color="#ff4757" style={{ marginLeft: 6 }} />
+                    )}
+                </View>
 
                 <View style={[styles.membersList, !cap.is_shared && { opacity: 0, pointerEvents: 'none' }]}>
                     <View style={styles.avatarStack}>
@@ -144,7 +163,7 @@ const ProfileCapsuleCell = React.memo(({
                         )}
                     </View>
                     <Text style={styles.membersCountText}>
-                        {cap.total_members || 1} {cap.total_members === 1 ? 'member' : 'members'}
+                        {cap.total_members || 1} {cap.total_members === 1 ? t('common.member') : t('common.members')}
                     </Text>
                 </View>
 
@@ -168,6 +187,8 @@ const ProfileCapsuleCell = React.memo(({
 });
 
 export default function ProfileScreen() {
+    const insets = useSafeAreaInsets();
+    const { t, i18n } = useTranslation();
     const navigation = useNavigation<any>();
     const route = useRoute();
     // Target user ID from route params (if navigating to another profile)
@@ -187,6 +208,8 @@ export default function ProfileScreen() {
     const [showEdit, setShowEdit] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
     const [showLanguageSettings, setShowLanguageSettings] = useState(false);
+    const [showPrivacy, setShowPrivacy] = useState(false);
+    const [showTerms, setShowTerms] = useState(false);
 
     const [followersCount, setFollowersCount] = useState(0);
     const [followingCount, setFollowingCount] = useState(0);
@@ -201,6 +224,10 @@ export default function ProfileScreen() {
     const feedbackAnim = useRef(new Animated.Value(0)).current;
 
     const [profileStickers, setProfileStickers] = useState<any[]>([]);
+
+    const [userStories, setUserStories] = useState<any>(null);
+    const [activeStoryViewer, setActiveStoryViewer] = useState(false);
+
 
     useEffect(() => {
         // Quick check for own profile based on session
@@ -232,23 +259,56 @@ export default function ProfileScreen() {
 
         console.log('ProfileScreen: loading profile for', idToLoad, 'isOwn:', own);
 
-        const [profileRes, capsRes, followersRes, followingRes, followCheck] = await Promise.all([
+        const [profileRes, capsRes, followersRes, followingRes, followCheck, storiesRes, readsRes, myInvitesRes] = await Promise.all([
             supabase.from('profiles').select('*').eq('id', idToLoad).maybeSingle(),
-            // Query capsules where user is owner, invited directly, OR in capsule_invites
+            // Query capsules where target user is owner or participant
             supabase.rpc('get_user_capsules_v2', { target_user_id: idToLoad }),
             supabase.from('follows').select('*', { count: 'exact', head: true }).eq('following_id', idToLoad),
             supabase.from('follows').select('*', { count: 'exact', head: true }).eq('follower_id', idToLoad),
-            targetUserId ? supabase.from('follows').select('*').eq('follower_id', user.id).eq('following_id', targetUserId).maybeSingle() : { data: null }
+            targetUserId ? supabase.from('follows').select('*').eq('follower_id', user.id).eq('following_id', targetUserId).maybeSingle() : { data: null },
+            supabase.from('capsule_items')
+                .select(`
+                    *,
+                    capsules:capsule_id(id, title, model)
+                `)
+                .eq('owner_id', idToLoad)
+                .eq('is_story', true)
+                .gt('expires_at', new Date().toISOString())
+                .order('created_at', { ascending: false }),
+            supabase.from('story_reads').select('story_id').eq('user_id', myId),
+            supabase.from('capsule_invites').select('capsule_id').eq('user_id', myId).eq('status', 'accepted')
         ]);
+        
+        const storiesData = storiesRes.data || [];
+        const readIds = new Set((readsRes.data || []).map(r => r.story_id));
+
+        
+        if (storiesData.length > 0) {
+            const storiesWithRead = storiesData.map(s => ({ ...s, is_read: readIds.has(s.id) }));
+            const allRead = storiesWithRead.every(s => s.is_read);
+            setUserStories({
+                owner_id: idToLoad,
+                username: profileRes.data?.username,
+                avatar_url: profileRes.data?.avatar_url,
+                stories: storiesWithRead,
+                all_read: allRead
+            });
+        } else {
+            setUserStories(null);
+        }
+
+        const myAcceptedCaps = new Set((myInvitesRes.data || []).map(i => i.capsule_id));
+
 
         if (profileRes.data) setProfile(profileRes.data);
         if (capsRes.data) {
             const all = capsRes.data || [];
 
-            // Filter viewable based on privacy and relationships
-            const viewable = own
-                ? all
-                : all.filter((c: any) => c.is_public || c.owner_id === user.id || c.is_participant);
+            // Do not filter capsules, but tag them with access info
+            const viewable = all.map((c: any) => ({
+                ...c,
+                isAccessible: own || c.is_public || c.owner_id === user.id || myAcceptedCaps.has(c.id) || (c.invited_user_id === myId && c.invite_status === 'accepted')
+            }));
 
             let opened = viewable.filter((c: any) => c.status === 'opened');
             const sealed = viewable.filter((c: any) => c.status === 'sealed');
@@ -257,7 +317,8 @@ export default function ProfileScreen() {
             if (own) {
                 const nowMs = Date.now();
                 const toDelete = opened.filter((c: any) => {
-                    const itemCount = c.capsule_items_count || 0;
+                    // Corrected: use capsule_items_count_val from RPC result
+                    const itemCount = c.capsule_items_count_val !== undefined ? c.capsule_items_count_val : (c.capsule_items_count || 0);
                     if (itemCount === 0) {
                         const openedSinceMs = nowMs - new Date(c.opens_at).getTime();
                         if (openedSinceMs > 24 * 3600 * 1000) {
@@ -274,8 +335,8 @@ export default function ProfileScreen() {
                         await supabase.from('notifications').insert({
                             user_id: user.id,
                             type: 'system',
-                            title: 'Capsule Deleted',
-                            message: `Your capsule "${c.title}" was deleted because it was opened while empty.`,
+                            title: t('profile.delete_capsule_notif'),
+                            message: t('profile.delete_capsule_msg', { title: c.title }),
                             metadata: { capsule_id: c.id }
                         });
                     }
@@ -360,12 +421,12 @@ export default function ProfileScreen() {
         }
 
         Alert.alert(
-            'Logout',
-            'Are you sure you want to log out?',
+            t('profile.logout'),
+            t('profile.logout_confirm'),
             [
-                { text: 'Cancel', style: 'cancel' },
+                { text: t('common.cancel'), style: 'cancel' },
                 {
-                    text: 'Logout',
+                    text: t('profile.logout'),
                     style: 'destructive',
                     onPress: async () => {
                         setShowSettings(false);
@@ -386,6 +447,14 @@ export default function ProfileScreen() {
             await supabase.from('follows').insert({ follower_id: currentUserId, following_id: targetUserId });
             setFollowersCount(prev => prev + 1);
             setIsFollowing(true);
+            
+            // Notify the user being followed
+            await supabase.from('notifications').insert({
+                user_id: targetUserId,
+                sender_id: currentUserId,
+                type: 'follow',
+                message: t('common.started_following_you'),
+            });
         }
     };
 
@@ -435,8 +504,8 @@ export default function ProfileScreen() {
                         <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.feedbackIcon}>
                             <Ionicons name="checkmark-circle" size={40} color="#fff" />
                         </LinearGradient>
-                        <Text style={styles.feedbackTitle}>Request Sent!</Text>
-                        <Text style={styles.feedbackSubtitle}>Our team is reviewing your profile. We'll notify you soon.</Text>
+                        <Text style={styles.feedbackTitle}>{t('profile.request_sent')}</Text>
+                        <Text style={styles.feedbackSubtitle}>{t('profile.reviewing_profile')}</Text>
                     </View>
                 </Animated.View>
             )}
@@ -482,7 +551,7 @@ export default function ProfileScreen() {
                             })}
                         </View>
 
-                        <View style={styles.bannerActions}>
+                        <View style={[styles.bannerActions, { paddingTop: insets.top + 20 }]}>
                             {targetUserId && (
                                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
                                     <Ionicons name="chevron-back" size={24} color="#fff" />
@@ -498,175 +567,248 @@ export default function ProfileScreen() {
                         </View>
                 </LinearGradient>
 
-                <View style={styles.avatarSection}>
-                    <View style={styles.avatarRow}>
-                        <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.avatarRing}>
-                            {profile?.avatar_url
-                                ? <Image source={{ uri: profile.avatar_url }} style={styles.avatar} />
-                                : <View style={[styles.avatar, styles.avatarPlaceholder]}>
-                                    <Ionicons name="person" size={30} color={Colors.primary} />
+                <View style={styles.avatarStatsRow}>
+                    <TouchableOpacity 
+                        style={styles.avatarRing} 
+                        disabled={!userStories}
+                        onPress={() => setActiveStoryViewer(true)}
+                    >
+                        {userStories ? (
+                            userStories.all_read ? (
+                                <View style={[styles.avatarRingInner, { backgroundColor: profile?.favorite_color || '#a180fb', padding: 1.5 }]}>
+                                    {profile?.avatar_url
+                                        ? <Image source={{ uri: profile.avatar_url }} style={styles.avatar} />
+                                        : <View style={[styles.avatar, styles.avatarPlaceholder]}>
+                                            <Ionicons name="person" size={30} color={Colors.primary} />
+                                        </View>
+                                    }
                                 </View>
-                            }
-                        </LinearGradient>
-                        <View style={styles.statsRow}>
-                            {[
-                                { label: 'Opened', value: String(openedCaps.length) },
-                                { label: 'Sealed', value: String(sealedCaps.length) },
-                                { label: 'Followers', value: String(followersCount) },
-                                { label: 'Following', value: String(followingCount) },
-                            ].map((s) => (
-                                <TouchableOpacity
-                                    key={s.label}
-                                    style={styles.stat}
-                                    onPress={() => {
-                                        if (s.label === 'Followers' || s.label === 'Following') {
-                                            navigation.push('UserList', {
-                                                userId: profileId,
-                                                type: s.label.toLowerCase()
-                                            });
-                                        }
-                                    }}
-                                >
+                            ) : (
+                                <LinearGradient colors={[Colors.accent, profile?.favorite_color || '#a180fb']} style={styles.avatarRingInner}>
+                                    {profile?.avatar_url
+                                        ? <Image source={{ uri: profile.avatar_url }} style={styles.avatar} />
+                                        : <View style={[styles.avatar, styles.avatarPlaceholder]}>
+                                            <Ionicons name="person" size={30} color={Colors.primary} />
+                                        </View>
+                                    }
+                                </LinearGradient>
+                            )
+                        ) : (
+                            <View style={[styles.avatarRingInner, { backgroundColor: profile?.favorite_color || '#a180fb', padding: 1.5 }]}>
+                                {profile?.avatar_url
+                                    ? <Image source={{ uri: profile.avatar_url }} style={styles.avatar} />
+                                    : <View style={[styles.avatar, styles.avatarPlaceholder]}>
+                                        <Ionicons name="person" size={30} color={Colors.primary} />
+                                    </View>
+                                }
+                            </View>
+                        )}
+                    </TouchableOpacity>
+
+                    <View style={styles.statsRow}>
+                        {[
+                            { label: t('profile.followersCount'), value: String(followersCount) },
+                            { label: t('profile.followingCount'), value: String(followingCount) },
+                            { label: t('profile.openedCapsules'), value: String(openedCaps.length) },
+                            { label: t('profile.sealedCapsules'), value: String(sealedCaps.length) },
+                        ].map((s) => (
+                            <TouchableOpacity
+                                key={s.label}
+                                style={styles.stat}
+                                onPress={() => {
+                                    if (s.label === t('profile.followersCount') || s.label === t('profile.followingCount')) {
+                                        navigation.push('UserList', {
+                                            userId: profileId,
+                                            type: s.label === t('profile.followersCount') ? 'followers' : 'following'
+                                        });
+                                    }
+                                }}
+                            >
+                                <View style={styles.statContent}>
                                     <Text style={styles.statValue}>{s.value}</Text>
                                     <Text style={styles.statLabel}>{s.label}</Text>
-                                </TouchableOpacity>
-                            ))}
-                        </View>
-                    </View>
-
-                    <View style={styles.userInfo}>
-                        <View style={styles.nameRow}>
-                            <Text style={styles.displayName}>{profile?.display_name ?? '—'}</Text>
-                            {profile?.is_verified && <VerifiedBadge size={18} style={{ marginLeft: 2 }} />}
-                        </View>
-                        <Text style={styles.handle}>@{profile?.username ?? '—'}</Text>
-                        {profile?.bio ? <Text style={styles.bio}>{profile.bio}</Text> : null}
-
-                        <View style={styles.lofiBar}>
-                            <Text style={styles.lofiText}>{openedCaps.length} opened | {sealedCaps.length} sealed</Text>
-                            <View style={styles.lofiDivider} />
-                            <Text style={[styles.lofiText, { color: Colors.textMuted }]}>member since {joinYear}</Text>
-                        </View>
-
-                        {/* Favorites Section */}
-                        {(profile?.favorite_movie || profile?.favorite_song) && (
-                            <View style={styles.favoritesCard}>
-                                {profile?.favorite_movie && (
-                                    <View style={styles.favoriteItem}>
-                                        <View style={[styles.favIconBox, { backgroundColor: '#FFEDF6' }]}>
-                                            <Ionicons name="film" size={14} color="#F72585" />
-                                        </View>
-                                        <View>
-                                            <Text style={styles.favLabel}>FAVORITE MOVIE</Text>
-                                            <Text style={styles.favValue}>{profile.favorite_movie}</Text>
-                                        </View>
-                                    </View>
-                                )}
-                                {profile?.favorite_song && (
-                                    <View style={[styles.favoriteItem, profile?.favorite_movie && { marginTop: 12 }]}>
-                                        <View style={[styles.favIconBox, { backgroundColor: '#E0F2FE' }]}>
-                                            <Ionicons name="musical-notes" size={14} color="#0EA5E9" />
-                                        </View>
-                                        <View>
-                                            <Text style={styles.favLabel}>FAVORITE SONG</Text>
-                                            <Text style={styles.favValue}>{profile.favorite_song}</Text>
-                                        </View>
-                                    </View>
-                                )}
-                            </View>
-                        )}
-                    </View>
-
-                    <View style={styles.actionButtons}>
-                        {isOwnProfile ? (
-                            <View style={{ flex: 1, flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-                                <TouchableOpacity style={styles.pillActionBtn} onPress={() => setShowEdit(true)} activeOpacity={0.8}>
-                                    <LinearGradient colors={[Colors.primary, Colors.primaryDark]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.pillGradient}>
-                                        <Ionicons name="create-outline" size={16} color="#fff" />
-                                        <Text style={styles.pillBtnText}>Edit Profile</Text>
-                                    </LinearGradient>
-                                </TouchableOpacity>
-                                {profile?.is_admin && (
-                                    <TouchableOpacity style={styles.pillIconBtn} activeOpacity={0.7} onPress={() => navigation.navigate('TimerConfig')}>
-                                        <Ionicons name="options-outline" size={18} color={Colors.textSecondary} />
-                                    </TouchableOpacity>
-                                )}
-                            </View>
-                        ) : (
-                            <>
-                                <TouchableOpacity style={styles.pillActionBtn} onPress={handleFollowToggle} activeOpacity={0.8}>
-                                    <LinearGradient
-                                        colors={isFollowing ? ['#f8f9fa', '#e9ecef'] : [Colors.primary, Colors.primaryDark]}
-                                        start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-                                        style={[styles.pillGradient, isFollowing && { borderWidth: 1, borderColor: Colors.border }]}
-                                    >
-                                        <Ionicons name={isFollowing ? "person-remove-outline" : "person-add-outline"} size={16} color={isFollowing ? Colors.textPrimary : "#fff"} />
-                                        <Text style={[styles.pillBtnText, isFollowing && { color: Colors.textPrimary }]}>{isFollowing ? 'Following' : 'Follow'}</Text>
-                                    </LinearGradient>
-                                </TouchableOpacity>
-                                <TouchableOpacity
-                                    style={styles.pillIconBtn}
-                                    activeOpacity={0.7}
-                                    onPress={async () => {
-                                        if (!currentUserId || !targetUserId) return;
-                                        const { data: myConvos } = await supabase.from('conversation_participants').select('conversation_id').eq('user_id', currentUserId);
-                                        const myConvoIds = myConvos?.map(c => c.conversation_id) || [];
-                                        let conversationIdToUse = null;
-                                        if (myConvoIds.length > 0) {
-                                            const { data: sharedConvos } = await supabase.from('conversation_participants').select('conversation_id').eq('user_id', targetUserId).in('conversation_id', myConvoIds);
-                                            if (sharedConvos && sharedConvos.length > 0) conversationIdToUse = sharedConvos[0].conversation_id;
-                                        }
-                                        if (!conversationIdToUse) {
-                                            const { data: newConvo } = await supabase.from('conversations').insert({}).select().single();
-                                            if (newConvo) {
-                                                conversationIdToUse = newConvo.id;
-                                                await supabase.from('conversation_participants').insert([{ conversation_id: newConvo.id, user_id: currentUserId }, { conversation_id: newConvo.id, user_id: targetUserId }]);
-                                            }
-                                        }
-                                        if (conversationIdToUse) navigation.navigate('ChatDetail', { conversationId: conversationIdToUse });
-                                    }}
-                                >
-                                    <Ionicons name="paper-plane-outline" size={18} color={Colors.textSecondary} />
-                                </TouchableOpacity>
-                            </>
-                        )}
+                                </View>
+                            </TouchableOpacity>
+                        ))}
                     </View>
                 </View>
 
-                <View style={styles.tabs}>
-                    {(['all', 'opened', 'sealed'] as ProfileTab[]).map((tab) => (
-                        <TouchableOpacity key={tab} style={[styles.tab, activeTab === tab && styles.tabActive]} onPress={() => setActiveTab(tab)}>
-                            <Ionicons name={tab === 'all' ? 'albums-outline' : tab === 'opened' ? 'lock-open-outline' : 'lock-closed-outline'} size={15} color={activeTab === tab ? Colors.primary : Colors.textMuted} />
-                            <Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>{tab === 'all' ? 'All' : tab === 'opened' ? 'Opened' : 'Sealed'}</Text>
-                        </TouchableOpacity>
-                    ))}
+                <View style={styles.userInfo}>
+                    <View style={styles.nameRow}>
+                        <Text style={styles.displayName}>{profile?.display_name ?? '—'}</Text>
+                        {profile?.is_verified && <VerifiedBadge size={18} style={{ marginLeft: 2 }} />}
+                    </View>
+                    <Text style={styles.handle}>@{profile?.username ?? '—'}</Text>
+                    {profile?.bio ? <Text style={styles.bio}>{profile.bio}</Text> : null}
+
+                    <View style={styles.lofiBar}>
+                        <Ionicons name="gift-outline" size={14} color={Colors.primary} />
+                        <View style={styles.lofiDivider} />
+                        {profile?.birthdate ? (
+                            <Text style={[styles.lofiText, { color: Colors.textMuted }]}>
+                                {new Date(profile.birthdate).toLocaleDateString(i18n.language === 'es' ? 'es-ES' : 'en-US', { day: 'numeric', month: 'long' })}
+                            </Text>
+                        ) : (
+                            <Text style={[styles.lofiText, { color: Colors.textMuted }]}>{t('profile.since')} {joinYear}</Text>
+                        )}
+                    </View>
+
+                    {/* Favorites Section */}
+                    {(profile?.favorite_movie || profile?.favorite_song) && (
+                        <View style={styles.favoritesCard}>
+                            {profile?.favorite_movie && (
+                                <View style={styles.favoriteItem}>
+                                    <View style={[styles.favIconBox, { backgroundColor: '#FFEDF6' }]}>
+                                        <Ionicons name="film" size={14} color="#F72585" />
+                                    </View>
+                                    <View>
+                                        <Text style={styles.favLabel}>{t('profile.favoriteMovie')}</Text>
+                                        <Text style={styles.favValue}>{profile.favorite_movie}</Text>
+                                    </View>
+                                </View>
+                            )}
+                            {profile?.favorite_song && (
+                                <View style={[styles.favoriteItem, profile?.favorite_movie && { marginTop: 12 }]}>
+                                    <View style={[styles.favIconBox, { backgroundColor: '#E0F2FE' }]}>
+                                        <Ionicons name="musical-notes" size={14} color="#0EA5E9" />
+                                    </View>
+                                    <View>
+                                        <Text style={styles.favLabel}>{t('profile.favoriteSong')}</Text>
+                                        <Text style={styles.favValue}>{profile.favorite_song}</Text>
+                                    </View>
+                                </View>
+                            )}
+                        </View>
+                    )}
+                </View>
+
+                <View style={styles.actionButtons}>
+                    {isOwnProfile ? (
+                        <View style={{ flex: 1, flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                            <TouchableOpacity style={styles.pillActionBtn} onPress={() => setShowEdit(true)} activeOpacity={0.8}>
+                                <LinearGradient colors={[Colors.primary, Colors.primaryDark]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.pillGradient}>
+                                    <Ionicons name="create-outline" size={16} color="#fff" />
+                                    <Text style={styles.pillBtnText}>{t('profile.editProfile')}</Text>
+                                </LinearGradient>
+                            </TouchableOpacity>
+                            {profile?.is_admin && (
+                                <TouchableOpacity style={styles.pillIconBtn} activeOpacity={0.7} onPress={() => navigation.navigate('TimerConfig')}>
+                                    <Ionicons name="options-outline" size={18} color={Colors.textSecondary} />
+                                </TouchableOpacity>
+                            )}
+                        </View>
+                    ) : (
+                        <>
+                            <TouchableOpacity style={styles.pillActionBtn} onPress={handleFollowToggle} activeOpacity={0.8}>
+                                <LinearGradient
+                                    colors={isFollowing ? ['#f8f9fa', '#e9ecef'] : [Colors.primary, Colors.primaryDark]}
+                                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                                    style={[styles.pillGradient, isFollowing && { borderWidth: 1, borderColor: Colors.border }]}
+                                >
+                                    <Ionicons name={isFollowing ? "person-remove-outline" : "person-add-outline"} size={16} color={isFollowing ? Colors.textPrimary : "#fff"} />
+                                    <Text style={[styles.pillBtnText, isFollowing && { color: Colors.textPrimary }]}>{isFollowing ? t('profile.followingBtn') : t('profile.followBtn')}</Text>
+                                </LinearGradient>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={styles.pillIconBtn}
+                                activeOpacity={0.7}
+                                onPress={async () => {
+                                    if (!currentUserId || !targetUserId) return;
+                                    const { data: myConvos } = await supabase.from('conversation_participants').select('conversation_id').eq('user_id', currentUserId);
+                                    const myConvoIds = myConvos?.map(c => c.conversation_id) || [];
+                                    let conversationIdToUse = null;
+                                    if (myConvoIds.length > 0) {
+                                        const { data: sharedConvos } = await supabase.from('conversation_participants').select('conversation_id').eq('user_id', targetUserId).in('conversation_id', myConvoIds);
+                                        if (sharedConvos && sharedConvos.length > 0) conversationIdToUse = sharedConvos[0].conversation_id;
+                                    }
+                                    if (!conversationIdToUse) {
+                                        const { data: newConvo } = await supabase.from('conversations').insert({}).select().single();
+                                        if (newConvo) {
+                                            conversationIdToUse = newConvo.id;
+                                            await supabase.from('conversation_participants').insert([{ conversation_id: newConvo.id, user_id: currentUserId }, { conversation_id: newConvo.id, user_id: targetUserId }]);
+                                        }
+                                    }
+                                    if (conversationIdToUse) navigation.navigate('ChatDetail', { conversationId: conversationIdToUse });
+                                }}
+                            >
+                                <Ionicons name="paper-plane-outline" size={18} color={Colors.textSecondary} />
+                            </TouchableOpacity>
+                        </>
+                    )}
+                </View>
+
+                <View style={styles.tabsContainer}>
+                    <View style={styles.tabsBackground}>
+                        {(['all', 'opened', 'sealed'] as ProfileTab[]).map((tab) => {
+                            const isActive = activeTab === tab;
+                            return (
+                                <TouchableOpacity 
+                                    key={tab} 
+                                    style={[styles.tab, isActive && styles.tabActive]} 
+                                    onPress={() => setActiveTab(tab)}
+                                    activeOpacity={0.7}
+                                >
+                                    {isActive && (
+                                        <LinearGradient 
+                                            colors={[Colors.primary, Colors.primaryDark]} 
+                                            start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                                            style={StyleSheet.absoluteFill}
+                                        />
+                                    )}
+                                    <Ionicons 
+                                        name={tab === 'all' ? 'albums' : tab === 'opened' ? 'lock-open' : 'lock-closed'} 
+                                        size={14} 
+                                        color={isActive ? "#fff" : Colors.textMuted} 
+                                    />
+                                    <Text style={[styles.tabText, isActive && styles.tabTextActive]}>
+                                        {tab === 'all' ? t('profile.allCapsules') : tab === 'opened' ? t('profile.openedCapsules') : t('profile.sealedCapsules')}
+                                    </Text>
+                                </TouchableOpacity>
+                            );
+                        })}
+                    </View>
                 </View>
 
                 <View style={{ flex: 1 }}>
                     <View style={styles.sealedGrid}>
-                        {(activeTab === 'all'
-                            ? [...openedCaps, ...sealedCaps].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-                            : activeTab === 'opened' ? openedCaps : sealedCaps
-                        ).map((cap) => (
-                            <ProfileCapsuleCell
-                                key={cap.id}
-                                cap={cap}
-                                navigation={navigation}
-                                isOwnProfile={isOwnProfile}
-                                isSealed={cap.status === 'sealed'}
-                                cfg={TYPE_CONFIG[cap.type as keyof typeof TYPE_CONFIG] || TYPE_CONFIG.legacycap}
-                                coverUrl={coverMap[cap.id]}
-                                itemsCount={cap.capsule_items_count ?? (cap.capsule_items?.[0]?.count || 0)}
-                                likesCount={cap.likes_count ?? (cap.likes?.[0]?.count || 0)}
-                                commentsCount={cap.comments_count ?? (cap.comments?.[0]?.count || 0)}
-                                setPickerCapsuleId={setPickerCapsuleId}
-                                themeColor="#a269ff"
-                                capsuleMediaMap={capsuleMediaMap}
-                            />
-                        ))}
+                        <FlatList
+                            data={
+                                (activeTab === 'all'
+                                    ? [...openedCaps, ...sealedCaps].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                                    : activeTab === 'sealed' ? sealedCaps : openedCaps
+                                ).sort((a, b) => {
+                                    if (a.type === 'legacycap' && b.type !== 'legacycap') return -1;
+                                    if (b.type === 'legacycap' && a.type !== 'legacycap') return 1;
+                                    return 0;
+                                })
+                            }
+                            keyExtractor={(item) => item.id}
+                            numColumns={2}
+                            columnWrapperStyle={{ gap: 12 }}
+                            contentContainerStyle={{ padding: 12, gap: 12, alignItems: 'flex-start' }}
+                            renderItem={({ item }) => (
+                                <View style={{ width: (width - 36) / 2 }}>
+                                    <ProfileCapsuleCell
+                                        cap={item}
+                                        navigation={navigation}
+                                        isOwnProfile={isOwnProfile}
+                                        isSealed={item.status === 'sealed'}
+                                        cfg={TYPE_CONFIG(t)[item.type] || TYPE_CONFIG(t).instacap}
+                                        coverUrl={coverMap[item.id]}
+                                        itemsCount={item.capsule_items_count_val ?? (item.capsule_items_count || 0)}
+                                        likesCount={item.likes_count_val ?? (item.likes_count || 0)}
+                                        commentsCount={item.comments_count_val ?? (item.comments_count || 0)}
+                                        setPickerCapsuleId={setPickerCapsuleId}
+                                        themeColor={profile?.favorite_color || Colors.primary}
+                                        capsuleMediaMap={capsuleMediaMap}
+                                        t={t}
+                                    />
+                                </View>
+                            )}
+                        />
                         {((activeTab === 'opened' && openedCaps.length === 0) || (activeTab === 'sealed' && sealedCaps.length === 0)) && (
                             <View style={styles.emptyState}>
-                                <Text style={styles.emptyTitle}>No capsules found</Text>
+                                <Text style={styles.emptyTitle}>{t('profile.noCapsulesFound')}</Text>
                             </View>
                         )}
                     </View>
@@ -677,8 +819,8 @@ export default function ProfileScreen() {
                 <TouchableOpacity style={styles.pickerOverlay} activeOpacity={1} onPress={() => setPickerCapsuleId(null)}>
                     <View style={styles.pickerSheet}>
                         <View style={styles.pickerHandle} />
-                        <Text style={styles.pickerTitle}>Choose cover photo</Text>
-                        <Text style={styles.pickerSub}>Long-press a photo to set it as the capsule cover</Text>
+                        <Text style={styles.pickerTitle}>{t('profile.chooseCoverPhoto')}</Text>
+                        <Text style={styles.pickerSub}>{t('profile.longPressToSetCover')}</Text>
                         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pickerRow}>
                             {(pickerCapsuleId ? (capsuleMediaMap[pickerCapsuleId] || []) : []).map((item) => {
                                 const isSelected = coverMap[pickerCapsuleId!] === item.media_url;
@@ -705,42 +847,47 @@ export default function ProfileScreen() {
                 <Pressable style={styles.modalOverlay} onPress={() => setShowSettings(false)}>
                     <Pressable style={styles.modalSheet}>
                         <View style={styles.pickerHandle} />
-                        <Text style={styles.modalTitle}>Settings</Text>
+                        <Text style={styles.modalTitle}>{t('profile.settings')}</Text>
+                        <TouchableOpacity style={styles.settingsItem} onPress={() => { setShowSettings(false); navigation.navigate('PersonalizeProfile'); }}>
+                            <View style={styles.settingsItemIcon}><Ionicons name="sparkles-outline" size={18} color={Colors.primary} /></View>
+                            <Text style={styles.settingsItemText}>{t('profile.personalizeProfile')}</Text>
+                            <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+                        </TouchableOpacity>
                         <TouchableOpacity style={styles.settingsItem} onPress={() => { setShowSettings(false); setShowEdit(true); }}>
                             <View style={styles.settingsItemIcon}><Ionicons name="person-outline" size={18} color={Colors.textPrimary} /></View>
-                            <Text style={styles.settingsItemText}>Edit Profile</Text>
+                            <Text style={styles.settingsItemText}>{t('profile.editProfile')}</Text>
                             <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
                         </TouchableOpacity>
                         <TouchableOpacity style={styles.settingsItem} onPress={() => { setShowSettings(false); setShowLanguageSettings(true); }}>
                             <View style={styles.settingsItemIcon}><Ionicons name="language-outline" size={18} color={Colors.textPrimary} /></View>
-                            <Text style={styles.settingsItemText}>Language</Text>
-                            <Text style={styles.settingsItemValue}>English</Text>
+                            <Text style={styles.settingsItemText}>{t('profile.language')}</Text>
+                            <Text style={styles.settingsItemValue}>{i18n.language === 'es' ? 'Español' : 'English'}</Text>
                             <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
                         </TouchableOpacity>
-                        <TouchableOpacity style={styles.settingsItem} onPress={() => Alert.alert('Security', 'Security settings coming soon.')}>
+                        <TouchableOpacity style={styles.settingsItem} onPress={() => Alert.alert(t('profile.security'), t('profile.securityComingSoon'))}>
                             <View style={styles.settingsItemIcon}><Ionicons name="lock-closed-outline" size={18} color={Colors.textPrimary} /></View>
-                            <Text style={styles.settingsItemText}>Security</Text>
+                            <Text style={styles.settingsItemText}>{t('profile.security')}</Text>
                             <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
                         </TouchableOpacity>
                         <TouchableOpacity style={[styles.settingsItem, (profile?.verification_status === 'pending' || profile?.verification_status === 'verified') && { opacity: 0.5 }]} onPress={handleRequestVerification} disabled={profile?.verification_status === 'pending' || profile?.verification_status === 'verified'}>
                             <View style={styles.settingsItemIcon}><Ionicons name="checkmark-circle-outline" size={18} color={Colors.primary} /></View>
-                            <Text style={styles.settingsItemText}>{profile?.verification_status === 'pending' ? 'Verification Pending' : profile?.verification_status === 'verified' ? 'Verified Account' : 'Request Verification'}</Text>
+                            <Text style={styles.settingsItemText}>{profile?.verification_status === 'pending' ? t('profile.verificationPending') : profile?.verification_status === 'verified' ? t('profile.verifiedAccount') : t('profile.requestVerification')}</Text>
                             <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
                         </TouchableOpacity>
-                        <TouchableOpacity style={styles.settingsItem} onPress={() => Linking.openURL('https://kapsely.com/privacy')}>
+                        <TouchableOpacity style={styles.settingsItem} onPress={() => { setShowSettings(false); setShowPrivacy(true); }}>
                             <View style={styles.settingsItemIcon}><Ionicons name="shield-checkmark-outline" size={18} color={Colors.textPrimary} /></View>
-                            <Text style={styles.settingsItemText}>Privacy Policy</Text>
-                            <Ionicons name="open-outline" size={18} color={Colors.textMuted} />
+                            <Text style={styles.settingsItemText}>{t('profile.privacyPolicy')}</Text>
+                            <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
                         </TouchableOpacity>
-                        <TouchableOpacity style={styles.settingsItem} onPress={() => Linking.openURL('https://kapsely.com/terms')}>
+                        <TouchableOpacity style={styles.settingsItem} onPress={() => { setShowSettings(false); setShowTerms(true); }}>
                             <View style={styles.settingsItemIcon}><Ionicons name="document-text-outline" size={18} color={Colors.textPrimary} /></View>
-                            <Text style={styles.settingsItemText}>Terms of Use</Text>
-                            <Ionicons name="open-outline" size={18} color={Colors.textMuted} />
+                            <Text style={styles.settingsItemText}>{t('profile.termsOfUse')}</Text>
+                            <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
                         </TouchableOpacity>
 
                         <TouchableOpacity style={[styles.settingsItem, { borderBottomWidth: 0 }]} onPress={handleLogout}>
                             <View style={[styles.settingsItemIcon, { backgroundColor: Colors.error + '10' }]}><Ionicons name="log-out-outline" size={18} color={Colors.error} /></View>
-                            <Text style={[styles.settingsItemText, { color: Colors.error, fontFamily: Fonts.bold }]}>Logout</Text>
+                            <Text style={[styles.settingsItemText, { color: Colors.error, fontFamily: Fonts.bold }]}>{t('profile.logout')}</Text>
                         </TouchableOpacity>
                         <View style={styles.appVersionContainer}><Text style={styles.appVersionText}>kapsely v1.0.1</Text></View>
                     </Pressable>
@@ -752,19 +899,85 @@ export default function ProfileScreen() {
                     <Pressable style={styles.modalSheet}>
                         <View style={styles.pickerHandle} />
                         <View style={styles.modalHeaderRow}>
-                            <TouchableOpacity onPress={() => { setShowLanguageSettings(false); setShowSettings(true); }} style={styles.backButton}><Ionicons name="arrow-back" size={20} color={Colors.textPrimary} /></TouchableOpacity>
-                            <Text style={styles.modalTitleInline}>Language</Text>
+                            <TouchableOpacity onPress={() => { setShowLanguageSettings(false); setShowSettings(true); }} style={styles.backButton}>
+                                <Ionicons name="chevron-back" size={24} color={Colors.textPrimary} />
+                            </TouchableOpacity>
+                            <Text style={styles.modalTitleInline}>{t('profile.language')}</Text>
                             <View style={{ width: 20 }} />
                         </View>
-                        {['English', 'Español', 'Português', 'Русский'].map((lang) => (
-                            <TouchableOpacity key={lang} style={[styles.langItem, lang !== 'English' && { opacity: 0.5 }]} disabled={lang !== 'English'}>
-                                <Text style={styles.settingsItemText}>{lang}</Text>
-                                {lang === 'English' && <Ionicons name="checkmark-circle" size={20} color={Colors.primary} />}
+                        {[
+                            { code: 'en', label: 'English' },
+                            { code: 'es', label: 'Español' }
+                        ].map((lang) => (
+                            <TouchableOpacity 
+                                key={lang.code} 
+                                style={styles.langItem} 
+                                onPress={() => {
+                                    i18n.changeLanguage(lang.code);
+                                    setShowLanguageSettings(false);
+                                    setShowSettings(true);
+                                }}
+                            >
+                                <Text style={styles.settingsItemText}>{lang.label}</Text>
+                                {i18n.language === lang.code && <Ionicons name="checkmark-circle" size={20} color={Colors.primary} />}
                             </TouchableOpacity>
                         ))}
                     </Pressable>
                 </Pressable>
             </Modal>
+
+            {/* Privacy Policy Modal */}
+            <Modal visible={showPrivacy} transparent animationType="slide" onRequestClose={() => setShowPrivacy(false)}>
+                <Pressable style={styles.modalOverlay} onPress={() => setShowPrivacy(false)}>
+                    <Pressable style={[styles.modalSheet, { maxHeight: '80%' }]}>
+                        <View style={styles.pickerHandle} />
+                        <View style={styles.modalHeaderRow}>
+                            <TouchableOpacity onPress={() => { setShowPrivacy(false); setShowSettings(true); }} style={styles.backButton}>
+                                <Ionicons name="chevron-back" size={24} color={Colors.textPrimary} />
+                            </TouchableOpacity>
+                            <Text style={styles.modalTitleInline}>{t('profile.privacyPolicy')}</Text>
+                            <View style={{ width: 20 }} />
+                        </View>
+                        <ScrollView contentContainerStyle={{ padding: 20 }}>
+                            <Text style={styles.legalText}>{t('detail.privacy_content')}</Text>
+                        </ScrollView>
+                    </Pressable>
+                </Pressable>
+            </Modal>
+
+            {/* Terms of Use Modal */}
+            <Modal visible={showTerms} transparent animationType="slide" onRequestClose={() => setShowTerms(false)}>
+                <Pressable style={styles.modalOverlay} onPress={() => setShowTerms(false)}>
+                    <Pressable style={[styles.modalSheet, { maxHeight: '80%' }]}>
+                        <View style={styles.pickerHandle} />
+                        <View style={styles.modalHeaderRow}>
+                            <TouchableOpacity onPress={() => { setShowTerms(false); setShowSettings(true); }} style={styles.backButton}>
+                                <Ionicons name="chevron-back" size={24} color={Colors.textPrimary} />
+                            </TouchableOpacity>
+                            <Text style={styles.modalTitleInline}>{t('profile.termsOfUse')}</Text>
+                            <View style={{ width: 20 }} />
+                        </View>
+                        <ScrollView contentContainerStyle={{ padding: 20 }}>
+                            <Text style={styles.legalText}>{t('detail.terms_content')}</Text>
+                        </ScrollView>
+                    </Pressable>
+                </Pressable>
+            </Modal>
+
+            <StoryViewer 
+                visible={activeStoryViewer}
+                userGroup={userStories}
+                onClose={() => setActiveStoryViewer(false)}
+                onStoryRead={async (storyId) => {
+                    if (!currentUserId) return;
+                    await supabase.from('story_reads').upsert({ user_id: currentUserId, story_id: storyId }, { onConflict: 'user_id,story_id' });
+                    // Optimistic update
+                    if (userStories) {
+                        const updated = userStories.stories.map((s: any) => s.id === storyId ? { ...s, is_read: true } : s);
+                        setUserStories({ ...userStories, stories: updated, all_read: updated.every((s: any) => s.is_read) });
+                    }
+                }}
+            />
         </View>
     );
 }
@@ -773,61 +986,64 @@ const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: Colors.background },
     centered: { justifyContent: 'center', alignItems: 'center' },
     scrollContent: { paddingBottom: 100 },
-    banner: { height: 160 },
+    banner: { height: 185 },
     bannerCircle1: { position: 'absolute', top: -30, right: -20, width: 120, height: 120, borderRadius: 60, backgroundColor: 'rgba(255,255,255,0.12)' },
     bannerCircle2: { position: 'absolute', bottom: -10, left: 30, width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(255,255,255,0.08)' },
-    favoritesCard: {
-        marginTop: 15,
-        backgroundColor: Colors.surface,
-        borderRadius: 20,
-        padding: 16,
-        borderWidth: 1,
-        borderColor: Colors.border,
-        ...Shadow.subtle,
-    },
     bannerSticker: {
         position: 'absolute',
         width: 44,
         height: 44,
         zIndex: 5,
+        ...Shadow.subtle
     },
-    favoriteItem: {
+    avatarSection: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 12,
+        paddingHorizontal: 20,
+        gap: 20,
+        marginTop: -50,
     },
-    favIconBox: {
-        width: 32,
-        height: 32,
-        borderRadius: 10,
-        alignItems: 'center',
+    avatarStatsRow: {
+        flexDirection: 'row',
+        alignItems: 'flex-end',
+        paddingHorizontal: 20,
+        gap: 16,
+        marginTop: -45,
+        paddingBottom: 8,
+    },
+    avatarRing: {
+        width: 90,
+        height: 90,
+        borderRadius: 45,
         justifyContent: 'center',
+        alignItems: 'center',
+        ...Shadow.subtle
     },
-    favLabel: {
-        fontSize: 9,
-        fontFamily: Fonts.bold,
-        color: Colors.textMuted,
-        letterSpacing: 1,
+    avatarRingInner: {
+        width: 86,
+        height: 86,
+        borderRadius: 43,
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 2
     },
-    favValue: {
-        fontSize: 14,
-        fontFamily: Fonts.medium,
-        color: Colors.textPrimary,
-        marginTop: 1,
-    },
-    bannerActions: { paddingTop: 50, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center' },
+    avatar: { width: 80, height: 80, borderRadius: 40 },
+    avatarPlaceholder: { backgroundColor: Colors.cardAlt, justifyContent: 'center', alignItems: 'center' },
+    bannerActions: { paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center' },
     backBtn: { width: 40, height: 40, justifyContent: 'center' },
     settingsBtn: { width: 40, height: 40, justifyContent: 'center', alignItems: 'flex-end' },
-    avatarSection: { paddingHorizontal: 20, paddingBottom: 20 },
-    avatarRow: { flexDirection: 'row', marginTop: -40, gap: 20, alignItems: 'flex-end' },
-    avatarRing: { width: 90, height: 90, borderRadius: 45, padding: 3, ...Shadow.card },
-    avatar: { width: 84, height: 84, borderRadius: 42, borderWidth: 3, borderColor: Colors.background },
-    avatarPlaceholder: { backgroundColor: Colors.cardAlt, justifyContent: 'center', alignItems: 'center' },
-    statsRow: { flex: 1, flexDirection: 'row', justifyContent: 'space-around', paddingBottom: 5 },
-    stat: { alignItems: 'center' },
-    statValue: { fontSize: 18, fontFamily: Fonts.bold, color: Colors.textPrimary },
-    statLabel: { fontSize: 11, fontFamily: Fonts.regular, color: Colors.textMuted },
-    userInfo: { marginTop: 15 },
+    statsRow: {
+        flex: 1,
+        flexDirection: 'row',
+        justifyContent: 'space-around',
+        alignItems: 'flex-end',
+        paddingBottom: 4,
+    },
+    stat: { alignItems: 'center', flex: 1 },
+    statContent: { alignItems: 'center' },
+    statValue: { fontSize: 15, fontFamily: Fonts.bold, color: Colors.textPrimary },
+    statLabel: { fontSize: 8, fontFamily: Fonts.medium, color: Colors.textMuted, marginTop: 2, textTransform: 'uppercase', letterSpacing: 0.3 },
+    userInfo: { marginTop: 15, paddingHorizontal: 20 },
     nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
     displayName: { fontSize: 22, fontFamily: Fonts.bold, color: Colors.textPrimary },
     handle: { fontSize: 14, fontFamily: Fonts.medium, color: Colors.textMuted, marginTop: 2 },
@@ -887,16 +1103,56 @@ const styles = StyleSheet.create({
         textAlign: 'center',
         lineHeight: 22,
     },
-    actionButtons: { flexDirection: 'row', marginTop: 22, gap: 10, paddingHorizontal: 2 },
+    favoritesCard: {
+        marginTop: 20,
+        padding: 16,
+        backgroundColor: Colors.cardAlt,
+        borderRadius: 20,
+        borderWidth: 1,
+        borderColor: Colors.border,
+    },
+    favoriteItem: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    favIconBox: { width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+    favLabel: { fontSize: 10, fontFamily: Fonts.bold, color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 },
+    favValue: { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.textPrimary, marginTop: 1 },
+    actionButtons: { flexDirection: 'row', marginTop: 22, gap: 10, paddingHorizontal: 18 },
     pillActionBtn: { flex: 4, borderRadius: 12, height: 44, overflow: 'hidden' },
     pillGradient: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
-    pillBtnText: { color: '#fff', fontSize: 13, fontFamily: Fonts.semiBold, letterSpacing: 0.2 },
+    pillBtnText: { color: 'white', fontSize: 13, fontFamily: Fonts.semiBold, letterSpacing: 0.2 },
     pillIconBtn: { flex: 1, height: 44, borderRadius: 12, backgroundColor: Colors.surface, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: Colors.border, ...Shadow.subtle },
-    tabs: { flexDirection: 'row', marginTop: 25, borderBottomWidth: 1, borderBottomColor: Colors.border },
-    tab: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 15, borderBottomWidth: 2.5, borderBottomColor: 'transparent' },
-    tabActive: { borderBottomColor: Colors.primary },
-    tabText: { fontSize: 14, fontFamily: Fonts.medium, color: Colors.textMuted },
-    tabTextActive: { color: Colors.primary, fontFamily: Fonts.bold },
+    tabsContainer: {
+        paddingHorizontal: Spacing.md,
+        marginVertical: Spacing.md,
+    },
+    tabsBackground: {
+        flexDirection: 'row',
+        backgroundColor: 'rgba(162, 105, 255, 0.08)',
+        borderRadius: 25,
+        padding: 4,
+        gap: 4,
+    },
+    tab: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 10,
+        borderRadius: 22,
+        gap: 8,
+        overflow: 'hidden',
+    },
+    tabActive: {
+        ...Shadow.primary,
+    },
+    tabText: {
+        fontSize: 13,
+        fontFamily: Fonts.medium,
+        color: Colors.textMuted,
+    },
+    tabTextActive: {
+        color: '#fff',
+        fontFamily: Fonts.bold,
+    },
     grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 2, padding: 2 },
     gridCell: { width: (width - 6) / 3, aspectRatio: 1 },
     gridCellInner: { flex: 1, justifyContent: 'center', alignItems: 'center', borderRadius: 4, overflow: 'hidden', backgroundColor: 'transparent' },
@@ -913,9 +1169,9 @@ const styles = StyleSheet.create({
     pickerThumbSelected: { borderColor: Colors.primary },
     pickerThumbImg: { width: '100%', height: '100%' },
     pickerCheckOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center' },
-    sealedGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, padding: 12 },
-    sealedCell: { width: (width - 36) / 2 },
-    sealedCellInner: { alignItems: 'center', backgroundColor: Colors.surface, padding: 12, borderRadius: 20, borderWidth: 1, borderColor: Colors.border, ...Shadow.subtle },
+    sealedGrid: { flex: 1 },
+    sealedCell: { flex: 1, height: '100%' },
+    sealedCellInner: { flex: 1, alignItems: 'center', backgroundColor: Colors.surface, padding: 12, borderRadius: 20, borderWidth: 1, borderColor: Colors.border, ...Shadow.subtle },
     sealedImgLarge: { width: 120, height: 120, justifyContent: 'center', alignItems: 'center', borderRadius: 12, overflow: 'hidden' },
     sealedTimer: { fontSize: 16, fontFamily: Fonts.bold, color: Colors.primary, marginTop: 12 },
     sealedTitle: { fontSize: 15, fontFamily: Fonts.bold, color: Colors.textPrimary, marginTop: 4, width: '100%', textAlign: 'center' },
@@ -953,7 +1209,7 @@ const styles = StyleSheet.create({
         borderRadius: 10,
         ...Shadow.subtle,
     },
-    sharedBadgeText: { fontSize: 9, fontFamily: Fonts.bold, color: '#fff' },
+    sharedBadgeText: { fontSize: 9, fontFamily: Fonts.bold, color: "#fff" },
     membersList: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -963,8 +1219,16 @@ const styles = StyleSheet.create({
         paddingHorizontal: 8,
         paddingVertical: 4,
         borderRadius: 12,
+        ...Shadow.subtle,
     },
     avatarStack: { flexDirection: 'row', alignItems: 'center' },
     stackAvatar: { width: 18, height: 18, borderRadius: 9, backgroundColor: Colors.background },
     membersCountText: { fontSize: 10, fontFamily: Fonts.medium, color: Colors.textSecondary },
+    legalText: {
+        fontSize: 14,
+        fontFamily: Fonts.regular,
+        color: Colors.textSecondary,
+        lineHeight: 22,
+    },
 });
+

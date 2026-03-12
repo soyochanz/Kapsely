@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, Image, TouchableOpacity, StyleSheet, Dimensions, Platform } from 'react-native';
+import { View, Text, Image, TouchableOpacity, StyleSheet, Dimensions, Platform, Alert } from 'react-native';
+import { BlurView } from 'expo-blur';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts, BorderRadius, Spacing, Shadow } from '../theme';
@@ -20,8 +21,7 @@ const typeConfig = {
     eventcap: { label: 'EventCap', color: Colors.eventCap, bgColor: Colors.eventCapLight, icon: 'calendar-outline' },
     legacycap: { label: 'LegacyCap', color: Colors.legacyCap, bgColor: Colors.legacyCapLight, icon: 'time-outline' },
 };
-
-const CapsuleCard = React.memo(({ capsule }: { capsule: any }) => {
+const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp }: { capsule: any, isLocked?: boolean }) => {
     const navigation = useNavigation<any>();
     const [isFollowed, setIsFollowed] = useState(false);
     const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -32,14 +32,17 @@ const CapsuleCard = React.memo(({ capsule }: { capsule: any }) => {
     const [mediaCollage, setMediaCollage] = useState<any[]>([]);
     const [latestItem, setLatestItem] = useState<any>(null);
     
+    // Determine if locked
+    const [isLocked, setIsLocked] = useState(isLockedProp || false);
+    
     const cfg = typeConfig[capsule.type as keyof typeof typeConfig] || typeConfig.legacycap;
     const [themeColor, setThemeColor] = useState<string>(() => {
         const config = timerConfigManager.getConfig(capsule.model);
         return config?.themeColor || '#a269ff';
     });
     const [modelImages, setModelImages] = useState({
-        closed: timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model] || MODEL_IMAGES.beach,
-        open: timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model] || MODEL_IMAGES[capsule.model] || MODEL_IMAGES.beach
+        closed: timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model] || (MODEL_IMAGES as any).basicred_kap,
+        open: timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model] || MODEL_IMAGES[capsule.model] || (MODEL_IMAGES as any).basicred_kap
     });
 
     useEffect(() => {
@@ -47,8 +50,8 @@ const CapsuleCard = React.memo(({ capsule }: { capsule: any }) => {
             const config = timerConfigManager.getConfig(capsule.model);
             setThemeColor(config?.themeColor || '#a269ff');
             setModelImages({
-                closed: timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model] || MODEL_IMAGES.beach,
-                open: timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model] || MODEL_IMAGES[capsule.model] || MODEL_IMAGES.beach
+                closed: timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model] || (MODEL_IMAGES as any).basicred_kap,
+                open: timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model] || MODEL_IMAGES[capsule.model] || (MODEL_IMAGES as any).basicred_kap
             });
         });
         return unsubscribe;
@@ -59,6 +62,12 @@ const CapsuleCard = React.memo(({ capsule }: { capsule: any }) => {
             const { data: { user } } = await supabase.auth.getUser();
             if (user) {
                 setCurrentUserId(user.id);
+                // Check access
+                const hasAccess = capsule.is_public || capsule.owner_id === user.id || capsule.is_participant;
+                if (isLockedProp === undefined) {
+                    setIsLocked(!hasAccess);
+                }
+                
                 // Check if liked
                 const { data: likeData } = await supabase.from('likes')
                     .select('*')
@@ -67,6 +76,9 @@ const CapsuleCard = React.memo(({ capsule }: { capsule: any }) => {
                     .maybeSingle();
                 setIsLiked(!!likeData);
                 checkFollow(user.id);
+            } else if (isLockedProp === undefined) {
+                // If not logged in, only public are accessible
+                setIsLocked(!capsule.is_public);
             }
             // Fetch like count
             const { count: countLikes } = await supabase.from('likes')
@@ -160,6 +172,10 @@ const CapsuleCard = React.memo(({ capsule }: { capsule: any }) => {
     };
 
     const handlePress = () => {
+        if (isLocked) {
+            Alert.alert("Private Capsule", "You haven't been invited to this capsule yet.");
+            return;
+        }
         navigation.navigate('CapsuleDetail', { capsuleId: capsule.id });
     };
 
@@ -208,6 +224,7 @@ const CapsuleCard = React.memo(({ capsule }: { capsule: any }) => {
             </View>
 
             <View style={[styles.capsuleVisualContainer, capsule.status === 'opened' && styles.openedVisualContainer]}>
+
                 {capsule.status === 'sealed' && latestItem?.media_type === 'video' && latestItem?.thumbnail_url && (
                     <View style={StyleSheet.absoluteFill}>
                         <Image 
@@ -291,7 +308,12 @@ const CapsuleCard = React.memo(({ capsule }: { capsule: any }) => {
             </View>
 
             <View style={styles.cardFooter}>
-                <Text style={styles.capsuleTitle}>{capsule.title}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Text style={styles.capsuleTitle}>{capsule.title}</Text>
+                    {isLocked && (
+                        <Ionicons name="lock-closed" size={16} color="#ff4757" style={{ marginLeft: 6, marginBottom: 4 }} />
+                    )}
+                </View>
                 
                 {capsule.status === 'sealed' && latestItem?.media_type === 'video' ? (
                      <View style={styles.videoStatusRow}>

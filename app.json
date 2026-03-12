@@ -16,7 +16,10 @@
       "supportsTablet": false,
       "bundleIdentifier": "com.kapsely.app",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSCameraUsageDescription": "Allow $(PRODUCT_NAME) to access your camera to capture memories for your capsules.",
+        "NSMicrophoneUsageDescription": "Allow $(PRODUCT_NAME) to access your microphone for recording voice notes.",
+        "NSPhotoLibraryUsageDescription": "Allow $(PRODUCT_NAME) to access your photo library to choose memories for your capsules."
       }
     },
     "android": {
@@ -26,6 +29,7 @@
       },
       "package": "com.kapsely.app",
       "permissions": [
+        "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS"
       ]

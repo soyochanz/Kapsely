@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import {
     View, Text, StyleSheet, ScrollView, TouchableOpacity,
-    TextInput, Image, StatusBar, SafeAreaView,
+    TextInput, Image, StatusBar, KeyboardAvoidingView, Platform,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
@@ -15,6 +16,7 @@ export default function ChatScreen() {
     const [view, setView] = useState<ChatView>('list');
     const [selectedConvId, setSelectedConvId] = useState<string | null>(null);
     const [message, setMessage] = useState('');
+    const insets = useSafeAreaInsets();
 
     const selectedConv = MOCK_CONVERSATIONS.find((c) => c.id === selectedConvId);
 
@@ -22,7 +24,7 @@ export default function ChatScreen() {
         return (
             <View style={styles.container}>
                 <StatusBar barStyle="dark-content" />
-                <SafeAreaView style={styles.detailHeader}>
+                <View style={[styles.detailHeader, { paddingTop: insets.top + 10 }]}>
                     <TouchableOpacity onPress={() => setView('list')} style={styles.backBtn}>
                         <Ionicons name="arrow-back" size={20} color={Colors.textPrimary} />
                     </TouchableOpacity>
@@ -39,7 +41,7 @@ export default function ChatScreen() {
                     <TouchableOpacity style={styles.detailAction}>
                         <Ionicons name="ellipsis-vertical" size={18} color={Colors.textSecondary} />
                     </TouchableOpacity>
-                </SafeAreaView>
+                </View>
 
                 <ScrollView
                     style={styles.messagesScroll}
@@ -79,7 +81,10 @@ export default function ChatScreen() {
                     ))}
                 </ScrollView>
 
-                <View style={styles.inputBar}>
+                <KeyboardAvoidingView 
+                    behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                >
+                    <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 10) }]}>
                     <TouchableOpacity style={styles.inputAction}>
                         <Ionicons name="add-circle" size={26} color={Colors.primary} />
                     </TouchableOpacity>
@@ -100,14 +105,15 @@ export default function ChatScreen() {
                         </LinearGradient>
                     </TouchableOpacity>
                 </View>
+                </KeyboardAvoidingView>
             </View>
         );
     }
 
     return (
         <View style={styles.container}>
-            <StatusBar barStyle="dark-content" backgroundColor={Colors.surface} />
-            <SafeAreaView>
+            <StatusBar barStyle="dark-content" backgroundColor={Colors.background} />
+            <View style={{ paddingTop: insets.top + 10 }}>
                 <View style={styles.header}>
                     <Text style={styles.headerTitle}>Messages</Text>
                     <TouchableOpacity style={styles.newChatBtn}>
@@ -123,7 +129,7 @@ export default function ChatScreen() {
                         selectionColor={Colors.primary}
                     />
                 </View>
-            </SafeAreaView>
+            </View>
 
             <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
                 <Text style={styles.sectionLabel}>Shared Capsules</Text>
@@ -187,7 +193,7 @@ const styles = StyleSheet.create({
     // Detail view
     detailHeader: {
         flexDirection: 'row', alignItems: 'center',
-        paddingHorizontal: Spacing.md, paddingTop: 50, paddingBottom: 12,
+        paddingHorizontal: Spacing.md, paddingBottom: 12,
         backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.border, gap: Spacing.sm,
     },
     backBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },

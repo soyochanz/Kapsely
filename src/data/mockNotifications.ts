@@ -1,6 +1,6 @@
 export interface Notification {
     id: string;
-    type: 'like' | 'comment' | 'follow' | 'capsule_opened' | 'capsule_invite' | 'memory';
+    type: 'like' | 'comment' | 'follow' | 'capsule_opened' | 'capsule_invite' | 'memory' | 'chat_message' | 'system' | 'cap_angel_assigned';
     user: {
         id?: string;
         username: string;
@@ -10,12 +10,16 @@ export interface Notification {
     time: string;
     isRead: boolean;
     capsuleId?: string;
+    conversationId?: string;
     capsuleTitle?: string;
     capsuleType?: 'eventcap' | 'instacap' | 'legacycap';
     capsuleModel?: string;
     capsuleChainId?: string;
     capsuleOpensAt?: string;
+    capsuleOwnerId?: string;
     createdAt?: string;
+    isExpired?: boolean;
+    expiryDate?: Date;
 }
 
 export const MOCK_NOTIFICATIONS: Notification[] = [

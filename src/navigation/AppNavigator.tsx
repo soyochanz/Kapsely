@@ -18,6 +18,7 @@ import CreateSelectionScreen from '../screens/CreateSelectionScreen';
 import CapsuleSelectorScreen from '../screens/CapsuleSelectorScreen';
 import AddItemScreen from '../screens/AddItemScreen';
 import UserListScreen from '../screens/UsersListScreen';
+import PersonalizeProfileScreen from '../screens/PersonalizeProfileScreen';
 import { View, StyleSheet } from 'react-native';
 import { Colors } from '../theme';
 import { navigationRef } from '../../App';
@@ -92,6 +93,7 @@ export default function AppNavigator() {
                 <Stack.Screen name="AddItem" component={AddItemScreen} />
                 <Stack.Screen name="UserList" component={UserListScreen} />
                 <Stack.Screen name="TimerConfig" component={TimerConfigScreen} />
+                <Stack.Screen name="PersonalizeProfile" component={PersonalizeProfileScreen} />
             </Stack.Navigator>
         </View>
     );

@@ -1,9 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, KeyboardAvoidingView, Platform, SafeAreaView, StatusBar, ActivityIndicator, Image } from 'react-native';
+import { 
+    View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, 
+    KeyboardAvoidingView, Platform, StatusBar, ActivityIndicator, Image 
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Colors, Fonts, Spacing, BorderRadius } from '../theme';
 import { supabase } from '../lib/supabase';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function ChatDetailScreen() {
     const [loading, setLoading] = useState(true);
@@ -11,12 +16,14 @@ export default function ChatDetailScreen() {
     const [newMessage, setNewMessage] = useState('');
     const [currentUserId, setCurrentUserId] = useState<string | null>(null);
     const [otherUser, setOtherUser] = useState<any>(null);
+    const insets = useSafeAreaInsets();
     const navigation = useNavigation();
     const route = useRoute<any>();
     const { conversationId } = route.params;
 
     const loadData = async () => {
-        const { data: { user } } = await supabase.auth.getUser();
+        const { data: { session } } = await supabase.auth.getSession();
+        const user = session?.user;
         if (!user) return;
         setCurrentUserId(user.id);
 
@@ -29,13 +36,11 @@ export default function ChatDetailScreen() {
             .maybeSingle();
 
         if (partData) {
-            // Fetch profile separately to avoid join issues (often hidden behind secondary schemas)
             const { data: profile } = await supabase
                 .from('profiles')
                 .select('*')
                 .eq('id', partData.user_id)
                 .single();
-
             if (profile) setOtherUser(profile);
         }
 
@@ -48,27 +53,81 @@ export default function ChatDetailScreen() {
         if (msgs) setMessages(msgs);
         setLoading(false);
 
-        // Mark as read
+        // Mark chat as visited (used by ChatListScreen to determine unread status)
+        AsyncStorage.setItem(`chat_visited_${conversationId}`, new Date().toISOString());
+
+        // Also mark received messages as read in DB (best effort)
         try {
-            const { data: { user: currentUser } } = await supabase.auth.getUser();
-            if (currentUser) {
-                await supabase
-                    .from('conversation_participants')
-                    .update({ last_read_at: new Date().toISOString() })
+            await Promise.all([
+                supabase
+                    .from('messages')
+                    .update({ is_read: true })
                     .eq('conversation_id', conversationId)
-                    .eq('user_id', currentUser.id);
-            }
+                    .neq('sender_id', user.id),
+                supabase
+                    .from('notifications')
+                    .update({ is_read: true })
+                    .eq('conversation_id', conversationId)
+                    .eq('user_id', user.id)
+            ]);
         } catch (e) {
-            console.warn('Could not update last_read_at:', e);
+            // is_read column may not exist — visit timestamp is the fallback
+            console.warn('Could not mark messages as read (is_read may not exist):', e);
         }
     };
 
-    useEffect(() => { loadData(); }, []);
+    useEffect(() => { 
+        loadData(); 
+
+        const sub = supabase
+            .channel(`chat-${conversationId}`)
+            .on(
+                'postgres_changes',
+                { event: 'INSERT', schema: 'public', table: 'messages', filter: `conversation_id=eq.${conversationId}` },
+                (payload) => {
+                    const newMsg = payload.new as any;
+                    // Only add messages from OTHER users via realtime
+                    // Our own sent messages are added locally in sendMessage()
+                    supabase.auth.getSession().then(({ data: { session } }) => {
+                        const user = session?.user;
+                        if (!user || newMsg.sender_id === user.id) return;
+
+                        // Add with dedup guard
+                        setMessages(prev => {
+                            if (prev.some(m => m.id === newMsg.id)) return prev;
+                            return [...prev, newMsg];
+                        });
+
+                        // Mark as read immediately
+                        supabase
+                            .from('messages')
+                            .update({ is_read: true })
+                            .eq('id', newMsg.id)
+                            .then();
+                    });
+                }
+            )
+            .subscribe();
+
+        return () => { supabase.removeChannel(sub); };
+    }, [conversationId]);
 
     const sendMessage = async () => {
         if (!newMessage.trim() || !currentUserId) return;
         const msg = newMessage.trim();
         setNewMessage('');
+
+        // Optimistic local add
+        const tempId = `temp_${Date.now()}`;
+        const tempMsg = {
+            id: tempId,
+            conversation_id: conversationId,
+            sender_id: currentUserId,
+            content: msg,
+            created_at: new Date().toISOString(),
+            is_read: false,
+        };
+        setMessages(prev => [...prev, tempMsg]);
 
         const { data, error } = await supabase.from('messages').insert({
             conversation_id: conversationId,
@@ -77,12 +136,17 @@ export default function ChatDetailScreen() {
         }).select().single();
 
         if (data) {
-            setMessages([...messages, data]);
+            // Replace temp message with real one (has correct db-generated ID & timestamp)
+            setMessages(prev => prev.map(m => m.id === tempId ? data : m));
             try {
                 await supabase.from('conversations').update({ last_message_at: new Date() }).eq('id', conversationId);
             } catch (e) {
                 console.warn('Could not update last_message_at:', e);
             }
+        } else {
+            // Remove temp if insert failed
+            setMessages(prev => prev.filter(m => m.id !== tempId));
+            if (error) console.warn('Send error:', error.message);
         }
     };
 
@@ -98,9 +162,9 @@ export default function ChatDetailScreen() {
     };
 
     return (
-        <SafeAreaView style={styles.container}>
+        <View style={styles.container}>
             <StatusBar barStyle="dark-content" />
-            <View style={styles.header}>
+            <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
                     <Ionicons name="chevron-back" size={24} color={Colors.textPrimary} />
                 </TouchableOpacity>
@@ -114,33 +178,39 @@ export default function ChatDetailScreen() {
                 <View style={{ width: 40 }} />
             </View>
 
-            {loading ? (
-                <View style={styles.centered}><ActivityIndicator color={Colors.primary} /></View>
-            ) : (
-                <FlatList
-                    data={messages}
-                    keyExtractor={(item) => item.id}
-                    renderItem={renderMessage}
-                    contentContainerStyle={styles.list}
-                    showsVerticalScrollIndicator={false}
-                />
-            )}
+            <KeyboardAvoidingView 
+                style={{ flex: 1 }}
+                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+            >
+                {loading ? (
+                    <View style={styles.centered}><ActivityIndicator color={Colors.primary} /></View>
+                ) : (
+                    <FlatList
+                        data={messages}
+                        keyExtractor={(item) => item.id}
+                        renderItem={renderMessage}
+                        contentContainerStyle={styles.list}
+                        showsVerticalScrollIndicator={false}
+                        removeClippedSubviews={false}
+                    />
+                )}
 
-            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-                <View style={styles.inputRow}>
+                <View style={[styles.inputRow, { paddingBottom: Math.max(insets.bottom || 16, Spacing.md) }]}>
                     <TextInput
                         style={styles.input}
                         value={newMessage}
                         onChangeText={setNewMessage}
                         placeholder="Say something..."
                         placeholderTextColor={Colors.textMuted}
+                        multiline
                     />
                     <TouchableOpacity style={styles.sendBtn} onPress={sendMessage}>
                         <Ionicons name="send" size={20} color="#fff" />
                     </TouchableOpacity>
                 </View>
             </KeyboardAvoidingView>
-        </SafeAreaView>
+        </View>
     );
 }
 
@@ -164,7 +234,7 @@ const styles = StyleSheet.create({
     theirBubble: { backgroundColor: Colors.cardAlt, borderBottomLeftRadius: 4 },
     msgText: { fontSize: 15, fontFamily: Fonts.regular, color: Colors.textPrimary },
     myMsgText: { color: '#fff' },
-    inputRow: { flexDirection: 'row', alignItems: 'center', padding: Spacing.md, backgroundColor: Colors.surface, borderTopWidth: 1, borderTopColor: Colors.border },
-    input: { flex: 1, height: 44, backgroundColor: Colors.background, borderRadius: 22, paddingHorizontal: 16, fontSize: 15, color: Colors.textPrimary },
-    sendBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: Colors.primary, marginLeft: Spacing.sm, alignItems: 'center', justifyContent: 'center' },
+    inputRow: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: Spacing.md, paddingTop: 10, backgroundColor: Colors.surface, borderTopWidth: 1, borderTopColor: Colors.border },
+    input: { flex: 1, minHeight: 44, maxHeight: 120, backgroundColor: Colors.background, borderRadius: 24, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12, fontSize: 15, color: Colors.textPrimary },
+    sendBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: Colors.primary, marginLeft: Spacing.sm, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
 });

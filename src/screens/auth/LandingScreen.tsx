@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Dimensions, Animated, StatusBar, Image, Platform } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
@@ -13,6 +14,7 @@ interface Props {
 }
 
 export default function LandingScreen({ onNavigateToLogin, onNavigateToRegister }: Props) {
+    const insets = useSafeAreaInsets();
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const translateY = useRef(new Animated.Value(40)).current;
     const rotateAnim = useRef(new Animated.Value(0)).current;
@@ -78,7 +80,7 @@ export default function LandingScreen({ onNavigateToLogin, onNavigateToRegister 
                 />
             </Animated.View>
 
-            <View style={styles.content}>
+            <View style={[styles.content, { paddingTop: insets.top + 40, paddingBottom: insets.bottom + 20 }]}>
                 <View style={styles.topSection}>
                     <Animated.View style={[styles.heroIconWrapper, { transform: [{ translateY: floatY }] }]}>
                         <View style={styles.iconGlow} />
@@ -153,8 +155,8 @@ const styles = StyleSheet.create({
         flex: 1,
         justifyContent: 'space-between',
         paddingHorizontal: Spacing.xl,
-        paddingTop: height * 0.16,
-        paddingBottom: height * 0.06,
+        paddingTop: 40,
+        paddingBottom: 20,
     },
     topSection: {
         alignItems: 'center',

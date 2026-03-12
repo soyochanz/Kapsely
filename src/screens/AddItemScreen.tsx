@@ -7,7 +7,7 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Audio, Video, ResizeMode } from 'expo-av';
 import * as VideoThumbnails from 'expo-video-thumbnails';
-import { Colors, Fonts, Spacing, BorderRadius } from '../theme';
+import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
 import { supabase } from '../lib/supabase';
 import { decode } from 'base64-arraybuffer';
 
@@ -29,15 +29,45 @@ export default function AddItemScreen() {
     const [previewVideo, setPreviewVideo] = useState<string | null>(null);
 
     useEffect(() => {
-        if (contentType === 'image' || contentType === 'video') {
-            pickMedia();
-        }
         return () => {
             if (recording) {
                 recording.stopAndUnloadAsync();
             }
         };
-    }, [contentType]);
+    }, []);
+
+    const processAssets = async (assets: any[]) => {
+        setLoading(true);
+        const processedAssets: any[] = [];
+
+        for (const asset of assets) {
+            let currentAsset = { ...asset };
+            if (contentType === 'image') {
+                try {
+                    const manipResult = await ImageManipulator.manipulateAsync(
+                        asset.uri,
+                        [{ resize: { width: 1080 } }],
+                        { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
+                    );
+                    currentAsset = { ...currentAsset, uri: manipResult.uri, width: manipResult.width, height: manipResult.height };
+                } catch (e) {
+                    console.log('Error optimizing image:', e);
+                }
+            } else if (contentType === 'video') {
+                try {
+                    const { uri: thumbUri } = await VideoThumbnails.getThumbnailAsync(asset.uri, { time: 1000 });
+                    (currentAsset as any).thumbnailUri = thumbUri;
+                    (currentAsset as any).duration = asset.duration;
+                } catch (e) {
+                    console.log('Error generating thumbnail:', e);
+                }
+            }
+            processedAssets.push(currentAsset);
+        }
+
+        setMediaList(prev => [...prev, ...processedAssets]);
+        setLoading(false);
+    };
 
     const pickMedia = async () => {
         const result = await ImagePicker.launchImageLibraryAsync({
@@ -46,42 +76,36 @@ export default function AddItemScreen() {
             selectionLimit: 10,
             quality: 0.8,
             videoMaxDuration: 120,
-            base64: false, // Don't request base64 in initial pick for multiple to save memory
+            base64: false,
         });
 
         if (!result.canceled && result.assets && result.assets.length > 0) {
-            setLoading(true);
-            const processedAssets: any[] = [];
-
-            for (const asset of result.assets) {
-                let currentAsset = { ...asset };
-                if (contentType === 'image') {
-                    try {
-                        const manipResult = await ImageManipulator.manipulateAsync(
-                            asset.uri,
-                            [{ resize: { width: 1080 } }],
-                            { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
-                        );
-                        currentAsset = { ...currentAsset, uri: manipResult.uri, width: manipResult.width, height: manipResult.height };
-                    } catch (e) {
-                        console.log('Error optimizing image:', e);
-                    }
-                } else if (contentType === 'video') {
-                    try {
-                        const { uri: thumbUri } = await VideoThumbnails.getThumbnailAsync(asset.uri, { time: 1000 });
-                        (currentAsset as any).thumbnailUri = thumbUri;
-                        (currentAsset as any).duration = asset.duration; // Store duration (ms)
-                    } catch (e) {
-                        console.log('Error generating thumbnail:', e);
-                    }
-                }
-                processedAssets.push(currentAsset);
-            }
-
-            setMediaList(prev => [...prev, ...processedAssets]);
-            setLoading(false);
+            await processAssets(result.assets);
         } else if (mediaList.length === 0) {
             navigation.goBack();
+        }
+    };
+
+    const captureMedia = async () => {
+        try {
+            const permission = await ImagePicker.requestCameraPermissionsAsync();
+            if (permission.status !== 'granted') {
+                Alert.alert('Permission Denied', 'Please enable camera permissions in settings.');
+                return;
+            }
+
+            const result = await ImagePicker.launchCameraAsync({
+                mediaTypes: contentType === 'image' ? ImagePicker.MediaTypeOptions.Images : ImagePicker.MediaTypeOptions.Videos,
+                quality: 0.8,
+                videoMaxDuration: 120,
+            });
+
+            if (!result.canceled && result.assets && result.assets.length > 0) {
+                await processAssets(result.assets);
+            }
+        } catch (e) {
+            console.error('Camera error:', e);
+            Alert.alert('Error', 'Failed to open camera.');
         }
     };
 
@@ -113,11 +137,11 @@ export default function AddItemScreen() {
         setIsRecording(false);
         if (!recording) return;
         try {
-            await recording.stopAndUnloadAsync();
             const status = await recording.getStatusAsync();
             if (status && 'durationMillis' in status) {
                 setAudioDuration(status.durationMillis);
             }
+            await recording.stopAndUnloadAsync();
             const uri = recording.getURI();
             setRecordedUri(uri);
             setRecording(null);
@@ -261,29 +285,54 @@ export default function AddItemScreen() {
                 ) : (
                     <>
                         <View style={styles.mediaContainer}>
-                            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.mediaList}>
-                                {mediaList.map((item, index) => (
-                                    <View key={index} style={styles.mediaPreviewWrapper}>
-                                        <Image source={{ uri: item.thumbnailUri || item.uri }} style={styles.mediaPreview} />
-                                        {contentType === 'video' && (
-                                            <TouchableOpacity 
-                                                style={styles.playOverlay} 
-                                                onPress={() => setPreviewVideo(item.uri)}
-                                            >
-                                                <View style={styles.playCircle}>
-                                                    <Ionicons name="play" size={30} color="#fff" />
-                                                </View>
+                            {mediaList.length === 0 ? (
+                                <View style={styles.emptyMedia}>
+                                    <TouchableOpacity style={[styles.largeChoiceBtn, { backgroundColor: Colors.primary }]} onPress={captureMedia}>
+                                        <View style={styles.choiceIconCircle}>
+                                            <Ionicons name="camera" size={32} color="#fff" />
+                                        </View>
+                                        <Text style={styles.choiceLabel}>Take Photo/Video</Text>
+                                        <Text style={styles.choiceSub}>Capture a new memory</Text>
+                                    </TouchableOpacity>
+                                    
+                                    <TouchableOpacity style={styles.largeChoiceBtn} onPress={pickMedia}>
+                                        <View style={[styles.choiceIconCircle, { backgroundColor: Colors.border }]}>
+                                            <Ionicons name="images" size={32} color={Colors.textPrimary} />
+                                        </View>
+                                        <Text style={styles.choiceLabel}>Choose from Gallery</Text>
+                                        <Text style={styles.choiceSub}>Select existing media</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            ) : (
+                                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.mediaList}>
+                                    {mediaList.map((item, index) => (
+                                        <View key={index} style={styles.mediaPreviewWrapper}>
+                                            <Image source={{ uri: item.thumbnailUri || item.uri }} style={styles.mediaPreview} />
+                                            {contentType === 'video' && (
+                                                <TouchableOpacity 
+                                                    style={styles.playOverlay} 
+                                                    onPress={() => setPreviewVideo(item.uri)}
+                                                >
+                                                    <View style={styles.playCircle}>
+                                                        <Ionicons name="play" size={30} color="#fff" />
+                                                    </View>
+                                                </TouchableOpacity>
+                                            )}
+                                            <TouchableOpacity style={styles.removeBtn} onPress={() => removeMedia(index)}>
+                                                <Ionicons name="close-circle" size={24} color="#ff4757" />
                                             </TouchableOpacity>
-                                        )}
-                                        <TouchableOpacity style={styles.removeBtn} onPress={() => removeMedia(index)}>
-                                            <Ionicons name="close-circle" size={24} color="#ff4757" />
-                                        </TouchableOpacity>
-                                    </View>
-                                ))}
-                                <TouchableOpacity style={styles.addMoreBtn} onPress={pickMedia}>
-                                    <Ionicons name="add" size={32} color={Colors.textMuted} />
-                                </TouchableOpacity>
-                            </ScrollView>
+                                        </View>
+                                    ))}
+                                    <TouchableOpacity style={[styles.addMoreBtn, { borderStyle: 'solid', backgroundColor: Colors.primary + '11', borderColor: Colors.primary }]} onPress={captureMedia}>
+                                        <Ionicons name="camera" size={32} color={Colors.primary} />
+                                        <Text style={{ fontSize: 10, fontFamily: Fonts.bold, color: Colors.primary, marginTop: 4 }}>Capture</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity style={styles.addMoreBtn} onPress={pickMedia}>
+                                        <Ionicons name="images" size={32} color={Colors.textMuted} />
+                                        <Text style={{ fontSize: 10, fontFamily: Fonts.medium, color: Colors.textMuted, marginTop: 4 }}>Gallery</Text>
+                                    </TouchableOpacity>
+                                </ScrollView>
+                            )}
                         </View>
 
                         <Modal visible={!!previewVideo} transparent animationType="fade">
@@ -365,4 +414,21 @@ const styles = StyleSheet.create({
     videoModal: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
     fullVideo: { width: '100%', height: '80%' },
     closeVideo: { position: 'absolute', top: 50, right: 20 },
+
+    emptyMedia: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 15, paddingVertical: 40 },
+    largeChoiceBtn: { 
+        width: '100%', 
+        backgroundColor: Colors.surface, 
+        padding: 24, 
+        borderRadius: 20, 
+        flexDirection: 'row', 
+        alignItems: 'center', 
+        gap: 20, 
+        borderWidth: 1.5, 
+        borderColor: Colors.border,
+        ...Shadow.subtle 
+    },
+    choiceIconCircle: { width: 64, height: 64, borderRadius: 32, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' },
+    choiceLabel: { fontSize: 18, fontFamily: Fonts.bold, color: Colors.textPrimary },
+    choiceSub: { fontSize: 13, fontFamily: Fonts.regular, color: Colors.textMuted, marginTop: 2 },
 });

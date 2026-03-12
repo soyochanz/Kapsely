@@ -4,7 +4,7 @@ import {
     TouchableOpacity, ScrollView, SafeAreaView, StatusBar,
     Dimensions, Platform, TextInput, Modal, Alert, Switch, ActivityIndicator, Pressable
 } from 'react-native';
-import DateTimePicker from '@react-native-community/datetimepicker';
+import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
@@ -48,6 +48,60 @@ export default function TimerConfigScreen() {
     });
     const [datePickerMode, setDatePickerMode] = useState<'start' | 'end' | null>(null);
 
+    const handleDatePickerPress = (mode: 'start' | 'end') => {
+        const currentVal = (newModel as any)[mode === 'start' ? 'event_start' : 'event_end'];
+        let date = new Date();
+        if (currentVal) {
+            const parsed = new Date(currentVal);
+            if (!isNaN(parsed.getTime())) {
+                date = parsed;
+            }
+        }
+
+        if (Platform.OS === 'android') {
+            try {
+                if (typeof DateTimePickerAndroid !== 'undefined' && DateTimePickerAndroid.open) {
+                    DateTimePickerAndroid.open({
+                        value: date,
+                        onChange: (event, selectedDate) => {
+                            if (event.type === 'set' && selectedDate) {
+                                // Add a small delay before opening time picker to avoid conflict with closing date picker
+                                setTimeout(() => {
+                                    if (typeof DateTimePickerAndroid !== 'undefined' && DateTimePickerAndroid.open) {
+                                        DateTimePickerAndroid.open({
+                                            value: selectedDate,
+                                            onChange: (event2, finalDate) => {
+                                                if (event2.type === 'set' && finalDate) {
+                                                    setNewModel(p => ({
+                                                        ...p,
+                                                        [mode === 'start' ? 'event_start' : 'event_end']: finalDate.toISOString()
+                                                    }));
+                                                }
+                                            },
+                                            mode: 'time',
+                                            is24Hour: true,
+                                        });
+                                    }
+                                }, 150);
+                            }
+                        },
+                        mode: 'date',
+                        is24Hour: true,
+                    });
+                } else {
+                    // Fallback to state-based picker if Android API is unavailable
+                    setDatePickerMode(mode);
+                }
+            } catch (error) {
+                console.error('Date picker error:', error);
+                setDatePickerMode(mode);
+            }
+        } else {
+            setDatePickerMode(mode);
+        }
+    };
+
+
     const [showAddChain, setShowAddChain] = useState(false);
     const [newChain, setNewChain] = useState({ id: '', name: '', image_url: '', thumbnail_url: '', is_active: true });
 
@@ -65,7 +119,7 @@ export default function TimerConfigScreen() {
         return initial;
     });
 
-    const activeConfig = configs[selectedModel.id] || DEFAULT_CONFIGS.beach;
+    const activeConfig = configs[selectedModel.id] || DEFAULT_CONFIGS.basicred_kap;
 
     // Keep a ref to the current selected model ID for the PanResponder closure
     const currentModelIdRef = useRef(selectedModel.id);
@@ -197,10 +251,9 @@ export default function TimerConfigScreen() {
     const [uploading, setUploading] = useState(false);
 
     const pickAndUploadImage = async (onDone: (url: string) => void) => {
-        console.log('--- START pickAndUploadImage ---');
+        console.log('--- pickAndUploadImage Started ---');
         try {
             const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-            console.log('Permission granted:', perm.granted);
             if (!perm.granted) {
                 Alert.alert('Permission required', 'Allow photo access to upload images.');
                 return;
@@ -209,49 +262,56 @@ export default function TimerConfigScreen() {
             const result = await ImagePicker.launchImageLibraryAsync({
                 mediaTypes: ImagePicker.MediaTypeOptions.Images,
                 allowsEditing: true,
-                quality: 0.9,
+                quality: 0.8,
             });
-            console.log('Picker result canceled:', result.canceled);
 
             if (!result.canceled && result.assets[0]) {
                 setUploading(true);
                 const asset = result.assets[0];
-                console.log('Processing asset:', asset.uri);
+                const fileName = `model_${Date.now()}.jpg`; // Consistent suffix
                 
-                // Process image to ensure it's PNG if it has transparency, or just optimized
-                const manipulated = await ImageManipulator.manipulateAsync(
-                    asset.uri,
-                    [],
-                    { compress: 0.8, format: ImageManipulator.SaveFormat.PNG }
-                );
-                console.log('Manipulated asset:', manipulated.uri);
+                let body: any;
+                if (Platform.OS === 'web') {
+                    // Web handling: use Blob, it's safer for Supabase JS on Web
+                    const response = await fetch(asset.uri);
+                    body = await response.blob();
+                    console.log('Web blob created:', body.size, body.type);
+                } else {
+                    // Native handling: manipulate then base64 to body
+                    const manipulated = await ImageManipulator.manipulateAsync(
+                        asset.uri,
+                        [{ resize: { width: 800 } }], // Resize for better performance
+                        { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
+                    );
+                    const base64 = await FileSystem.readAsStringAsync(manipulated.uri, { encoding: 'base64' as any });
+                    body = decode(base64);
+                    console.log('Native body created for:', fileName);
+                }
 
-                const fileName = `admin_${Date.now()}.png`;
-                const base64 = await FileSystem.readAsStringAsync(manipulated.uri, { encoding: 'base64' as any });
-                const body = decode(base64);
-
-                console.log('Uploading to storage...');
-                const { error } = await supabase.storage.from('website').upload(`assets/${fileName}`, body, {
-                    contentType: 'image/png',
+                console.log('Uploading image to Supabase storage...');
+                // We'll use the 'models' bucket which is already set up and used for existing models
+                const { error: uploadError } = await supabase.storage.from('models').upload(fileName, body, {
+                    contentType: 'image/jpeg',
                     upsert: true,
                 });
 
-                if (error) {
-                    console.error('Storage upload error:', error);
-                    throw error;
+                if (uploadError) {
+                    console.error('Supabase Storage Error:', uploadError);
+                    throw uploadError;
                 }
 
-                const { data: { publicUrl } } = supabase.storage.from('website').getPublicUrl(`assets/${fileName}`);
-                console.log('Public URL:', publicUrl);
+                const { data: { publicUrl } } = supabase.storage.from('models').getPublicUrl(fileName);
+                console.log('Upload complete! Public URL:', publicUrl);
+                
                 onDone(publicUrl);
-                Alert.alert('Success', 'Image uploaded successfully');
+                Alert.alert('Success', 'Image uploaded successfully!');
             }
         } catch (e: any) {
-            console.error('Upload error detail:', e);
-            Alert.alert('Upload Error', e.message || 'Could not upload image');
+            console.error('Upload process failed:', e);
+            Alert.alert('Upload Error', e.message || 'Could not upload image. Please check your connection or session.');
         } finally {
             setUploading(false);
-            console.log('--- END pickAndUploadImage ---');
+            console.log('--- pickAndUploadImage Finished ---');
         }
     };
 
@@ -263,7 +323,7 @@ export default function TimerConfigScreen() {
 
         const success = await timerConfigManager.saveModel(newModel);
         if (success) {
-            await timerConfigManager.saveConfig(newModel.id, DEFAULT_CONFIGS.beach);
+            await timerConfigManager.saveConfig(newModel.id, DEFAULT_CONFIGS.basicred_kap);
             syncConfigs();
             setSelectedModel(newModel);
             setShowAddModel(false);
@@ -359,7 +419,7 @@ export default function TimerConfigScreen() {
     ).current;
 
     const reset = () => {
-        const def: ModelTimerConfig = DEFAULT_CONFIGS[selectedModel.id] || DEFAULT_CONFIGS['beach'];
+        const def: ModelTimerConfig = DEFAULT_CONFIGS[selectedModel.id] || DEFAULT_CONFIGS['basicred_kap'];
         pan.setValue({ x: def.x * FRAME_SIZE, y: def.y * FRAME_SIZE });
         updateActiveConfig(def);
     };
@@ -777,7 +837,7 @@ export default function TimerConfigScreen() {
                                 </TouchableOpacity>
                             </View>
 
-                            <ScrollView style={{ maxHeight: 500 }} showsVerticalScrollIndicator={false}>
+                            <View>
                                 {allModels.map((m) => (
                                     <View key={m.id} style={styles.modelLibraryCard}>
                                         <Image source={{ uri: m.image_cover || m.image }} style={styles.modelLibraryThumb} />
@@ -827,7 +887,7 @@ export default function TimerConfigScreen() {
                                         </View>
                                     </View>
                                 ))}
-                            </ScrollView>
+                            </View>
                         </View>
                     )}
                     <View style={{ height: 60 }} />
@@ -939,7 +999,7 @@ export default function TimerConfigScreen() {
                                             <Text style={styles.miniLabel}>Start Date</Text>
                                             <TouchableOpacity 
                                                 style={styles.datePickerBtn} 
-                                                onPress={() => setDatePickerMode('start')}
+                                                onPress={() => handleDatePickerPress('start')}
                                             >
                                                 <Ionicons name="calendar-outline" size={16} color={Colors.textMuted} />
                                                 <Text style={styles.dateText}>
@@ -951,7 +1011,7 @@ export default function TimerConfigScreen() {
                                             <Text style={styles.miniLabel}>End Date</Text>
                                             <TouchableOpacity 
                                                 style={styles.datePickerBtn} 
-                                                onPress={() => setDatePickerMode('end')}
+                                                onPress={() => handleDatePickerPress('end')}
                                             >
                                                 <Ionicons name="calendar-outline" size={16} color={Colors.textMuted} />
                                                 <Text style={styles.dateText}>
@@ -963,7 +1023,11 @@ export default function TimerConfigScreen() {
 
                                     {datePickerMode && (
                                         <DateTimePicker
-                                            value={(newModel as any)[datePickerMode === 'start' ? 'event_start' : 'event_end'] ? new Date((newModel as any)[datePickerMode === 'start' ? 'event_start' : 'event_end']) : new Date()}
+                                            value={(() => {
+                                                const v = (newModel as any)[datePickerMode === 'start' ? 'event_start' : 'event_end'];
+                                                const d = v ? new Date(v) : new Date();
+                                                return isNaN(d.getTime()) ? new Date() : d;
+                                            })()}
                                             mode="datetime"
                                             display={Platform.OS === 'ios' ? 'spinner' : 'default'}
                                             onChange={(event, selectedDate) => {

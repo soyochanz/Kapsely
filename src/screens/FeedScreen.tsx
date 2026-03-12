@@ -1,21 +1,26 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
     View, Text, StyleSheet, ScrollView, TouchableOpacity,
-    Image, StatusBar, SafeAreaView, Modal, Pressable, Platform, Alert,
+    Image, StatusBar, Modal, Pressable, Platform, Alert,
     Dimensions, Animated, Easing, FlatList, ActivityIndicator
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useIsFocused } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
+import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
 import CapsuleCard from '../components/CapsuleCard';
 import CapsuleTypePill from '../components/CapsuleTypePill';
+import CapsuleWithTimer from '../components/CapsuleWithTimer';
+
 import TimelineActivity from '../components/TimelineActivity';
 import { supabase } from '../lib/supabase';
 import { MODEL_IMAGES } from '../constants/models';
 import { timerConfigManager } from '../utils/timerConfig';
 import InteractiveTour, { TutorialStep } from '../components/InteractiveTour';
+import StoryViewer from '../components/StoryViewer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 type CapsuleType = 'instacap' | 'eventcap' | 'legacycap';
@@ -25,6 +30,8 @@ type FeedTab = 'following' | 'explore';
 type FilterType = CapsuleType | 'all' | 'today';
 
 export default function FeedScreen() {
+    const { t } = useTranslation();
+    const insets = useSafeAreaInsets();
     const [activeTab, setActiveTab] = useState<FeedTab>('explore');
     const [activeFilter, setActiveFilter] = useState<FilterType>('all');
     const [capsules, setCapsules] = useState<any[]>([]);
@@ -55,8 +62,9 @@ export default function FeedScreen() {
     const [isPaused, setIsPaused] = useState(false);
     const navigation = useNavigation<any>();
 
-    const loadFeed = async (forceRefresh = false) => {
-        const cacheKey = `${activeTab}_${activeFilter}`;
+    const loadFeed = async (forceRefresh = false, tabOverride?: FeedTab) => {
+        const tab = tabOverride ?? activeTab;
+        const cacheKey = `${tab}_${activeFilter}`;
 
         // Use cache if available and not forcing refresh
         if (!forceRefresh && feedCache[cacheKey]) {
@@ -67,7 +75,9 @@ export default function FeedScreen() {
 
         if (!refreshing) setLoading(true);
 
-        const { data: { user } } = await supabase.auth.getUser();
+        // Use cached session (no extra network round-trip)
+        const { data: { session } } = await supabase.auth.getSession();
+        const user = session?.user;
         if (!user) {
             setLoading(false);
             setRefreshing(false);
@@ -82,7 +92,11 @@ export default function FeedScreen() {
         let capsQuery = supabase.from('capsules').select(`
             *,
             profiles:owner_id (username, display_name, avatar_url)
-        `).eq('is_public', true).neq('owner_id', user.id);
+        `).neq('owner_id', user.id);
+
+        if (tab === 'explore') {
+            capsQuery = capsQuery.eq('is_public', true);
+        }
 
         if (activeFilter !== 'all' && activeFilter !== 'today') {
             capsQuery = capsQuery.eq('type', activeFilter);
@@ -96,7 +110,7 @@ export default function FeedScreen() {
             capsQuery = capsQuery.gte('opens_at', startOfDay.toISOString()).lte('opens_at', endOfDay.toISOString());
         }
 
-        if (activeTab === 'following') {
+        if (tab === 'following') {
             if (followingIds.length > 0) {
                 capsQuery = capsQuery.in('owner_id', followingIds);
             } else {
@@ -105,7 +119,7 @@ export default function FeedScreen() {
                 setRefreshing(false);
                 return;
             }
-        } else if (activeTab === 'explore' && followingIds.length > 0) {
+        } else if (tab === 'explore' && followingIds.length > 0) {
             capsQuery = capsQuery.not('owner_id', 'in', `(${followingIds.join(',')})`);
         }
 
@@ -116,9 +130,13 @@ export default function FeedScreen() {
                 profiles:owner_id (username, display_name, avatar_url),
                 capsules:capsule_id!inner (title, is_public, type, status, opens_at, model, chain_id)
             `)
-            .eq('capsules.is_public', true);
+            .in('media_type', ['image', 'video']);
 
-        if (activeTab === 'following') {
+        if (tab === 'explore') {
+            itemsQuery = itemsQuery.eq('capsules.is_public', true);
+        }
+
+        if (tab === 'following') {
             itemsQuery = itemsQuery.in('owner_id', followingIds);
         } else {
             itemsQuery = itemsQuery.neq('owner_id', user.id);
@@ -141,55 +159,140 @@ export default function FeedScreen() {
 
         // 3. Run queries in parallel
         const [capsResponse, itemsResponse] = await Promise.all([
-            capsQuery.order('created_at', { ascending: false }).limit(15),
-            itemsQuery.order('created_at', { ascending: false }).limit(15)
+            capsQuery.order('created_at', { ascending: false }).limit(40),
+            itemsQuery.order('created_at', { ascending: false }).limit(40)
         ]);
 
         const capsData = capsResponse.data || [];
         const activityData = itemsResponse.data || [];
 
+        // Group activity items by capsule and time proximity (1 hour for deduplication)
+        const groupedActivity: any[] = [];
+        const activityProcessed = new Set();
+        const THRESHOLD = 60 * 60 * 1000; // 1 hour threshold for grouping/dedup
+
+        activityData.forEach((item, idx) => {
+            if (activityProcessed.has(item.id)) return;
+
+            const group = [item];
+            activityProcessed.add(item.id);
+
+            const isVisualMedia = item.media_type === 'image' || item.media_type === 'video';
+
+            // Look ahead for similar items
+            if (isVisualMedia) {
+                for (let j = idx + 1; j < activityData.length; j++) {
+                    const nextItem = activityData[j];
+                    const timeDiff = Math.abs(new Date(item.created_at).getTime() - new Date(nextItem.created_at).getTime());
+
+                    if (nextItem.capsule_id === item.capsule_id &&
+                        timeDiff < THRESHOLD &&
+                        (nextItem.media_type === 'image' || nextItem.media_type === 'video')) {
+                        group.push(nextItem);
+                        activityProcessed.add(nextItem.id);
+                    }
+                }
+            }
+
+            if (group.length > 1) {
+                groupedActivity.push({
+                    ...item,
+                    feedType: 'activity_group',
+                    groupItems: group,
+                    count: group.length
+                });
+            } else {
+                groupedActivity.push({ ...item, feedType: 'activity' });
+            }
+        });
+
         const merged = [
             ...capsData.map(c => ({ ...c, feedType: 'capsule' })),
-            ...activityData.map(a => ({ ...a, feedType: 'activity' }))
+            ...groupedActivity
         ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
-        setCapsules(merged);
-        setFeedCache(prev => ({ ...prev, [cacheKey]: merged }));
+        // Deduplicate: If an activity item exists for a capsule, REMOVE the generic "New Capsule" post
+        // We do this by checking if any item in groupedActivity references the capsule.id
+        const finalMerged = merged.filter((item) => {
+            if (item.feedType === 'capsule') {
+                const activityExists = groupedActivity.some(act => {
+                    const actCapId = act.capsule_id?.toString();
+                    const itemId = item.id?.toString();
+                    return actCapId && itemId && actCapId === itemId;
+                });
+
+                // If there's an activity post for this capsule, we hide the generic creation post.
+                // This is unless the capsule is very old or has no media (but groupedActivity only has media)
+                return !activityExists;
+            }
+            return true;
+        });
+
+        setCapsules(finalMerged);
+        setFeedCache(prev => ({ ...prev, [cacheKey]: finalMerged }));
         setLoading(false);
         setRefreshing(false);
     };
 
     const loadStories = async () => {
-        const { data } = await supabase.from('capsule_items')
-            .select(`
-                *,
-                profiles:owner_id(username, avatar_url, id),
-                capsules:capsule_id(id, title, model)
-            `)
-            .eq('is_story', true)
-            .gt('expires_at', new Date().toISOString())
-            .order('created_at', { ascending: false });
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+
+        const [storiesRes, readsRes] = await Promise.all([
+            supabase.from('capsule_items')
+                .select(`
+                    *,
+                    profiles:owner_id(username, avatar_url, id),
+                    capsules:capsule_id(id, title, model)
+                `)
+                .eq('is_story', true)
+                .gt('expires_at', new Date().toISOString())
+                .order('created_at', { ascending: false }),
+            supabase.from('story_reads').select('story_id').eq('user_id', user.id)
+        ]);
+
+        const data = storiesRes.data;
+        const readIds = new Set((readsRes.data || []).map(r => r.story_id));
 
         if (data) {
             // Group stories by user (like Instagram)
             const usersWithStories: any[] = [];
             data.forEach(s => {
                 let userGroup = usersWithStories.find(u => u.owner_id === s.owner_id);
+                const storyWithRead = { ...s, is_read: readIds.has(s.id) };
                 if (!userGroup) {
                     userGroup = { ...s.profiles, owner_id: s.owner_id, stories: [] };
                     usersWithStories.push(userGroup);
                 }
-                userGroup.stories.push(s);
+                userGroup.stories.push(storyWithRead);
             });
-            setStories(usersWithStories);
 
-            const { data: { user } } = await supabase.auth.getUser();
-            if (user) {
-                const mine = usersWithStories.find(u => u.owner_id === user.id);
-                setMyStory(mine || null);
-            }
+            // Evaluate if user has completely read ALL stories
+            const processedUsers = usersWithStories.map(u => ({
+                ...u,
+                all_read: u.stories.every((s: any) => s.is_read)
+            }));
+
+            // Sort: My story first (if exists), then others (unread first), then read
+            const sorted = processedUsers.sort((a, b) => {
+                const isMineA = a.owner_id === user.id;
+                const isMineB = b.owner_id === user.id;
+                if (isMineA && !isMineB) return -1;
+                if (!isMineA && isMineB) return 1;
+
+                if (a.all_read !== b.all_read) return a.all_read ? 1 : -1;
+                return 0;
+            });
+
+            setStories(sorted);
+            const mine = sorted.find(u => u.owner_id === user.id);
+            setMyStory(mine || null);
         }
     };
+
+
+
+
 
     const handleYourCapPress = async () => {
         if (tutorialStep === 'POST_YOURCAP') {
@@ -284,7 +387,12 @@ export default function FeedScreen() {
 
     const confirmStory = async (item: any) => {
         const expiresAt = new Date();
-        expiresAt.setHours(expiresAt.getHours() + 48);
+        expiresAt.setHours(expiresAt.getHours() + 168); // 1 Week
+
+        // Check if capsule is sealed for Mystery effect
+        const { data: cap } = await supabase.from('capsules').select('status').eq('id', item.capsule_id).single();
+        const isMystery = cap?.status === 'sealed';
+
 
         const { error } = await supabase.from('capsule_items').insert({
             owner_id: currentUserId,
@@ -293,8 +401,10 @@ export default function FeedScreen() {
             media_type: item.media_type || 'image',
             content_type: item.content_type || 'image',
             is_story: true,
+            is_mystery: isMystery,
             expires_at: expiresAt.toISOString()
         });
+
 
         if (!error) {
             setShowCapsulePicker(false);
@@ -304,69 +414,52 @@ export default function FeedScreen() {
         }
     };
 
-    // Story Viewer Animation
-    useEffect(() => {
-        if (activeStory && !isPaused) {
-            progress.setValue(0);
-            Animated.timing(progress, {
-                toValue: 1,
-                duration: 5000,
-                easing: Easing.linear,
-                useNativeDriver: false,
-            }).start(({ finished }) => {
-                if (finished) nextStory();
-            });
-        } else if (isPaused) {
-            progress.stopAnimation();
-        }
-    }, [activeStory, activeStoryIndex, isPaused]);
+    const markStoryRead = async (storyId: string) => {
+        if (!currentUserId) return;
+        await supabase.from('story_reads').upsert({ user_id: currentUserId, story_id: storyId }, { onConflict: 'user_id,story_id' });
+        // Optimistic update locally
+        setStories(prev => prev.map(u => ({
+            ...u,
+            stories: u.stories.map((s: any) => s.id === storyId ? { ...s, is_read: true } : s)
+        })).map(u => ({
+            ...u,
+            all_read: u.stories.every((s: any) => s.is_read)
+        })));
 
-    const nextStory = () => {
-        if (!activeStory) return;
-        if (activeStoryIndex < activeStory.stories.length - 1) {
-            setActiveStoryIndex(prev => prev + 1);
-        } else {
-            // Next user's story
-            const currentIndex = stories.findIndex(u => u.owner_id === activeStory.owner_id);
-            if (currentIndex < stories.length - 1) {
-                setActiveStory(stories[currentIndex + 1]);
-                setActiveStoryIndex(0);
-            } else {
-                setActiveStory(null);
-            }
+        // Also update myStory if it was mine
+        if (myStory) {
+            const updatedMyStories = myStory.stories.map((s: any) => s.id === storyId ? { ...s, is_read: true } : s);
+            const allRead = updatedMyStories.every((s: any) => s.is_read);
+            setMyStory({ ...myStory, stories: updatedMyStories, all_read: allRead });
         }
     };
 
-    const prevStory = () => {
-        if (!activeStory) return;
-        if (activeStoryIndex > 0) {
-            setActiveStoryIndex(prev => prev - 1);
-        } else {
-            // Prev user's story
-            const currentIndex = stories.findIndex(u => u.owner_id === activeStory.owner_id);
-            if (currentIndex > 0) {
-                setActiveStory(stories[currentIndex - 1]);
-                setActiveStoryIndex(stories[currentIndex - 1].stories.length - 1);
-            } else {
-                setActiveStory(null);
-            }
-        }
-    };
 
     useEffect(() => {
         const initTab = async () => {
-            const { data: { user } } = await supabase.auth.getUser();
+            // Use cached session (fast, no network) instead of slow getUser()
+            const { data: { session } } = await supabase.auth.getSession();
+            const user = session?.user;
             if (user) {
-                const { count } = await supabase.from('follows').select('*', { count: 'exact', head: true }).eq('follower_id', user.id);
-                setActiveTab(count && count > 0 ? 'following' : 'explore');
                 setCurrentUserId(user.id);
+                const { count } = await supabase
+                    .from('follows')
+                    .select('*', { count: 'exact', head: true })
+                    .eq('follower_id', user.id);
+                // Determine correct tab
+                const correctTab: FeedTab = count && count > 0 ? 'following' : 'explore';
+                setActiveTab(correctTab);
+                // Load with the correct tab immediately (no race condition)
+                loadFeed(false, correctTab);
+                loadStories();
             }
         };
         initTab();
     }, []);
 
     useEffect(() => {
-        if (currentUserId || activeTab === 'explore') {
+        // Only re-load when user manually changes tab/filter (not on init, which is handled above)
+        if (currentUserId) {
             loadFeed();
             loadStories();
         }
@@ -396,39 +489,41 @@ export default function FeedScreen() {
 
     useEffect(() => {
         const checkUnread = async () => {
-            const { data: { user } } = await supabase.auth.getUser();
+            const { data: { session } } = await supabase.auth.getSession();
+            const user = session?.user;
             if (!user) return;
 
-            // Fetch conversations
-            const { data: participants } = await supabase
+            const { data: myConvs } = await supabase
                 .from('conversation_participants')
-                .select('conversation_id, last_read_at')
+                .select('conversation_id')
                 .eq('user_id', user.id);
 
-            if (!participants || participants.length === 0) {
+            if (!myConvs || myConvs.length === 0) {
                 setHasUnread(false);
                 return;
             }
 
-            let unreadFound = false;
-            for (const p of participants) {
+            // Check each conversation: is there a message from others after our last visit?
+            let foundUnread = false;
+            for (const conv of myConvs) {
+                const lastVisited = await AsyncStorage.getItem(`chat_visited_${conv.conversation_id}`);
                 const { data: lastMsg } = await supabase
                     .from('messages')
                     .select('created_at, sender_id')
-                    .eq('conversation_id', p.conversation_id)
+                    .eq('conversation_id', conv.conversation_id)
                     .neq('sender_id', user.id)
                     .order('created_at', { ascending: false })
                     .limit(1)
                     .maybeSingle();
 
                 if (lastMsg) {
-                    if (!p.last_read_at || new Date(lastMsg.created_at) > new Date(p.last_read_at)) {
-                        unreadFound = true;
+                    if (!lastVisited || new Date(lastMsg.created_at) > new Date(lastVisited)) {
+                        foundUnread = true;
                         break;
                     }
                 }
             }
-            setHasUnread(unreadFound);
+            setHasUnread(foundUnread);
         };
 
         checkUnread();
@@ -452,7 +547,7 @@ export default function FeedScreen() {
         <View style={styles.container}>
             <StatusBar barStyle="dark-content" backgroundColor={Colors.background} />
 
-            <SafeAreaView style={styles.header}>
+            <View style={[styles.header, { paddingTop: insets.top + 15 }]}>
                 <View style={styles.headerContent}>
                     <View style={styles.logoContainer}>
                         <Image
@@ -463,8 +558,8 @@ export default function FeedScreen() {
                         <Text style={styles.logoText}>kapsely</Text>
                     </View>
                     <View style={styles.headerActions}>
-                        <TouchableOpacity 
-                            style={styles.iconBtn} 
+                        <TouchableOpacity
+                            style={styles.iconBtn}
                             onPress={() => {
                                 if (tutorialStep === 'PRESS_PLUS') {
                                     setTutorialStep('POST_YOURCAP');
@@ -477,12 +572,12 @@ export default function FeedScreen() {
                         <TouchableOpacity style={styles.iconBtn} onPress={() => navigation.navigate('Search')}>
                             <Ionicons name="search-outline" size={22} color={Colors.textPrimary} />
                         </TouchableOpacity>
-                        <TouchableOpacity 
+                        <TouchableOpacity
                             onPress={() => navigation.navigate('ChatList')}
                             activeOpacity={0.8}
                         >
-                            <LinearGradient 
-                                colors={[Colors.primary, Colors.primaryDark]} 
+                            <LinearGradient
+                                colors={[Colors.primary, Colors.primaryDark]}
                                 style={[styles.notifIcon, hasUnread && styles.notifIconUnread]}
                             >
                                 <Ionicons name="chatbubble-ellipses" size={16} color="#fff" />
@@ -493,16 +588,16 @@ export default function FeedScreen() {
                 </View>
 
                 <View style={styles.tabRow}>
-                    {(['following', 'explore'] as FeedTab[]).map((tab) => (
-                        <TouchableOpacity key={tab} style={styles.tabItem} onPress={() => setActiveTab(tab)} activeOpacity={0.7}>
-                            <Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>
-                                {tab === 'following' ? 'Following' : 'Explore'}
+                    {(['following', 'explore'] as FeedTab[]).map((t_key) => (
+                        <TouchableOpacity key={t_key} style={styles.tabItem} onPress={() => setActiveTab(t_key)} activeOpacity={0.7}>
+                            <Text style={[styles.tabText, activeTab === t_key && styles.tabTextActive]}>
+                                {t_key === 'following' ? t('feed.following') : t('feed.explore')}
                             </Text>
-                            {activeTab === tab && <View style={styles.tabUnderline} />}
+                            {activeTab === t_key && <View style={styles.tabUnderline} />}
                         </TouchableOpacity>
                     ))}
                 </View>
-            </SafeAreaView>
+            </View>
 
             <FlatList
                 data={capsules}
@@ -527,14 +622,14 @@ export default function FeedScreen() {
                                 >
                                     <Ionicons name="time" size={16} color={activeFilter === 'today' ? '#fff' : '#FF416C'} />
                                     <View>
-                                        <Text style={[styles.todayLabel, activeFilter === 'today' && { color: '#fff' }]}>Opens Today</Text>
+                                        <Text style={[styles.todayLabel, activeFilter === 'today' && { color: '#fff' }]}>{t('feed.opens_today')}</Text>
                                         {activeFilter === 'today' && <View style={styles.todayActiveDot} />}
                                     </View>
                                 </LinearGradient>
                             </TouchableOpacity>
 
                             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pillsRow} contentContainerStyle={styles.pillsContent}>
-                                <CapsuleTypePill type="all" label="All" isActive={activeFilter === 'all'} onPress={() => setActiveFilter('all')} />
+                                <CapsuleTypePill type="all" label={t('feed.all')} isActive={activeFilter === 'all'} onPress={() => setActiveFilter('all')} />
                                 <CapsuleTypePill type="instacap" label="InstaCap" isActive={activeFilter === 'instacap'} onPress={() => setActiveFilter('instacap')} />
                                 <CapsuleTypePill type="eventcap" label="EventCap" isActive={activeFilter === 'eventcap'} onPress={() => setActiveFilter('eventcap')} />
                                 <CapsuleTypePill type="legacycap" label="LegacyCap" isActive={activeFilter === 'legacycap'} onPress={() => setActiveFilter('legacycap')} />
@@ -561,18 +656,27 @@ export default function FeedScreen() {
 
                             {stories.filter(u => u.owner_id !== currentUserId).map((u) => (
                                 <TouchableOpacity key={u.owner_id} style={styles.storyItem} onPress={() => { setActiveStory(u); setActiveStoryIndex(0); }}>
-                                    <LinearGradient colors={['#f09433', '#e6683c', '#dc2743', '#cc2366', '#bc1888']} style={styles.storyRing}>
-                                        <View style={styles.storyAvatarWrap}>
-                                            <Image source={{ uri: u.avatar_url || 'https://via.placeholder.com/150' }} style={styles.storyAvatar} />
+                                    {u.all_read ? (
+                                        <View style={[styles.storyRing, { backgroundColor: Colors.border, padding: 2 }]}>
+                                            <View style={styles.storyAvatarWrap}>
+                                                <Image source={{ uri: u.avatar_url || 'https://via.placeholder.com/150' }} style={styles.storyAvatar} />
+                                            </View>
                                         </View>
-                                    </LinearGradient>
-                                    <Text style={styles.storyLabel} numberOfLines={1}>{u.username ?? 'user'}</Text>
+                                    ) : (
+                                        <LinearGradient colors={['#f09433', '#e6683c', '#dc2743', '#cc2366', '#bc1888']} style={styles.storyRing}>
+                                            <View style={styles.storyAvatarWrap}>
+                                                <Image source={{ uri: u.avatar_url || 'https://via.placeholder.com/150' }} style={styles.storyAvatar} />
+                                            </View>
+                                        </LinearGradient>
+                                    )}
+                                    <Text style={[styles.storyLabel, u.all_read && { color: Colors.textMuted }]} numberOfLines={1}>{u.username ?? 'user'}</Text>
                                 </TouchableOpacity>
                             ))}
+
                         </ScrollView>
 
                         {loading && !refreshing && (
-                            <View style={{ paddingVertical: 20 }}>
+                            <View style={{ paddingTop: insets.top + 15 }}>
                                 <ActivityIndicator color={Colors.primary} />
                             </View>
                         )}
@@ -586,7 +690,7 @@ export default function FeedScreen() {
                 ListEmptyComponent={() => !loading && (
                     <View style={styles.emptyState}>
                         <Ionicons name="lock-closed-outline" size={48} color={Colors.textMuted} />
-                        <Text style={styles.emptyText}>No capsules yet</Text>
+                        <Text style={styles.emptyText}>{t('feed.no_capsules_yet')}</Text>
                     </View>
                 )}
             />
@@ -615,7 +719,7 @@ export default function FeedScreen() {
                                 {userCapsules.map(cap => (
                                     <TouchableOpacity key={cap.id} style={styles.pickerItem} onPress={() => handleSelectCapsuleForPicker(cap)}>
                                         <View style={styles.pickerModelWrap}>
-                                            <Image source={{ uri: timerConfigManager.getModelImage(cap.model) || MODEL_IMAGES[cap.model] || MODEL_IMAGES.beach }} style={styles.pickerModelImg} resizeMode="contain" />
+                                            <Image source={{ uri: timerConfigManager.getModelImage(cap.model) || MODEL_IMAGES[cap.model] || (MODEL_IMAGES as any).basicred_kap }} style={styles.pickerModelImg} resizeMode="contain" />
                                         </View>
                                         <View style={{ flex: 1 }}>
                                             <Text style={styles.pickerItemText}>{cap.title}</Text>
@@ -650,15 +754,16 @@ export default function FeedScreen() {
                                         <Animated.View style={[styles.shufflingIcon, { transform: [{ scale: shuffleAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.2] }) }] }]}>
                                             <Ionicons name="rocket-outline" size={64} color={Colors.primary} />
                                         </Animated.View>
-                                        <Text style={styles.shufflingText}>Exploring your sealed memory capsules...</Text>
+                                        <Text style={styles.luckyText}>{t('feed.lucky_msg')}</Text>
+                                        <Text style={styles.shufflingText}>{t('feed.shuffling_msg')}</Text>
                                     </View>
                                 ) : (
                                     <View style={styles.previewWrap}>
                                         <View style={styles.previewImgContainer}>
                                             <Image source={{ uri: randomPreviewItem?.media_url }} style={styles.previewImgReal} />
                                             <Animated.View style={[StyleSheet.absoluteFill, { opacity: unblurAnim }]}>
-                                                <BlurView intensity={100} tint="dark" style={StyleSheet.absoluteFill} />
-                                                <BlurView intensity={50} tint="light" style={StyleSheet.absoluteFill} />
+                                                <BlurView intensity={50} tint="dark" style={StyleSheet.absoluteFill} />
+                                                <BlurView intensity={40} tint="light" style={StyleSheet.absoluteFill} />
                                             </Animated.View>
                                         </View>
                                         <Text style={styles.luckyText}>A memory has surfaced!</Text>
@@ -680,97 +785,25 @@ export default function FeedScreen() {
                 </View>
             </Modal>
 
-            {/* Story Viewer Modal */}
-            <Modal visible={!!activeStory} transparent animationType="fade">
-                {activeStory && (
-                    <View style={styles.storyViewer}>
-                        <StatusBar barStyle="light-content" />
+            <StoryViewer
+                visible={!!activeStory}
+                userGroup={activeStory}
+                onClose={() => setActiveStory(null)}
+                onNextUser={() => {
+                    const currentIndex = stories.findIndex(u => u.owner_id === activeStory?.owner_id);
+                    if (currentIndex < stories.length - 1) setActiveStory(stories[currentIndex + 1]);
+                    else setActiveStory(null);
+                }}
+                onPrevUser={() => {
+                    const currentIndex = stories.findIndex(u => u.owner_id === activeStory?.owner_id);
+                    if (currentIndex > 0) setActiveStory(stories[currentIndex - 1]);
+                }}
+                onStoryRead={markStoryRead}
+                currentUserId={currentUserId || undefined}
+            />
 
-                        {/* Gestures for Next/Prev */}
-                        <Pressable
-                            style={StyleSheet.absoluteFill}
-                            onPressIn={() => setIsPaused(true)}
-                            onPressOut={() => setIsPaused(false)}
-                            onLongPress={() => { }} // Block normal long press
-                        >
-                            <Image
-                                source={{ uri: activeStory.stories[activeStoryIndex].media_url }}
-                                style={styles.storyBackground}
-                                resizeMode="cover"
-                            />
-
-                            <LinearGradient colors={['rgba(0,0,0,0.6)', 'transparent', 'rgba(0,0,0,0.4)']} style={StyleSheet.absoluteFill} />
-
-                            <View style={styles.gestureOverlay}>
-                                <Pressable style={styles.gestureSide} onPress={prevStory} />
-                                <View style={{ flex: 1 }} />
-                                <Pressable style={styles.gestureSide} onPress={nextStory} />
-                            </View>
-
-                            {/* Floating Capsule Model Link */}
-                            <Animated.View style={styles.floatingCapsule}>
-                                <BlurView intensity={30} tint="dark" style={styles.blurCapsule}>
-                                    <TouchableOpacity
-                                        style={styles.floatingCapsuleInner}
-                                        onPress={() => {
-                                            const capId = activeStory.stories[activeStoryIndex].capsule_id;
-                                            setActiveStory(null);
-                                            navigation.push('CapsuleDetail', { capsuleId: capId });
-                                        }}
-                                    >
-                                        <Image
-                                            source={{ uri: timerConfigManager.getModelImage(activeStory.stories[activeStoryIndex].capsules.model) || MODEL_IMAGES[activeStory.stories[activeStoryIndex].capsules.model] }}
-                                            style={styles.floatingModelImg}
-                                            resizeMode="contain"
-                                        />
-                                        <Text style={styles.floatingModelText}>View Capsule</Text>
-                                        <Ionicons name="arrow-forward" size={12} color="#fff" />
-                                    </TouchableOpacity>
-                                </BlurView>
-                            </Animated.View>
-
-                            {/* Header / Bars */}
-                            <SafeAreaView style={styles.storySafeHeader}>
-                                <View style={styles.progressBars}>
-                                    {activeStory.stories.map((s: any, i: number) => (
-                                        <View key={s.id} style={styles.progressBarBg}>
-                                            <Animated.View
-                                                style={[
-                                                    styles.progressBarFill,
-                                                    {
-                                                        width: i < activeStoryIndex ? '100%' :
-                                                            i === activeStoryIndex ? progress.interpolate({
-                                                                inputRange: [0, 1],
-                                                                outputRange: ['0%', '100%']
-                                                            }) : '0%'
-                                                    }
-                                                ]}
-                                            />
-                                        </View>
-                                    ))}
-                                </View>
-
-                                <View style={styles.storyHeader}>
-                                    <Image source={{ uri: activeStory.avatar_url || 'https://via.placeholder.com/150' }} style={styles.storyAvatarSmall} />
-                                    <View>
-                                        <Text style={styles.storyUser}>{activeStory.username}</Text>
-                                        <Text style={styles.storyTime}>
-                                            {activeStory.stories[activeStoryIndex].capsules.title}
-                                        </Text>
-                                    </View>
-                                    <View style={{ flex: 1 }} />
-                                    <TouchableOpacity onPress={() => setActiveStory(null)}>
-                                        <Ionicons name="close" size={32} color="#fff" />
-                                    </TouchableOpacity>
-                                </View>
-                            </SafeAreaView>
-                        </Pressable>
-                    </View>
-                )}
-            </Modal>
-
-            <InteractiveTour 
-                step={tutorialStep} 
+            <InteractiveTour
+                step={tutorialStep}
                 onAction={(action) => {
                     if (action === 'START') setTutorialStep('PRESS_PLUS');
                 }}
@@ -799,11 +832,11 @@ const styles = StyleSheet.create({
     logoText: { color: Colors.textPrimary, fontSize: 20, fontFamily: Fonts.bold, letterSpacing: -0.5 },
     headerActions: { flexDirection: 'row', gap: Spacing.sm, alignItems: 'center' },
     iconBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-    notifIcon: { 
-        width: 36, 
-        height: 36, 
-        borderRadius: 12, 
-        alignItems: 'center', 
+    notifIcon: {
+        width: 36,
+        height: 36,
+        borderRadius: 12,
+        alignItems: 'center',
         justifyContent: 'center',
         ...Shadow.subtle,
     },
@@ -811,14 +844,14 @@ const styles = StyleSheet.create({
         transform: [{ scale: 1.05 }],
     },
     notifBadge: {
-        position: 'absolute', 
-        top: -2, 
-        right: -2, 
-        width: 12, 
-        height: 12, 
+        position: 'absolute',
+        top: -2,
+        right: -2,
+        width: 12,
+        height: 12,
         borderRadius: 6,
-        backgroundColor: Colors.error, 
-        borderWidth: 2, 
+        backgroundColor: Colors.error,
+        borderWidth: 2,
         borderColor: Colors.surface,
         ...Shadow.primary,
     },

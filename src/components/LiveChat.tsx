@@ -60,6 +60,18 @@ export default function LiveChat({ capsuleId, tint }: LiveChatProps) {
                         .then(({ data }) => {
                             setMessages(prev => [...prev, { ...newMsg, profiles: data || undefined }]);
                             setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+                            
+                            // Mark as read immediately if we're in the chat
+                            supabase.auth.getUser().then(({ data: { user } }) => {
+                                if (user) {
+                                    supabase
+                                        .from('notifications')
+                                        .update({ is_read: true })
+                                        .eq('capsule_id', capsuleId)
+                                        .eq('user_id', user.id)
+                                        .then();
+                                }
+                            });
                         });
                 }
             )
@@ -104,6 +116,16 @@ export default function LiveChat({ capsuleId, tint }: LiveChatProps) {
         if (data) {
             setMessages(data);
             setTimeout(() => flatListRef.current?.scrollToEnd({ animated: false }), 200);
+        }
+
+        // Mark as read
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+            await supabase
+                .from('notifications')
+                .update({ is_read: true })
+                .eq('capsule_id', capsuleId)
+                .eq('user_id', user.id);
         }
     };
 

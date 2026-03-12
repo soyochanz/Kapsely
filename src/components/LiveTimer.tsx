@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import { timerConfigManager, ModelTimerConfig } from '../utils/timerConfig';
 import { Fonts } from '../theme';
 
@@ -23,6 +24,7 @@ const LiveTimer = React.memo(({
 }: LiveTimerProps) => {
     const [label, setLabel] = useState('');
     const [savedConfig, setSavedConfig] = useState<ModelTimerConfig | null>(null);
+    const { t } = useTranslation();
 
     const config = configOverride || savedConfig;
 
@@ -44,7 +46,7 @@ const LiveTimer = React.memo(({
 
             let newLabel = '';
             if (diff <= 0) {
-                newLabel = 'Ready!';
+                newLabel = t('common.ready') ?? 'Ready!';
             } else {
                 const activeFormat = config?.format ?? 'standard';
                 const totalHours = diff / (1000 * 60 * 60);
@@ -53,12 +55,12 @@ const LiveTimer = React.memo(({
                 if (activeFormat === 'days' || totalHours > 72) {
                     if (totalDays > 730) {
                         const years = Math.floor(totalDays / 365);
-                        newLabel = `${years} ${years === 1 ? 'year' : 'years'}`;
+                        newLabel = `${years} ${years === 1 ? t('common.year') : t('common.years')}`;
                     } else if (totalDays > 365) {
                         const months = Math.floor(totalDays / 30);
-                        newLabel = `${months} ${months === 1 ? 'month' : 'months'}`;
+                        newLabel = `${months} ${months === 1 ? t('common.month') : t('common.months')}`;
                     } else {
-                        newLabel = `${totalDays} ${totalDays === 1 ? 'day' : 'days'}`;
+                        newLabel = `${totalDays} ${t('common.days')}`;
                     }
                 } else {
                     const h = Math.floor(totalHours);
@@ -77,7 +79,7 @@ const LiveTimer = React.memo(({
         update();
         const timer = setInterval(update, 1000);
         return () => clearInterval(timer);
-    }, [date, config]);
+    }, [date, config, t]);
 
     const renderContent = () => {
         if (!config || config.curvature === 0 || label === 'Ready!') {

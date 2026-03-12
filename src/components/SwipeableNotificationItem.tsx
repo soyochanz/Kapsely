@@ -128,6 +128,7 @@ export default function SwipeableNotificationItem({
             <Animated.View style={[styles.row, { transform: [{ translateX }] }]} {...panResponder.panHandlers}>
                 <NotificationItem
                     notification={notification}
+                    onMarkRead={onMarkRead}
                     onAcceptInvite={onAcceptInvite}
                     onRejectInvite={onRejectInvite}
                 />

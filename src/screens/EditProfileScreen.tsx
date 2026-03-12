@@ -4,6 +4,7 @@ import {
     TextInput, StatusBar, SafeAreaView, Image, ActivityIndicator,
     Alert, Modal, Pressable, Platform, Dimensions,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
 const { width } = Dimensions.get('window');
 import * as FileSystem from 'expo-file-system/legacy';
@@ -12,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
+import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
 import { supabase, Profile } from '../lib/supabase';
 
@@ -34,6 +36,7 @@ interface Props {
 }
 
 export default function EditProfileScreen({ onClose }: Props) {
+    const { t } = useTranslation();
     const navigation = useNavigation();
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -45,17 +48,17 @@ export default function EditProfileScreen({ onClose }: Props) {
     const favoriteSongInit = '';
     const [favoriteSong, setFavoriteSong] = useState(favoriteSongInit);
     const [avatarUri, setAvatarUri] = useState<string | null>(null);
+    const [birthdate, setBirthdate] = useState<string | null>(null);
+    const [showDatePicker, setShowDatePicker] = useState(false);
     const [uploading, setUploading] = useState(false);
 
     const [showColorPicker, setShowColorPicker] = useState(false);
     const [userId, setUserId] = useState<string | null>(null);
     const [initialAvatarUrl, setInitialAvatarUrl] = useState<string | null>(null);
+    const [initialDisplayName, setInitialDisplayName] = useState('');
+    const [displayNameHistory, setDisplayNameHistory] = useState<string[]>([]);
 
-    // Profile Stickers State
-    const [profileStickers, setProfileStickers] = useState<(any | null)[]>([null, null, null, null, null, null, null]);
-    const [allStickers, setAllStickers] = useState<any[]>([]);
-    const [showStickerPicker, setShowStickerPicker] = useState(false);
-    const [activeSlot, setActiveSlot] = useState<number | null>(null);
+
 
     // ── Load current profile ──────────────────────────────────────────────────
     useEffect(() => {
@@ -70,60 +73,19 @@ export default function EditProfileScreen({ onClose }: Props) {
                 setFavoriteColor(data.favorite_color ?? '#a269ff');
                 setFavoriteMovie(data.favorite_movie ?? '');
                 setFavoriteSong(data.favorite_song ?? '');
+                setBirthdate(data.birthdate ?? null);
                 setAvatarUri(data.avatar_url ?? null);
                 setInitialAvatarUrl(data.avatar_url ?? null);
+                setInitialDisplayName(data.display_name ?? '');
+                setDisplayNameHistory(data.display_name_history ?? []);
             }
             setLoading(false);
             
-            // Load stickers
-            loadProfileStickers(user.id);
-            const { data: stks } = await supabase.from('stickers').select('*').eq('is_active', true);
-            if (stks) setAllStickers(stks);
+
         })();
     }, []);
 
-    const loadProfileStickers = async (uid: string) => {
-        const { data } = await supabase
-            .from('profile_stickers')
-            .select('*, stickers(*)')
-            .eq('user_id', uid);
-        
-        if (data) {
-            const slots = [null, null, null, null, null, null, null];
-            data.forEach((ps: any) => {
-                if (ps.position >= 1 && ps.position <= 7) {
-                    slots[ps.position - 1] = ps.stickers;
-                }
-            });
-            setProfileStickers(slots);
-        }
-    };
 
-    const handleSelectSticker = async (sticker: any) => {
-        if (activeSlot === null || !userId) return;
-        
-        try {
-            const pos = activeSlot + 1;
-            if (sticker === null) {
-                // Remove sticker
-                await supabase.from('profile_stickers').delete().eq('user_id', userId).eq('position', pos);
-            } else {
-                // Upsert sticker
-                const { error } = await supabase.from('profile_stickers').upsert({
-                    user_id: userId,
-                    sticker_id: sticker.id,
-                    position: pos,
-                    updated_at: new Date().toISOString()
-                }, { onConflict: 'user_id,position' });
-                if (error) throw error;
-            }
-            
-            loadProfileStickers(userId);
-            setShowStickerPicker(false);
-        } catch (e: any) {
-            Alert.alert('Error', e.message);
-        }
-    };
 
     // ── Avatar pick + crop ────────────────────────────────────────────────────
     const pickAvatar = async () => {
@@ -216,13 +178,35 @@ export default function EditProfileScreen({ onClose }: Props) {
                 }
             }
 
+            const nameChanged = displayName.trim() !== initialDisplayName.trim();
+            let newHistory = [...displayNameHistory];
+
+            if (nameChanged) {
+                const fifteenDaysAgo = new Date();
+                fifteenDaysAgo.setDate(fifteenDaysAgo.getDate() - 15);
+
+                const recentChanges = displayNameHistory.filter(ts => new Date(ts) > fifteenDaysAgo);
+                
+                if (recentChanges.length >= 2) {
+                    Alert.alert(
+                        'Limit Reached', 
+                        'You can only change your display name twice every 15 days. Please try again later.'
+                    );
+                    setSaving(false);
+                    return;
+                }
+                newHistory.push(new Date().toISOString());
+            }
+
             const { error } = await supabase.from('profiles').update({
-                display_name: displayName,
+                display_name: displayName.trim(),
                 bio,
                 favorite_color: favoriteColor,
-                favorite_movie: favoriteMovie,
-                favorite_song: favoriteSong,
+                favorite_movie: favoriteMovie.trim() || null,
+                favorite_song: favoriteSong.trim() || null,
+                birthdate: birthdate,
                 avatar_url: finalAvatarUrl,
+                display_name_history: newHistory,
                 updated_at: new Date().toISOString(),
             }).eq('id', userId);
 
@@ -263,16 +247,13 @@ export default function EditProfileScreen({ onClose }: Props) {
         <View style={styles.container}>
             <StatusBar barStyle="dark-content" backgroundColor={Colors.surface} />
             <SafeAreaView style={styles.safeArea}>
-                {/* Header */}
                 <View style={styles.header}>
                     <TouchableOpacity onPress={() => onClose ? onClose() : navigation.goBack()} style={styles.headerBtn}>
-                        <Ionicons name="close" size={22} color={Colors.textPrimary} />
+                        <Ionicons name="close" size={26} color={Colors.textPrimary} />
                     </TouchableOpacity>
-                    <Text style={styles.headerTitle}>Edit Profile</Text>
-                    <TouchableOpacity onPress={handleSave} style={styles.saveBtn} disabled={saving}>
-                        {saving || uploading
-                            ? <ActivityIndicator size="small" color="#fff" />
-                            : <Text style={styles.saveBtnText}>Save</Text>}
+                    <Text style={styles.headerTitle}>{t('profile.editProfile')}</Text>
+                    <TouchableOpacity onPress={handleSave} disabled={saving} style={styles.saveBtn}>
+                        {saving ? <ActivityIndicator size="small" color={Colors.primary} /> : <Text style={styles.saveBtnText}>{t('common.save')}</Text>}
                     </TouchableOpacity>
                 </View>
             </SafeAreaView>
@@ -294,24 +275,24 @@ export default function EditProfileScreen({ onClose }: Props) {
                             <Ionicons name="camera" size={14} color="#fff" />
                         </View>
                     </TouchableOpacity>
-                    <Text style={styles.avatarHint}>Tap to change photo · Adjust image to fit</Text>
+                    <Text style={styles.avatarHint}>{t('profile.tapToChangePhoto')}</Text>
                 </View>
 
                 {/* Fields */}
                 <View style={styles.section}>
-                    <Text style={styles.sectionLabel}>Display Name</Text>
+                    <Text style={styles.sectionLabel}>{t('profile.displayName')}</Text>
                     <TextInput style={styles.input} value={displayName} onChangeText={setDisplayName}
-                        placeholder="Your visible name" placeholderTextColor={Colors.textMuted} />
+                        placeholder={t('profile.yourVisibleName')} placeholderTextColor={Colors.textMuted} />
 
-                    <Text style={styles.sectionLabel}>Bio</Text>
+                    <Text style={styles.sectionLabel}>{t('profile.bio')}</Text>
                     <TextInput style={[styles.input, styles.textArea]} value={bio} onChangeText={setBio}
-                        placeholder="Write something about you..." placeholderTextColor={Colors.textMuted}
+                        placeholder={t('profile.writeSomethingAboutYou')} placeholderTextColor={Colors.textMuted}
                         multiline numberOfLines={3} />
                 </View>
 
                 {/* Favorite Color */}
                 <View style={styles.section}>
-                    <Text style={styles.sectionLabel}>Favorite Color</Text>
+                    <Text style={styles.sectionLabel}>{t('profile.favoriteColor')}</Text>
                     <TouchableOpacity
                         style={styles.colorRow}
                         onPress={() => setShowColorPicker(true)}
@@ -325,43 +306,58 @@ export default function EditProfileScreen({ onClose }: Props) {
 
                 {/* Favorites */}
                 <View style={styles.section}>
-                    <Text style={styles.sectionLabel}>🎬 Favorite Movie</Text>
+                    <Text style={styles.sectionLabel}>{t('profile.favoriteMovieSeries')}</Text>
                     <TextInput style={styles.input} value={favoriteMovie} onChangeText={setFavoriteMovie}
-                        placeholder="e.g. Interstellar" placeholderTextColor={Colors.textMuted} />
+                        placeholder={t('profile.moviePlaceholder')} placeholderTextColor={Colors.textMuted} 
+                        maxLength={30} />
+                    <Text style={styles.charLimit}>{favoriteMovie.length}/30</Text>
 
-                    <Text style={styles.sectionLabel}>🎵 Favorite Song</Text>
+                    <Text style={styles.sectionLabel}>{t('profile.favoriteSong')}</Text>
                     <TextInput style={styles.input} value={favoriteSong} onChangeText={setFavoriteSong}
-                        placeholder="e.g. Bohemian Rhapsody – Queen" placeholderTextColor={Colors.textMuted} />
+                        placeholder={t('profile.songPlaceholder')} placeholderTextColor={Colors.textMuted}
+                        maxLength={30} />
+                    <Text style={styles.charLimit}>{favoriteSong.length}/30</Text>
                 </View>
 
-                {/* Profile Stickers Section */}
+                {/* Birthdate */}
                 <View style={styles.section}>
-                    <View style={styles.sectionHeaderRow}>
-                        <Text style={styles.sectionLabel}>Profile Stickers</Text>
-                        <Ionicons name="sparkles" size={14} color={favoriteColor} />
-                    </View>
-                    <Text style={styles.sectionHint}>Add up to 7 stickers to your profile banner</Text>
-                    
-                    <View style={styles.stickerGrid}>
-                        {profileStickers.map((stk, i) => (
-                            <TouchableOpacity 
-                                key={i} 
-                                style={styles.stickerSlot} 
-                                onPress={() => {
-                                    setActiveSlot(i);
-                                    setShowStickerPicker(true);
+                    <Text style={styles.sectionLabel}>{t('profile.birthdate')}</Text>
+                    <TouchableOpacity 
+                        style={styles.input} 
+                        onPress={() => setShowDatePicker(true)}
+                        activeOpacity={0.7}
+                    >
+                        <Text style={{ color: birthdate ? Colors.textPrimary : Colors.textMuted }}>
+                            {birthdate ? new Date(birthdate).toLocaleDateString() : t('profile.setYourBirthday')}
+                        </Text>
+                    </TouchableOpacity>
+                    {showDatePicker && (
+                        <View>
+                            <DateTimePicker
+                                value={birthdate ? new Date(birthdate) : new Date(2000, 0, 1)}
+                                mode="date"
+                                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                                maximumDate={new Date()}
+                                onChange={(event, selectedDate) => {
+                                    setShowDatePicker(Platform.OS === 'ios');
+                                    if (selectedDate) {
+                                        setBirthdate(selectedDate.toISOString().split('T')[0]);
+                                    }
                                 }}
-                            >
-                                {stk ? (
-                                    <Image source={{ uri: stk.image_url }} style={styles.slotStickerImg} resizeMode="contain" />
-                                ) : (
-                                    <Ionicons name="add" size={20} color={Colors.textMuted} />
-                                )}
-                                <View style={styles.slotNumber}><Text style={styles.slotNumberText}>{i + 1}</Text></View>
-                            </TouchableOpacity>
-                        ))}
-                    </View>
+                            />
+                            {Platform.OS === 'ios' && (
+                                <TouchableOpacity 
+                                    style={styles.dateDoneBtn} 
+                                    onPress={() => setShowDatePicker(false)}
+                                >
+                                    <Text style={styles.dateDoneText}>{t('common.done')}</Text>
+                                </TouchableOpacity>
+                            )}
+                        </View>
+                    )}
                 </View>
+
+
 
                 {/* Logout Button */}
                 <View style={styles.logoutSection}>
@@ -414,44 +410,6 @@ export default function EditProfileScreen({ onClose }: Props) {
                             onPress={() => setShowColorPicker(false)} activeOpacity={0.85}>
                             <Text style={styles.modalConfirmText}>Confirm Color</Text>
                         </TouchableOpacity>
-                    </Pressable>
-                </Pressable>
-            </Modal>
-
-            {/* Sticker Picker Modal */}
-            <Modal visible={showStickerPicker} transparent animationType="slide" onRequestClose={() => setShowStickerPicker(false)}>
-                <Pressable style={styles.modalOverlay} onPress={() => setShowStickerPicker(false)}>
-                    <Pressable style={styles.modalSheet}>
-                        <View style={styles.modalHandle} />
-                        <View style={styles.modalHeaderRow}>
-                            <Text style={styles.modalTitle}>Select a Sticker</Text>
-                            <TouchableOpacity onPress={() => setShowStickerPicker(false)}>
-                                <Ionicons name="close" size={24} color={Colors.textPrimary} />
-                            </TouchableOpacity>
-                        </View>
-                        
-                        <ScrollView contentContainerStyle={styles.stickerPickerGrid}>
-                            <TouchableOpacity 
-                                style={styles.stickerOption} 
-                                onPress={() => handleSelectSticker(null)}
-                            >
-                                <View style={[styles.stickerOptionIcon, { backgroundColor: '#f0f0f0' }]}>
-                                    <Ionicons name="trash-outline" size={24} color={Colors.error} />
-                                </View>
-                                <Text style={styles.stickerOptionName}>Remove</Text>
-                            </TouchableOpacity>
-
-                            {allStickers.map(s => (
-                                <TouchableOpacity 
-                                    key={s.id} 
-                                    style={styles.stickerOption}
-                                    onPress={() => handleSelectSticker(s)}
-                                >
-                                    <Image source={{ uri: s.image_url }} style={styles.stickerOptionImg} resizeMode="contain" />
-                                    <Text style={styles.stickerOptionName}>{s.name}</Text>
-                                </TouchableOpacity>
-                            ))}
-                        </ScrollView>
                     </Pressable>
                 </Pressable>
             </Modal>
@@ -509,6 +467,14 @@ const styles = StyleSheet.create({
         borderRadius: BorderRadius.md, padding: 12,
         color: Colors.textPrimary, fontSize: 14, fontFamily: Fonts.regular,
         marginBottom: 4,
+    },
+    charLimit: {
+        fontSize: 10,
+        color: Colors.textMuted,
+        textAlign: 'right',
+        marginTop: -2,
+        marginBottom: 8,
+        fontFamily: Fonts.regular
     },
     textArea: { minHeight: 80, textAlignVertical: 'top' },
 
@@ -620,4 +586,16 @@ const styles = StyleSheet.create({
     stickerOptionImg: { width: 60, height: 60 },
     stickerOptionName: { fontSize: 11, fontFamily: Fonts.medium, color: Colors.textPrimary, textAlign: 'center' },
     modalHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+    dateDoneBtn: {
+        alignItems: 'center',
+        paddingVertical: 10,
+        backgroundColor: Colors.primary + '15',
+        borderRadius: BorderRadius.md,
+        marginTop: 5,
+    },
+    dateDoneText: {
+        color: Colors.primary,
+        fontFamily: Fonts.bold,
+        fontSize: 14,
+    },
 });

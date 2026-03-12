@@ -16,9 +16,10 @@ import { timerConfigManager } from './src/utils/timerConfig';
 
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Platform } from 'react-native';
-import { registerForPushNotificationsAsync, savePushToken, setupNotificationHandlers } from './src/utils/pushNotifications';
+import { registerForPushNotificationsAsync, savePushToken, setupNotificationHandlers, clearBadgeCount } from './src/utils/pushNotifications';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import './src/i18n/config';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -35,6 +36,9 @@ export default function App() {
       try {
         // Init timer configs
         await timerConfigManager.init();
+
+        // Clear notification badge
+        if (Platform.OS !== 'web') clearBadgeCount();
 
         // Get session
         const { data: { session: s }, error } = await supabase.auth.getSession();

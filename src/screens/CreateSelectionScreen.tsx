@@ -1,16 +1,24 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Dimensions, SafeAreaView, StatusBar, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Dimensions, SafeAreaView, StatusBar } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Colors, Fonts, Spacing, Shadow, BorderRadius } from '../theme';
-import InteractiveTour from '../components/InteractiveTour';
+import { useTranslation } from 'react-i18next';
+import { Colors, Fonts, Spacing, Shadow } from '../theme';
 
 const { width } = Dimensions.get('window');
 
 export default function CreateSelectionScreen({ route }: any) {
     const navigation = useNavigation<any>();
-    const { capsuleId, isTutorial } = route.params || {};
+    const { t } = useTranslation();
+    const { capsuleId } = route.params || {};
+
+    const contentItems = [
+        { id: 'image', icon: 'image', label: t('create.selection.image'), color: '#FF6B6B', sub: t('create.selection.image_sub') },
+        { id: 'video', icon: 'videocam', label: t('create.selection.video'), color: '#4FACFE', sub: t('create.selection.video_sub') },
+        { id: 'audio', icon: 'mic', label: t('create.selection.audio'), color: '#06D6A0', sub: t('create.selection.audio_sub') },
+        { id: 'note', icon: 'document-text', label: t('create.selection.note'), color: '#FFD166', sub: t('create.selection.note_sub') },
+    ];
 
     return (
         <SafeAreaView style={styles.container}>
@@ -22,8 +30,8 @@ export default function CreateSelectionScreen({ route }: any) {
             </View>
 
             <View style={styles.content}>
-                <Text style={styles.title}>What would you like to do?</Text>
-                <Text style={styles.subtitle}>Create something new or add to your capsules</Text>
+                <Text style={styles.title}>{t('create.selection.title')}</Text>
+                <Text style={styles.subtitle}>{t('create.selection.subtitle')}</Text>
 
                 {!capsuleId && (
                     <>
@@ -42,8 +50,8 @@ export default function CreateSelectionScreen({ route }: any) {
                                     <Ionicons name="rocket" size={32} color="#fff" />
                                 </View>
                                 <View style={styles.btnInfo}>
-                                    <Text style={styles.primaryBtnText}>Create a New Capsule</Text>
-                                    <Text style={styles.primaryBtnSub}>Seal memories for your future self</Text>
+                                    <Text style={styles.primaryBtnText}>{t('create.selection.create_new')}</Text>
+                                    <Text style={styles.primaryBtnSub}>{t('create.selection.create_sub')}</Text>
                                 </View>
                                 <Ionicons name="chevron-forward" size={20} color="rgba(255,255,255,0.6)" />
                             </LinearGradient>
@@ -51,19 +59,14 @@ export default function CreateSelectionScreen({ route }: any) {
 
                         <View style={styles.divider}>
                             <View style={styles.line} />
-                            <Text style={styles.dividerText}>OR ADD CONTENT</Text>
+                            <Text style={styles.dividerText}>{t('create.selection.or_add')}</Text>
                             <View style={styles.line} />
                         </View>
                     </>
                 )}
 
                 <View style={styles.grid}>
-                    {[
-                        { id: 'image', icon: 'image', label: 'Image', color: '#FF6B6B', sub: 'Photos & Art' },
-                        { id: 'video', icon: 'videocam', label: 'Video', color: '#4FACFE', sub: 'Live moments' },
-                        { id: 'audio', icon: 'mic', label: 'Audio', color: '#06D6A0', sub: 'Voice notes' },
-                        { id: 'note', icon: 'document-text', label: 'Note', color: '#FFD166', sub: 'Thoughts' },
-                    ].map((item) => (
+                    {contentItems.map((item) => (
                         <TouchableOpacity
                             key={item.id}
                             style={styles.gridItem}
@@ -86,15 +89,6 @@ export default function CreateSelectionScreen({ route }: any) {
                     ))}
                 </View>
             </View>
-
-            {/* Temporary disabled tutorial
-            {isTutorial && !capsuleId && (
-                <InteractiveTour 
-                    step="SELECT_TYPE" 
-                    onDismiss={() => navigation.setParams({ isTutorial: false })}
-                />
-            )}
-            */}
         </SafeAreaView>
     );
 }

@@ -5,11 +5,15 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useTranslation } from 'react-i18next';
 import { supabase } from '../lib/supabase';
 import { Colors, Fonts, Spacing, BorderRadius } from '../theme';
 
 export default function SearchScreen() {
+    const insets = useSafeAreaInsets();
     const navigation = useNavigation();
+    const { t } = useTranslation();
     const [query, setQuery] = useState('');
     const [results, setResults] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
@@ -60,17 +64,19 @@ export default function SearchScreen() {
         <View style={styles.container}>
             <StatusBar barStyle="dark-content" />
 
-            <View style={styles.header}>
-                <Text style={styles.title}>Explore People</Text>
+            <View style={[styles.header, { paddingTop: insets.top + 15 }]}>
+                <Text style={styles.title}>{t('search.explore_people')}</Text>
                 <View style={styles.searchBar}>
                     <Ionicons name="search" size={20} color={Colors.textMuted} />
                     <TextInput
                         style={styles.input}
-                        placeholder="Search by name or username..."
+                        placeholder={t('search.search_placeholder')}
                         placeholderTextColor={Colors.textMuted}
                         value={query}
                         onChangeText={setQuery}
                         autoCapitalize="none"
+                        autoCorrect={false}
+                        spellCheck={false}
                     />
                     {searching && <ActivityIndicator size="small" color={Colors.primary} />}
                     {query.length > 0 && !searching && (
@@ -84,7 +90,7 @@ export default function SearchScreen() {
             {query.length > 0 && results.length === 0 && !searching ? (
                 <View style={styles.emptyContainer}>
                     <Ionicons name="search-outline" size={60} color={Colors.cardAlt} />
-                    <Text style={styles.emptyText}>No users found for "{query}"</Text>
+                    <Text style={styles.emptyText}>{t('search.no_users_found', { query })}</Text>
                 </View>
             ) : (
                 <FlatList
@@ -95,7 +101,7 @@ export default function SearchScreen() {
                     showsVerticalScrollIndicator={false}
                     ListEmptyComponent={
                         <View style={styles.emptyContainer}>
-                            <Text style={styles.exploreHint}>Search for your friends to start following them.</Text>
+                            <Text style={styles.exploreHint}>{t('search.search_hint')}</Text>
                         </View>
                     }
                 />
@@ -107,7 +113,6 @@ export default function SearchScreen() {
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: Colors.background },
     header: {
-        paddingTop: 60,
         paddingHorizontal: Spacing.md,
         paddingBottom: Spacing.md
     },

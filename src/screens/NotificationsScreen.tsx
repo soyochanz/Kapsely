@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Platform, View, Text, StyleSheet, ScrollView, TouchableOpacity, StatusBar, ActivityIndicator, } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Spacing, BorderRadius } from '../theme';
 import SwipeableNotificationItem from '../components/SwipeableNotificationItem';
 import { Notification } from '../data/mockNotifications';
@@ -10,6 +11,7 @@ import { clearBadgeCount } from '../utils/pushNotifications';
 
 export default function NotificationsScreen() {
     const insets = useSafeAreaInsets();
+    const { t } = useTranslation();
     const [notifications, setNotifications] = useState<Notification[]>([]);
     const [loading, setLoading] = useState(true);
     const [scrollEnabled, setScrollEnabled] = useState(true);
@@ -85,12 +87,12 @@ export default function NotificationsScreen() {
         const past = new Date(dateStr);
         const diff = now.getTime() - past.getTime();
         const minutes = Math.floor(diff / 60000);
-        if (minutes < 1) return 'Just now';
-        if (minutes < 60) return `${minutes}m ago`;
+        if (minutes < 1) return t('common.just_now');
+        if (minutes < 60) return t('common.m_ago', { count: minutes });
         const hours = Math.floor(minutes / 60);
-        if (hours < 24) return `${hours}h ago`;
+        if (hours < 24) return t('common.h_ago', { count: hours });
         const days = Math.floor(hours / 24);
-        return `${days}d ago`;
+        return t('common.d_ago', { count: days });
     };
 
     const unreadCount = notifications.filter((n) => !n.isRead).length;
@@ -176,14 +178,14 @@ export default function NotificationsScreen() {
             <View style={{ paddingTop: insets.top + 15 }}>
                 <View style={styles.header}>
                     <View>
-                        <Text style={styles.headerTitle}>Notifications</Text>
+                        <Text style={styles.headerTitle}>{t('notifications.title')}</Text>
                         {unreadCount > 0 && (
-                            <Text style={styles.headerSubtitle}>{unreadCount} unread</Text>
+                            <Text style={styles.headerSubtitle}>{t('notifications.unread', { count: unreadCount })}</Text>
                         )}
                     </View>
                     <TouchableOpacity style={styles.markAllBtn} onPress={handleMarkAllRead}>
                         <Ionicons name="checkmark-done" size={16} color={Colors.primary} />
-                        <Text style={styles.markAllText}>Mark all read</Text>
+                        <Text style={styles.markAllText}>{t('notifications.mark_all_read')}</Text>
                     </TouchableOpacity>
                 </View>
             </View>
@@ -192,8 +194,10 @@ export default function NotificationsScreen() {
             <View style={styles.hintBar}>
                 <Ionicons name="swap-horizontal-outline" size={13} color={Colors.textMuted} />
                 <Text style={styles.hintText}>
-                    Swipe <Text style={{ color: Colors.success, fontFamily: Fonts.semiBold }}>right</Text> to mark read ·
-                    Swipe <Text style={{ color: Colors.eventCap, fontFamily: Fonts.semiBold }}> left</Text> to delete
+                    {t('notifications.swipe_right').split('·')[0]}
+                    <Text style={{ color: Colors.success, fontFamily: Fonts.semiBold }}>{t('common.right') ?? 'right'}</Text>
+                    {' · '}
+                    <Text style={{ color: Colors.eventCap, fontFamily: Fonts.semiBold }}>{t('common.left') ?? 'left'}</Text>
                 </Text>
             </View>
 
@@ -219,8 +223,8 @@ export default function NotificationsScreen() {
                 ) : (
                     <View style={styles.emptyState}>
                         <Ionicons name="notifications-off-outline" size={52} color={Colors.textMuted} />
-                        <Text style={styles.emptyTitle}>All clear!</Text>
-                        <Text style={styles.emptyText}>No notifications left.</Text>
+                        <Text style={styles.emptyTitle}>{t('notifications.all_clear')}</Text>
+                        <Text style={styles.emptyText}>{t('notifications.no_notifications')}</Text>
                     </View>
                 )}
             </ScrollView>

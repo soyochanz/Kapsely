@@ -21,21 +21,31 @@ const notifIcons: Record<string, { name: string; color: string }> = {
     capsule_opened: { name: 'lock-open', color: Colors.legacyCap },
     capsule_invite: { name: 'mail', color: Colors.eventCap },
     memory: { name: 'sparkles', color: Colors.legacyCap },
+    chat_message: { name: 'chatbubbles', color: Colors.primary },
 };
 
 interface NotificationItemProps {
     notification: Notification;
+    onMarkRead?: (id: string) => void;
     onAcceptInvite?: (notif: Notification) => void;
     onRejectInvite?: (notif: Notification) => void;
 }
 
-export default function NotificationItem({ notification, onAcceptInvite, onRejectInvite }: NotificationItemProps) {
+export default function NotificationItem({ notification, onMarkRead, onAcceptInvite, onRejectInvite }: NotificationItemProps) {
     const navigation = useNavigation<any>();
     const iconCfg = notifIcons[notification.type] || { name: 'notifications', color: Colors.textMuted };
     const isMemory = notification.type === 'memory';
 
     const handlePress = () => {
-        if (notification.capsuleId) {
+        if (!notification.isRead && onMarkRead) {
+            onMarkRead(notification.id);
+        }
+
+        if (notification.type === 'chat_message' && notification.conversationId) {
+            navigation.navigate('ChatDetail', { conversationId: notification.conversationId });
+        } else if (notification.type === 'chat_message' && notification.capsuleId) {
+            navigation.navigate('CapsuleDetail', { capsuleId: notification.capsuleId, initialTab: 'Chat' });
+        } else if (notification.capsuleId) {
             navigation.navigate('CapsuleDetail', { capsuleId: notification.capsuleId });
         } else if (notification.user?.id) {
             navigation.navigate('UserProfile', { targetUserId: notification.user.id });
@@ -112,11 +122,12 @@ export default function NotificationItem({ notification, onAcceptInvite, onRejec
                 <View style={styles.capsulePreview}>
                     <CapsuleWithTimer
                         modelKey={notification.capsuleModel}
-                        source={{ uri: timerConfigManager.getModelImage(notification.capsuleModel) || MODEL_IMAGES[notification.capsuleModel] || MODEL_IMAGES.beach }}
+                        source={{ uri: timerConfigManager.getModelImage(notification.capsuleModel) || MODEL_IMAGES[notification.capsuleModel as keyof typeof MODEL_IMAGES] || (MODEL_IMAGES as any).basicred_kap }}
                         date={notification.capsuleOpensAt || ''}
                         chainId={notification.capsuleChainId}
                         capsuleType={notification.capsuleType}
                         hideTimer
+                        hideParticles
                         style={styles.notifCapsule}
                     />
                 </View>

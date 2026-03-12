@@ -1,9 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Image, ActivityIndicator, StatusBar, SafeAreaView, Modal, TextInput, Alert } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, Image, ActivityIndicator, StatusBar, Modal, TextInput, Alert } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
 import { supabase } from '../lib/supabase';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function ChatListScreen() {
     const [loading, setLoading] = useState(true);
@@ -12,11 +14,14 @@ export default function ChatListScreen() {
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<any[]>([]);
     const [searching, setSearching] = useState(false);
+    const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+    const insets = useSafeAreaInsets();
     const navigation = useNavigation<any>();
+    const channelRef = useRef<any>(null);
 
-    const loadConversations = async () => {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) return;
+    const loadConversations = async (userId?: string) => {
+        const uid = userId || currentUserId;
+        if (!uid) return;
 
         const { data, error } = await supabase
             .from('conversation_participants')
@@ -27,16 +32,15 @@ export default function ChatListScreen() {
                     last_message_at
                 )
             `)
-            .eq('user_id', user.id);
+            .eq('user_id', uid);
 
         if (data) {
-            // Mapping to get other participant details (simplified)
             const chats = await Promise.all(data.map(async (c: any) => {
                 const { data: otherPartData } = await supabase
                     .from('conversation_participants')
                     .select('user_id')
                     .eq('conversation_id', c.conversation_id)
-                    .neq('user_id', user.id)
+                    .neq('user_id', uid)
                     .maybeSingle();
 
                 let otherUserProfile = null;
@@ -57,18 +61,68 @@ export default function ChatListScreen() {
                     .limit(1)
                     .maybeSingle();
 
+                // Determine unread: compare last message timestamp vs our last visit
+                const lastVisitKey = `chat_visited_${c.conversation_id}`;
+                const lastVisited = await AsyncStorage.getItem(lastVisitKey);
+                let unreadCount = 0;
+
+                if (lastMsg && lastMsg.sender_id !== uid) {
+                    // Message from the OTHER user
+                    if (!lastVisited || new Date(lastMsg.created_at) > new Date(lastVisited)) {
+                        // It arrived after we last visited
+                        unreadCount = 1;
+                    }
+                }
+
                 return {
                     ...c,
                     otherUser: otherUserProfile,
-                    lastMessage: lastMsg
+                    lastMessage: lastMsg,
+                    unreadCount: unreadCount || 0,
                 };
             }));
-            setConversations(chats.filter(c => c.otherUser));
+
+            // Sort: unread conversations first, then by last message time
+            const sorted = chats
+                .filter(c => c.otherUser)
+                .sort((a, b) => {
+                    if ((b.unreadCount > 0 ? 1 : 0) !== (a.unreadCount > 0 ? 1 : 0)) {
+                        return (b.unreadCount > 0 ? 1 : 0) - (a.unreadCount > 0 ? 1 : 0);
+                    }
+                    const aTime = a.lastMessage?.created_at || 0;
+                    const bTime = b.lastMessage?.created_at || 0;
+                    return new Date(bTime).getTime() - new Date(aTime).getTime();
+                });
+
+            setConversations(sorted);
         }
         setLoading(false);
     };
 
-    useEffect(() => { loadConversations(); }, []);
+    useEffect(() => {
+        const init = async () => {
+            const { data: { session } } = await supabase.auth.getSession();
+            const user = session?.user;
+            if (!user) return;
+            setCurrentUserId(user.id);
+            await loadConversations(user.id);
+
+            // Real-time: re-sort when new messages arrive
+            channelRef.current = supabase
+                .channel('chat_list_realtime')
+                .on('postgres_changes', {
+                    event: '*',
+                    schema: 'public',
+                    table: 'messages',
+                }, () => loadConversations(user.id))
+                .subscribe();
+        };
+        init();
+
+        return () => {
+            if (channelRef.current) supabase.removeChannel(channelRef.current);
+        };
+    }, []);
 
     const searchUsers = async (query: string) => {
         setSearchQuery(query);
@@ -95,7 +149,6 @@ export default function ChatListScreen() {
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) return;
 
-            // Find conversation between these users
             const { data: userConvs } = await supabase
                 .from('conversation_participants')
                 .select('conversation_id')
@@ -117,7 +170,6 @@ export default function ChatListScreen() {
                 setShowSearch(false);
                 navigation.navigate('ChatDetail', { conversationId: (existing as any).conversation_id });
             } else {
-                // Create new conversation
                 const { data: newConv, error: convError } = await supabase.from('conversations').insert({
                     last_message_at: new Date().toISOString()
                 }).select().single();
@@ -139,38 +191,49 @@ export default function ChatListScreen() {
         }
     };
 
-    const renderItem = ({ item }: any) => (
-        <TouchableOpacity
-            style={styles.chatItem}
-            onPress={() => navigation.navigate('ChatDetail', { conversationId: item.conversation_id })}
-        >
-            <TouchableOpacity onPress={() => (navigation as any).navigate('UserProfile', { targetUserId: item.otherUser.id })}>
-                {item.otherUser?.avatar_url ? (
-                    <Image source={{ uri: item.otherUser.avatar_url }} style={styles.avatar} />
-                ) : (
-                    <View style={styles.avatarPlaceholder}>
-                        <Ionicons name="person" size={24} color={Colors.textMuted} />
-                    </View>
-                )}
+    const renderItem = ({ item }: any) => {
+        const hasUnread = item.unreadCount > 0;
+        return (
+            <TouchableOpacity
+                style={[styles.chatItem, hasUnread && styles.chatItemUnread]}
+                onPress={() => navigation.navigate('ChatDetail', { conversationId: item.conversation_id })}
+            >
+                <TouchableOpacity onPress={() => (navigation as any).navigate('UserProfile', { targetUserId: item.otherUser.id })} style={styles.avatarWrap}>
+                    {item.otherUser?.avatar_url ? (
+                        <Image source={{ uri: item.otherUser.avatar_url }} style={styles.avatar} />
+                    ) : (
+                        <View style={styles.avatarPlaceholder}>
+                            <Ionicons name="person" size={24} color={Colors.textMuted} />
+                        </View>
+                    )}
+                    {hasUnread && <View style={styles.unreadAvatarDot} />}
+                </TouchableOpacity>
+                <View style={styles.chatInfo}>
+                    <Text style={[styles.chatName, hasUnread && styles.chatNameUnread]}>{item.otherUser?.display_name || item.otherUser?.username || 'User'}</Text>
+                    <Text style={[styles.lastMessage, hasUnread && styles.lastMessageUnread]} numberOfLines={1}>
+                        {item.lastMessage?.content || 'No messages yet'}
+                    </Text>
+                </View>
+                <View style={styles.chatRight}>
+                    {item.lastMessage && (
+                        <Text style={styles.chatTime}>
+                            {new Date(item.lastMessage.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </Text>
+                    )}
+                    {hasUnread && (
+                        <View style={styles.unreadBadge}>
+                            <Text style={styles.unreadBadgeText}>{item.unreadCount > 9 ? '9+' : item.unreadCount}</Text>
+                        </View>
+                    )}
+                </View>
             </TouchableOpacity>
-            <View style={styles.chatInfo}>
-                <Text style={styles.chatName}>{item.otherUser?.display_name || item.otherUser?.username || 'User'}</Text>
-                <Text style={styles.lastMessage} numberOfLines={1}>
-                    {item.lastMessage?.content || 'No messages yet'}
-                </Text>
-            </View>
-            {item.lastMessage && (
-                <Text style={styles.chatTime}>
-                    {new Date(item.lastMessage.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </Text>
-            )}
-        </TouchableOpacity>
-    );
+        );
+    };
 
     return (
         <View style={styles.container}>
             <StatusBar barStyle="dark-content" />
-            <SafeAreaView style={styles.header}>
+            <View style={[styles.header, { paddingTop: insets.top }]}>
                 <View style={styles.headerContent}>
                     <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
                         <Ionicons name="chevron-back" size={24} color={Colors.textPrimary} />
@@ -180,7 +243,7 @@ export default function ChatListScreen() {
                         <Ionicons name="create-outline" size={24} color={Colors.primary} />
                     </TouchableOpacity>
                 </View>
-            </SafeAreaView>
+            </View>
 
             {loading ? (
                 <View style={styles.centered}><ActivityIndicator color={Colors.primary} /></View>
@@ -204,7 +267,7 @@ export default function ChatListScreen() {
 
             {/* Search Modal */}
             <Modal visible={showSearch} animationType="slide">
-                <SafeAreaView style={styles.modalContainer}>
+                <View style={[styles.modalContainer, { paddingTop: insets.top }]}>
                     <View style={styles.searchHeader}>
                         <TouchableOpacity onPress={() => setShowSearch(false)}>
                             <Ionicons name="close" size={28} color={Colors.textPrimary} />
@@ -246,7 +309,7 @@ export default function ChatListScreen() {
                             }
                         />
                     )}
-                </SafeAreaView>
+                </View>
             </Modal>
         </View>
     );
@@ -266,25 +329,52 @@ const styles = StyleSheet.create({
         padding: Spacing.md, borderRadius: BorderRadius.lg, marginBottom: Spacing.sm,
         borderWidth: 1, borderColor: Colors.border, ...Shadow.subtle
     },
+    chatItemUnread: {
+        borderColor: Colors.primary + '40',
+        backgroundColor: Colors.primary + '06',
+    },
+    avatarWrap: { position: 'relative', marginRight: Spacing.md },
     avatar: { width: 50, height: 50, borderRadius: 25 },
     avatarPlaceholder: { width: 50, height: 50, borderRadius: 25, backgroundColor: Colors.cardAlt, alignItems: 'center', justifyContent: 'center' },
-    chatInfo: { flex: 1, marginLeft: Spacing.md },
-    chatName: { fontSize: 16, fontFamily: Fonts.semiBold, color: Colors.textPrimary },
-    lastMessage: { fontSize: 14, fontFamily: Fonts.regular, color: Colors.textSecondary, marginTop: 2 },
-    chatTime: { fontSize: 12, fontFamily: Fonts.regular, color: Colors.textMuted },
+    unreadAvatarDot: {
+        position: 'absolute',
+        bottom: 0,
+        right: 0,
+        width: 12,
+        height: 12,
+        borderRadius: 6,
+        backgroundColor: Colors.primary,
+        borderWidth: 2,
+        borderColor: Colors.surface,
+    },
+    chatInfo: { flex: 1 },
+    chatName: { fontSize: 15, fontFamily: Fonts.semiBold, color: Colors.textPrimary },
+    chatNameUnread: { fontFamily: Fonts.bold, color: Colors.textPrimary },
+    lastMessage: { fontSize: 13, fontFamily: Fonts.regular, color: Colors.textSecondary, marginTop: 2 },
+    lastMessageUnread: { fontFamily: Fonts.semiBold, color: Colors.textPrimary },
+    chatRight: { alignItems: 'flex-end', gap: 6 },
+    chatTime: { fontSize: 11, fontFamily: Fonts.regular, color: Colors.textMuted },
+    unreadBadge: {
+        backgroundColor: Colors.primary,
+        minWidth: 20,
+        height: 20,
+        borderRadius: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 4,
+    },
+    unreadBadgeText: { color: '#fff', fontSize: 11, fontFamily: Fonts.bold },
     empty: { alignItems: 'center', justifyContent: 'center', marginTop: 100, gap: Spacing.md },
     emptyText: { fontSize: 16, fontFamily: Fonts.medium, color: Colors.textMuted },
     startBtn: { backgroundColor: Colors.primary, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20, marginTop: 10 },
     startBtnText: { color: '#fff', fontFamily: Fonts.bold },
-
     modalContainer: { flex: 1, backgroundColor: Colors.background },
     searchHeader: { flexDirection: 'row', alignItems: 'center', padding: Spacing.md, borderBottomWidth: 1, borderBottomColor: Colors.border },
     searchInput: { flex: 1, marginLeft: 15, fontSize: 16, fontFamily: Fonts.regular, color: Colors.textPrimary },
     userItem: { flexDirection: 'row', alignItems: 'center', padding: Spacing.md, borderBottomWidth: 0.5, borderBottomColor: Colors.border },
-    userAvatar: { width: 44, height: 44, borderRadius: 22 },
-    userAvatarPlaceholder: { width: 44, height: 44, borderRadius: 22, backgroundColor: Colors.cardAlt, alignItems: 'center', justifyContent: 'center' },
+    userAvatar: { width: 44, height: 44, borderRadius: 22, marginRight: Spacing.md },
+    userAvatarPlaceholder: { width: 44, height: 44, borderRadius: 22, backgroundColor: Colors.cardAlt, alignItems: 'center', justifyContent: 'center', marginRight: Spacing.md },
     userName: { fontSize: 16, fontFamily: Fonts.bold, color: Colors.textPrimary },
     userHandle: { fontSize: 13, fontFamily: Fonts.regular, color: Colors.textMuted },
     noResults: { textAlign: 'center', marginTop: 30, color: Colors.textMuted, fontFamily: Fonts.medium },
 });
-

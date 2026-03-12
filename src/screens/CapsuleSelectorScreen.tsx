@@ -11,6 +11,8 @@ import LiveTimer from '../components/LiveTimer';
 import CapsuleWithTimer from '../components/CapsuleWithTimer';
 import { timerConfigManager } from '../utils/timerConfig';
 
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
 const TYPE_CONFIG: Record<string, { icon: string; color: string; label: string }> = {
     instacap: { icon: 'camera', color: Colors.instaCap, label: 'Insta' },
     eventcap: { icon: 'calendar', color: Colors.eventCap, label: 'Event' },
@@ -18,6 +20,7 @@ const TYPE_CONFIG: Record<string, { icon: string; color: string; label: string }
 };
 
 export default function CapsuleSelectorScreen() {
+    const insets = useSafeAreaInsets();
     const navigation = useNavigation<any>();
     const route = useRoute();
     const { contentType }: any = route.params || {};
@@ -74,7 +77,7 @@ export default function CapsuleSelectorScreen() {
     };
 
     return (
-        <SafeAreaView style={styles.container}>
+        <View style={[styles.container, { paddingTop: insets.top }]}>
             <StatusBar barStyle="dark-content" />
             <View style={styles.header}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
@@ -107,19 +110,19 @@ export default function CapsuleSelectorScreen() {
                     renderItem={({ item }) => <CapsuleEntry item={item} onSelect={handleSelect} />}
                 />
             )}
-        </SafeAreaView>
+        </View>
     );
 }
 
 const CapsuleEntry = ({ item, onSelect }: { item: any, onSelect: (cap: any) => void }) => {
     const cfg = TYPE_CONFIG[item.type as keyof typeof TYPE_CONFIG] || TYPE_CONFIG.legacycap;
     const [modelImg, setModelImg] = useState(() => {
-        return timerConfigManager.getModelImage(item.model) || MODEL_IMAGES[item.model] || MODEL_IMAGES.beach;
+        return timerConfigManager.getModelImage(item.model) || MODEL_IMAGES[item.model] || (MODEL_IMAGES as any).basicred_kap;
     });
 
     useEffect(() => {
         const updateModel = () => {
-            setModelImg(timerConfigManager.getModelImage(item.model) || MODEL_IMAGES[item.model] || MODEL_IMAGES.beach);
+            setModelImg(timerConfigManager.getModelImage(item.model) || MODEL_IMAGES[item.model] || (MODEL_IMAGES as any).basicred_kap);
         };
         const unsubscribe = timerConfigManager.subscribe(updateModel);
         updateModel();

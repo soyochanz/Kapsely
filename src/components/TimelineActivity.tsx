@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, Image, TouchableOpacity, Dimensions, Alert, Platform } from 'react-native';
+import { supabase } from '../lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts, BorderRadius, Spacing, Shadow } from '../theme';
 import { useNavigation } from '@react-navigation/native';
@@ -12,6 +13,45 @@ import { MODEL_IMAGES, MODEL_IMAGES_OPEN } from '../constants/models';
 import VerifiedBadge from './VerifiedBadge';
 
 const { width } = Dimensions.get('window');
+
+const CollageView = ({ items, count, isSealed }: { items: any[], count: number, isSealed: boolean }) => {
+    // Show up to 4 items in the collage
+    const displayItems = items.slice(0, 4);
+    
+    return (
+        <View style={styles.collageContainer}>
+            {isSealed && displayItems.length > 0 ? (
+                <Image
+                    source={{ uri: displayItems[0].thumbnail_url || displayItems[0].media_url }}
+                    style={StyleSheet.absoluteFill}
+                    blurRadius={Platform.OS === 'ios' ? 12 : 30}
+                    resizeMode="cover"
+                />
+            ) : (
+                <View style={styles.collageGrid}>
+                    {displayItems.map((item, idx) => (
+                        <Image
+                            key={idx}
+                            source={{ uri: item.thumbnail_url || item.media_url }}
+                            style={[
+                                styles.collageImage,
+                                displayItems.length === 1 && styles.collageSingle,
+                                displayItems.length === 2 && styles.collageDual,
+                                displayItems.length === 3 && idx === 0 && styles.collageTripleLarge,
+                            ]}
+                            resizeMode="cover"
+                        />
+                    ))}
+                </View>
+            )}
+            {isSealed && <BlurView intensity={45} tint="light" style={StyleSheet.absoluteFill} />}
+            <View style={styles.groupCountBadge}>
+                <Ionicons name="images" size={20} color="#fff" />
+                <Text style={styles.groupCountText}>+{count}</Text>
+            </View>
+        </View>
+    );
+};
 
 interface TimelineActivityProps {
     item: any;
@@ -42,11 +82,10 @@ const Waveform = ({ active = true }: { active?: boolean }) => {
 export default function TimelineActivity({ item }: TimelineActivityProps) {
     const navigation = useNavigation<any>();
     const profile = item.profiles || { username: 'user', avatar_url: null };
-    const capsule = Array.isArray(item.capsules) ? item.capsules[0] : (item.capsules || { title: 'Capsule', type: 'instacap', model: 'beach' });
+    const capsule = Array.isArray(item.capsules) ? item.capsules[0] : (item.capsules || { title: 'Capsule', type: 'instacap', model: 'basicred_kap' });
 
-    const handlePress = () => {
-        navigation.navigate('CapsuleDetail', { capsuleId: item.capsule_id });
-    };
+    const isAudio = item.media_type === 'audio';
+    const isNote = item.media_type === 'note';
 
     const getTypeColors = () => {
         switch (capsule.type) {
@@ -67,8 +106,31 @@ export default function TimelineActivity({ item }: TimelineActivityProps) {
         }
     };
 
-    const isAudio = item.media_type === 'audio';
-    const isNote = item.media_type === 'note';
+    // Determine access
+    const [currentUserId, setCurrentUserId] = React.useState<string | null>(null);
+    const [hasAccess, setHasAccess] = React.useState(true);
+
+    React.useEffect(() => {
+        const checkAccess = async () => {
+             const { data: { user } } = await supabase.auth.getUser();
+             if (user) {
+                 setCurrentUserId(user.id);
+                 const access = capsule.is_public || capsule.owner_id === user.id || item.owner_id === user.id || capsule.is_participant;
+                 setHasAccess(!!access);
+             } else {
+                 setHasAccess(!!capsule.is_public);
+             }
+        };
+        checkAccess();
+    }, [capsule.id, item.owner_id]);
+
+    const handlePress = () => {
+        if (!hasAccess) {
+             Alert.alert("Private Capsule", "You haven't been invited to this capsule yet.");
+             return;
+        }
+        navigation.navigate('CapsuleDetail', { capsuleId: item.capsule_id });
+    };
 
     return (
         <TouchableOpacity
@@ -78,21 +140,27 @@ export default function TimelineActivity({ item }: TimelineActivityProps) {
         >
             {/* Background Layer (Media or Gradient) */}
             <View style={styles.backgroundLayer}>
-                {item.media_url && (item.media_type === 'image' || item.media_type === 'video') ? (
+                {item.feedType === 'activity_group' ? (
+                    <CollageView 
+                        items={item.groupItems} 
+                        count={item.count} 
+                        isSealed={capsule?.status === 'sealed'} 
+                    />
+                ) : (item.media_url || item.thumbnail_url) && (item.media_type === 'image' || item.media_type === 'video') ? (
                     <>
                         <Image
-                            source={{ uri: item.media_url }}
+                            source={{ uri: item.thumbnail_url || item.media_url }}
                             style={styles.backgroundImage}
-                            blurRadius={capsule?.status === 'sealed' ? 20 : 0}
+                            blurRadius={capsule?.status === 'sealed' ? (Platform.OS === 'ios' ? 12 : 30) : 0}
                         />
                         {capsule?.status === 'sealed' && (
-                            <BlurView intensity={100} tint="dark" style={StyleSheet.absoluteFill} />
+                            <BlurView intensity={Platform.OS === 'ios' ? 45 : 70} tint="light" style={StyleSheet.absoluteFill} />
                         )}
                     </>
                 ) : isAudio ? (
-                    <LinearGradient colors={['#6a11cb', '#2575fc']} style={styles.backgroundGradient} />
+                    <LinearGradient colors={['#a269ff', '#8050d0']} style={styles.backgroundGradient} />
                 ) : isNote ? (
-                    <LinearGradient colors={['#f6d365', '#fda085']} style={styles.backgroundGradient} />
+                    <LinearGradient colors={['#bd9aff', '#a269ff']} style={styles.backgroundGradient} />
                 ) : (
                     <LinearGradient colors={getTypeColors() as any} style={styles.backgroundGradient} />
                 )}
@@ -100,6 +168,7 @@ export default function TimelineActivity({ item }: TimelineActivityProps) {
                     colors={['rgba(0,0,0,0.4)', 'transparent', 'rgba(0,0,0,0.8)']}
                     style={StyleSheet.absoluteFill}
                 />
+
             </View>
 
             {/* Top Info Bar */}
@@ -123,7 +192,12 @@ export default function TimelineActivity({ item }: TimelineActivityProps) {
                             <Text style={styles.username}>{profile.display_name || profile.username || 'user'}</Text>
                             {profile.is_verified && <VerifiedBadge size={14} style={{ marginLeft: 2 }} />}
                         </TouchableOpacity>
-                        <Text style={styles.activityType}>Added {item.media_type || 'content'}</Text>
+                        <Text style={styles.activityType}>
+                            {item.feedType === 'activity_group' 
+                                ? `Added ${item.count} memories` 
+                                : `Added ${item.media_type || 'content'}`
+                            }
+                        </Text>
                     </View>
                 </TouchableOpacity>
 
@@ -134,32 +208,23 @@ export default function TimelineActivity({ item }: TimelineActivityProps) {
                             onPress={() => navigation.navigate('CapsuleDetail', { capsuleId: item.capsule_id })}
                         >
                             <CapsuleWithTimer
-                                modelKey={capsule.model || 'beach'}
-                                source={{ uri: capsule.status === 'opened' ? (timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model as keyof typeof MODEL_IMAGES_OPEN] || MODEL_IMAGES_OPEN.beach) : (timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || MODEL_IMAGES.beach) }}
+                                modelKey={capsule.model || 'basicred_kap'}
+                                source={{ uri: capsule.status === 'opened' ? (timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model as keyof typeof MODEL_IMAGES_OPEN] || (MODEL_IMAGES_OPEN as any).basicred_kap) : (timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || (MODEL_IMAGES as any).basicred_kap) }}
                                 date={capsule.opens_at}
                                 chainId={capsule.chain_id}
                                 capsuleType={capsule.type}
                                 hideTimer
                                 isOpened={capsule.status === 'opened'}
                                 style={styles.capsuleMini}
+                                hideParticles
                             />
                         </TouchableOpacity>
-                        
-                        {capsule.status === 'sealed' && (
-                            <View style={styles.miniTimerContainer}>
-                                <LiveTimer 
-                                    date={capsule.opens_at} 
-                                    modelId={capsule.model}
-                                    style={styles.miniTimerText}
-                                />
-                            </View>
-                        )}
                     </View>
                 )}
             </View>
 
-            {/* Middle Content Layer for Audio/Note */}
-            {(isAudio || isNote) && (
+            {/* Middle Content Layer for Audio/Note/Video */}
+            {(isAudio || isNote || item.media_type === 'video') && (
                 <View style={styles.middleContent}>
                     {isAudio && (
                         <View style={styles.audioPreviewWrap}>
@@ -169,54 +234,104 @@ export default function TimelineActivity({ item }: TimelineActivityProps) {
                             <Waveform />
                         </View>
                     )}
+                    {item.media_type === 'video' && (
+                        <View style={styles.videoPlayOverlay}>
+                            <View style={styles.playIconCircle}>
+                                <Ionicons name="play" size={32} color="#fff" style={{ marginLeft: 3 }} />
+                            </View>
+                            {/* If we had duration, we could show it here, but typically we have it in caption or metadata */}
+                        </View>
+                    )}
                     {isNote && (
-                        <View style={styles.notePreviewWrap}>
-                            <Ionicons name="document-text-outline" size={40} color="rgba(255,255,255,0.3)" />
-                            <Text style={styles.noteContentText} numberOfLines={5}>
-                                {item.content}
-                            </Text>
+                        <View style={[styles.noteContainer]}>
+                            {capsule?.status === 'sealed' ? (
+                                <>
+                                    <View style={styles.noteTextSkeletonWrap}>
+                                        <Text style={[styles.scrambledText, { fontSize: 22, opacity: 0.1 }]} numberOfLines={12}>
+                                            {'∑ ∆ ∿ ⎈ ⌬ ⍟ ⚯ ⌘ Ω ✚ ✣ ✢ ✥ ✦ ✧ ✩ ✪ ✫ ✬ ✭ ✮ ✯ ✰ ✱ ✲ ✳ ✴ ✵ ✶ ✷ ✸ ✹ ✺ ✻ ✼ ✽ ✾ ✿ ❀ ❁ ❂ ❃ ❄ ❅ ❆ ❇ ❈ ❉ ❊ ❋'.split(' ').sort(() => 0.5 - Math.random()).join(' ')}
+                                        </Text>
+                                    </View>
+
+                                    {/* Premium frosted glass blur edge-to-edge */}
+                                    {Platform.OS === 'ios' ? (
+                                        <BlurView intensity={100} tint="light" style={StyleSheet.absoluteFill} />
+                                    ) : (
+                                        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255,255,255,0.85)' }]} />
+                                    )}
+
+                                    <View style={styles.sealedNoteOverlay}>
+                                        <View style={[styles.aestheticIconWrap, { backgroundColor: 'transparent', shadowOpacity: 0 }]}>
+                                            <Ionicons name="lock-closed-outline" size={32} color="rgba(0, 0, 0, 0.2)" />
+                                        </View>
+                                        <Text style={[styles.aestheticHintText, { color: 'rgba(0,0,0,0.4)', letterSpacing: 4 }]}>ENCRYPTED THOUGHT</Text>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12, opacity: 0.5 }}>
+                                            <Ionicons name="document-text-outline" size={14} color="#000" />
+                                            <Text style={{ fontSize: 11, fontFamily: Fonts.bold, marginLeft: 4 }}>Note Memory</Text>
+                                        </View>
+                                    </View>
+                                </>
+                            ) : (
+                                <View style={{ width: '100%', padding: 40, alignItems: 'center', justifyContent: 'center', flex: 1 }}>
+                                    <Ionicons name="document-text-outline" size={32} color="rgba(255,255,255,0.7)" style={{ marginBottom: 20 }} />
+                                    <Text style={[styles.noteContentText, { fontSize: 18, color: '#fff', textAlign: 'center', letterSpacing: 0.5 }]} numberOfLines={8}>
+                                        {item.content}
+                                    </Text>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', position: 'absolute', bottom: 20, opacity: 0.7 }}>
+                                        <Text style={{ fontSize: 11, fontFamily: Fonts.bold, color: '#fff' }}>Note Memory</Text>
+                                    </View>
+                                </View>
+                            )}
                         </View>
                     )}
                 </View>
             )}
 
-            {/* Bottom Info Section */}
-            <View style={styles.bottomSection}>
+            {/* Bottom Info Section (Hidden for Notes to be edge-to-edge elegant) */}
+            {!isNote && (
+                <View style={styles.bottomSection}>
                 <BlurView intensity={40} tint="dark" style={styles.glassInfo}>
                     <View style={styles.capsuleInfo}>
                         <View style={[styles.typeIndicator, { backgroundColor: getTypeColors()[0] as any }]} />
                         <Text style={styles.capsuleTitle} numberOfLines={1}>{capsule.title}</Text>
+                        {!hasAccess && (
+                            <Ionicons name="lock-closed" size={14} color="#ff4757" style={{ marginLeft: 6 }} />
+                        )}
                     </View>
 
                     <View style={styles.itemPreview}>
                         <View style={styles.iconContainer}>
                             <Ionicons name={getIcon() as any} size={16} color="#fff" />
                         </View>
-                        <Text style={styles.previewText}>
-                            {isAudio ? `Voice Note (${item.content || '--:--'})` : isNote ? 'Written Note' : (item.caption || item.content || `New ${item.media_type} shared`)}
+                        <Text style={styles.previewText} numberOfLines={1}>
+                            {item.feedType === 'activity_group'
+                                ? `New memory collection (${item.count} items)`
+                                : isAudio ? `Voice Note (${item.content || '--:--'})` : isNote ? 'Written Note' : (item.caption || (item.media_type === 'video' ? `Video (${item.content || '--:--'})` : (item.content || `New ${item.media_type} shared`)))
+                            }
                         </Text>
-                        {isAudio && (
+                        {(isAudio) && (
                             <View style={styles.durationBadge}>
-                                <Text style={styles.durationText}>{item.content || '0:00'}</Text>
+                                <Ionicons name="mic" size={10} color="#fff" style={{ marginRight: 4 }} />
+                                <Text style={styles.durationText}>{item.content || '--:--'}</Text>
                             </View>
                         )}
                     </View>
                 </BlurView>
 
-                {item.capsules?.status === 'sealed' && (
+                {capsule?.status === 'sealed' && (
                     <View style={styles.sealedBadge}>
                         <Ionicons name="lock-closed" size={10} color="#fff" />
                         <Text style={styles.sealedText}>SEALED</Text>
                     </View>
                 )}
             </View>
+            )}
         </TouchableOpacity>
     );
 }
 
 const styles = StyleSheet.create({
     card: {
-        height: 440,
+        height: 375,
         marginHorizontal: Spacing.md,
         marginBottom: Spacing.lg,
         borderRadius: BorderRadius.xl,
@@ -277,9 +392,9 @@ const styles = StyleSheet.create({
         marginTop: -2,
     },
     capsuleCorner: {
-        width: 64,
-        height: 64,
-        borderRadius: 32,
+        width: 48,
+        height: 48,
+        borderRadius: 24,
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor: 'rgba(0,0,0,0.3)',
@@ -301,14 +416,29 @@ const styles = StyleSheet.create({
         fontFamily: Fonts.bold,
     },
     capsuleMini: {
-        width: 56,
-        height: 56,
+        width: 42,
+        height: 42,
     },
     middleContent: {
         ...StyleSheet.absoluteFillObject,
         alignItems: 'center',
         justifyContent: 'center',
         padding: 40,
+        zIndex: 2,
+    },
+    videoPlayOverlay: {
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    playIconCircle: {
+        width: 60,
+        height: 60,
+        borderRadius: 30,
+        backgroundColor: 'rgba(0,0,0,0.4)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 2,
+        borderColor: 'rgba(255,255,255,0.6)',
     },
     audioPreviewWrap: {
         alignItems: 'center',
@@ -321,7 +451,8 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.3)',
+        borderColor: 'rgba(255,255,255,0.4)',
+        backgroundColor: 'rgba(255,255,255,0.1)',
     },
     waveContainer: {
         flexDirection: 'row',
@@ -333,23 +464,79 @@ const styles = StyleSheet.create({
         width: 4,
         borderRadius: 2,
     },
-    notePreviewWrap: {
+    noteContainer: {
         width: '100%',
-        padding: 24,
-        borderRadius: 20,
-        backgroundColor: 'rgba(255,255,255,0.1)',
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.2)',
+        height: '100%',
         alignItems: 'center',
+        justifyContent: 'center',
+        padding: 24,
+    },
+    notePaper: {
+        width: '100%',
+        height: '100%',
+        backgroundColor: 'rgba(255,255,255,0.14)',
+        borderRadius: 22,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.35)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        ...Shadow.subtle,
+    },
+    sparkle: {
+        position: 'absolute',
+        borderRadius: 2,
+    },
+    noteTextSkeletonWrap: {
+        width: '100%',
+        padding: 30,
+        gap: 14,
+    },
+    skeletonLine: {
+        height: 6,
+        backgroundColor: 'rgba(255,255,255,0.08)',
+        borderRadius: 3,
+        width: '100%',
+    },
+    scrambledText: {
+        fontSize: 16,
+        color: 'rgba(0,0,0,0.25)',
+        lineHeight: 28,
+        letterSpacing: 4,
+        textAlign: 'center',
+    },
+    sealedNoteOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 10,
+    },
+    aestheticIconWrap: {
+        width: 64,
+        height: 64,
+        borderRadius: 32,
+        backgroundColor: 'rgba(255, 255, 255, 0.95)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 16,
+        ...Shadow.primary,
+        shadowOpacity: 0.1,
+        borderWidth: 1,
+        borderColor: 'rgba(0, 0, 0, 0.05)'
+    },
+    aestheticHintText: {
+        fontFamily: Fonts.bold,
+        fontSize: 14,
+        color: 'rgba(0, 0, 0, 0.4)',
+        letterSpacing: 3,
+        textTransform: 'uppercase',
     },
     noteContentText: {
-        fontSize: 15,
+        fontSize: 17,
         fontFamily: Fonts.medium,
         color: '#fff',
+        lineHeight: 26,
         textAlign: 'center',
-        marginTop: 12,
         fontStyle: 'italic',
-        lineHeight: 22,
     },
     timerChip: {
         flexDirection: 'row',
@@ -441,5 +628,51 @@ const styles = StyleSheet.create({
         color: '#fff',
         marginLeft: 4,
         letterSpacing: 1,
-    }
+    },
+    // Collage Styles
+    collageContainer: {
+        flex: 1,
+        width: '100%',
+        height: '100%',
+    },
+    collageGrid: {
+        flex: 1,
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+    },
+    collageImage: {
+        width: '50%',
+        height: '50%',
+    },
+    collageSingle: {
+        width: '100%',
+        height: '100%',
+    },
+    collageDual: {
+        width: '50%',
+        height: '100%',
+    },
+    collageTripleLarge: {
+        width: '100%',
+        height: '50%',
+    },
+    groupCountBadge: {
+        position: 'absolute',
+        top: '40%',
+        alignSelf: 'center',
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        borderRadius: 25,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.3)',
+    },
+    groupCountText: {
+        color: '#fff',
+        fontSize: 18,
+        fontFamily: Fonts.bold,
+    },
 });

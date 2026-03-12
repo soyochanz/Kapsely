@@ -55,6 +55,7 @@ export type Profile = {
     favorite_song: string | null;
     is_verified?: boolean;
     is_admin?: boolean;
+    display_name_history?: string[];
     created_at: string;
     updated_at: string;
 };

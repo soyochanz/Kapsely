@@ -34,26 +34,17 @@ export interface ChainItem {
 }
 
 export const DEFAULT_CONFIGS: Record<string, ModelTimerConfig> = {
-    basic_red: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ff4757', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
-    choco: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#5d4037', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
-    disco: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#a269ff', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
-    dragon: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ff1493', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
-    dubai: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#d4a017', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
-    galaxy: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#4b0082', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
-    greenlime: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#6abf69', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
-    h2o: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#00d2ff', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
-    lava: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ff4500', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
-    orange: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ff8c00', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
-    pink: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ff69b4', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
-    poke: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ff0000', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
-    rocket: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#708090', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
-    star: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ffd700', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
-    travel: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#2ed573', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
-    cottoncandy: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ffacf5', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
-    cookies: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#c56cf0', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
-    glowjelly: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#a29bfe', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
-    shark: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#2f3542', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
-    dog: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ffa502', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    basicred_kap: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ff4757', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    base_kap: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#a269ff', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    lego_kap: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#a269ff', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    bubbletea_kap: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#a269ff', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    strawberry_kap: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#a269ff', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    penguin_kap: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#a269ff', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    shark_kap: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#a269ff', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    matcha_kap: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#a269ff', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    puppy_kap: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#a269ff', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    cottoncandy_kap: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#a269ff', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    pioneers_cap: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#a269ff', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
 };
 
 class TimerConfigManager {
@@ -120,12 +111,11 @@ class TimerConfigManager {
 
     async saveModel(model: any) {
         try {
-            const { error } = await supabase.from('models').upsert({
+            const modelData: any = {
                 id: model.id,
                 label: model.label,
                 image: model.image,
                 image_open: model.image_open,
-                image_cover: model.image_cover,
                 category: model.category,
                 tint: model.tint,
                 is_active: model.is_active,
@@ -134,7 +124,14 @@ class TimerConfigManager {
                 event_end: model.event_end || null,
                 event_title: model.event_title || null,
                 event_description: model.event_description || null
-            });
+            };
+
+            // Only add image_cover if it exists in the model object
+            if (model.image_cover) {
+                modelData.image_cover = model.image_cover;
+            }
+
+            const { error } = await supabase.from('models').upsert(modelData);
             if (error) throw error;
             await this.refresh();
             return true;
@@ -159,7 +156,7 @@ class TimerConfigManager {
     }
 
     getConfig(modelId: string): ModelTimerConfig {
-        return this.configs[modelId] || this.configs['beach'] || Object.values(this.configs)[0];
+        return this.configs[modelId] || this.configs['basicred_kap'] || Object.values(this.configs)[0];
     }
 
     async saveConfig(modelId: string, config: ModelTimerConfig) {

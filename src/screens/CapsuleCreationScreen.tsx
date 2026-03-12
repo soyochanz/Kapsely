@@ -1,7 +1,7 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import {
     View, Text, StyleSheet, ScrollView, TouchableOpacity,
-    TextInput, StatusBar, SafeAreaView, Dimensions, Switch,
+    TextInput, StatusBar, Dimensions, Switch,
     Image, Pressable, PanResponder, Animated, Alert, ActivityIndicator, Easing, Modal,
     Platform, KeyboardAvoidingView, Keyboard,
 } from 'react-native';
@@ -11,6 +11,7 @@ import Slider from '@react-native-community/slider';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
 import { CapsuleType } from '../data/mockCapsules';
 import { supabase } from '../lib/supabase';
@@ -24,23 +25,7 @@ import { timerConfigManager } from '../utils/timerConfig';
 const MIN_DAYS = 14;
 const MAX_DAYS = 365;
 
-const DURATION_PRESETS = [
-    { label: '2 Weeks', days: 14, emoji: '⚡' },
-    { label: '1 Month', days: 30, emoji: '📅' },
-    { label: '3 Months', days: 90, emoji: '🌙' },
-    { label: '6 Months', days: 180, emoji: '⭐' },
-    { label: '1 Year', days: 365, emoji: '🔮' },
-    { label: 'Custom', days: -1, emoji: '🗓️' },
-];
-
-function daysToLabel(days: number): string {
-    if (days <= 14) return '2 Weeks';
-    if (days <= 30) return '1 Month';
-    if (days <= 90) return '3 Months';
-    if (days <= 180) return '6 Months';
-    if (days >= 365) return '1 Year';
-    return `${days} days`;
-}
+// Duration label moved inside component to use translations
 
 function addDays(days: number): Date {
     return new Date(Date.now() + days * 86400000);
@@ -67,69 +52,92 @@ const styles = StyleSheet.create({
     safeArea: { backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.border },
     header: {
         flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-        paddingHorizontal: Spacing.md, paddingTop: 50, paddingBottom: 12,
+        paddingHorizontal: Spacing.md, paddingTop: 12, paddingBottom: 12,
     },
     headerBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
     headerTitle: { color: Colors.textPrimary, fontSize: 16, fontFamily: Fonts.semiBold },
 
     stepIndicatorRow: {
         flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-        paddingHorizontal: Spacing.md, paddingBottom: Spacing.md, paddingTop: 4,
+        paddingHorizontal: Spacing.md, paddingBottom: 8, paddingTop: 4,
     },
     stepDotWrapper: { alignItems: 'center', gap: 3 },
-    stepDot: { width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-    stepNum: { fontSize: 10, fontFamily: Fonts.bold },
+    stepDot: { width: 16, height: 16, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+    stepNum: { fontSize: 8, fontFamily: Fonts.bold },
     stepLabel: { fontSize: 8, fontFamily: Fonts.semiBold, letterSpacing: 0.3 },
     stepLine: { flex: 1, height: 2, marginHorizontal: 2, marginBottom: 14, borderRadius: 1 },
+
+    floatingBottomNav: {
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 15,
+        paddingHorizontal: Spacing.lg, paddingVertical: 15,
+        backgroundColor: Colors.surface,
+        borderTopWidth: 1, borderTopColor: Colors.border,
+        ...Shadow.subtle
+    },
+    floatingNavBtn: {
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 14, borderRadius: 30,
+        ...Shadow.subtle
+    },
+    floatingNavText: { fontFamily: Fonts.bold, fontSize: 13, letterSpacing: 0.8 },
+    floatingNavTextNext: { fontFamily: Fonts.bold, fontSize: 13, letterSpacing: 0.8, color: '#fff' },
 
     heroContainer: {
         alignItems: 'center',
         paddingTop: 10,
         paddingBottom: 25,
-        borderBottomWidth: 1,
         position: 'relative',
         overflow: 'hidden',
     },
     heroImageContainer: {
-        width: 140,
-        height: 140,
+        width: 120,
+        height: 120,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: '#fff',
-        borderRadius: 70,
-        ...Shadow.card,
-        borderWidth: 3,
-        borderColor: '#fff',
         zIndex: 2,
     },
     heroImage: {
-        width: 130,
-        height: 130,
+        width: 110,
+        height: 110,
     },
     heroTypeIcon: {
         position: 'absolute',
-        bottom: 0,
-        right: 0,
-        width: 32,
-        height: 32,
-        borderRadius: 16,
+        bottom: 5,
+        right: 5,
+        width: 28,
+        height: 28,
+        borderRadius: 14,
         alignItems: 'center',
         justifyContent: 'center',
-        borderWidth: 3,
-        borderColor: '#fff',
         ...Shadow.subtle,
         zIndex: 3,
     },
     heroTextContainer: {
         alignItems: 'center',
-        marginTop: 15,
+        marginTop: 5,
         paddingHorizontal: Spacing.xl,
+        zIndex: 2,
     },
     heroTitle: {
-        fontSize: 22,
+        fontSize: 18,
         fontFamily: Fonts.bold,
         color: Colors.textPrimary,
         textAlign: 'center',
+    },
+    changeModelBadge: {
+        position: 'absolute',
+        bottom: 20,
+        right: 20,
+        backgroundColor: Colors.surface,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: BorderRadius.full,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        ...Shadow.subtle,
+        zIndex: 10,
     },
     heroBadgeRow: {
         flexDirection: 'row',
@@ -166,7 +174,7 @@ const styles = StyleSheet.create({
     },
 
     scroll: { flex: 1 },
-    scrollContent: { paddingBottom: 110 },
+    scrollContent: { paddingBottom: 130, minHeight: Dimensions.get('window').height },
     step: { padding: Spacing.md },
     stepHeaderCenter: { alignItems: 'center', marginBottom: Spacing.lg },
     stepTitleCenter: { color: Colors.textPrimary, fontSize: 24, fontFamily: Fonts.bold, textAlign: 'center' },
@@ -647,22 +655,6 @@ const styles = StyleSheet.create({
     },
 
     // Interactive Hero
-    changeModelBadge: {
-        position: 'absolute',
-        bottom: 0,
-        right: 0,
-        backgroundColor: Colors.surface,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 18,
-        borderWidth: 1.5,
-        borderColor: Colors.border,
-        ...Shadow.subtle,
-        zIndex: 5,
-    },
     addContentHint: {
         position: 'absolute',
         top: 25,
@@ -796,28 +788,7 @@ const styles = StyleSheet.create({
 
 const SLIDER_W = width - Spacing.md * 2 - Spacing.md * 2; // account for step+card padding
 
-function DurationSlider({ days, onChange, color }: { days: number; onChange: (d: number) => void; color: string }) {
-    return (
-        <View style={styles.sliderWrapper}>
-            <Slider
-                style={{ width: '100%', height: 40 }}
-                minimumValue={MIN_DAYS}
-                maximumValue={MAX_DAYS}
-                step={1}
-                value={days}
-                onValueChange={(val) => onChange(Math.round(val))}
-                minimumTrackTintColor={color}
-                maximumTrackTintColor={Colors.border}
-                thumbTintColor={color}
-            />
-            <View style={styles.sliderLabels}>
-                <Text style={styles.sliderLabelText}>2 Weeks</Text>
-                <Text style={[styles.sliderLabelText, { color, fontFamily: Fonts.bold, fontSize: 12 }]}>{daysToLabel(days)}</Text>
-                <Text style={styles.sliderLabelText}>1 Year</Text>
-            </View>
-        </View>
-    );
-}
+// DurationSlider moved inside component to use daysToLabel and t
 
 const MemoizedModelCard = React.memo(({ model, isActive, onSelect }: any) => {
 
@@ -862,12 +833,17 @@ const MemoizedModelCard = React.memo(({ model, isActive, onSelect }: any) => {
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
 export default function CapsuleCreationScreen() {
+    const { t } = useTranslation();
     const navigation = useNavigation<any>();
+    const insets = useSafeAreaInsets();
     const scrollRef = useRef<ScrollView>(null);
     const [currentStep, setCurrentStep] = useState<Step>('type');
     const [selectedType, setSelectedType] = useState<CapsuleType | null>(null);
-    const [selectedModel, setSelectedModel] = useState('basic_red');
+    const [selectedModel, setSelectedModel] = useState('basicred_kap');
     const [hasLegacyCap, setHasLegacyCap] = useState(false);
+    const [activeInstaCapCount, setActiveInstaCapCount] = useState(0);
+    const [loadingLimits, setLoadingLimits] = useState(true);
+
     const [modelSearch, setModelSearch] = useState('');
     const [modelCategory, setModelCategory] = useState('All');
     const [title, setTitle] = useState('');
@@ -887,14 +863,76 @@ export default function CapsuleCreationScreen() {
     const [isPublic, setIsPublic] = useState(true);
     const [keyboardVisible, setKeyboardVisible] = useState(false);
 
+    const scrollY = useRef(new Animated.Value(0)).current;
+
+    const heroHeight = scrollY.interpolate({
+        inputRange: [0, 100, 200],
+        outputRange: [210, 100, 0],
+        extrapolate: 'clamp'
+    });
+
+    const heroOpacity = scrollY.interpolate({
+        inputRange: [0, 100, 180],
+        outputRange: [1, 0.8, 0],
+        extrapolate: 'clamp'
+    });
+
+    const DURATION_PRESETS = useMemo(() => [
+        { label: t('common.2_weeks'), days: 14, emoji: '⚡' },
+        { label: t('common.1_month'), days: 30, emoji: '📅' },
+        { label: t('common.3_months'), days: 90, emoji: '🌙' },
+        { label: t('common.6_months'), days: 180, emoji: '⭐' },
+        { label: t('common.1_year'), days: 365, emoji: '🔮' },
+        { label: t('common.custom'), days: -1, emoji: '🗓️' },
+    ], [t]);
+
+    const daysToLabel = (days: number): string => {
+        if (days <= 14) return t('common.2_weeks');
+        if (days <= 30) return t('common.1_month');
+        if (days <= 90) return t('common.3_months');
+        if (days <= 180) return t('common.6_months');
+        if (days >= 365) return t('common.1_year');
+        return `${days} ${t('common.days')}`;
+    };
+
+    const DurationSlider = useCallback(({ days, onChange, color }: { days: number; onChange: (d: number) => void; color: string }) => {
+        return (
+            <View style={styles.sliderWrapper}>
+                <Slider
+                    style={{ width: '100%', height: 40 }}
+                    minimumValue={MIN_DAYS}
+                    maximumValue={MAX_DAYS}
+                    step={1}
+                    value={days}
+                    onValueChange={(val) => onChange(Math.round(val))}
+                    minimumTrackTintColor={color}
+                    maximumTrackTintColor={Colors.border}
+                    thumbTintColor={color}
+                />
+                <View style={styles.sliderLabels}>
+                    <Text style={styles.sliderLabelText}>{t('common.2_weeks')}</Text>
+                    <Text style={[styles.sliderLabelText, { color, fontFamily: Fonts.bold, fontSize: 12 }]}>{daysToLabel(days)}</Text>
+                    <Text style={styles.sliderLabelText}>{t('common.1_year')}</Text>
+                </View>
+            </View>
+        );
+    }, [t, daysToLabel]);
+
     useEffect(() => {
         const showSubscription = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
         const hideSubscription = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false));
+        
+        // Safety timeout for loading limits
+        const timeout = setTimeout(() => {
+            if (loadingLimits) setLoadingLimits(false);
+        }, 5000);
+
         return () => {
             showSubscription.remove();
             hideSubscription.remove();
+            clearTimeout(timeout);
         };
-    }, []);
+    }, [loadingLimits]);
 
     // Duration (InstaCap)
     const [selectedPreset, setSelectedPreset] = useState<number | null>(null); // days or null if custom is showing
@@ -908,10 +946,10 @@ export default function CapsuleCreationScreen() {
     const [isAnimatingSeal, setIsAnimatingSeal] = useState(false);
     const dropAnim = useRef(new Animated.Value(-300)).current;
     const capScaleAnim = useRef(new Animated.Value(1)).current;
-    
+
     // Notification animation
     const notifAnim = useRef(new Animated.Value(-100)).current;
-    
+
     // Media feed animations for sealing process
     const mediaAnims = useRef([
         new Animated.Value(-600),
@@ -933,59 +971,114 @@ export default function CapsuleCreationScreen() {
             rules: { icon: string; text: string }[]; limit: string;
             disabled?: boolean;
         }[] = [
-            {
-                id: 'legacycap', title: 'LegacyCap', tagline: 'The capsule of your life',
-                description: 'The most exclusive and symbolic capsule in Kapsely. A message to your future self — identity, legacy, permanence.',
-                color: Colors.legacyCap, bgColor: Colors.legacyCapLight, icon: 'time', limit: '1 active',
-                rules: [
-                    { icon: 'alert-circle-outline', text: 'Only 1 active LegacyCap per account' },
-                    { icon: 'lock-closed', text: 'Opens automatically after 5 years' },
-                    { icon: 'ban', text: 'Cannot be modified once sealed' },
-                    { icon: 'film', text: 'Cinematic unlock experience' },
-                    { icon: 'star', text: 'Exclusive animated countdown' },
-                ],
-            },
-            {
-                id: 'instacap', title: 'InstaCap', tagline: 'Memories with a release date',
-                description: 'Flexible personal or shared capsule. Creates anticipation — turns waiting into meaning.',
-                color: Colors.instaCap, bgColor: Colors.instaCapLight, icon: 'camera', limit: 'Max 5',
-                rules: [
-                    { icon: 'albums-outline', text: 'Max 5 active InstaCaps at once' },
-                    { icon: 'calendar-outline', text: 'Duration: 2 weeks to 1 year' },
-                    { icon: 'people', text: 'Can be shared — invite a follower' },
-                    { icon: 'checkmark-circle', text: 'Both users can upload content' },
-                    { icon: 'hand-left-outline', text: 'Invitee must accept to participate' },
-                ],
-            },
-            {
-                id: 'eventcap', title: 'EventCap', tagline: 'Synchronized collective memory',
-                description: activeEvent ? activeEvent.event_description : 'Linked to real-world events — concerts, championships, graduations. All capsules open simultaneously.',
-                color: Colors.eventCap, bgColor: Colors.eventCapLight, icon: 'calendar', limit: 'Per event',
-                rules: [
-                    { icon: 'earth', text: 'Connected to verified global events' },
-                    { icon: 'sync', text: 'All capsules open simultaneously' },
-                    { icon: 'qr-code', text: 'Requires event QR or access code' },
-                    { icon: 'shield-checkmark', text: 'Only verified attendees can upload' },
-                    { icon: 'timer-outline', text: 'Globally synchronized countdown' },
-                ],
-                disabled: !activeEvent,
-            },
-        ];
+                {
+                    id: 'legacycap', title: 'LegacyCap', tagline: t('create.legacy.tagline'),
+                    description: t('create.legacy.description'),
+                    color: Colors.legacyCap, bgColor: Colors.legacyCapLight, icon: 'time', limit: '1 active',
+                    rules: [
+                        { icon: 'alert-circle-outline', text: t('create.legacy.rule1') },
+                        { icon: 'lock-closed', text: t('create.legacy.rule2') },
+                        { icon: 'ban', text: t('create.legacy.rule3') },
+                        { icon: 'film', text: t('create.legacy.rule4') },
+                        { icon: 'star', text: t('create.legacy.rule5') },
+                    ],
+                },
+                {
+                    id: 'instacap', title: 'InstaCap', tagline: t('create.insta.tagline'),
+                    description: t('create.insta.description'),
+                    color: Colors.instaCap, bgColor: Colors.instaCapLight, icon: 'camera', limit: 'Max 5',
+                    rules: [
+                        { icon: 'albums-outline', text: t('create.insta.rule1') },
+                        { icon: 'calendar-outline', text: t('create.insta.rule2') },
+                        { icon: 'people', text: t('create.insta.rule3') },
+                        { icon: 'checkmark-circle', text: t('create.insta.rule4') },
+                        { icon: 'hand-left-outline', text: t('create.insta.rule5') },
+                    ],
+                },
+                {
+                    id: 'eventcap', title: 'EventCap', tagline: t('create.event.tagline'),
+                    description: activeEvent ? activeEvent.event_description : t('create.event.description'),
+                    color: Colors.eventCap, bgColor: Colors.eventCapLight, icon: 'calendar', limit: 'Per event',
+                    rules: [
+                        { icon: 'earth', text: t('create.event.rule1') },
+                        { icon: 'sync', text: t('create.event.rule2') },
+                        { icon: 'qr-code', text: t('create.event.rule3') },
+                        { icon: 'shield-checkmark', text: t('create.event.rule4') },
+                        { icon: 'timer-outline', text: t('create.event.rule5') },
+                    ],
+                    disabled: !activeEvent || loadingLimits,
+                },
+            ];
         return types;
-    }, [activeEvent, hasLegacyCap]);
+    }, [activeEvent, hasLegacyCap, activeInstaCapCount, loadingLimits]);
+
 
     const activeCfg = useMemo(() => {
         return selectedType ? capsuleTypes.find((t: any) => t.id === selectedType) : null;
     }, [selectedType, capsuleTypes]);
 
     const stepIndex = STEPS.indexOf(currentStep);
-    const activeModel = availableModels.find((m: any) => m.id === selectedModel) 
+    const activeModel = availableModels.find((m: any) => m.id === selectedModel)
         ? availableModels.find((m: any) => m.id === selectedModel)
         : (CAPSULE_MODELS as any).find((m: any) => m.id === selectedModel) ?? CAPSULE_MODELS[0];
 
     const [activeThemeColor, setActiveThemeColor] = useState(() => {
         return timerConfigManager.getConfig(selectedModel)?.themeColor || (activeCfg?.color ?? Colors.primary);
     });
+
+    useEffect(() => {
+        if (Platform.OS === 'android') {
+            NavigationBar.setVisibilityAsync('hidden');
+            NavigationBar.setBehaviorAsync('inset-touch');
+        }
+
+        // Hide bottom tab bar while creating a capsule
+        navigation.setOptions({ tabBarStyle: { display: 'none' } });
+        return () => {
+            navigation.setOptions({ tabBarStyle: undefined });
+        };
+    }, [navigation]);
+
+    useEffect(() => {
+        const checkCapsuleLimits = async () => {
+            setLoadingLimits(true);
+            try {
+                const { data: { session } } = await supabase.auth.getSession();
+                const user = session?.user;
+                if (user) {
+                    // Check LegacyCap
+                    const { count: legacyCount } = await supabase
+                        .from('capsules')
+                        .select('*', { count: 'exact', head: true })
+                        .eq('owner_id', user.id)
+                        .eq('type', 'legacycap')
+                        .eq('status', 'sealed');
+
+                    if (legacyCount !== null) {
+                        setHasLegacyCap(legacyCount > 0);
+                    }
+
+                    // Check InstaCap count
+                    const { count: instaCount } = await supabase
+                        .from('capsules')
+                        .select('*', { count: 'exact', head: true })
+                        .eq('owner_id', user.id)
+                        .eq('type', 'instacap')
+                        .eq('status', 'sealed');
+
+                    if (instaCount !== null) {
+                        setActiveInstaCapCount(instaCount);
+                    }
+                }
+            } catch (err) {
+                console.error('Error checking capsule limits:', err);
+            } finally {
+                setLoadingLimits(false);
+            }
+        };
+
+        checkCapsuleLimits();
+    }, []);
 
     useEffect(() => {
         if (Platform.OS === 'android') {
@@ -1021,25 +1114,12 @@ export default function CapsuleCreationScreen() {
             setAvailableCategories(['All', ...Array.from(new Set(timerConfigManager.models.map(m => m.category)))]);
         };
 
-        const checkLegacyCap = async () => {
-            const { data: { user } } = await supabase.auth.getUser();
-            if (user) {
-                const { count } = await supabase
-                    .from('capsules')
-                    .select('*', { count: 'exact', head: true })
-                    .eq('owner_id', user.id)
-                    .eq('type', 'legacycap')
-                    .eq('status', 'sealed');
-                if (count && count > 0) {
-                    setHasLegacyCap(true);
-                }
-            }
-        };
-        checkLegacyCap();
         syncData();
 
         return timerConfigManager.subscribe(syncData);
     }, [selectedModel, activeCfg]);
+
+
 
     useEffect(() => {
         const query = userSearchQuery.trim();
@@ -1116,7 +1196,7 @@ export default function CapsuleCreationScreen() {
         setCapAngelHandle(user.username);
         setCapAngelSearchQuery('');
         setCapAngelSearchResults([]);
-        
+
         // Selection feedback animation
         setShowSuccessNotif(true);
         Animated.spring(notifAnim, {
@@ -1163,26 +1243,34 @@ export default function CapsuleCreationScreen() {
 
     const goNext = () => {
         if (currentStep === 'type' && !selectedType) {
-            Alert.alert('Required', 'Please select a capsule type');
+            Alert.alert('Selection Required', 'Please select a capsule format to continue.');
             return;
         }
         if (currentStep === 'content') {
             if (!title.trim() || !description.trim()) {
-                Alert.alert('Required', 'Please enter a title and description');
+                Alert.alert('Missing Information', 'Please enter a title and message for your capsule.');
                 return;
             }
         }
         if (currentStep === 'schedule') {
             if (selectedType === 'instacap' && !selectedPreset && !showCustomSlider) {
-                Alert.alert('Required', 'Please select a duration for your capsule');
+                Alert.alert('Timeline Required', 'Please select when your capsule should open.');
                 return;
             }
         }
-        if (stepIndex < STEPS.length - 1) setCurrentStep(STEPS[stepIndex + 1]);
+        if (stepIndex < STEPS.length - 1) {
+            setCurrentStep(STEPS[stepIndex + 1]);
+            scrollRef.current?.scrollTo({ y: 0, animated: true });
+        }
     };
-    const goBack = () => { if (stepIndex > 0) setCurrentStep(STEPS[stepIndex - 1]); };
+    const goBack = () => {
+        if (stepIndex > 0) {
+            setCurrentStep(STEPS[stepIndex - 1]);
+            scrollRef.current?.scrollTo({ y: 0, animated: true });
+        }
+    };
 
-    const stepLabels = ['Type', 'Content', 'Schedule', 'Angel', 'Review'];
+    // const stepLabels = ['Type', 'Content', 'Schedule', 'Angel', 'Review']; // Removed as per instructions
 
     // ── Compute final opening date ──────────────────────────────────────────
     const finalDays: number | null =
@@ -1206,8 +1294,8 @@ export default function CapsuleCreationScreen() {
     }, [selectedType, activeEvent, finalDays]);
 
     const displayOpeningDate = useMemo(() => {
-        return new Date(openingDate).toLocaleDateString('en-US', { 
-            year: 'numeric', month: 'long', day: 'numeric' 
+        return new Date(openingDate).toLocaleDateString('en-US', {
+            year: 'numeric', month: 'long', day: 'numeric'
         });
     }, [openingDate]);
 
@@ -1257,6 +1345,24 @@ export default function CapsuleCreationScreen() {
                     return;
                 }
             }
+
+            // Check InstaCap limit (5 per account)
+            if (selectedType === 'instacap') {
+                const { count: instaCount, error: countError } = await supabase
+                    .from('capsules')
+                    .select('*', { count: 'exact', head: true })
+                    .eq('owner_id', user.id)
+                    .eq('type', 'instacap')
+                    .eq('status', 'sealed');
+
+                if (countError) throw countError;
+                if (instaCount && instaCount >= 5) {
+                    Alert.alert('Limit Reached', 'You can only have up to 5 active InstaCaps at a time.');
+                    setSealing(false);
+                    return;
+                }
+            }
+
 
             const opensAt = selectedType === 'eventcap' && activeEvent
                 ? activeEvent.event_end
@@ -1324,7 +1430,7 @@ export default function CapsuleCreationScreen() {
             setIsAnimatingSeal(true);
             Animated.sequence([
                 // Media feed "tu tu tu tu"
-                Animated.stagger(250, mediaAnims.map(anim => 
+                Animated.stagger(250, mediaAnims.map(anim =>
                     Animated.timing(anim, {
                         toValue: 120,
                         duration: 700,
@@ -1351,7 +1457,7 @@ export default function CapsuleCreationScreen() {
 
                     // reset
                     setCurrentStep('type'); setSelectedType(null); setTitle(''); setDescription('');
-                    setSelectedModel('basic_red'); setSelectedPreset(null); setShowCustomSlider(false);
+                    setSelectedModel('basicred_kap'); setSelectedPreset(null); setShowCustomSlider(false);
                     setIsPublic(true); setCapAngel(false); setIsShared(false); setInvitedUsers([]);
                     setCapAngelHandle(''); setSelectedCapAngel(null); setCapAngelSearchQuery(''); setCapAngelSearchResults([]);
                     setModelSearch(''); setModelCategory('All');
@@ -1373,7 +1479,7 @@ export default function CapsuleCreationScreen() {
     return (
         <View style={styles.container}>
             <StatusBar barStyle="dark-content" backgroundColor={Colors.surface} />
-            
+
             {/* Selection Success Notification */}
             {showSuccessNotif && (
                 <Animated.View style={[styles.notificationBadge, { transform: [{ translateY: notifAnim }] }]}>
@@ -1391,31 +1497,31 @@ export default function CapsuleCreationScreen() {
                     <Text style={{ fontSize: 24, fontFamily: Fonts.bold, color: activeThemeColor, marginBottom: 40 }}>Sealing your memories...</Text>
                     <View style={{ width: 240, height: 350, alignItems: 'center' }}>
                         {mediaAnims.map((anim, i) => (
-                            <Animated.View key={i} style={{ 
-                                position: 'absolute', 
+                            <Animated.View key={i} style={{
+                                position: 'absolute',
                                 transform: [{ translateY: anim }],
-                                opacity: anim.interpolate({ 
-                                    inputRange: [-600, -200, 100, 150], 
-                                    outputRange: [0, 1, 1, 0] 
+                                opacity: anim.interpolate({
+                                    inputRange: [-600, -200, 100, 150],
+                                    outputRange: [0, 1, 1, 0]
                                 }),
                                 zIndex: 1
                             }}>
                                 <View style={{ backgroundColor: activeThemeColor + '15', padding: 12, borderRadius: 15, borderWidth: 1, borderColor: activeThemeColor + '33' }}>
-                                    <Ionicons 
-                                        name={i === 0 ? "image" : i === 1 ? "videocam" : "musical-notes"} 
-                                        size={32} 
-                                        color={activeThemeColor} 
+                                    <Ionicons
+                                        name={i === 0 ? "image" : i === 1 ? "videocam" : "musical-notes"}
+                                        size={32}
+                                        color={activeThemeColor}
                                     />
                                 </View>
                             </Animated.View>
                         ))}
-                        
+
                         <Animated.View style={{ transform: [{ translateY: dropAnim }], zIndex: 2 }}>
                             <View style={{ backgroundColor: activeThemeColor + '22', width: 60, height: 60, borderRadius: 30, alignItems: 'center', justifyContent: 'center' }}>
                                 <Ionicons name="sparkles" size={32} color={activeThemeColor} />
                             </View>
                         </Animated.View>
-                        
+
                         <Animated.View style={{ transform: [{ scale: capScaleAnim }], position: 'absolute', bottom: 20 }}>
                             <View style={[
                                 Platform.select({
@@ -1437,718 +1543,764 @@ export default function CapsuleCreationScreen() {
                     </View>
                 </View>
             )}
-            <SafeAreaView style={[styles.safeArea, keyboardVisible && { borderBottomWidth: 0 }]}>
+            <View style={[styles.safeArea, keyboardVisible && { borderBottomWidth: 0 }, { paddingTop: insets.top + 10 }]}>
                 {/* Header */}
-                <View style={[styles.header, keyboardVisible && { paddingTop: Platform.OS === 'ios' ? 10 : 0, paddingBottom: 5 }]}>
+                <View style={[styles.header, keyboardVisible && { paddingTop: 0, paddingBottom: 5 }, { paddingTop: 10 }]}>
                     <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerBtn}>
                         <Ionicons name="close" size={24} color={Colors.textPrimary} />
                     </TouchableOpacity>
-                    <Text style={styles.headerTitle}>
-                        {currentStep === 'type' && 'Choose Type'}
-                        {currentStep === 'content' && 'Add Content'}
-                        {currentStep === 'schedule' && 'Set Opening'}
-                        {currentStep === 'capangel' && 'CapAngel'}
-                        {currentStep === 'review' && 'Review & Seal'}
-                    </Text>
+                    <Text style={styles.headerTitle}>{t('create.title')}</Text>
                     <View style={styles.headerBtn} />
                 </View>
 
                 {/* Step Indicator */}
-                <View style={[styles.stepIndicatorRow, keyboardVisible && { paddingBottom: 5, paddingTop: 0 }]}>
-                    {STEPS.map((step, i) => (
-                        <React.Fragment key={step}>
-                            <View style={styles.stepDotWrapper}>
-                                <View style={[
-                                    styles.stepDot,
-                                    i < stepIndex ? { backgroundColor: activeThemeColor } :
-                                        i === stepIndex ? { backgroundColor: activeThemeColor, borderWidth: 0 } :
-                                            { backgroundColor: Colors.cardAlt, borderWidth: 1, borderColor: Colors.border },
-                                ]}>
-                                    {i < stepIndex
-                                        ? <Ionicons name="checkmark" size={10} color="#fff" />
-                                        : <Text style={[styles.stepNum, { color: i <= stepIndex ? '#fff' : Colors.textMuted }]}>{i + 1}</Text>
-                                    }
+                <View style={styles.stepIndicatorRow}>
+                    {STEPS.map((s, i) => {
+                        const isActive = stepIndex >= i;
+                        const isUpcoming = stepIndex < i;
+                        const colors = isActive ? [Colors.primary, Colors.primaryDark] : [Colors.border, Colors.border];
+                        return (
+                            <React.Fragment key={s}>
+                                <View style={styles.stepDotWrapper}>
+                                    <LinearGradient 
+                                        colors={isActive ? ([Colors.primary, Colors.primaryDark] as const) : ([Colors.border, Colors.border] as const)} 
+                                        style={styles.stepDot}
+                                    >
+                                        <Text style={[styles.stepNum, { color: '#fff' }]}>{i + 1}</Text>
+                                    </LinearGradient>
+                                    <Text style={[styles.stepLabel, { color: isActive ? Colors.primary : Colors.textMuted }]}>
+                                        {t(`create.${s}`).toUpperCase()}
+                                    </Text>
                                 </View>
-                                <Text style={[styles.stepLabel, { color: i === stepIndex ? activeThemeColor : Colors.textMuted }]}>
-                                    {stepLabels[i]}
-                                </Text>
-                            </View>
-                            {i < STEPS.length - 1 && (
-                                <View style={[styles.stepLine, { backgroundColor: i < stepIndex ? activeThemeColor : Colors.border }]} />
-                            )}
-                        </React.Fragment>
-                    ))}
+                                {i < STEPS.length - 1 && (
+                                    <View style={[styles.stepLine, { backgroundColor: isActive && stepIndex > i ? Colors.primary : Colors.border }]} />
+                                )}
+                            </React.Fragment>
+                        );
+                    })}
                 </View>
 
                 {/* Persistent Hero Preview - Hidden in Review step or when keyboard is visible */}
                 {currentStep !== 'review' && !keyboardVisible && (
-                    <View style={[
-                        styles.heroContainer, 
-                        { borderBottomColor: activeThemeColor + '22' }
-                    ]}>
-                        <LinearGradient
-                            colors={[activeThemeColor + '15', activeThemeColor + '08', Colors.surface]}
-                            style={StyleSheet.absoluteFill}
-                        />
+                    <Animated.View 
+                        collapsable={false}
+                        style={{ height: heroHeight, overflow: 'hidden' }}
+                    >
+                        <Animated.View style={[
+                            styles.heroContainer,
+                            { borderBottomColor: activeThemeColor + '22', height: 210, opacity: heroOpacity }
+                        ]}>
+                            {/* Background is now clean surface as requested */}
 
-                        {/* Top corner navigation - AS REQUESTED */}
-                        <View style={styles.heroNavRow}>
-                            {stepIndex > 0 && (
-                                <TouchableOpacity onPress={goBack} style={styles.heroNavBtn} activeOpacity={0.7}>
-                                    <Ionicons name="chevron-back" size={20} color={activeThemeColor} />
-                                    <Text style={[styles.heroNavText, { color: activeThemeColor }]}>BACK</Text>
-                                </TouchableOpacity>
-                            )}
-                            <View style={{ flex: 1 }} />
-                            <TouchableOpacity
-                                onPress={goNext}
-                                disabled={currentStep === 'type' && !selectedType}
-                                style={[styles.heroNavBtn, (currentStep === 'type' && !selectedType) && { opacity: 0.3 }]}
-                                activeOpacity={0.7}
+                            {/* Premium Model Preview */}
+                            <Pressable 
+                                style={styles.heroImageContainer}
+                                onPress={() => setShowModelModal(true)}
                             >
-                                <Text style={[styles.heroNavText, { color: activeThemeColor }]}>NEXT</Text>
-                                <Ionicons name="chevron-forward" size={20} color={activeThemeColor} />
-                            </TouchableOpacity>
-                        </View>
-
-                        {/* Premium Model Preview */}
-                        <Pressable 
-                            style={styles.heroImageContainer}
-                            onPress={() => setShowModelModal(true)}
-                        >
-                            <Animated.View style={{ transform: [{ scale: capScaleAnim }], alignItems: 'center', justifyContent: 'center' }}>
-                                <CapsuleWithTimer
-                                    modelKey={selectedModel}
-                                    source={{ uri: activeModel.image }}
-                                    date={openingDate}
-                                    chainId={selectedChainId}
-                                    capsuleType={selectedType || undefined}
-                                    style={styles.heroImage}
-                                    hideTimer={true}
-                                />
-                                {selectedType && (
-                                    <View style={[styles.heroTypeIcon, { backgroundColor: activeThemeColor }]}>
-                                        <Ionicons name={activeCfg?.icon as any} size={16} color="#fff" />
-                                    </View>
-                                )}
-                            </Animated.View>
-                            <View style={[styles.changeModelBadge, { paddingHorizontal: 12, width: 'auto', gap: 6 }]}>
+                                <Animated.View style={{ transform: [{ scale: capScaleAnim }], alignItems: 'center', justifyContent: 'center' }}>
+                                    <CapsuleWithTimer
+                                        modelKey={selectedModel}
+                                        source={{ uri: activeModel.image }}
+                                        date={openingDate}
+                                        chainId={selectedChainId}
+                                        capsuleType={selectedType || undefined}
+                                        style={styles.heroImage}
+                                        hideTimer={true}
+                                    />
+                                    {selectedType && (
+                                        <View style={[styles.heroTypeIcon, { backgroundColor: activeThemeColor }]}>
+                                            <Ionicons name={activeCfg?.icon as any} size={16} color="#fff" />
+                                        </View>
+                                    )}
+                                </Animated.View>
+                            </Pressable>
+                            
+                            <TouchableOpacity 
+                                style={styles.changeModelBadge}
+                                onPress={() => setShowModelModal(true)}
+                                activeOpacity={0.8}
+                            >
                                 <Ionicons name="color-palette" size={14} color={activeThemeColor} />
-                                <Text style={{ fontSize: 10, fontFamily: Fonts.bold, color: activeThemeColor }}>CHANGE MODEL</Text>
-                            </View>
-                        </Pressable>
-                        
-                        {!keyboardVisible && (
-                            <View style={styles.heroTextContainer}>
-                                <Text style={styles.heroTitle} numberOfLines={1}>
-                                    {title || 'Nova Capsule'}
-                                </Text>
-                                <View style={styles.heroBadgeRow}>
-                                    {selectedType ? (
-                                        <View style={[styles.heroBadge, { backgroundColor: activeThemeColor + '20', borderColor: activeThemeColor + '50' }]}>
-                                            <Text style={[styles.heroBadgeText, { color: activeThemeColor }]}>{activeCfg?.title.toUpperCase()}</Text>
-                                        </View>
-                                    ) : (
-                                        <View style={styles.heroBadge}>
-                                            <Text style={styles.heroPlaceholderText}>Select a creation type below</Text>
-                                        </View>
-                                    )}
-                                    {selectedType === 'instacap' && finalDays && (
-                                        <View style={styles.heroBadge}>
-                                            <Ionicons name="time-outline" size={10} color={activeThemeColor} />
-                                            <Text style={styles.heroBadgeTextSmall}>{daysToLabel(finalDays)}</Text>
-                                        </View>
-                                    )}
-                                    {selectedType === 'legacycap' && (
-                                        <View style={styles.heroBadge}>
-                                            <Ionicons name="infinite" size={10} color={activeThemeColor} />
-                                            <Text style={styles.heroBadgeTextSmall}>5 Years</Text>
-                                        </View>
-                                    )}
+                                <Text style={{ fontSize: 10, fontFamily: Fonts.bold, color: activeThemeColor }}>APPEARANCE</Text>
+                            </TouchableOpacity>
+                            
+                            {!keyboardVisible && (
+                                <View style={styles.heroTextContainer}>
+                                    <Text style={styles.heroTitle} numberOfLines={1}>
+                                        {title || 'Nova Capsule'}
+                                    </Text>
+                                    <View style={styles.heroBadgeRow}>
+                                        {selectedType ? (
+                                            <View style={[styles.heroBadge, { backgroundColor: activeThemeColor + '20', borderColor: activeThemeColor + '50' }]}>
+                                                <Text style={[styles.heroBadgeText, { color: activeThemeColor }]}>{activeCfg?.title.toUpperCase()}</Text>
+                                            </View>
+                                        ) : (
+                                            <View style={styles.heroBadge}>
+                                                <Text style={styles.heroPlaceholderText}>Select a creation type below</Text>
+                                            </View>
+                                        )}
+                                        {selectedType === 'instacap' && finalDays && (
+                                            <View style={styles.heroBadge}>
+                                                <Ionicons name="time-outline" size={10} color={activeThemeColor} />
+                                                <Text style={styles.heroBadgeTextSmall}>{daysToLabel(finalDays)}</Text>
+                                            </View>
+                                        )}
+                                        {selectedType === 'legacycap' && (
+                                            <View style={styles.heroBadge}>
+                                                <Ionicons name="infinite" size={10} color={activeThemeColor} />
+                                                <Text style={styles.heroBadgeTextSmall}>5 Years</Text>
+                                            </View>
+                                        )}
+                                    </View>
                                 </View>
-                            </View>
-                        )}
-                    </View>
+                            )}
+                        </Animated.View>
+                    </Animated.View>
                 )}
-            </SafeAreaView>
+            </View>
 
 
-            <KeyboardAvoidingView 
+            <KeyboardAvoidingView
                 behavior={Platform.OS === 'ios' ? 'padding' : undefined}
                 style={{ flex: 1 }}
                 keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}
             >
-                <ScrollView 
-                    ref={scrollRef}
-                    style={styles.scroll} 
+                <Animated.ScrollView
+                    ref={scrollRef as any}
+                    style={styles.scroll}
                     showsVerticalScrollIndicator={false}
-                    contentContainerStyle={styles.scrollContent} 
+                    contentContainerStyle={styles.scrollContent}
                     keyboardShouldPersistTaps="handled"
                     automaticallyAdjustKeyboardInsets={true}
+                    onScroll={Animated.event(
+                        [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                        { useNativeDriver: false }
+                    )}
+                    scrollEventThrottle={16}
                 >
 
-                {/* ═══ STEP 1: TYPE ══════════════════════════════════════════ */}
-                {currentStep === 'type' && (
-                    <View style={styles.step}>
-                        <View style={styles.stepHeaderCenter}>
-                            <Text style={styles.stepTitleCenter}>Choose Your Format</Text>
-                            <Text style={styles.stepSubCenter}>How do you want to preserve this moment?</Text>
-                        </View>
+                    {/* ═══ STEP 1: TYPE ══════════════════════════════════════════ */}
+                    {currentStep === 'type' && (
+                        <View style={styles.step}>
+                            <View style={styles.stepHeaderCenter}>
+                                <Text style={styles.stepTitleCenter}>{t('create.choose_format')}</Text>
+                                <Text style={styles.stepSubCenter}>{t('create.choose_format_sub')}</Text>
+                            </View>
 
-                        <View style={styles.typeGridContainer}>
-                            {capsuleTypes.map((type) => {
-                                const isActive = selectedType === type.id;
-                                const isLocked = (type.id === 'legacycap' && hasLegacyCap) || type.disabled;
-                                return (
-                                    <TouchableOpacity
-                                        key={type.id}
-                                        activeOpacity={0.7}
-                                        onPress={() => {
-                                            if (isLocked) {
-                                                if (type.disabled) {
-                                                    Alert.alert('Event Ended', 'This event is no longer available.');
-                                                } else {
-                                                    Alert.alert('Limit Reached', 'You can only have one active Legacy Capsule.');
+                            <View style={styles.typeGridContainer}>
+                                {capsuleTypes.map((type) => {
+                                    const isActive = selectedType === type.id;
+                                    const isLocked = loadingLimits ||
+                                        (type.id === 'legacycap' && hasLegacyCap) ||
+                                        (type.id === 'instacap' && activeInstaCapCount >= 5) ||
+                                        type.disabled;
+                                    return (
+
+                                        <TouchableOpacity
+                                            key={type.id}
+                                            activeOpacity={0.7}
+                                            onPress={() => {
+                                                if (isLocked) {
+                                                    if (loadingLimits) return;
+                                                    if (type.disabled) {
+                                                        Alert.alert('Event Ended', 'This event is no longer available.');
+                                                    } else if (type.id === 'legacycap') {
+                                                        Alert.alert('Limit Reached', 'You can only have one active Legacy Capsule.');
+                                                    } else if (type.id === 'instacap') {
+                                                        Alert.alert('Limit Reached', 'You can only have up to 5 active InstaCaps.');
+                                                    }
+                                                    return;
                                                 }
-                                                return;
-                                            }
-                                            
-                                            // Selection logic
-                                            const prevType = selectedType;
-                                            setSelectedType(type.id);
-                                            
-                                            if (type.id === 'eventcap' && activeEvent) {
-                                                setSelectedModel(activeEvent.id);
-                                            } else if (prevType === 'eventcap' && selectedModel === activeEvent?.id) {
-                                                setSelectedModel('beach');
-                                            }
 
-                                            // Trigger scale animation for visual feedback
-                                            Animated.sequence([
-                                                Animated.timing(capScaleAnim, { toValue: 1.1, duration: 150, useNativeDriver: true }),
-                                                Animated.timing(capScaleAnim, { toValue: 1, duration: 150, useNativeDriver: true })
-                                            ]).start();
-                                        }}
-                                        style={[
-                                            styles.modernTypeCard,
-                                            isActive && { borderColor: type.color, backgroundColor: type.color + '10' },
-                                            isLocked && { opacity: 0.5 }
-                                        ]}
-                                    >
-                                        <View style={[styles.modernTypeIconBg, { backgroundColor: isActive ? type.color : Colors.cardAlt }]}>
-                                            <Ionicons name={type.icon as any} size={28} color={isActive ? '#fff' : type.color} />
+
+                                                // Selection logic
+                                                const prevType = selectedType;
+                                                setSelectedType(type.id);
+
+                                                if (type.id === 'eventcap' && activeEvent) {
+                                                    setSelectedModel(activeEvent.id);
+                                                } else if (prevType === 'eventcap' && selectedModel === activeEvent?.id) {
+                                                    setSelectedModel('basicred_kap');
+                                                }
+
+                                                // Trigger scale animation for visual feedback
+                                                Animated.sequence([
+                                                    Animated.timing(capScaleAnim, { toValue: 1.1, duration: 150, useNativeDriver: true }),
+                                                    Animated.timing(capScaleAnim, { toValue: 1, duration: 150, useNativeDriver: true })
+                                                ]).start();
+                                            }}
+                                            style={[
+                                                styles.modernTypeCard,
+                                                isActive && { borderColor: type.color, backgroundColor: type.color + '10' },
+                                                isLocked && { opacity: 0.5 }
+                                            ]}
+                                        >
+                                            <View style={[styles.modernTypeIconBg, { backgroundColor: isActive ? type.color : Colors.cardAlt }]}>
+                                                <Ionicons name={type.icon as any} size={28} color={isActive ? '#fff' : type.color} />
+                                            </View>
+                                            <Text style={[styles.modernTypeTitle, isActive && { color: type.color }]}>{type.title}</Text>
+                                            <Text style={styles.modernTypeTagline}>{type.tagline}</Text>
+
+                                            {isActive && (
+                                                <View style={[styles.modernCheckDot, { backgroundColor: type.color }]}>
+                                                    <Ionicons name="checkmark" size={10} color="#fff" />
+                                                </View>
+                                            )}
+                                            {isLocked && (
+                                                <View style={styles.lockedOverlay}>
+                                                    <Ionicons name="lock-closed" size={16} color={Colors.textMuted} />
+                                                </View>
+                                            )}
+                                        </TouchableOpacity>
+                                    );
+                                })}
+                            </View>
+
+                            <View style={styles.typeDetailsBox}>
+                                {selectedType ? (
+                                    <View style={styles.typeDetailContent}>
+                                        <Text style={[styles.typeDetailLabel, { color: activeThemeColor }]}>{activeCfg?.title} {t('create.strategy')}</Text>
+                                        <Text style={styles.typeDetailDesc}>{activeCfg?.description}</Text>
+                                        <View style={styles.compactRulesRow}>
+                                            {activeCfg?.rules.slice(0, 3).map((rule, ri) => (
+                                                <View key={ri} style={styles.compactRulePill}>
+                                                    <Ionicons name={rule.icon as any} size={10} color={activeThemeColor} />
+                                                    <Text style={styles.compactRuleText} numberOfLines={1}>{rule.text}</Text>
+                                                </View>
+                                            ))}
                                         </View>
-                                        <Text style={[styles.modernTypeTitle, isActive && { color: type.color }]}>{type.title}</Text>
-                                        <Text style={styles.modernTypeTagline}>{type.tagline}</Text>
-                                        
-                                        {isActive && (
-                                            <View style={[styles.modernCheckDot, { backgroundColor: type.color }]}>
-                                                <Ionicons name="checkmark" size={10} color="#fff" />
-                                            </View>
-                                        )}
-                                        {isLocked && (
-                                            <View style={styles.lockedOverlay}>
-                                                <Ionicons name="lock-closed" size={16} color={Colors.textMuted} />
-                                            </View>
-                                        )}
-                                    </TouchableOpacity>
-                                );
-                            })}
-                        </View>
-
-                        <View style={styles.typeDetailsBox}>
-                            {selectedType ? (
-                                <View style={styles.typeDetailContent}>
-                                    <Text style={[styles.typeDetailLabel, { color: activeThemeColor }]}>{activeCfg?.title} Strategy</Text>
-                                    <Text style={styles.typeDetailDesc}>{activeCfg?.description}</Text>
-                                    <View style={styles.compactRulesRow}>
-                                        {activeCfg?.rules.slice(0, 3).map((rule, ri) => (
-                                            <View key={ri} style={styles.compactRulePill}>
-                                                <Ionicons name={rule.icon as any} size={10} color={activeThemeColor} />
-                                                <Text style={styles.compactRuleText} numberOfLines={1}>{rule.text}</Text>
-                                            </View>
-                                        ))}
                                     </View>
-                                </View>
-                            ) : (
-                                <View style={styles.typeSelectionPrompt}>
-                                    <Ionicons name="finger-print" size={32} color={Colors.border} />
-                                    <Text style={styles.typePromptText}>Tap a format to begin your journey</Text>
+                                ) : (
+                                    <View style={styles.typeSelectionPrompt}>
+                                        <Ionicons name="finger-print" size={32} color={Colors.border} />
+                                        <Text style={styles.typePromptText}>{t('create.tap_format')}</Text>
+                                    </View>
+                                )}
+                            </View>
+
+
+                            {/* Pioneers Event Active Banner */}
+                            {activeEvent && (
+                                <View style={styles.pioneersEventBanner}>
+                                    <LinearGradient
+                                        colors={['#f5a623', '#e8472f']}
+                                        start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                                        style={styles.pioneersGradient}
+                                    >
+                                        <Ionicons name="rocket" size={18} color="#fff" />
+                                        <View style={{ flex: 1, marginLeft: 10 }}>
+                                            <Text style={styles.pioneersTitle}>🚀 {activeEvent.event_title} — Active</Text>
+                                            <Text style={styles.pioneersSubtitle}>
+                                                {activeEvent.event_description} • {t('create.available_until')} {new Date(activeEvent.event_end).toLocaleDateString()}
+                                            </Text>
+                                        </View>
+                                    </LinearGradient>
                                 </View>
                             )}
+
                         </View>
+                    )}
 
+                    {/* ═══ STEP 2: CONTENT ══════════════════════════════════════ */}
+                    {currentStep === 'content' && (
+                        <View style={styles.step}>
+                            <Text style={styles.stepTitle}>{t('create.add_your_content')}</Text>
+                            <Text style={styles.stepSub}>{t('create.what_to_seal')}</Text>
 
-                        {/* Pioneers Event Active Banner */}
-                        {activeEvent && (
-                            <View style={styles.pioneersEventBanner}>
-                                <LinearGradient
-                                    colors={['#f5a623', '#e8472f']}
-                                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-                                    style={styles.pioneersGradient}
-                                >
-                                    <Ionicons name="rocket" size={18} color="#fff" />
-                                    <View style={{ flex: 1, marginLeft: 10 }}>
-                                        <Text style={styles.pioneersTitle}>🚀 {activeEvent.event_title} — Active</Text>
-                                        <Text style={styles.pioneersSubtitle}>{activeEvent.event_description}</Text>
+                            {/* EventCap: access code */}
+                            {selectedType === 'eventcap' && (
+                                <>
+                                    <View style={[styles.infoBox, { borderColor: Colors.eventCap + '33', backgroundColor: Colors.eventCapLight }]}>
+                                        <Ionicons name="qr-code" size={20} color={Colors.eventCap} />
+                                        <View style={{ flex: 1 }}>
+                                            <Text style={[styles.infoBoxTitle, { color: Colors.eventCap }]}>{t('create.event_verification_required')}</Text>
+                                            <Text style={styles.infoBoxText}>{t('create.event_verification_desc')}</Text>
+                                        </View>
                                     </View>
-                                </LinearGradient>
-                            </View>
-                        )}
-
-                    </View>
-                )}
-
-                {/* ═══ STEP 2: CONTENT ══════════════════════════════════════ */}
-                {currentStep === 'content' && (
-                    <View style={styles.step}>
-                        <Text style={styles.stepTitle}>Add your content</Text>
-                        <Text style={styles.stepSub}>What do you want to seal inside?</Text>
-
-                        {/* EventCap: access code */}
-                        {selectedType === 'eventcap' && (
-                            <>
-                                <View style={[styles.infoBox, { borderColor: Colors.eventCap + '33', backgroundColor: Colors.eventCapLight }]}>
-                                    <Ionicons name="qr-code" size={20} color={Colors.eventCap} />
-                                    <View style={{ flex: 1 }}>
-                                        <Text style={[styles.infoBoxTitle, { color: Colors.eventCap }]}>Event Verification Required</Text>
-                                        <Text style={styles.infoBoxText}>Enter your event QR code or access code to link to a verified event</Text>
+                                    <View style={styles.inputGroup}>
+                                        <Text style={styles.inputLabel}>{t('create.event_access_code')}</Text>
+                                        <TextInput
+                                            style={[styles.textInput, { borderColor: Colors.eventCap + '55' }]}
+                                            placeholder="e.g. COACHELLA-2026-XXXX"
+                                            placeholderTextColor={Colors.textMuted}
+                                            value={eventCode} onChangeText={setEventCode}
+                                            onFocus={() => scrollRef.current?.scrollToEnd({ animated: true })}
+                                        />
                                     </View>
+                                </>
+                            )}
+
+                            {selectedType === 'instacap' && (
+                                <View style={styles.toggleRow}>
+                                    <View style={styles.toggleInfo}>
+                                        <View style={[styles.typeIconSmall, { backgroundColor: Colors.instaCap + '15' }]}>
+                                            <Ionicons name="people" size={18} color={Colors.instaCap} />
+                                        </View>
+                                        <View>
+                                            <Text style={styles.toggleLabel}>{t('create.shared_capsule')}</Text>
+                                            <Text style={styles.toggleSub}>{t('create.invite_friends_count', { count: invitedUsers.length })}</Text>
+                                        </View>
+                                    </View>
+                                    <Switch value={isShared} onValueChange={setIsShared}
+                                        trackColor={{ false: Colors.border, true: Colors.instaCap + '66' }}
+                                        thumbColor={isShared ? Colors.instaCap : Colors.textMuted} />
                                 </View>
+                            )}
+
+                            {selectedType === 'instacap' && isShared && (
                                 <View style={styles.inputGroup}>
-                                    <Text style={styles.inputLabel}>Event Access Code</Text>
-                                    <TextInput
-                                        style={[styles.textInput, { borderColor: Colors.eventCap + '55' }]}
-                                        placeholder="e.g. COACHELLA-2026-XXXX"
-                                        placeholderTextColor={Colors.textMuted}
-                                        value={eventCode} onChangeText={setEventCode}
-                                        onFocus={() => scrollRef.current?.scrollToEnd({ animated: true })}
-                                    />
-                                </View>
-                            </>
-                        )}
+                                    <Text style={styles.inputLabel}>{t('create.participants')}</Text>
 
-                        {selectedType === 'instacap' && (
+                                    {/* Selected users tags */}
+                                    {invitedUsers.length > 0 && (
+                                        <View style={styles.memberTagsList}>
+                                            {invitedUsers.map(u => (
+                                                <View key={u.id} style={styles.memberTag}>
+                                                    <Image source={{ uri: u.avatar_url }} style={styles.tagAvatar} />
+                                                    <Text style={styles.tagName}>{u.username}</Text>
+                                                    <TouchableOpacity onPress={() => toggleInviteUser(u)}>
+                                                        <Ionicons name="close-circle" size={16} color={Colors.textMuted} />
+                                                    </TouchableOpacity>
+                                                </View>
+                                            ))}
+                                        </View>
+                                    )}
+
+                                    <View style={styles.searchBarWrapper}>
+                                        <Ionicons name="search" size={20} color={Colors.textMuted} />
+                                        <TextInput
+                                            style={styles.searchBarInput}
+                                            placeholder="Search by username..."
+                                            placeholderTextColor={Colors.textMuted}
+                                            value={userSearchQuery}
+                                            onChangeText={setUserSearchQuery}
+                                            autoCapitalize="none"
+                                            autoCorrect={false}
+                                            spellCheck={false}
+                                            onFocus={() => scrollRef.current?.scrollToEnd({ animated: true })}
+                                        />
+                                        {searchingUsers && <ActivityIndicator size="small" color={Colors.primary} />}
+                                    </View>
+
+                                    {userSearchResults.length > 0 && (
+                                        <View style={styles.searchResults}>
+                                            {userSearchResults.filter(u => !invitedUsers.some(iu => iu.id === u.id)).map(user => (
+                                                <TouchableOpacity
+                                                    key={user.id}
+                                                    style={styles.searchResultItem}
+                                                    onPress={() => toggleInviteUser(user)}
+                                                >
+                                                    <Image source={{ uri: user.avatar_url }} style={styles.resultAvatar} />
+                                                    <View style={{ flex: 1 }}>
+                                                        <Text style={styles.resultName}>{user.display_name}</Text>
+                                                        <Text style={styles.resultUsername}>@{user.username}</Text>
+                                                    </View>
+                                                    <Ionicons name="add-circle-outline" size={24} color={Colors.primary} />
+                                                </TouchableOpacity>
+                                            ))}
+                                        </View>
+                                    )}
+
+                                    {userSearchQuery.length > 0 && userSearchResults.length === 0 && !searchingUsers && (
+                                        <View style={[styles.searchResults, { padding: 15, alignItems: 'center' }]}>
+                                            <Text style={{ color: Colors.textMuted, fontSize: 13, fontFamily: Fonts.medium }}>{t('create.no_users_found', { query: userSearchQuery })}</Text>
+                                        </View>
+                                    )}
+
+                                    <Text style={styles.helperText}>{t('create.invite_helper')}</Text>
+                                </View>
+                            )}
+
+                            <View style={styles.inputGroup}>
+                                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <Text style={styles.inputLabel}>{t('create.capsule_title')}</Text>
+                                    <Text style={[styles.inputLabel, { fontSize: 10, opacity: 0.5 }]}>{title.length}/31</Text>
+                                </View>
+                                <TextInput
+                                    style={styles.textInput}
+                                    placeholder={t('create.capsule_title_placeholder')}
+                                    placeholderTextColor={Colors.textMuted}
+                                    value={title}
+                                    onChangeText={setTitle}
+                                    maxLength={31}
+                                    autoCorrect={false}
+                                    spellCheck={false}
+                                />
+                            </View>
+
+                            <View style={styles.inputGroup}>
+                                <Text style={styles.inputLabel}>{t('create.message')}</Text>
+                                <TextInput style={[styles.textInput, styles.textArea]}
+                                    placeholder={t('create.message_placeholder')}
+                                    placeholderTextColor={Colors.textMuted}
+                                    value={description} onChangeText={setDescription}
+                                    multiline numberOfLines={4}
+                                    selectionColor={activeThemeColor}
+                                    autoCorrect={false}
+                                    spellCheck={false}
+                                />
+                            </View>
+
+                            {/* Visibility */}
                             <View style={styles.toggleRow}>
                                 <View style={styles.toggleInfo}>
-                                    <View style={[styles.typeIconSmall, { backgroundColor: Colors.instaCap + '15' }]}>
-                                        <Ionicons name="people" size={18} color={Colors.instaCap} />
-                                    </View>
-                                    <View>
-                                        <Text style={styles.toggleLabel}>Shared Capsule</Text>
-                                        <Text style={styles.toggleSub}>Invite up to 9 friends ({invitedUsers.length}/9)</Text>
+                                    <Ionicons name={isPublic ? 'globe-outline' : 'lock-closed-outline'} size={18} color={activeThemeColor} />
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={styles.toggleLabel}>{isPublic ? t('create.public_capsule') : t('create.private_capsule')}</Text>
+                                        <Text style={styles.toggleSub}>
+                                            {isPublic ? t('create.public_desc') : t('create.private_desc')}
+                                        </Text>
                                     </View>
                                 </View>
-                                <Switch value={isShared} onValueChange={setIsShared}
-                                    trackColor={{ false: Colors.border, true: Colors.instaCap + '66' }}
-                                    thumbColor={isShared ? Colors.instaCap : Colors.textMuted} />
+                                <Switch value={isPublic} onValueChange={setIsPublic}
+                                    trackColor={{ false: Colors.border, true: activeThemeColor + '66' }}
+                                    thumbColor={isPublic ? activeThemeColor : Colors.textMuted} />
                             </View>
-                        )}
+                        </View>
+                    )}
 
-                        {selectedType === 'instacap' && isShared && (
-                            <View style={styles.inputGroup}>
-                                <Text style={styles.inputLabel}>Participants</Text>
+                    {/* ═══ STEP 3: SCHEDULE ══════════════════════════════════════ */}
+                    {currentStep === 'schedule' && (
+                        <View style={styles.step}>
+                            <Text style={styles.stepTitle}>{t('create.when_open')}</Text>
+                            <Text style={styles.stepSub}>
+                                {selectedType === 'legacycap'
+                                    ? t('create.legacy_open_desc')
+                                    : selectedType === 'eventcap'
+                                        ? t('create.event_open_desc')
+                                        : t('create.choose_unlock')}
+                            </Text>
 
-                                {/* Selected users tags */}
-                                {invitedUsers.length > 0 && (
-                                    <View style={styles.memberTagsList}>
-                                        {invitedUsers.map(u => (
-                                            <View key={u.id} style={styles.memberTag}>
-                                                <Image source={{ uri: u.avatar_url }} style={styles.tagAvatar} />
-                                                <Text style={styles.tagName}>{u.username}</Text>
-                                                <TouchableOpacity onPress={() => toggleInviteUser(u)}>
+                            {/* LegacyCap fixed */}
+                            {selectedType === 'legacycap' && (
+                                <View style={[styles.fixedDateCard, { borderColor: Colors.legacyCap + '44', backgroundColor: Colors.legacyCapLight }]}>
+                                    <Image source={{ uri: activeModel.image }} style={{ width: 40, height: 54 }} resizeMode="contain" />
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={[styles.fixedDateLabel, { color: Colors.legacyCap }]}>{t('create.fixed_opening_5yr')}</Text>
+                                        <Text style={styles.fixedDateSub}>
+                                            {t('create.opens_on', { date: displayOpeningDate })}
+                                        </Text>
+                                    </View>
+                                </View>
+                            )}
+
+                            {/* EventCap fixed */}
+                            {selectedType === 'eventcap' && (
+                                <View style={[styles.fixedDateCard, { borderColor: Colors.eventCap + '44', backgroundColor: Colors.eventCapLight }]}>
+                                    <Ionicons name="earth" size={28} color={Colors.eventCap} />
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={[styles.fixedDateLabel, { color: Colors.eventCap }]}>{t('create.event_sync_opening')}</Text>
+                                        <Text style={styles.fixedDateSub}>{t('create.event_sync_desc')}</Text>
+                                    </View>
+                                </View>
+                            )}
+
+                            {/* InstaCap duration presets */}
+                            {selectedType === 'instacap' && (
+                                <>
+                                    <View style={styles.presetGrid}>
+                                        {DURATION_PRESETS.map((p) => {
+                                            const isCustom = p.days === -1;
+                                            const isActive = isCustom ? showCustomSlider : (!showCustomSlider && selectedPreset === p.days);
+                                            return (
+                                                <TouchableOpacity
+                                                    key={p.label}
+                                                    activeOpacity={0.8}
+                                                    onPress={() => {
+                                                        if (isCustom) {
+                                                            setShowCustomSlider(true);
+                                                            setSelectedPreset(null);
+                                                        } else {
+                                                            setShowCustomSlider(false);
+                                                            setSelectedPreset(p.days);
+                                                        }
+                                                    }}
+                                                    style={[styles.presetCard, isActive && { borderColor: Colors.instaCap, backgroundColor: Colors.instaCapLight }]}
+                                                >
+                                                    <Text style={styles.presetEmoji}>{p.emoji}</Text>
+                                                    <Text style={[styles.presetLabel, isActive && { color: Colors.instaCap }]}>{p.label}</Text>
+                                                    {isActive && (
+                                                        <View style={[styles.presetCheck, { backgroundColor: Colors.instaCap }]}>
+                                                            <Ionicons name="checkmark" size={10} color="#fff" />
+                                                        </View>
+                                                    )}
+                                                </TouchableOpacity>
+                                            );
+                                        })}
+                                    </View>
+
+                                    {/* Custom slider */}
+                                    {showCustomSlider && (
+                                        <View style={[styles.customSliderCard, { borderColor: Colors.instaCap + '44' }]}>
+                                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                                                <Ionicons name="time-outline" size={18} color={Colors.instaCap} />
+                                                <Text style={[styles.selectedDateLabel, { flex: 1 }]}>{t('create.custom_duration')}</Text>
+                                                <Text style={[styles.selectedDateValue, { color: Colors.instaCap }]}>{daysToLabel(customDays)}</Text>
+                                            </View>
+                                            <DurationSlider days={customDays} onChange={setCustomDays} color={Colors.instaCap} />
+                                        </View>
+                                    )}
+
+                                    {/* Selected date preview */}
+                                    {(selectedPreset || showCustomSlider) && (
+                                        <View style={[styles.selectedDateCard, { borderColor: Colors.instaCap + '44' }]}>
+                                            <Ionicons name="calendar-outline" size={20} color={Colors.instaCap} />
+                                            <View>
+                                                <Text style={styles.selectedDateLabel}>{t('create.opening_date')}</Text>
+                                                <Text style={[styles.selectedDateValue, { color: Colors.instaCap }]}>
+                                                    {displayOpeningDate}
+                                                </Text>
+                                            </View>
+                                        </View>
+                                    )}
+                                </>
+                            )}
+                        </View>
+                    )}
+
+
+
+                    {/* ═══ STEP 4: CAPANGEL ═════════════════════════════════════ */}
+                    {currentStep === 'capangel' && (
+                        <View style={styles.step}>
+                            <Text style={styles.stepTitle}>{t('create.assign_capangel')}</Text>
+                            <Text style={styles.stepSub}>{t('create.capangel_desc')}</Text>
+
+                            <TouchableOpacity
+                                style={[styles.toggleRow, capAngel && { borderColor: activeCfg?.color ?? Colors.primary, backgroundColor: (activeCfg?.color ?? Colors.primary) + '08' }]}
+                                onPress={() => setCapAngel(!capAngel)}
+                            >
+                                <View style={styles.toggleInfo}>
+                                    <Ionicons name="sparkles-outline" size={24} color={capAngel ? activeThemeColor : Colors.textMuted} />
+                                    <View>
+                                        <Text style={styles.toggleLabel}>{t('create.enable_capangel')}</Text>
+                                        <Text style={styles.toggleSub}>{t('create.guardian_spec')}</Text>
+                                    </View>
+                                </View>
+                                <Switch
+                                    value={capAngel}
+                                    onValueChange={setCapAngel}
+                                    trackColor={{ false: Colors.border, true: activeThemeColor + '66' }}
+                                    thumbColor={capAngel ? activeThemeColor : Colors.textMuted}
+                                />
+                            </TouchableOpacity>
+
+                            {capAngel && (
+                                <View style={styles.inputGroup}>
+                                    <Text style={styles.inputLabel}>{t('create.guardian_selection')}</Text>
+
+                                    {selectedCapAngel && (
+                                        <View style={styles.memberTagsList}>
+                                            <View style={styles.memberTag}>
+                                                <Image source={{ uri: selectedCapAngel.avatar_url }} style={styles.tagAvatar} />
+                                                <Text style={styles.tagName}>{selectedCapAngel.username}</Text>
+                                                <TouchableOpacity onPress={() => { setSelectedCapAngel(null); setCapAngelHandle(''); }}>
                                                     <Ionicons name="close-circle" size={16} color={Colors.textMuted} />
                                                 </TouchableOpacity>
                                             </View>
-                                        ))}
-                                    </View>
-                                )}
+                                        </View>
+                                    )}
 
-                                <View style={styles.searchBarWrapper}>
-                                    <Ionicons name="search" size={20} color={Colors.textMuted} />
-                                    <TextInput
-                                        style={styles.searchBarInput}
-                                        placeholder="Search by username..."
-                                        placeholderTextColor={Colors.textMuted}
-                                        value={userSearchQuery}
-                                        onChangeText={setUserSearchQuery}
-                                        autoCapitalize="none"
-                                        onFocus={() => scrollRef.current?.scrollToEnd({ animated: true })}
-                                    />
-                                    {searchingUsers && <ActivityIndicator size="small" color={Colors.primary} />}
-                                </View>
+                                    {!selectedCapAngel && (
+                                        <View style={styles.autocompleteWrapper}>
+                                            <View style={styles.searchBarWrapper}>
+                                                <Ionicons name="search" size={20} color={Colors.textMuted} />
+                                                <TextInput
+                                                    style={styles.searchBarInput}
+                                                    placeholder={t('create.search_guardian')}
+                                                    placeholderTextColor={Colors.textMuted}
+                                                    value={capAngelSearchQuery}
+                                                    onChangeText={setCapAngelSearchQuery}
+                                                    autoCapitalize="none"
+                                                    onFocus={() => scrollRef.current?.scrollToEnd({ animated: true })}
+                                                />
+                                                {searchingCapAngel && <ActivityIndicator size="small" color={activeThemeColor} />}
+                                            </View>
 
-                                {userSearchResults.length > 0 && (
-                                    <View style={styles.searchResults}>
-                                        {userSearchResults.filter(u => !invitedUsers.some(iu => iu.id === u.id)).map(user => (
-                                            <TouchableOpacity
-                                                key={user.id}
-                                                style={styles.searchResultItem}
-                                                onPress={() => toggleInviteUser(user)}
-                                            >
-                                                <Image source={{ uri: user.avatar_url }} style={styles.resultAvatar} />
-                                                <View style={{ flex: 1 }}>
-                                                    <Text style={styles.resultName}>{user.display_name}</Text>
-                                                    <Text style={styles.resultUsername}>@{user.username}</Text>
+                                            {capAngelSearchResults.length > 0 && (
+                                                <View style={styles.autocompleteDropdown}>
+                                                    <ScrollView keyboardShouldPersistTaps="handled">
+                                                        {capAngelSearchResults.map(user => (
+                                                            <TouchableOpacity
+                                                                key={user.id}
+                                                                style={styles.searchResultItem}
+                                                                onPress={() => selectCapAngel(user)}
+                                                            >
+                                                                <Image source={{ uri: user.avatar_url }} style={styles.resultAvatar} />
+                                                                <View style={{ flex: 1 }}>
+                                                                    <Text style={styles.resultName}>{user.display_name}</Text>
+                                                                    <Text style={styles.resultUsername}>@{user.username}</Text>
+                                                                </View>
+                                                                <Ionicons name="add-circle-outline" size={24} color={activeThemeColor} />
+                                                            </TouchableOpacity>
+                                                        ))}
+                                                    </ScrollView>
                                                 </View>
-                                                <Ionicons name="add-circle-outline" size={24} color={Colors.primary} />
-                                            </TouchableOpacity>
-                                        ))}
-                                    </View>
-                                )}
-
-                                {userSearchQuery.length > 0 && userSearchResults.length === 0 && !searchingUsers && (
-                                    <View style={[styles.searchResults, { padding: 15, alignItems: 'center' }]}>
-                                        <Text style={{ color: Colors.textMuted, fontSize: 13, fontFamily: Fonts.medium }}>No users found for "{userSearchQuery}"</Text>
-                                    </View>
-                                )}
-
-                                <Text style={styles.helperText}>Invite other players to add memories together</Text>
-                            </View>
-                        )}
-
-                        <View style={styles.inputGroup}>
-                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <Text style={styles.inputLabel}>Capsule Title</Text>
-                                <Text style={[styles.inputLabel, { fontSize: 10, opacity: 0.5 }]}>{title.length}/30</Text>
-                            </View>
-                            <TextInput
-                                style={styles.textInput}
-                                placeholder="E.g. Summer 2024 Memories"
-                                placeholderTextColor={Colors.textMuted}
-                                value={title}
-                                onChangeText={setTitle}
-                                maxLength={30}
-                                autoCorrect={false}
-                                spellCheck={false}
-                            />
-                        </View>
-
-                        <View style={styles.inputGroup}>
-                            <Text style={styles.inputLabel}>Message</Text>
-                            <TextInput style={[styles.textInput, styles.textArea]}
-                                placeholder="Write a message to your future self or someone special..."
-                                placeholderTextColor={Colors.textMuted}
-                                value={description} onChangeText={setDescription}
-                                multiline numberOfLines={4}
-                                selectionColor={activeThemeColor}
-                                autoCorrect={false}
-                                spellCheck={false}
-                            />
-                        </View>
-
-                        {/* Visibility */}
-                        <View style={styles.toggleRow}>
-                            <View style={styles.toggleInfo}>
-                                <Ionicons name={isPublic ? 'globe-outline' : 'lock-closed-outline'} size={18} color={activeThemeColor} />
-                                <View style={{ flex: 1 }}>
-                                    <Text style={styles.toggleLabel}>{isPublic ? 'Public Capsule' : 'Private Capsule'}</Text>
-                                    <Text style={styles.toggleSub}>
-                                        {isPublic ? 'Appears in feed & public profile' : 'Only visible to you in your private feed'}
-                                    </Text>
-                                </View>
-                            </View>
-                            <Switch value={isPublic} onValueChange={setIsPublic}
-                                trackColor={{ false: Colors.border, true: activeThemeColor + '66' }}
-                                thumbColor={isPublic ? activeThemeColor : Colors.textMuted} />
-                        </View>
-                    </View>
-                )}
-
-                {/* ═══ STEP 3: SCHEDULE ══════════════════════════════════════ */}
-                {currentStep === 'schedule' && (
-                    <View style={styles.step}>
-                        <Text style={styles.stepTitle}>When does it open?</Text>
-                        <Text style={styles.stepSub}>
-                            {selectedType === 'legacycap'
-                                ? 'LegacyCaps open automatically after 5 years'
-                                : selectedType === 'eventcap'
-                                    ? 'EventCaps open simultaneously with all attendees'
-                                    : 'Choose when your capsule unlocks'}
-                        </Text>
-
-                        {/* LegacyCap fixed */}
-                        {selectedType === 'legacycap' && (
-                            <View style={[styles.fixedDateCard, { borderColor: Colors.legacyCap + '44', backgroundColor: Colors.legacyCapLight }]}>
-                                <Image source={{ uri: activeModel.image }} style={{ width: 40, height: 54 }} resizeMode="contain" />
-                                <View style={{ flex: 1 }}>
-                                    <Text style={[styles.fixedDateLabel, { color: Colors.legacyCap }]}>Fixed Opening: 5 Years</Text>
-                                    <Text style={styles.fixedDateSub}>
-                                        Opens on {displayOpeningDate}
-                                    </Text>
-                                </View>
-                            </View>
-                        )}
-
-                        {/* EventCap fixed */}
-                        {selectedType === 'eventcap' && (
-                            <View style={[styles.fixedDateCard, { borderColor: Colors.eventCap + '44', backgroundColor: Colors.eventCapLight }]}>
-                                <Ionicons name="earth" size={28} color={Colors.eventCap} />
-                                <View style={{ flex: 1 }}>
-                                    <Text style={[styles.fixedDateLabel, { color: Colors.eventCap }]}>Event-Synchronized Opening</Text>
-                                    <Text style={styles.fixedDateSub}>Opens simultaneously with all verified attendees when the event ends</Text>
-                                </View>
-                            </View>
-                        )}
-
-                        {/* InstaCap duration presets */}
-                        {selectedType === 'instacap' && (
-                            <>
-                                <View style={styles.presetGrid}>
-                                    {DURATION_PRESETS.map((p) => {
-                                        const isCustom = p.days === -1;
-                                        const isActive = isCustom ? showCustomSlider : (!showCustomSlider && selectedPreset === p.days);
-                                        return (
-                                            <TouchableOpacity
-                                                key={p.label}
-                                                activeOpacity={0.8}
-                                                onPress={() => {
-                                                    if (isCustom) {
-                                                        setShowCustomSlider(true);
-                                                        setSelectedPreset(null);
-                                                    } else {
-                                                        setShowCustomSlider(false);
-                                                        setSelectedPreset(p.days);
-                                                    }
-                                                }}
-                                                style={[styles.presetCard, isActive && { borderColor: Colors.instaCap, backgroundColor: Colors.instaCapLight }]}
-                                            >
-                                                <Text style={styles.presetEmoji}>{p.emoji}</Text>
-                                                <Text style={[styles.presetLabel, isActive && { color: Colors.instaCap }]}>{p.label}</Text>
-                                                {isActive && (
-                                                    <View style={[styles.presetCheck, { backgroundColor: Colors.instaCap }]}>
-                                                        <Ionicons name="checkmark" size={10} color="#fff" />
-                                                    </View>
-                                                )}
-                                            </TouchableOpacity>
-                                        );
-                                    })}
-                                </View>
-
-                                {/* Custom slider */}
-                                {showCustomSlider && (
-                                    <View style={[styles.customSliderCard, { borderColor: Colors.instaCap + '44' }]}>
-                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                                            <Ionicons name="time-outline" size={18} color={Colors.instaCap} />
-                                            <Text style={[styles.selectedDateLabel, { flex: 1 }]}>Custom duration</Text>
-                                            <Text style={[styles.selectedDateValue, { color: Colors.instaCap }]}>{daysToLabel(customDays)}</Text>
+                                            )}
+                                            {capAngelSearchQuery.length > 0 && capAngelSearchResults.length === 0 && !searchingCapAngel && (
+                                                <View style={[styles.autocompleteDropdown, { padding: 15, alignItems: 'center' }]}>
+                                                    <Text style={{ color: Colors.textMuted, fontSize: 13, fontFamily: Fonts.medium }}>{t('create.no_users_found_capangel', { query: capAngelSearchQuery })}</Text>
+                                                </View>
+                                            )}
                                         </View>
-                                        <DurationSlider days={customDays} onChange={setCustomDays} color={Colors.instaCap} />
-                                    </View>
-                                )}
-
-                                {/* Selected date preview */}
-                                {(selectedPreset || showCustomSlider) && (
-                                    <View style={[styles.selectedDateCard, { borderColor: Colors.instaCap + '44' }]}>
-                                        <Ionicons name="calendar-outline" size={20} color={Colors.instaCap} />
-                                        <View>
-                                            <Text style={styles.selectedDateLabel}>Opening date</Text>
-                                            <Text style={[styles.selectedDateValue, { color: Colors.instaCap }]}>
-                                                {displayOpeningDate}
-                                            </Text>
-                                        </View>
-                                    </View>
-                                )}
-                            </>
-                        )}
-                    </View>
-                )}
-
-
-
-                {/* ═══ STEP 4: CAPANGEL ═════════════════════════════════════ */}
-                {currentStep === 'capangel' && (
-                    <View style={styles.step}>
-                        <Text style={styles.stepTitle}>Assign a CapAngel?</Text>
-                        <Text style={styles.stepSub}>Someone who will watch over your capsule</Text>
-
-                        <TouchableOpacity
-                            style={[styles.toggleRow, capAngel && { borderColor: activeCfg?.color ?? Colors.primary, backgroundColor: (activeCfg?.color ?? Colors.primary) + '08' }]}
-                            onPress={() => setCapAngel(!capAngel)}
-                        >
-                            <View style={styles.toggleInfo}>
-                                <Ionicons name="sparkles-outline" size={24} color={capAngel ? activeThemeColor : Colors.textMuted} />
-                                <View>
-                                    <Text style={styles.toggleLabel}>Enable CapAngel</Text>
-                                    <Text style={styles.toggleSub}>Specify a guardian for this capsule</Text>
+                                    )}
+                                    <Text style={styles.helperText}>{t('create.capangel_helper')}</Text>
                                 </View>
-                            </View>
-                            <Switch
-                                value={capAngel}
-                                onValueChange={setCapAngel}
-                                trackColor={{ false: Colors.border, true: activeThemeColor + '66' }}
-                                thumbColor={capAngel ? activeThemeColor : Colors.textMuted}
-                            />
-                        </TouchableOpacity>
+                            )}
 
-                        {capAngel && (
-                            <View style={styles.inputGroup}>
-                                <Text style={styles.inputLabel}>Guardian Selection</Text>
-
-                                {selectedCapAngel && (
-                                    <View style={styles.memberTagsList}>
-                                        <View style={styles.memberTag}>
-                                            <Image source={{ uri: selectedCapAngel.avatar_url }} style={styles.tagAvatar} />
-                                            <Text style={styles.tagName}>{selectedCapAngel.username}</Text>
-                                            <TouchableOpacity onPress={() => { setSelectedCapAngel(null); setCapAngelHandle(''); }}>
-                                                <Ionicons name="close-circle" size={16} color={Colors.textMuted} />
-                                            </TouchableOpacity>
-                                        </View>
-                                    </View>
-                                )}
-
-                                {!selectedCapAngel && (
-                                    <View style={styles.autocompleteWrapper}>
-                                        <View style={styles.searchBarWrapper}>
-                                            <Ionicons name="search" size={20} color={Colors.textMuted} />
-                                            <TextInput
-                                                style={styles.searchBarInput}
-                                                placeholder="Search by username..."
-                                                placeholderTextColor={Colors.textMuted}
-                                                value={capAngelSearchQuery}
-                                                onChangeText={setCapAngelSearchQuery}
-                                                autoCapitalize="none"
-                                                onFocus={() => scrollRef.current?.scrollToEnd({ animated: true })}
-                                            />
-                                            {searchingCapAngel && <ActivityIndicator size="small" color={activeThemeColor} />}
-                                        </View>
-
-                                        {capAngelSearchResults.length > 0 && (
-                                            <View style={styles.autocompleteDropdown}>
-                                                <ScrollView keyboardShouldPersistTaps="handled">
-                                                    {capAngelSearchResults.map(user => (
-                                                        <TouchableOpacity
-                                                            key={user.id}
-                                                            style={styles.searchResultItem}
-                                                            onPress={() => selectCapAngel(user)}
-                                                        >
-                                                            <Image source={{ uri: user.avatar_url }} style={styles.resultAvatar} />
-                                                            <View style={{ flex: 1 }}>
-                                                                <Text style={styles.resultName}>{user.display_name}</Text>
-                                                                <Text style={styles.resultUsername}>@{user.username}</Text>
-                                                            </View>
-                                                            <Ionicons name="add-circle-outline" size={24} color={activeThemeColor} />
-                                                        </TouchableOpacity>
-                                                    ))}
-                                                </ScrollView>
-                                            </View>
-                                        )}
-                                        {capAngelSearchQuery.length > 0 && capAngelSearchResults.length === 0 && !searchingCapAngel && (
-                                            <View style={[styles.autocompleteDropdown, { padding: 15, alignItems: 'center' }]}>
-                                                <Text style={{ color: Colors.textMuted, fontSize: 13, fontFamily: Fonts.medium }}>No users found for "{capAngelSearchQuery}"</Text>
-                                            </View>
-                                        )}
-                                    </View>
-                                )}
-                                <Text style={styles.helperText}>Your CapAngel will be notified and can help oversee this capsule's unlock.</Text>
-                            </View>
-                        )}
-
-                        <View style={[styles.infoBox, { marginTop: 20 }]}>
-                            <Ionicons name="information-circle-outline" size={20} color={Colors.textMuted} />
-                            <Text style={styles.infoBoxText}>
-                                A CapAngel is a trusted contact who ensures your capsule's legacy is preserved.
-                            </Text>
-                        </View>
-                    </View>
-                )}
-
-
-
-                {/* ═══ STEP 5: REVIEW ══════════════════════════════════════ */}
-                {currentStep === 'review' && (
-                    <View style={styles.step}>
-                        <Text style={styles.stepTitle}>Ready to seal?</Text>
-                        <Text style={styles.stepSub}>One last look before we lock it away</Text>
-
-                        {/* Capsule model preview - Clean PNG Hero */}
-                        <View style={styles.reviewHero}>
-                            <LinearGradient
-                                colors={['transparent', activeThemeColor + '11', 'transparent']}
-                                style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 260, borderRadius: 100 }}
-                            />
-                            <View style={styles.modelContainerLarge}>
-                                <CapsuleWithTimer
-                                    modelKey={selectedModel}
-                                    source={{ uri: activeModel.image }}
-                                    date={openingDate}
-                                    chainId={selectedChainId}
-                                    capsuleType={selectedType || undefined}
-                                    style={styles.reviewHeroImg}
-                                />
-                                <View style={[styles.cornerTypeIconLarge, { backgroundColor: activeThemeColor }]}>
-                                    <Ionicons name={activeCfg?.icon as any} size={14} color="#fff" />
-                                </View>
-                            </View>
-
-                            <View style={[styles.reviewTypeBadge, { backgroundColor: activeThemeColor + '18', borderColor: activeThemeColor + '44', marginTop: 10 }]}>
-                                <Text style={[styles.reviewTypeBadgeText, { color: activeThemeColor }]}>{activeCfg?.title ?? 'Capsule'}</Text>
-                            </View>
-                            <Text style={styles.reviewTitle}>{title || 'Untitled Capsule'}</Text>
-                        </View>
-
-                        {/* Checklist */}
-                        {[
-                            { label: 'Type', value: activeCfg?.title ?? '—', done: !!selectedType },
-                            { label: 'Title', value: title || 'Not set', done: title.length > 0 },
-                            { label: 'Duration', value: selectedType === 'legacycap' ? '5 years' : selectedType === 'eventcap' ? 'Event sync' : finalDays ? daysToLabel(finalDays) : 'Not set', done: !!finalDays || selectedType !== 'instacap' },
-                            { label: 'Model', value: activeModel.label, done: true },
-                            { label: 'CapAngel', value: capAngel ? (capAngelHandle || 'Set') : 'Skipped', done: capAngel },
-                        ].map((item, i) => (
-                            <View key={i} style={styles.reviewRow}>
-                                <View style={[styles.reviewCheck,
-                                item.done ? { backgroundColor: Colors.success + '18', borderColor: Colors.success + '55' } :
-                                    { backgroundColor: Colors.cardAlt, borderColor: Colors.border }]}>
-                                    <Ionicons name={item.done ? 'checkmark' : 'remove'} size={12} color={item.done ? Colors.success : Colors.textMuted} />
-                                </View>
-                                <Text style={styles.reviewRowLabel}>{item.label}</Text>
-                                <Text style={[styles.reviewRowValue, !item.done && { color: Colors.textMuted }]}>{item.value}</Text>
-                            </View>
-                        ))}
-
-                        {selectedType === 'legacycap' && (
-                            <View style={[styles.warningBox, { borderColor: Colors.legacyCap + '44', backgroundColor: Colors.legacyCapLight }]}>
-                                <Ionicons name="warning" size={18} color={Colors.legacyCap} />
-                                <Text style={[styles.warningText, { color: Colors.legacyCap + 'cc' }]}>
-                                    <Text style={{ fontFamily: Fonts.semiBold, color: Colors.legacyCap }}>LegacyCap Warning: </Text>
-                                    Once sealed, this capsule cannot be modified. It will open in exactly 5 years.
+                            <View style={[styles.infoBox, { marginTop: 20 }]}>
+                                <Ionicons name="information-circle-outline" size={20} color={Colors.textMuted} />
+                                <Text style={styles.infoBoxText}>
+                                    {t('create.capangel_info_box')}
                                 </Text>
                             </View>
-                        )}
-
-                        <View style={{ marginTop: 30, gap: 12 }}>
-                            <TouchableOpacity 
-                                onPress={sealCapsule} 
-                                disabled={sealing}
-                                activeOpacity={0.8}
-                                style={[
-                                    styles.footerNextBtn, 
-                                    { backgroundColor: sealing ? activeThemeColor + '88' : activeThemeColor, height: 60, borderRadius: 30 }
-                                ]}
-                            >
-                                {sealing ? (
-                                    <ActivityIndicator size="small" color="#fff" />
-                                ) : (
-                                    <>
-                                        <Text style={[styles.footerNextText, { fontSize: 18 }]}>SEAL CAPSULE</Text>
-                                        <Ionicons name="lock-closed" size={20} color="#fff" />
-                                    </>
-                                )}
-                            </TouchableOpacity>
-
-                            <TouchableOpacity onPress={goBack} style={[styles.footerBackBtn, { justifyContent: 'center', height: 50, borderRadius: 25 }]} activeOpacity={0.7}>
-                                <Ionicons name="chevron-back" size={20} color={Colors.textPrimary} />
-                                <Text style={styles.footerBackText}>Go Back</Text>
-                            </TouchableOpacity>
-
-                            <Text style={{ textAlign: 'center', color: Colors.textMuted, fontSize: 12, fontStyle: 'italic', marginTop: 10, marginBottom: 40 }}>
-                                Double check everything before sealing.
-                            </Text>
                         </View>
+                    )}
+
+
+
+                    {/* ═══ STEP 5: REVIEW ══════════════════════════════════════ */}
+                    {currentStep === 'review' && (
+                        <View style={styles.step}>
+                            <Text style={styles.stepTitle}>{t('create.ready_to_seal')}</Text>
+                            <Text style={styles.stepSub}>{t('create.review_sub')}</Text>
+
+                            {/* Capsule model preview - Clean PNG Hero */}
+                            <View style={styles.reviewHero}>
+                                <LinearGradient
+                                    colors={['transparent', activeThemeColor + '11', 'transparent']}
+                                    style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 260, borderRadius: 100 }}
+                                />
+                                <View style={styles.modelContainerLarge}>
+                                    <CapsuleWithTimer
+                                        modelKey={selectedModel}
+                                        source={{ uri: activeModel.image }}
+                                        date={openingDate}
+                                        chainId={selectedChainId}
+                                        capsuleType={selectedType || undefined}
+                                        style={styles.reviewHeroImg}
+                                    />
+                                    <View style={[styles.cornerTypeIconLarge, { backgroundColor: activeThemeColor }]}>
+                                        <Ionicons name={activeCfg?.icon as any} size={14} color="#fff" />
+                                    </View>
+                                </View>
+
+                                <View style={[styles.reviewTypeBadge, { backgroundColor: activeThemeColor + '18', borderColor: activeThemeColor + '44', marginTop: 10 }]}>
+                                    <Text style={[styles.reviewTypeBadgeText, { color: activeThemeColor }]}>{activeCfg?.title ?? t('create.capsule')}</Text>
+                                </View>
+                                <Text style={styles.reviewTitle}>{title || t('create.untitled_capsule')}</Text>
+                            </View>
+
+                            {/* Checklist */}
+                            {[
+                                { label: t('create.type'), value: activeCfg?.title ?? '—', done: !!selectedType },
+                                { label: t('create.title'), value: title || t('create.not_set'), done: title.length > 0 },
+                                { label: t('create.duration'), value: selectedType === 'legacycap' ? t('create.five_years') : selectedType === 'eventcap' ? t('create.event_sync') : finalDays ? daysToLabel(finalDays) : t('create.not_set'), done: !!finalDays || selectedType !== 'instacap' },
+                                { label: t('create.model'), value: activeModel.label, done: true },
+                                { label: t('create.capangel'), value: capAngel ? (capAngelHandle || t('create.set')) : t('create.skipped'), done: capAngel },
+                            ].map((item, i) => (
+                                <View key={i} style={styles.reviewRow}>
+                                    <View style={[styles.reviewCheck,
+                                    item.done ? { backgroundColor: Colors.success + '18', borderColor: Colors.success + '55' } :
+                                        { backgroundColor: Colors.cardAlt, borderColor: Colors.border }]}>
+                                        <Ionicons name={item.done ? 'checkmark' : 'remove'} size={12} color={item.done ? Colors.success : Colors.textMuted} />
+                                    </View>
+                                    <Text style={styles.reviewRowLabel}>{item.label}</Text>
+                                    <Text style={[styles.reviewRowValue, !item.done && { color: Colors.textMuted }]}>{item.value}</Text>
+                                </View>
+                            ))}
+
+                            {selectedType === 'legacycap' && (
+                                <View style={[styles.warningBox, { borderColor: Colors.legacyCap + '44', backgroundColor: Colors.legacyCapLight }]}>
+                                    <Ionicons name="warning" size={18} color={Colors.legacyCap} />
+                                    <Text style={[styles.warningText, { color: Colors.legacyCap + 'cc' }]}>
+                                        <Text style={{ fontFamily: Fonts.semiBold, color: Colors.legacyCap }}>{t('create.legacy_caution_title')}</Text>
+                                        {t('create.legacy_caution_desc')}
+                                    </Text>
+                                </View>
+                            )}
+
+                            <View style={{ marginTop: 30, gap: 12 }}>
+                                <TouchableOpacity
+                                    onPress={sealCapsule}
+                                    disabled={sealing}
+                                    activeOpacity={0.8}
+                                    style={[
+                                        styles.footerNextBtn,
+                                        { backgroundColor: sealing ? activeThemeColor + '88' : activeThemeColor, height: 60, borderRadius: 30 }
+                                    ]}
+                                >
+                                    {sealing ? (
+                                        <ActivityIndicator size="small" color="#fff" />
+                                    ) : (
+                                        <>
+                                            <Text style={[styles.footerNextText, { fontSize: 18 }]}>{t('create.seal_capsule_btn')}</Text>
+                                            <Ionicons name="lock-closed" size={20} color="#fff" />
+                                        </>
+                                    )}
+                                </TouchableOpacity>
+
+                                <TouchableOpacity onPress={goBack} style={[styles.footerBackBtn, { justifyContent: 'center', height: 50, borderRadius: 25 }]} activeOpacity={0.7}>
+                                    <Ionicons name="chevron-back" size={20} color={Colors.textPrimary} />
+                                    <Text style={styles.footerBackText}>{t('create.go_back_btn')}</Text>
+                                </TouchableOpacity>
+
+                                <Text style={{ textAlign: 'center', color: Colors.textMuted, fontSize: 12, fontStyle: 'italic', marginTop: 10, marginBottom: 40 }}>
+                                    {t('create.double_check')}
+                                </Text>
+                            </View>
+                        </View>
+                    )}
+                </Animated.ScrollView>
+
+                {/* Floating Bottom Nav */}
+                {currentStep !== 'review' && (
+                    <View style={[styles.floatingBottomNav, { paddingBottom: Math.max(insets.bottom, 15) }]}>
+                        {stepIndex > 0 ? (
+                            <>
+                                <TouchableOpacity onPress={goBack} style={[styles.floatingNavBtn, { flex: 1, backgroundColor: Colors.surface, borderWidth: 1, borderColor: activeThemeColor + '44' }]} activeOpacity={0.7}>
+                                    <Ionicons name="chevron-back" size={20} color={activeThemeColor} />
+                                    <Text style={[styles.floatingNavText, { color: activeThemeColor }]}>{t('create.back').toUpperCase()}</Text>
+                                </TouchableOpacity>
+                                
+                                    <TouchableOpacity
+                                        onPress={goNext}
+                                        disabled={
+                                            (currentStep === 'type' && !selectedType) ||
+                                            (currentStep === 'content' && (!title.trim() || !description.trim())) ||
+                                            (currentStep === 'schedule' && selectedType === 'instacap' && !selectedPreset && !showCustomSlider)
+                                        }
+                                        style={[
+                                            styles.floatingNavBtn,
+                                            { flex: 1, backgroundColor: activeThemeColor },
+                                            ((currentStep === 'type' && !selectedType) ||
+                                            (currentStep === 'content' && (!title.trim() || !description.trim())) ||
+                                            (currentStep === 'schedule' && selectedType === 'instacap' && !selectedPreset && !showCustomSlider)) && { opacity: 0.3 }
+                                        ]}
+                                        activeOpacity={0.7}
+                                    >
+                                        <Text style={styles.floatingNavTextNext}>{t('create.next').toUpperCase()}</Text>
+                                        <Ionicons name="chevron-forward" size={16} color="#fff" />
+                                    </TouchableOpacity>
+                            </>
+                        ) : (
+                            <TouchableOpacity
+                                onPress={goNext}
+                                disabled={!selectedType}
+                                style={[
+                                    styles.floatingNavBtn,
+                                    { flex: 1, backgroundColor: activeThemeColor, marginHorizontal: 10 },
+                                    (!selectedType) && { opacity: 0.3 }
+                                ]}
+                                activeOpacity={0.7}
+                            >
+                                <Text style={styles.floatingNavTextNext}>{t('create.next').toUpperCase()}</Text>
+                                <Ionicons name="chevron-forward" size={16} color="#fff" />
+                            </TouchableOpacity>
+                        )}
                     </View>
                 )}
-            </ScrollView>
-        </KeyboardAvoidingView>
+            </KeyboardAvoidingView>
 
 
             {/* Change Model Modal */}
@@ -2159,7 +2311,7 @@ export default function CapsuleCreationScreen() {
                 onRequestClose={() => setShowModelModal(false)}
             >
                 <Pressable style={styles.modalOverlay} onPress={() => setShowModelModal(false)}>
-                    <AnimatableModalContent 
+                    <AnimatableModalContent
                         availableModels={availableModels}
                         selectedModel={selectedModel}
                         onSelectModel={(id: string) => {
@@ -2183,10 +2335,10 @@ export default function CapsuleCreationScreen() {
 }
 
 // ─── Modal Content Sub-component ──────────────────────────────────────────────
-function AnimatableModalContent({ 
-    availableModels, selectedModel, onSelectModel, 
-    selectedChainId, onSelectChain, activeThemeColor, 
-    selectedType, onClose 
+function AnimatableModalContent({
+    availableModels, selectedModel, onSelectModel,
+    selectedChainId, onSelectChain, activeThemeColor,
+    selectedType, onClose
 }: any) {
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const slideAnim = useRef(new Animated.Value(50)).current;
@@ -2199,9 +2351,9 @@ function AnimatableModalContent({
     }, []);
 
     return (
-        <Animated.View 
+        <Animated.View
             style={[
-                styles.modalSheet, 
+                styles.modalSheet,
                 { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }
             ]}
         >
@@ -2215,7 +2367,7 @@ function AnimatableModalContent({
                 </TouchableOpacity>
             </View>
 
-            <View style={styles.modalContent}>
+            <ScrollView style={styles.modalContent} showsVerticalScrollIndicator={false}>
                 <Text style={styles.modalSectionLabel}>CAPSULE MODELS</Text>
                 <View style={[styles.modelGrid, { paddingBottom: 20 }]}>
                     {availableModels.filter((m: any) => {
@@ -2262,10 +2414,10 @@ function AnimatableModalContent({
                         </TouchableOpacity>
                     ))}
                 </View>
-            </View>
+            </ScrollView>
 
-            <TouchableOpacity 
-                style={[styles.modalConfirmBtn, { backgroundColor: activeThemeColor }]} 
+            <TouchableOpacity
+                style={[styles.modalConfirmBtn, { backgroundColor: activeThemeColor }]}
                 onPress={onClose}
             >
                 <Text style={styles.modalConfirmText}>Looks Perfect</Text>

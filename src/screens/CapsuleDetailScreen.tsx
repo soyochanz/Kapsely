@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     View, Text, StyleSheet, Image, ScrollView, TouchableOpacity,
     TextInput, Dimensions, Animated, StatusBar, Alert, ActivityIndicator,
-    Modal, FlatList, KeyboardAvoidingView, Platform, Pressable, Share, Linking, SectionList
+    Modal, FlatList, KeyboardAvoidingView, Platform, Pressable, Share, Linking, SectionList, Keyboard
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
@@ -11,6 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
+import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Spacing, Shadow, BorderRadius } from '../theme';
 import { supabase } from '../lib/supabase';
 
@@ -32,6 +33,7 @@ import { timerConfigManager } from '../utils/timerConfig';
 
 
 export default function CapsuleDetailScreen() {
+    const { t } = useTranslation();
     const navigation = useNavigation<any>();
     const route = useRoute();
     const { capsuleId }: any = route.params || {};
@@ -58,6 +60,8 @@ export default function CapsuleDetailScreen() {
     const [initialIndex, setInitialIndex] = useState(0);
     const [activeViewerIndex, setActiveViewerIndex] = useState(0);
 
+    const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null);
+
     const [isFollowedOwner, setIsFollowedOwner] = useState(false);
 
     const [showOptions, setShowOptions] = useState(false);
@@ -65,18 +69,18 @@ export default function CapsuleDetailScreen() {
 
     const isSealed = capsule?.status === 'sealed';
     const [modelImg, setModelImg] = useState<string>(() => {
-        if (!capsule) return MODEL_IMAGES.beach;
+        if (!capsule) return (MODEL_IMAGES as any).basicred_kap;
         return isSealed
-            ? (timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || MODEL_IMAGES.beach)
-            : (timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model as keyof typeof MODEL_IMAGES_OPEN] || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || MODEL_IMAGES.beach);
+            ? (timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || (MODEL_IMAGES as any).basicred_kap)
+            : (timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model as keyof typeof MODEL_IMAGES_OPEN] || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || (MODEL_IMAGES as any).basicred_kap);
     });
 
     useEffect(() => {
         if (!capsule) return;
         const updateModel = () => {
             const nextImg = isSealed
-                ? (timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || MODEL_IMAGES.beach)
-                : (timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model as keyof typeof MODEL_IMAGES_OPEN] || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || MODEL_IMAGES.beach);
+                ? (timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || (MODEL_IMAGES as any).basicred_kap)
+                : (timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model as keyof typeof MODEL_IMAGES_OPEN] || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || (MODEL_IMAGES as any).basicred_kap);
             setModelImg(nextImg);
         };
         const unsubscribe = timerConfigManager.subscribe(updateModel);
@@ -119,7 +123,7 @@ export default function CapsuleDetailScreen() {
                 user_id: targetId,
                 sender_id: userId,
                 type: 'follow',
-                message: 'started following you',
+                message: t('common.started_following_you'),
             });
         }
     };
@@ -201,12 +205,12 @@ export default function CapsuleDetailScreen() {
         const past = new Date(dateStr);
         const diff = now.getTime() - past.getTime();
         const minutes = Math.floor(diff / 60000);
-        if (minutes < 1) return 'Just now';
-        if (minutes < 60) return `${minutes}m ago`;
+        if (minutes < 1) return t('common.just_now');
+        if (minutes < 60) return t('common.m_ago', { count: minutes });
         const hours = Math.floor(minutes / 60);
-        if (hours < 24) return `${hours}h ago`;
+        if (hours < 24) return t('common.h_ago', { count: hours });
         const days = Math.floor(hours / 24);
-        return `${days}d ago`;
+        return t('common.d_ago', { count: days });
     };
 
     const loadData = async () => {
@@ -302,7 +306,7 @@ export default function CapsuleDetailScreen() {
                         if (member !== userId) {
                             await supabase.from('notifications').insert({
                                 user_id: member, sender_id: userId, type: 'capsule_opened', capsule_id: capsuleId,
-                                message: 'capsule is opening now!'
+                                message: t('detail.opening_now')
                             });
                         }
                     }
@@ -335,7 +339,7 @@ export default function CapsuleDetailScreen() {
             setIsLiked(true);
             if (capsule.owner_id !== userId) {
                 await supabase.from('notifications').insert({
-                    user_id: capsule.owner_id, sender_id: userId, type: 'like', capsule_id: capsuleId, message: 'liked your capsule'
+                    user_id: capsule.owner_id, sender_id: userId, type: 'like', capsule_id: capsuleId, message: t('detail.liked_your_capsule')
                 });
             }
         }
@@ -356,16 +360,19 @@ export default function CapsuleDetailScreen() {
 
     const handleSendComment = async () => {
         if (!comment.trim() || !userId) return;
+        Keyboard.dismiss();
         const { data } = await supabase.from('comments').insert({
             capsule_id: capsuleId, user_id: userId, content: comment.trim()
         }).select('*, profiles:user_id(*)').maybeSingle();
         if (data) {
             setComments([{ ...data, myLike: false, likeCount: 0 }, ...comments]);
             setComment('');
+            setHighlightedCommentId(data.id);
+            setTimeout(() => setHighlightedCommentId(null), 1000);
             if (capsule.owner_id !== userId) {
                 await supabase.from('notifications').insert({
                     user_id: capsule.owner_id, sender_id: userId, type: 'comment', capsule_id: capsuleId,
-                    message: `commented: ${comment.trim().substring(0, 30)}${comment.trim().length > 30 ? '...' : ''}`
+                    message: t('detail.commented', { text: `${comment.trim().substring(0, 30)}${comment.trim().length > 30 ? '...' : ''}` })
                 });
             }
         }
@@ -373,12 +380,12 @@ export default function CapsuleDetailScreen() {
 
     const handleDeleteCapsule = () => {
         Alert.alert(
-            "Delete Capsule",
-            "Are you sure? This memory and all its content will be gone forever.",
+            t('detail.delete_capsule_title'),
+            t('detail.delete_capsule_msg'),
             [
-                { text: "Keep it", style: "cancel" },
+                { text: t('detail.keep_it'), style: "cancel" },
                 {
-                    text: "Delete",
+                    text: t('common.delete'),
                     style: "destructive",
                     onPress: async () => {
                         setShowOptions(false);
@@ -430,12 +437,12 @@ export default function CapsuleDetailScreen() {
 
     const handleDeleteComment = (commentId: string) => {
         Alert.alert(
-            "Delete Comment",
-            "Are you sure you want to delete this comment?",
+            t('detail.delete_comment_title'),
+            t('detail.delete_comment_confirm'),
             [
-                { text: "Cancel", style: "cancel" },
+                { text: t('common.cancel'), style: "cancel" },
                 {
-                    text: "Delete",
+                    text: t('common.delete'),
                     style: "destructive",
                     onPress: async () => {
                         const { error } = await supabase.from('comments').delete().eq('id', commentId);
@@ -468,7 +475,17 @@ export default function CapsuleDetailScreen() {
 
     if (!capsule) return (
         <View style={[styles.container, styles.centered]}>
-            <Text style={{ color: Colors.textMuted }}>Capsule not found.</Text>
+            <TouchableOpacity 
+                style={[styles.backBtn, { position: 'absolute', top: insets.top + 10, left: 15 }]} 
+                onPress={() => navigation.goBack()}
+            >
+                <Ionicons name="close" size={28} color={Colors.textPrimary} />
+            </TouchableOpacity>
+            <Ionicons name="alert-circle-outline" size={48} color={Colors.textMuted} style={{ marginBottom: 15 }} />
+            <Text style={{ color: Colors.textMuted, fontFamily: Fonts.medium, fontSize: 16 }}>{t('detail.not_found')}</Text>
+            <Text style={{ color: Colors.textMuted, fontSize: 13, marginTop: 5, textAlign: 'center', paddingHorizontal: 40 }}>
+                {t('detail.no_permission')}
+            </Text>
         </View>
     );
 
@@ -522,7 +539,7 @@ export default function CapsuleDetailScreen() {
             <StatusBar barStyle="dark-content" />
             <Animated.View style={[styles.flashOverlay, { opacity: flashAnim, pointerEvents: 'none' }]} />
 
-            <View style={styles.header}>
+            <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
                     <Ionicons name="close" size={26} color={Colors.textPrimary} />
                 </TouchableOpacity>
@@ -540,7 +557,7 @@ export default function CapsuleDetailScreen() {
                             onPress={() => handleFollowToggle(capsule.owner_id, isFollowedOwner, setIsFollowedOwner)}
                         >
                             <Text style={[styles.headerFollowText, isFollowedOwner && styles.headerFollowTextActive]}>
-                                {isFollowedOwner ? 'Following' : 'Follow'}
+                                {isFollowedOwner ? t('common.following') : t('common.follow')}
                             </Text>
                         </TouchableOpacity>
                     )}
@@ -555,27 +572,27 @@ export default function CapsuleDetailScreen() {
                 <Pressable style={styles.modalOverlay} onPress={() => setShowOptions(false)}>
                     <View style={styles.optionsContent}>
                         <View style={styles.modalBar} />
-                        <Text style={styles.optionsTitle}>Capsule Options</Text>
+                        <Text style={styles.optionsTitle}>{t('detail.options')}</Text>
 
                         <TouchableOpacity style={styles.deleteOption} onPress={() => { setShowOptions(false); setShowQRModal(true); }}>
                             <Ionicons name="qr-code-outline" size={22} color={Colors.textPrimary} />
-                            <Text style={[styles.deleteOptionText, { color: Colors.textPrimary }]}>View QR Code</Text>
+                            <Text style={[styles.deleteOptionText, { color: Colors.textPrimary }]}>{t('detail.view_qr')}</Text>
                         </TouchableOpacity>
 
                         <TouchableOpacity style={styles.deleteOption} onPress={handleShareInstagram}>
                             <Ionicons name="logo-instagram" size={22} color="#E1306C" />
-                            <Text style={[styles.deleteOptionText, { color: '#E1306C' }]}>Share to Instagram Story</Text>
+                            <Text style={[styles.deleteOptionText, { color: '#E1306C' }]}>{t('detail.share_instagram')}</Text>
                         </TouchableOpacity>
 
                         {isOwner && (
                             <TouchableOpacity style={styles.deleteOption} onPress={handleDeleteCapsule}>
                                 <Ionicons name="trash-outline" size={22} color={Colors.eventCap} />
-                                <Text style={styles.deleteOptionText}>Delete Capsule Permanently</Text>
+                                <Text style={styles.deleteOptionText}>{t('detail.delete_perm')}</Text>
                             </TouchableOpacity>
                         )}
 
                         <TouchableOpacity style={styles.cancelOption} onPress={() => setShowOptions(false)}>
-                            <Text style={styles.cancelOptionText}>Cancel</Text>
+                            <Text style={styles.cancelOptionText}>{t('common.cancel')}</Text>
                         </TouchableOpacity>
                     </View>
                 </Pressable>
@@ -584,14 +601,14 @@ export default function CapsuleDetailScreen() {
             <Modal visible={showQRModal} transparent animationType="fade">
                 <Pressable style={styles.qrRootOverlay} onPress={() => setShowQRModal(false)}>
                     <View style={styles.qrContentBox}>
-                        <Text style={styles.qrTitle}>Capsule QR</Text>
+                        <Text style={styles.qrTitle}>{t('detail.capsule_qr')}</Text>
                         <Image
                             source={{ uri: `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=kapsely://capsule/${capsuleId}` }}
                             style={styles.qrImage}
                         />
-                        <Text style={styles.qrSubtitle}>Scan this QR to open the capsule.</Text>
+                        <Text style={styles.qrSubtitle}>{t('detail.scan_qr_hint')}</Text>
                         <TouchableOpacity style={styles.qrCloseBtn} onPress={() => setShowQRModal(false)}>
-                            <Text style={styles.qrCloseBtnText}>Close</Text>
+                            <Text style={styles.qrCloseBtnText}>{t('common.done')}</Text>
                         </TouchableOpacity>
                     </View>
                 </Pressable>
@@ -641,12 +658,12 @@ export default function CapsuleDetailScreen() {
                                                 </View>
                                             )}
                                         </View>
-                                        <View>
-                                            <Text style={styles.participantCount}>{totalMembers} members</Text>
-                                            {hasWaiting && (
-                                                <Text style={styles.waitingText}>{waitingCount} waiting</Text>
-                                            )}
-                                        </View>
+                                         <View>
+                                             <Text style={styles.participantCount}>{t('common.members_count', { count: totalMembers })}</Text>
+                                             {hasWaiting && (
+                                                 <Text style={styles.waitingText}>{t('common.waiting_count', { count: waitingCount })}</Text>
+                                             )}
+                                         </View>
                                     </View>
                                 )}
 
@@ -706,19 +723,19 @@ export default function CapsuleDetailScreen() {
                                                     onPress={handleRequestOpen}
                                                     disabled={hasRequestedOpen}
                                                 >
-                                                    <LinearGradient colors={[tint, tint + 'cc']} style={styles.openNowGrad}>
-                                                        <Text style={styles.openNowText}>
-                                                            {hasRequestedOpen
-                                                                ? `Awaiting others (${reqCount}/${totalMembers})`
-                                                                : `Unseal Capsule ✨`}
-                                                        </Text>
-                                                    </LinearGradient>
-                                                </TouchableOpacity>
-                                                {reqCount < totalMembers && (
-                                                    <Text style={styles.requestStatusHint}>
-                                                        Approval needed from all members ({reqCount}/{totalMembers})
-                                                    </Text>
-                                                )}
+                                                     <LinearGradient colors={[tint, tint + 'cc']} style={styles.openNowGrad}>
+                                                         <Text style={styles.openNowText}>
+                                                             {hasRequestedOpen
+                                                                 ? t('detail.awaiting_others', { current: reqCount, total: totalMembers })
+                                                                 : t('detail.unseal_capsule')}
+                                                         </Text>
+                                                     </LinearGradient>
+                                                 </TouchableOpacity>
+                                                 {reqCount < totalMembers && (
+                                                     <Text style={styles.requestStatusHint}>
+                                                         {t('detail.approval_needed', { current: reqCount, total: totalMembers })}
+                                                     </Text>
+                                                 )}
                                                 {isMember && (
                                                     <TouchableOpacity
                                                         style={[styles.addBtnSmall, { backgroundColor: tint + '15', marginTop: 15 }]}
@@ -736,10 +753,10 @@ export default function CapsuleDetailScreen() {
                                                     <LiveTimer date={capsule.opens_at} style={styles.lockedText} />
                                                 </View>
                                                 {isMember && (
-                                                    <TouchableOpacity style={[styles.addBtnSmall, { backgroundColor: tint + '15' }]} onPress={() => navigation.navigate('CreateSelection', { capsuleId: capsule.id })}>
-                                                        <Ionicons name="add-circle" size={18} color={tint} />
-                                                        <Text style={[styles.addBtnTextSmall, { color: tint }]}>Add Content</Text>
-                                                    </TouchableOpacity>
+                                                     <TouchableOpacity style={[styles.addBtnSmall, { backgroundColor: tint + '15' }]} onPress={() => navigation.navigate('CreateSelection', { capsuleId: capsule.id })}>
+                                                         <Ionicons name="add-circle" size={18} color={tint} />
+                                                         <Text style={[styles.addBtnTextSmall, { color: tint }]}>{t('create.add_content')}</Text>
+                                                     </TouchableOpacity>
                                                 )}
                                             </View>
                                         )}
@@ -762,16 +779,44 @@ export default function CapsuleDetailScreen() {
                             <View style={[styles.contentSection, !isSealed && { marginTop: 0 }]}>
                                 {isSealed ? (
                                     <View style={styles.blurredGridContainer}>
-                                        <View style={styles.sectionHeader}>
-                                            <Text style={styles.sectionTitle}>Sealed Memories</Text>
-                                            <Text style={styles.itemCount}>{items.length} items</Text>
-                                        </View>
+                                         <View style={styles.sectionHeader}>
+                                             <Text style={styles.sectionTitle}>{t('detail.sealed_memories')}</Text>
+                                             <Text style={styles.itemCount}>{t('profile.capsule_count', { count: items.length })}</Text>
+                                         </View>
                                         <View style={styles.grid}>
                                             {items.map(item => (
                                                 <View key={item.id} style={styles.gridItemPlaceholder}>
-                                                    {item.media_url && <Image source={{ uri: item.media_url }} style={StyleSheet.absoluteFill} blurRadius={50} />}
-                                                    <BlurView intensity={80} tint="dark" style={StyleSheet.absoluteFill} />
-                                                    <Ionicons name="lock-closed-outline" size={24} color="rgba(255,255,255,0.4)" />
+                                                    {item.media_type === 'note' ? (
+                                                        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255,255,255,0.85)', padding: 10, justifyContent: 'center' }]}>
+                                                            <Text style={{ fontSize: 13, color: 'rgba(0,0,0,0.15)', lineHeight: 18, letterSpacing: 2, textAlign: 'center', fontFamily: Fonts.bold }} numberOfLines={5}>
+                                                                {'∑ ∆ ∿ ⎈ ⌬ ⍟ ⚯ ⌘ Ω ✚ ✣ ✢ ✥ ✦ ✧ ✩ ✪ ✫ ✬ ✭ ✮ ✯ ✰ ✱ ✲ ✳ ✴ ✵ ✶ ✷ ✸ ✹ ✺ ✻ ✼ ✽ ✾ ✿ ❀ ❁ ❂ ❃ ❄ ❅ ❆ ❇ ❈ ❉ ❊ ❋'.split(' ').sort(() => 0.5 - Math.random()).join(' ')}
+                                                            </Text>
+                                                        </View>
+                                                     ) : (item.media_url || item.thumbnail_url) ? (
+                                                         <Image source={{ uri: item.thumbnail_url || item.media_url }} style={StyleSheet.absoluteFill} blurRadius={25} />
+                                                     ) : null}
+
+                                                     <BlurView intensity={item.media_type === 'note' ? 90 : 40} tint="light" style={StyleSheet.absoluteFill} />
+                                                     
+                                                     {/* Video specific overlays (blur keeps them slightly obscure but visible) */}
+                                                     {item.media_type === 'video' && (
+                                                         <>
+                                                             <View style={[styles.gridPlayIcon, { backgroundColor: 'rgba(255,255,255,0.3)' }]}>
+                                                                 <Ionicons name="play" size={16} color="rgba(255,255,255,0.9)" />
+                                                             </View>
+                                                             {item.content && (
+                                                                 <View style={[styles.gridDurationBadge, { backgroundColor: 'rgba(255,255,255,0.3)' }]}>
+                                                                     <Text style={[styles.gridDurationText, { color: '#000' }]}>{item.content}</Text>
+                                                                 </View>
+                                                             )}
+                                                         </>
+                                                     )}
+
+                                                     {/* Lock Icon */}
+                                                     <View style={{ position: 'absolute', width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}>
+                                                         <Ionicons name="lock-closed-outline" size={20} color="rgba(0,0,0,0.5)" />
+                                                     </View>
+
                                                     {item.profiles?.avatar_url && (
                                                         <Image source={{ uri: item.profiles.avatar_url }} style={styles.itemAvatar} />
                                                     )}
@@ -805,20 +850,38 @@ export default function CapsuleDetailScreen() {
                                                         onPress={() => item.media_type === 'audio' ? toggleAudio(item.media_url) : openViewer(items.indexOf(item))}
                                                     >
                                                         {item.media_type === 'audio' ? (
-                                                            <View style={[styles.gridAudioCell, { backgroundColor: tint + '22' }]}>
-                                                                <Ionicons name={playingAudio === item.media_url ? "pause" : "musical-notes"} size={24} color={tint} />
+                                                            <View style={[styles.gridAudioCell, { backgroundColor: tint }]}>
+                                                                {/* Mini Waveform */}
+                                                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2, height: 24, marginBottom: 4 }}>
+                                                                    {[12, 20, 16, 24, 18, 14].map((h, i) => (
+                                                                        <View key={i} style={{ width: 3, height: playingAudio === item.media_url ? h : h * 0.5, backgroundColor: 'rgba(255,255,255,0.8)', borderRadius: 2 }} />
+                                                                    ))}
+                                                                </View>
+                                                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.2)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10 }}>
+                                                                    <Ionicons name="mic" size={10} color="#fff" />
+                                                                    <Text style={{ color: '#fff', fontSize: 10, fontFamily: Fonts.bold }}>{item.content || '--:--'}</Text>
+                                                                </View>
                                                             </View>                                                        ) : item.media_type === 'note' ? (
-                                                            <View style={[styles.gridNoteCell, { backgroundColor: tint + '15' }]}>
-                                                                <Ionicons name="document-text-outline" size={24} color={tint} />
-                                                                <Text style={styles.noteSnippet} numberOfLines={4}>{item.content}</Text>
+                                                            <View style={[styles.gridNoteCell, { backgroundColor: '#f0f0f0' }]}>
+                                                                <Ionicons name="document-text" size={32} color={tint} opacity={0.3} style={{ position: 'absolute' }} />
+                                                                <Text style={[styles.noteSnippet, { color: '#000', fontSize: 12, fontFamily: Fonts.medium, textAlign: 'center' }]} numberOfLines={4}>
+                                                                    {item.content}
+                                                                </Text>
                                                             </View>
                                                         ) : (
                                                             <>
-                                                                <Image source={{ uri: (item.media_type === 'video' ? item.thumbnail_url : item.media_url) || 'https://via.placeholder.com/150' }} style={styles.gridImage} />
+                                                                <Image source={{ uri: (item.media_type === 'video' ? (item.thumbnail_url || item.media_url) : item.media_url) || 'https://via.placeholder.com/150' }} style={styles.gridImage} />
                                                                 {item.media_type === 'video' && (
-                                                                    <View style={styles.gridPlayIcon}>
-                                                                        <Ionicons name="play" size={16} color="#fff" />
-                                                                    </View>
+                                                                    <>
+                                                                        <View style={styles.gridPlayIcon}>
+                                                                            <Ionicons name="play" size={16} color="#fff" />
+                                                                        </View>
+                                                                        {item.content && (
+                                                                            <View style={styles.gridDurationBadge}>
+                                                                                <Text style={styles.gridDurationText}>{item.content}</Text>
+                                                                            </View>
+                                                                        )}
+                                                                    </>
                                                                 )}
                                                             </>
                                                         )}
@@ -850,7 +913,7 @@ export default function CapsuleDetailScreen() {
                                 </View>
                                 <View style={styles.commentsList}>
                                     {comments.map(c => (
-                                        <View key={c.id} style={styles.commentItem}>
+                                        <View key={c.id} style={[styles.commentItem, highlightedCommentId === c.id && { backgroundColor: Colors.primary + '20', borderRadius: 8, padding: 4 }]}>
                                             <TouchableOpacity onPress={() => navigation.navigate('UserProfile', { targetUserId: c.user_id })}>
                                                 <Image source={{ uri: c.profiles?.avatar_url || 'https://via.placeholder.com/150' }} style={styles.commentAvatar} />
                                             </TouchableOpacity>
@@ -894,9 +957,9 @@ export default function CapsuleDetailScreen() {
                             placeholder="Add a comment..."
                             value={comment}
                             onChangeText={setComment}
-                            onSubmitEditing={handleSendComment}
+                            multiline
                         />
-                        <TouchableOpacity onPress={handleSendComment} disabled={!comment.trim()}>
+                        <TouchableOpacity onPress={handleSendComment} disabled={!comment.trim()} style={{ marginBottom: 10 }}>
                             <Text style={[styles.postBtn, !comment.trim() && { opacity: 0.5 }]}>Post</Text>
                         </TouchableOpacity>
                     </View>
@@ -921,16 +984,24 @@ export default function CapsuleDetailScreen() {
                         renderItem={({ item, index }) => (
                              <View style={styles.viewerSlide}>
                                  {item.media_type === 'note' ? (
-                                     <View style={styles.viewerNoteContainer}>
-                                         <Ionicons name="document-text-outline" size={40} color={modelTint || Colors.primary} style={{ marginBottom: 20 }} />
-                                         <Text style={styles.viewerNoteText}>{item.content}</Text>
+                                     <View style={[styles.viewerNoteContainer, { backgroundColor: '#f0f0f0' }]}>
+                                         <Ionicons name="document-text" size={100} color={modelTint || Colors.primary} opacity={0.1} style={{ position: 'absolute' }} />
+                                         <Text style={[styles.viewerNoteText, { color: '#000', fontSize: 24, paddingHorizontal: 30, textAlign: 'center', lineHeight: 34, fontFamily: Fonts.medium }]}>{item.content}</Text>
                                      </View>
                                  ) : item.media_type === 'audio' ? (
-                                     <View style={styles.viewerNoteContainer}>
-                                         <TouchableOpacity onPress={() => toggleAudio(item.media_url)} style={[styles.recordBtn, { backgroundColor: modelTint || Colors.primary }]}>
-                                             <Ionicons name={playingAudio === item.media_url ? "pause" : "play"} size={40} color="#fff" />
+                                     <View style={[styles.viewerNoteContainer, { backgroundColor: modelTint || Colors.primary }]}>
+                                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, height: 60, marginBottom: 30 }}>
+                                             {[10, 20, 30, 45, 60, 40, 25, 15, 30, 50, 25, 12, 5].map((h, i) => (
+                                                 <View key={i} style={{ width: 6, height: playingAudio === item.media_url ? h : h * 0.4, backgroundColor: 'rgba(255,255,255,0.8)', borderRadius: 3 }} />
+                                             ))}
+                                         </View>
+                                         <TouchableOpacity onPress={() => toggleAudio(item.media_url)} style={[styles.recordBtn, { backgroundColor: 'rgba(255,255,255,0.2)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.5)' }]}>
+                                             <Ionicons name={playingAudio === item.media_url ? "pause" : "play"} size={40} color="#fff" style={{ marginLeft: playingAudio === item.media_url ? 0 : 4 }} />
                                          </TouchableOpacity>
-                                         <Text style={[styles.viewerNoteText, { marginTop: 20 }]}>Voice Note</Text>
+                                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 24, backgroundColor: 'rgba(0,0,0,0.2)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 }}>
+                                             <Ionicons name="mic" size={14} color="#fff" />
+                                             <Text style={{ color: '#fff', fontSize: 14, fontFamily: Fonts.bold }}>{item.content || 'Voice Note'}</Text>
+                                         </View>
                                      </View>
                                  ) : item.media_type === 'video' ? (
                                      <Video
@@ -1015,8 +1086,8 @@ const styles = StyleSheet.create({
     commentContent: { flex: 1 },
     commentUser: { fontSize: 13, fontFamily: Fonts.bold },
     commentText: { fontSize: 13, color: Colors.textSecondary },
-    commentBar: { flexDirection: 'row', alignItems: 'center', padding: Spacing.md, backgroundColor: Colors.surface, borderTopWidth: 1, borderTopColor: Colors.border, gap: 12 },
-    commentInput: { flex: 1, height: 40, backgroundColor: Colors.background, borderRadius: 20, paddingHorizontal: 15, fontSize: 14, borderWidth: 1, borderColor: Colors.border },
+    commentBar: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: Spacing.md, paddingTop: 10, backgroundColor: Colors.surface, borderTopWidth: 1, borderTopColor: Colors.border, gap: 12 },
+    commentInput: { flex: 1, minHeight: 40, maxHeight: 120, paddingTop: 12, paddingBottom: 12, backgroundColor: Colors.background, borderRadius: 24, paddingHorizontal: 16, fontSize: 14, borderWidth: 1, borderColor: Colors.border },
     postBtn: { color: Colors.primary, fontFamily: Fonts.bold },
     chatInfo: { flex: 1, textAlign: 'center', color: Colors.textMuted, fontSize: 13 },
     viewerContainer: { flex: 1, backgroundColor: '#000' },
@@ -1083,10 +1154,12 @@ const styles = StyleSheet.create({
     eventInfoTitle: { fontSize: 16, fontFamily: Fonts.bold, marginBottom: 5 },
     eventInfoText: { fontSize: 13, color: Colors.textSecondary, textAlign: 'center', fontFamily: Fonts.medium, lineHeight: 18 },
     emptyGridContainer: { marginTop: Spacing.md },
-    gridNoteCell: { width: ITEM_SIZE, height: ITEM_HEIGHT, borderRadius: 8, alignItems: 'center', justifyContent: 'center', padding: 8 },
-    noteSnippet: { fontSize: 10, fontFamily: Fonts.medium, color: Colors.textSecondary, textAlign: 'center', marginTop: 4 },
     viewerNoteContainer: { width: '85%', padding: 30, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 24, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
     viewerNoteText: { color: '#fff', fontSize: 18, fontFamily: Fonts.regular, textAlign: 'center', lineHeight: 26 },
     recordBtn: { width: 100, height: 100, borderRadius: 50, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
-    gridPlayIcon: { position: 'absolute', top: 5, right: 5, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 12, padding: 4, width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
+    gridPlayIcon: { position: 'absolute', top: 5, right: 5, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 12, width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
+    gridDurationBadge: { position: 'absolute', bottom: 5, left: 5, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 2 },
+    gridDurationText: { color: '#fff', fontSize: 9, fontFamily: Fonts.bold },
+    gridNoteCell: { width: ITEM_SIZE, height: ITEM_HEIGHT, borderRadius: 8, alignItems: 'center', justifyContent: 'center', padding: 12, backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+    noteSnippet: { fontSize: 11, fontFamily: Fonts.medium, color: Colors.textSecondary, textAlign: 'center', marginTop: 6, fontStyle: 'italic', opacity: 0.8 },
 });

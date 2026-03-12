@@ -17,6 +17,7 @@ interface CapsuleWithTimerProps {
     hideTimer?: boolean; // Hide the timer overlay entirely
     capsuleType?: string; // Optional type for specific particles
     isOpened?: boolean; // New prop for status
+    hideParticles?: boolean; // Suppress particles (for thumbnails, notifications)
 }
 
 const CapsuleWithTimer = React.memo(({
@@ -28,7 +29,8 @@ const CapsuleWithTimer = React.memo(({
     configOverride,
     hideTimer,
     capsuleType,
-    isOpened
+    isOpened,
+    hideParticles,
 }: CapsuleWithTimerProps) => {
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
     const [config, setConfig] = useState(configOverride || timerConfigManager.getConfig(modelKey));
@@ -151,7 +153,7 @@ const CapsuleWithTimer = React.memo(({
     return (
         <View style={containerStyle} onLayout={onLayout}>
             {/* Particles */}
-            {width > 0 && <Particles activeTint={activeTint} capsuleType={capsuleType} />}
+            {width > 0 && !hideParticles && <Particles activeTint={activeTint} capsuleType={capsuleType} />}
 
             {/* Shadow: behind everything via zIndex */}
             {width > 0 && (

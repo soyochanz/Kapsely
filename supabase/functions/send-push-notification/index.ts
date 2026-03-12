@@ -36,7 +36,14 @@ serve(async (req) => {
         const senderName = sender?.username ? `@${sender.username}` : 'Someone'
         const message = `${senderName} ${record.message || 'sent you a notification'}`
 
-        // 3. Send to Expo
+        // 3. Get unread count for badge
+        const { count: unreadCount } = await supabase
+            .from('notifications')
+            .select('*', { count: 'exact', head: true })
+            .eq('user_id', record.user_id)
+            .eq('is_read', false)
+
+        // 4. Send to Expo
         const expoResponse = await fetch('https://exp.host/--/api/v2/push/send', {
             method: 'POST',
             headers: {
@@ -48,6 +55,7 @@ serve(async (req) => {
                 sound: 'default',
                 title: 'Kapsely',
                 body: message,
+                badge: unreadCount,
                 data: {
                     notificationId: record.id,
                     capsuleId: record.capsule_id,

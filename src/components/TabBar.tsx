@@ -3,8 +3,9 @@ import { View, Text, TouchableOpacity, StyleSheet, Platform, Animated } from 're
 import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Colors, Fonts } from '../theme';
+import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { supabase } from '../lib/supabase';
 
 const TAB_CONFIG = [
     { name: 'Feed', icon: 'home-outline', iconActive: 'home', label: 'Home' },
@@ -14,7 +15,7 @@ const TAB_CONFIG = [
     { name: 'Profile', icon: 'person-outline', iconActive: 'person', label: 'Profile' },
 ];
 
-function TabItem({ route, index, state, navigation, cfg }: { route: any, index: number, state: any, navigation: any, cfg: any }) {
+function TabItem({ route, index, state, navigation, cfg, badgeCount }: { route: any, index: number, state: any, navigation: any, cfg: any, badgeCount?: number }) {
     const isFocused = state.index === index;
     const animatedScale = React.useRef(new Animated.Value(isFocused ? 1.1 : 1)).current;
 
@@ -29,12 +30,16 @@ function TabItem({ route, index, state, navigation, cfg }: { route: any, index: 
 
     const onPress = () => {
         const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
-        if (!isFocused && !event.defaultPrevented) {
-            if (route.name === 'Create') {
+        if (route.name === 'Create') {
+            // Always navigate to CreateSelection regardless of focus state
+            // setTimeout(0) lets React flush before navigating (fixes iOS Expo Go rendering bug)
+            setTimeout(() => {
                 (navigation as any).navigate('CreateSelection');
-            } else {
-                navigation.navigate(route.name);
-            }
+            }, 0);
+            return;
+        }
+        if (!isFocused && !event.defaultPrevented) {
+            navigation.navigate(route.name);
         }
     };
 
@@ -71,6 +76,11 @@ function TabItem({ route, index, state, navigation, cfg }: { route: any, index: 
                     size={28}
                     color={isFocused ? Colors.primary : Colors.textMuted}
                 />
+                {badgeCount !== undefined && badgeCount > 0 && (
+                    <View style={styles.badge}>
+                        <Text style={styles.badgeText}>{badgeCount > 9 ? '9+' : badgeCount}</Text>
+                    </View>
+                )}
                 {isFocused && <View style={styles.activeDot} />}
             </Animated.View>
         </TouchableOpacity>
@@ -82,9 +92,64 @@ export const TAB_BAR_HEIGHT = 84;
 export default function TabBar(props: BottomTabBarProps) {
     const { state } = props;
     const insets = useSafeAreaInsets();
+    const [unreadCount, setUnreadCount] = React.useState(0);
+
+    const fetchUnreadCount = React.useCallback(async () => {
+        const { data: { session } } = await supabase.auth.getSession();
+        const user = session?.user;
+        if (!user) return;
+
+        const { count } = await supabase
+            .from('notifications')
+            .select('*', { count: 'exact', head: true })
+            .eq('user_id', user.id)
+            .eq('is_read', false);
+        
+        setUnreadCount(count || 0);
+    }, []);
+
+    React.useEffect(() => {
+        fetchUnreadCount();
+
+        // Real-time subscription for unread count — listen to both INSERT and UPDATE
+        const channel = supabase
+            .channel('tabbar_notifs')
+            .on('postgres_changes', {
+                event: 'INSERT',
+                schema: 'public',
+                table: 'notifications'
+            }, fetchUnreadCount)
+            .on('postgres_changes', {
+                event: 'UPDATE',
+                schema: 'public',
+                table: 'notifications'
+            }, fetchUnreadCount)
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
+    }, [fetchUnreadCount]);
+
+    // Refresh badge when the current tab changes (e.g., after visiting Notifications)
+    React.useEffect(() => {
+        fetchUnreadCount();
+    }, [state.index]);
     
+    // Determine bottom position based on device navigation type
+    const hasOnScreenButtons = Platform.OS === 'android' && insets.bottom > 20;
+    const bottomPos = Platform.OS === 'ios' ? 24 : (hasOnScreenButtons ? (12 + insets.bottom) : 24);
+
+    const focusedRoute = state.routes[state.index];
+    const focusedDescriptor = props.descriptors[focusedRoute.key];
+    const focusedOptions = focusedDescriptor.options;
+
+    if ((focusedOptions.tabBarStyle as any)?.display === 'none') {
+        return null;
+    }
+
     return (
-        <View style={[styles.outerWrapper, { bottom: (Platform.OS === 'ios' ? 24 : 12) + insets.bottom }]}>
+        <View style={[styles.outerWrapper, { bottom: bottomPos }]}>
             <View style={styles.bar}>
                 {state.routes.map((route, index) => (
                     <TabItem
@@ -94,6 +159,7 @@ export default function TabBar(props: BottomTabBarProps) {
                         state={state}
                         navigation={props.navigation}
                         cfg={TAB_CONFIG[index]}
+                        badgeCount={TAB_CONFIG[index].name === 'Notifications' ? unreadCount : 0}
                     />
                 ))}
             </View>
@@ -185,6 +251,25 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         borderWidth: 4,
         borderColor: '#fff',
+    },
+    badge: {
+        position: 'absolute',
+        top: -4,
+        right: -8,
+        backgroundColor: Colors.eventCap, // Using a red-ish color from theme
+        minWidth: 18,
+        height: 18,
+        borderRadius: 9,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1.5,
+        borderColor: '#fff',
+    },
+    badgeText: {
+        color: '#fff',
+        fontSize: 10,
+        fontFamily: Fonts.bold,
+        lineHeight: 12,
     },
 });
 

@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
     View, Text, StyleSheet, TextInput, TouchableOpacity,
     KeyboardAvoidingView, Platform, ScrollView, StatusBar, Image, ActivityIndicator,
@@ -17,6 +18,7 @@ interface Props {
 }
 
 export default function LoginScreen({ onNavigateToRegister, onNavigateBack }: Props) {
+    const insets = useSafeAreaInsets();
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [showPass, setShowPass] = useState(false);
@@ -70,7 +72,7 @@ export default function LoginScreen({ onNavigateToRegister, onNavigateBack }: Pr
                 behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             >
                 <ScrollView
-                    contentContainerStyle={styles.scroll}
+                    contentContainerStyle={[styles.scroll, { paddingTop: insets.top + 10 }]}
                     keyboardShouldPersistTaps="handled"
                     showsVerticalScrollIndicator={false}
                 >
@@ -233,7 +235,7 @@ const styles = StyleSheet.create({
     scroll: {
         flexGrow: 1,
         paddingHorizontal: Spacing.xl,
-        paddingTop: Platform.OS === 'ios' ? 60 : 40,
+        paddingTop: 10,
         paddingBottom: 40,
     },
     content: {

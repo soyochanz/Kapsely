@@ -73,3 +73,7 @@ export function setupNotificationHandlers() {
         }),
     });
 }
+
+export async function clearBadgeCount() {
+    await Notifications.setBadgeCountAsync(0);
+}
