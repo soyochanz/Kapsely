@@ -16,7 +16,7 @@ import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
 import { CapsuleType } from '../data/mockCapsules';
 import { supabase } from '../lib/supabase';
 
-import { CAPSULE_MODELS, MODEL_CATEGORIES } from '../constants/models';
+import { CAPSULE_MODELS, MODEL_CATEGORIES, MODEL_IMAGES, MODEL_IMAGES_OPEN } from '../constants/models';
 import CapsuleWithTimer from '../components/CapsuleWithTimer';
 import { timerConfigManager } from '../utils/timerConfig';
 
@@ -41,15 +41,53 @@ function isEventActive(eventStart?: string, eventEnd?: string): boolean {
 
 // ─── Capsule types ────────────────────────────────────────────────────────────
 const { width } = Dimensions.get('window');
-type Step = 'type' | 'content' | 'schedule' | 'capangel' | 'review';
-const STEPS: Step[] = ['type', 'content', 'schedule', 'capangel', 'review'];
+type Step = 'identity' | 'format' | 'timing' | 'review';
+const STEPS: Step[] = ['identity', 'format', 'timing', 'review'];
+
+// ─── Custom duration slider ───────────────────────────────────────────────────
+const DurationSlider = ({ days, onChange, color, t, daysToLabel, setScrollEnabled }: any) => {
+    const [localVal, setLocalVal] = useState(days);
+
+    useEffect(() => {
+        setLocalVal(days);
+    }, [days]);
+
+    return (
+        <View style={{ width: '100%', alignItems: 'center' }}>
+            <Slider
+                style={{ width: '100%', height: 40 }}
+                minimumValue={MIN_DAYS}
+                maximumValue={MAX_DAYS}
+                step={1}
+                value={days}
+                onValueChange={(val) => {
+                    const rounded = Math.round(val);
+                    setLocalVal(rounded);
+                    onChange(rounded); // Call parent onChange immediately for responsiveness
+                }}
+                onSlidingStart={() => setScrollEnabled(false)}
+                onSlidingComplete={() => {
+                    setScrollEnabled(true);
+                }}
+                minimumTrackTintColor={color}
+                maximumTrackTintColor={Colors.border}
+                thumbTintColor={color}
+            />
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginTop: -5 }}>
+                <Text style={{ fontSize: 10, color: Colors.textMuted }}>{t('common.2_weeks')}</Text>
+                <Text style={{ fontSize: 12, color, fontFamily: Fonts.bold }}>{daysToLabel(localVal)}</Text>
+                <Text style={{ fontSize: 10, color: Colors.textMuted }}>{t('common.1_year')}</Text>
+            </View>
+        </View>
+    );
+};
 
 // capsuleTypes will be defined inside the component to react to loaded models
 
 // ─── Custom duration slider ───────────────────────────────────────────────────
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: Colors.background },
-    safeArea: { backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.border },
+    safeArea: { backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.border, overflow: 'hidden', zIndex: 10 },
     header: {
         flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
         paddingHorizontal: Spacing.md, paddingTop: 12, paddingBottom: 12,
@@ -57,36 +95,40 @@ const styles = StyleSheet.create({
     headerBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
     headerTitle: { color: Colors.textPrimary, fontSize: 16, fontFamily: Fonts.semiBold },
 
-    stepIndicatorRow: {
-        flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-        paddingHorizontal: Spacing.md, paddingBottom: 8, paddingTop: 4,
+    // ── Premium step progress bar ──
+    stepProgressWrap: {
+        paddingHorizontal: Spacing.lg, paddingBottom: 10, paddingTop: 6,
     },
-    stepDotWrapper: { alignItems: 'center', gap: 3 },
-    stepDot: { width: 16, height: 16, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-    stepNum: { fontSize: 8, fontFamily: Fonts.bold },
-    stepLabel: { fontSize: 8, fontFamily: Fonts.semiBold, letterSpacing: 0.3 },
-    stepLine: { flex: 1, height: 2, marginHorizontal: 2, marginBottom: 14, borderRadius: 1 },
+    stepProgressTrack: {
+        height: 3, backgroundColor: Colors.border, borderRadius: 2, position: 'relative', marginBottom: 8,
+    },
+    stepProgressFill: {
+        position: 'absolute', left: 0, top: 0, height: 3, borderRadius: 2,
+    },
+    stepProgressLabels: {
+        flexDirection: 'row', justifyContent: 'space-between',
+    },
+    stepProgressLabel: {
+        fontSize: 10, fontFamily: Fonts.semiBold, letterSpacing: 0.4,
+    },
 
     floatingBottomNav: {
-        flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 15,
-        paddingHorizontal: Spacing.lg, paddingVertical: 15,
-        backgroundColor: Colors.surface,
-        borderTopWidth: 1, borderTopColor: Colors.border,
-        ...Shadow.subtle
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12,
+        paddingHorizontal: Spacing.lg, paddingVertical: 14,
+        backgroundColor: 'rgba(255,255,255,0.96)',
+        borderTopWidth: 0,
     },
     floatingNavBtn: {
-        flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 14, borderRadius: 30,
-        ...Shadow.subtle
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 15, borderRadius: 30,
     },
-    floatingNavText: { fontFamily: Fonts.bold, fontSize: 13, letterSpacing: 0.8 },
-    floatingNavTextNext: { fontFamily: Fonts.bold, fontSize: 13, letterSpacing: 0.8, color: '#fff' },
+    floatingNavText: { fontFamily: Fonts.bold, fontSize: 13, letterSpacing: 0.5 },
+    floatingNavTextNext: { fontFamily: Fonts.bold, fontSize: 13, letterSpacing: 0.5, color: '#fff' },
 
     heroContainer: {
         alignItems: 'center',
         paddingTop: 10,
         paddingBottom: 25,
         position: 'relative',
-        overflow: 'hidden',
     },
     heroImageContainer: {
         width: 120,
@@ -118,26 +160,10 @@ const styles = StyleSheet.create({
         zIndex: 2,
     },
     heroTitle: {
-        fontSize: 18,
+        fontSize: 22,
         fontFamily: Fonts.bold,
         color: Colors.textPrimary,
         textAlign: 'center',
-    },
-    changeModelBadge: {
-        position: 'absolute',
-        bottom: 20,
-        right: 20,
-        backgroundColor: Colors.surface,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-        paddingHorizontal: 12,
-        paddingVertical: 8,
-        borderRadius: BorderRadius.full,
-        borderWidth: 1,
-        borderColor: Colors.border,
-        ...Shadow.subtle,
-        zIndex: 10,
     },
     heroBadgeRow: {
         flexDirection: 'row',
@@ -173,7 +199,7 @@ const styles = StyleSheet.create({
         fontStyle: 'italic',
     },
 
-    scroll: { flex: 1 },
+    scroll: { flex: 1, backgroundColor: Colors.background },
     scrollContent: { paddingBottom: 130, minHeight: Dimensions.get('window').height },
     step: { padding: Spacing.md },
     stepHeaderCenter: { alignItems: 'center', marginBottom: Spacing.lg },
@@ -216,6 +242,179 @@ const styles = StyleSheet.create({
         color: Colors.textPrimary,
         marginBottom: 4,
     },
+    
+    // REDESIGNED HERO
+    heroCardContainer: {
+        height: 320,
+        backgroundColor: 'transparent',
+        marginHorizontal: Spacing.md,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    heroImageWrapper: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingTop: 10,
+        flexDirection: 'column',
+        alignSelf: 'center',
+        gap: 12,
+    },
+    heroModel: {
+        width: 190,
+        height: 190,
+    },
+    // Discrete 'Change design' chip — replaces the invasive badge
+    changeDesignChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        paddingHorizontal: 14,
+        paddingVertical: 7,
+        borderRadius: BorderRadius.full,
+        backgroundColor: Colors.cardAlt,
+        borderWidth: 1,
+        borderColor: Colors.border,
+    },
+    changeDesignChipText: {
+        fontSize: 12,
+        fontFamily: Fonts.semiBold,
+        color: Colors.textSecondary,
+    },
+    // legacy names kept for compat
+    changeDesignBadge: { display: 'none' },
+    changeDesignInner: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    changeDesignBadgeText: { fontSize: 10, fontFamily: Fonts.bold, color: '#fff' },
+    changeDesignText: { fontSize: 11, fontFamily: Fonts.bold, color: '#fff', marginLeft: 6 },
+    heroTextOverlay: {
+        alignItems: 'center',
+        marginTop: 0,
+    },
+    heroTextTitle: {
+        fontSize: 20,
+        fontFamily: Fonts.bold,
+        color: Colors.textPrimary,
+        textAlign: 'center',
+        marginTop: 0,
+    },
+    heroTypeLabel: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        backgroundColor: 'rgba(255,255,255,0.95)',
+        paddingHorizontal: 12,
+        paddingVertical: 4,
+        borderRadius: 20,
+        marginTop: 4,
+    },
+    heroTypeText: {
+        fontSize: 11,
+        fontFamily: Fonts.semiBold,
+        letterSpacing: 0.4,
+    },
+
+    // TYPE SELECTION — clean, unified
+    modernTypeRow: {
+        flexDirection: 'row',
+        gap: 10,
+        marginBottom: 16,
+    },
+    typeCardV: {
+        flex: 1,
+        backgroundColor: Colors.surface,
+        borderRadius: 20,
+        borderWidth: 1.5,
+        borderColor: Colors.border,
+        padding: 14,
+        alignItems: 'center',
+        gap: 6,
+    },
+    typeIconContainerV: {
+        width: 58,
+        height: 58,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    typeImg: { width: 50, height: 50 },
+    typeTitleV: {
+        fontSize: 13,
+        fontFamily: Fonts.bold,
+        textAlign: 'center',
+        color: Colors.textPrimary,
+    },
+    // One clean tagline under title
+    typeTaglinePill: {
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        borderRadius: BorderRadius.full,
+        backgroundColor: Colors.cardAlt,
+    },
+    typeTaglinePillText: {
+        fontSize: 10,
+        fontFamily: Fonts.medium,
+        color: Colors.textMuted,
+        textAlign: 'center',
+    },
+    // kept for compat but invisible
+    typeDescV: { display: 'none' } as any,
+    typeLimitContainer: { display: 'none' } as any,
+    typeLimitText: { fontSize: 10, fontFamily: Fonts.bold } as any,
+    typeBadgeLocked: {
+        position: 'absolute',
+        top: 8, right: 8,
+        width: 22, height: 22,
+        borderRadius: 11,
+        backgroundColor: Colors.divider,
+        alignItems: 'center', justifyContent: 'center',
+    },
+    typeBadgeText: { fontSize: 7, fontFamily: Fonts.bold, color: Colors.textMuted },
+
+    // INFO MODAL
+    infoModalContent: {
+        backgroundColor: Colors.surface,
+        width: '85%',
+        borderRadius: 24,
+        padding: 24,
+        ...Shadow.lg,
+    },
+    infoModalHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        marginBottom: 16,
+    },
+    infoIconCircle: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    infoModalTitle: {
+        fontSize: 20,
+        fontFamily: Fonts.bold,
+        color: Colors.textPrimary,
+        flex: 1,
+    },
+    infoModalBody: {
+        maxHeight: 300,
+        marginBottom: 20,
+    },
+    infoModalText: {
+        fontSize: 15,
+        fontFamily: Fonts.regular,
+        color: Colors.textSecondary,
+        lineHeight: 22,
+    },
+    infoModalCloseBtn: {
+        paddingVertical: 14,
+        borderRadius: 14,
+        alignItems: 'center',
+    },
+    infoModalCloseText: {
+        color: '#fff',
+        fontSize: 16,
+        fontFamily: Fonts.bold,
+    },
     modernTypeTagline: {
         fontSize: 10,
         fontFamily: Fonts.medium,
@@ -245,12 +444,13 @@ const styles = StyleSheet.create({
     },
     typeDetailsBox: {
         backgroundColor: Colors.cardAlt,
-        borderRadius: 20,
-        padding: 20,
-        minHeight: 140,
+        borderRadius: 16,
+        padding: 18,
+        minHeight: 80,
         justifyContent: 'center',
         borderWidth: 1,
         borderColor: Colors.border,
+        marginBottom: 4,
     },
     typeDetailContent: {
         gap: 8,
@@ -350,18 +550,18 @@ const styles = StyleSheet.create({
     infoBoxText: { color: Colors.textSecondary, fontSize: 12, fontFamily: Fonts.regular, lineHeight: 16 },
     toggleRow: {
         flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-        backgroundColor: Colors.surface, padding: Spacing.md, borderRadius: BorderRadius.md,
-        borderWidth: 1, borderColor: Colors.border, marginBottom: Spacing.md, ...Shadow.subtle,
+        backgroundColor: Colors.surface, padding: Spacing.md, borderRadius: 16,
+        borderWidth: 1, borderColor: Colors.border, marginBottom: Spacing.md,
     },
     toggleInfo: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
     toggleLabel: { color: Colors.textPrimary, fontSize: 14, fontFamily: Fonts.semiBold },
     toggleSub: { color: Colors.textMuted, fontSize: 11, fontFamily: Fonts.regular, marginTop: 2 },
     inputGroup: { marginBottom: Spacing.md },
-    inputLabel: { color: Colors.textSecondary, fontSize: 12, fontFamily: Fonts.semiBold, letterSpacing: 0.5, marginBottom: 8 },
+    inputLabel: { color: Colors.textSecondary, fontSize: 13, fontFamily: Fonts.medium, letterSpacing: 0.3, marginBottom: 8 },
     textInput: {
-        backgroundColor: Colors.surface, borderWidth: 1.5, borderColor: Colors.border,
-        borderRadius: BorderRadius.md, padding: Spacing.md,
-        color: Colors.textPrimary, fontSize: 14, fontFamily: Fonts.regular, ...Shadow.subtle,
+        backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border,
+        borderRadius: 16, paddingHorizontal: Spacing.md, paddingVertical: 14,
+        color: Colors.textPrimary, fontSize: 15, fontFamily: Fonts.regular,
     },
     textArea: { minHeight: 100, textAlignVertical: 'top' },
     helperText: { color: Colors.textMuted, fontSize: 11, fontFamily: Fonts.regular, marginTop: 5 },
@@ -405,26 +605,26 @@ const styles = StyleSheet.create({
     presetGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, marginBottom: Spacing.md },
     presetCard: {
         width: (width - Spacing.md * 2 - Spacing.sm * 2) / 3,
-        backgroundColor: Colors.surface, borderRadius: BorderRadius.md,
+        backgroundColor: Colors.surface, borderRadius: 16,
         borderWidth: 1.5, borderColor: Colors.border,
-        padding: Spacing.sm + 2, alignItems: 'center', gap: 2,
-        position: 'relative', ...Shadow.subtle,
+        paddingVertical: 14, paddingHorizontal: 8, alignItems: 'center', gap: 4,
+        position: 'relative',
     },
-    presetEmoji: { fontSize: 20 },
-    presetLabel: { color: Colors.textPrimary, fontSize: 13, fontFamily: Fonts.semiBold },
+    presetEmoji: { fontSize: 22 },
+    presetLabel: { color: Colors.textPrimary, fontSize: 13, fontFamily: Fonts.semiBold, textAlign: 'center' },
     presetCheck: {
-        position: 'absolute', top: 5, right: 5, width: 16, height: 16,
-        borderRadius: 8, alignItems: 'center', justifyContent: 'center',
+        position: 'absolute', top: 6, right: 6, width: 18, height: 18,
+        borderRadius: 9, alignItems: 'center', justifyContent: 'center',
     },
     customSliderCard: {
-        borderRadius: BorderRadius.md, borderWidth: 1,
-        backgroundColor: Colors.surface, padding: Spacing.md,
-        marginBottom: Spacing.md, ...Shadow.subtle,
+        borderRadius: 16, borderWidth: 1,
+        backgroundColor: Colors.surface, padding: Spacing.md + 2,
+        marginBottom: Spacing.md,
     },
     selectedDateCard: {
         flexDirection: 'row', alignItems: 'center', gap: Spacing.md,
-        padding: Spacing.md, borderRadius: BorderRadius.md, borderWidth: 1,
-        backgroundColor: Colors.surface, marginBottom: Spacing.md, ...Shadow.subtle,
+        padding: Spacing.md, borderRadius: 16, borderWidth: 1,
+        backgroundColor: Colors.surface, marginBottom: Spacing.md,
     },
     selectedDateLabel: { color: Colors.textMuted, fontSize: 11, fontFamily: Fonts.regular },
     selectedDateValue: { fontSize: 15, fontFamily: Fonts.semiBold },
@@ -466,35 +666,45 @@ const styles = StyleSheet.create({
     },
     skipNoteText: { color: Colors.textMuted, fontSize: 12, fontFamily: Fonts.regular, flex: 1, lineHeight: 17 },
 
-    // Review
-    reviewHero: { alignItems: 'center', marginVertical: Spacing.lg },
-    reviewHeroImg: { width: 180, height: 180 },
-    modelContainerLarge: { position: 'relative', width: 220, height: 220, alignItems: 'center', justifyContent: 'center' },
+    // Review — more emotional
+    reviewHero: { alignItems: 'center', marginTop: Spacing.sm, marginBottom: Spacing.lg + 4 },
+    reviewHeroImg: { width: 200, height: 200 },
+    reviewGlowWrap: {
+        width: 280, height: 280, alignItems: 'center', justifyContent: 'center',
+    },
+    reviewGlowCircle: {
+        position: 'absolute', width: 260, height: 260, borderRadius: 130,
+    },
+    modelContainerLarge: { position: 'relative', width: 230, height: 230, alignItems: 'center', justifyContent: 'center' },
     cornerTypeIconLarge: {
-        position: 'absolute', top: 20, right: 20,
-        width: 28, height: 28, borderRadius: 14,
-        alignItems: 'center', justifyContent: 'center', ...Shadow.subtle, zIndex: 10,
+        position: 'absolute', top: 18, right: 18,
+        width: 30, height: 30, borderRadius: 15,
+        alignItems: 'center', justifyContent: 'center', zIndex: 10,
     },
-    modelTimerOverlayLarge: {
-        position: 'absolute', top: '53%', alignSelf: 'center',
-    },
+    modelTimerOverlayLarge: { position: 'absolute', top: '53%', alignSelf: 'center' },
     modelTimerTextLarge: { color: '#fff', fontSize: 24, fontWeight: '800', fontFamily: 'monospace' },
-    reviewTypeBadge: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: BorderRadius.full, borderWidth: 1 },
-    reviewTypeBadgeText: { fontSize: 10, fontFamily: Fonts.semiBold },
-    reviewTitle: { fontSize: 22, fontFamily: Fonts.bold, color: Colors.textPrimary, marginTop: 10, textAlign: 'center' },
+    reviewTypeBadge: { paddingHorizontal: 14, paddingVertical: 5, borderRadius: BorderRadius.full, borderWidth: 1 },
+    reviewTypeBadgeText: { fontSize: 11, fontFamily: Fonts.semiBold },
+    reviewTitle: { fontSize: 26, fontFamily: Fonts.bold, color: Colors.textPrimary, marginTop: 10, textAlign: 'center', letterSpacing: -0.3 },
+    reviewSubTitle: { fontSize: 14, fontFamily: Fonts.regular, color: Colors.textMuted, textAlign: 'center', marginTop: 4 },
     reviewMeta: { color: Colors.textSecondary, fontSize: 12, fontFamily: Fonts.regular },
+    reviewCardSection: {
+        backgroundColor: Colors.surface, borderRadius: 20, borderWidth: 1,
+        borderColor: Colors.border, marginBottom: 16, overflow: 'hidden',
+    },
     reviewRow: {
         flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
-        paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: Colors.divider,
+        paddingVertical: 13, paddingHorizontal: Spacing.md,
+        borderBottomWidth: 1, borderBottomColor: Colors.divider,
     },
-    reviewCheck: { width: 22, height: 22, borderRadius: 11, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
-    reviewRowLabel: { color: Colors.textSecondary, fontSize: 13, fontFamily: Fonts.regular, flex: 1 },
-    reviewRowValue: { color: Colors.textPrimary, fontSize: 13, fontFamily: Fonts.semiBold },
+    reviewCheck: { width: 24, height: 24, borderRadius: 12, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+    reviewRowLabel: { color: Colors.textSecondary, fontSize: 14, fontFamily: Fonts.regular, flex: 1 },
+    reviewRowValue: { color: Colors.textPrimary, fontSize: 14, fontFamily: Fonts.semiBold },
     warningBox: {
         flexDirection: 'row', alignItems: 'flex-start', gap: 10,
-        padding: Spacing.md, borderRadius: BorderRadius.md, borderWidth: 1.5, marginTop: Spacing.md,
+        padding: Spacing.md, borderRadius: 16, borderWidth: 1, marginTop: Spacing.md,
     },
-    warningText: { fontSize: 12, fontFamily: Fonts.regular, flex: 1, lineHeight: 17 },
+    warningText: { fontSize: 13, fontFamily: Fonts.regular, flex: 1, lineHeight: 18 },
 
     // CTA
     ctaContainer: { padding: Spacing.md, paddingBottom: Spacing.xl, gap: 8 },
@@ -556,52 +766,27 @@ const styles = StyleSheet.create({
     },
 
     stickyFooter: {
-        position: 'absolute',
-        bottom: 0,
-        left: 0,
-        right: 0,
-        flexDirection: 'row',
-        padding: Spacing.md,
-        paddingBottom: 35,
-        backgroundColor: Colors.surface,
-        borderTopWidth: 1,
-        borderTopColor: Colors.border,
-        alignItems: 'center',
-        gap: 12,
-        zIndex: 100,
-        ...Shadow.lg,
+        position: 'absolute', bottom: 0, left: 0, right: 0,
+        flexDirection: 'row', padding: Spacing.md, paddingBottom: 35,
+        backgroundColor: 'rgba(255,255,255,0.97)',
+        borderTopWidth: 0,
+        alignItems: 'center', gap: 12, zIndex: 100,
     },
     footerBackBtn: {
-        paddingHorizontal: 20,
-        paddingVertical: 14,
-        borderRadius: 14,
-        backgroundColor: Colors.cardAlt,
-        borderWidth: 1,
-        borderColor: Colors.border,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
+        paddingHorizontal: 20, paddingVertical: 15,
+        borderRadius: 30, backgroundColor: Colors.cardAlt,
+        borderWidth: 1, borderColor: Colors.border,
+        flexDirection: 'row', alignItems: 'center', gap: 6,
     },
     footerNextBtn: {
-        flex: 1,
-        paddingVertical: 14,
-        borderRadius: 14,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 8,
-        ...Shadow.primary,
+        flex: 1, paddingVertical: 15, borderRadius: 30,
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
     },
     footerNextText: {
-        color: '#fff',
-        fontSize: 16,
-        fontFamily: Fonts.bold,
-        letterSpacing: 0.5,
+        color: '#fff', fontSize: 16, fontFamily: Fonts.bold, letterSpacing: 0.3,
     },
     footerBackText: {
-        color: Colors.textPrimary,
-        fontSize: 14,
-        fontFamily: Fonts.semiBold,
+        color: Colors.textPrimary, fontSize: 14, fontFamily: Fonts.semiBold,
     },
 
     // Autocomplete for CapAngel
@@ -722,68 +907,47 @@ const styles = StyleSheet.create({
         marginTop: 10,
     },
     modalModelCard: {
-        width: (width - Spacing.lg * 2 - 24) / 4,
+        width: (width - Spacing.lg * 2 - 24) / 3,
         alignItems: 'center',
-        padding: 6,
-        borderRadius: 12,
+        padding: 8,
+        borderRadius: 16,
         borderWidth: 1.5,
         borderColor: Colors.border,
-        gap: 2,
+        gap: 4,
     },
     modalModelImg: {
-        width: 45,
-        height: 60,
+        width: 60,
+        height: 80,
     },
     modalModelLabel: {
-        fontSize: 9,
+        fontSize: 11,
         fontFamily: Fonts.semiBold,
         color: Colors.textSecondary,
-    },
-    chainGridCompact: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: 6,
-    },
-    modalChainCard: {
-        width: (width - Spacing.lg * 2 - 30) / 5,
-        alignItems: 'center',
-        padding: 6,
-        borderRadius: 10,
-        borderWidth: 1.5,
-        borderColor: Colors.border,
-        gap: 2,
-    },
-    chainIconBgSmall: {
-        width: 32,
-        height: 32,
-        borderRadius: 8,
-        backgroundColor: Colors.cardAlt,
-        alignItems: 'center',
-        justifyContent: 'center',
-        overflow: 'hidden',
-    },
-    chainImgSmall: {
-        width: '100%',
-        height: '100%',
-    },
-    modalChainLabel: {
-        fontSize: 9,
-        fontFamily: Fonts.medium,
-        color: Colors.textMuted,
         textAlign: 'center',
     },
-    modalConfirmBtn: {
-        paddingVertical: 16,
-        borderRadius: 16,
+    chainGridCompact: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    modalChainCard: {
+        width: (width - Spacing.lg * 2 - 32) / 4,
         alignItems: 'center',
-        justifyContent: 'center',
-        ...Shadow.primary,
+        paddingVertical: 8, paddingHorizontal: 4,
+        borderRadius: 14, borderWidth: 1.5,
+        borderColor: Colors.border, gap: 4,
     },
-    modalConfirmText: {
-        fontSize: 16,
-        fontFamily: Fonts.bold,
-        color: '#fff',
+    chainIconBgSmall: {
+        width: 40, height: 40, borderRadius: 10,
+        backgroundColor: Colors.cardAlt,
+        alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
     },
+    chainImgSmall: { width: '100%', height: '100%' },
+    modalChainLabel: {
+        fontSize: 10, fontFamily: Fonts.medium,
+        color: Colors.textMuted, textAlign: 'center',
+    },
+    modalConfirmBtn: {
+        paddingVertical: 16, borderRadius: 30,
+        alignItems: 'center', justifyContent: 'center',
+    },
+    modalConfirmText: { fontSize: 16, fontFamily: Fonts.bold, color: '#fff' },
 });
 
 const SLIDER_W = width - Spacing.md * 2 - Spacing.md * 2; // account for step+card padding
@@ -837,7 +1001,7 @@ export default function CapsuleCreationScreen() {
     const navigation = useNavigation<any>();
     const insets = useSafeAreaInsets();
     const scrollRef = useRef<ScrollView>(null);
-    const [currentStep, setCurrentStep] = useState<Step>('type');
+    const [currentStep, setCurrentStep] = useState<Step>('identity');
     const [selectedType, setSelectedType] = useState<CapsuleType | null>(null);
     const [selectedModel, setSelectedModel] = useState('basicred_kap');
     const [hasLegacyCap, setHasLegacyCap] = useState(false);
@@ -862,12 +1026,14 @@ export default function CapsuleCreationScreen() {
     const [eventCode, setEventCode] = useState('');
     const [isPublic, setIsPublic] = useState(true);
     const [keyboardVisible, setKeyboardVisible] = useState(false);
+    const [scrollEnabled, setScrollEnabled] = useState(true);
+    const [headerHeight, setHeaderHeight] = useState(0);
 
     const scrollY = useRef(new Animated.Value(0)).current;
 
     const heroHeight = scrollY.interpolate({
         inputRange: [0, 100, 200],
-        outputRange: [210, 100, 0],
+        outputRange: [330, 200, 0], // Increased to show Change Model button
         extrapolate: 'clamp'
     });
 
@@ -895,28 +1061,9 @@ export default function CapsuleCreationScreen() {
         return `${days} ${t('common.days')}`;
     };
 
-    const DurationSlider = useCallback(({ days, onChange, color }: { days: number; onChange: (d: number) => void; color: string }) => {
-        return (
-            <View style={styles.sliderWrapper}>
-                <Slider
-                    style={{ width: '100%', height: 40 }}
-                    minimumValue={MIN_DAYS}
-                    maximumValue={MAX_DAYS}
-                    step={1}
-                    value={days}
-                    onValueChange={(val) => onChange(Math.round(val))}
-                    minimumTrackTintColor={color}
-                    maximumTrackTintColor={Colors.border}
-                    thumbTintColor={color}
-                />
-                <View style={styles.sliderLabels}>
-                    <Text style={styles.sliderLabelText}>{t('common.2_weeks')}</Text>
-                    <Text style={[styles.sliderLabelText, { color, fontFamily: Fonts.bold, fontSize: 12 }]}>{daysToLabel(days)}</Text>
-                    <Text style={styles.sliderLabelText}>{t('common.1_year')}</Text>
-                </View>
-            </View>
-        );
-    }, [t, daysToLabel]);
+    const [sliderLocalVal, setSliderLocalVal] = useState(60);
+
+    // DurationSlider moved outside to avoid re-renders
 
     useEffect(() => {
         const showSubscription = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
@@ -941,11 +1088,15 @@ export default function CapsuleCreationScreen() {
 
     const [selectedChainId, setSelectedChainId] = useState<string | null>(null);
     const [showModelModal, setShowModelModal] = useState(false);
+    const [showCapAngelInfo, setShowCapAngelInfo] = useState(false);
 
     const [sealing, setSealing] = useState(false);
+    const [loadingAssets, setLoadingAssets] = useState(false);
     const [isAnimatingSeal, setIsAnimatingSeal] = useState(false);
+    const [sealStage, setSealStage] = useState<'open' | 'closed'>('open');
     const dropAnim = useRef(new Animated.Value(-300)).current;
     const capScaleAnim = useRef(new Animated.Value(1)).current;
+    const flashAnim = useRef(new Animated.Value(0)).current;
 
     // Notification animation
     const notifAnim = useRef(new Animated.Value(-100)).current;
@@ -959,6 +1110,16 @@ export default function CapsuleCreationScreen() {
 
     const [availableModels, setAvailableModels] = useState<any[]>(timerConfigManager.models);
     const [availableCategories, setAvailableCategories] = useState<string[]>(['All', ...Array.from(new Set(timerConfigManager.models.map(m => m.category)))]);
+
+    useEffect(() => {
+        const updateModels = () => {
+            setAvailableModels(timerConfigManager.models);
+            setAvailableCategories(['All', ...Array.from(new Set(timerConfigManager.models.map(m => m.category)))]);
+        };
+        const unsubscribe = timerConfigManager.subscribe(updateModels);
+        updateModels();
+        return unsubscribe;
+    }, []);
 
     const activeEvent = React.useMemo(() => {
         return availableModels.find(m => m.is_event && isEventActive(m.event_start, m.event_end));
@@ -996,7 +1157,7 @@ export default function CapsuleCreationScreen() {
                     ],
                 },
                 {
-                    id: 'eventcap', title: 'EventCap', tagline: t('create.event.tagline'),
+                    id: 'eventcap', title: 'EventCap', tagline: activeEvent ? activeEvent.event_title : t('create.event.tagline'),
                     description: activeEvent ? activeEvent.event_description : t('create.event.description'),
                     color: Colors.eventCap, bgColor: Colors.eventCapLight, icon: 'calendar', limit: 'Per event',
                     rules: [
@@ -1018,12 +1179,15 @@ export default function CapsuleCreationScreen() {
     }, [selectedType, capsuleTypes]);
 
     const stepIndex = STEPS.indexOf(currentStep);
-    const activeModel = availableModels.find((m: any) => m.id === selectedModel)
-        ? availableModels.find((m: any) => m.id === selectedModel)
-        : (CAPSULE_MODELS as any).find((m: any) => m.id === selectedModel) ?? CAPSULE_MODELS[0];
+    const activeModel = useMemo(() => {
+        const model = availableModels.find((m: any) => m.id === selectedModel) || 
+                      (CAPSULE_MODELS as any).find((m: any) => m.id === selectedModel);
+        return model || CAPSULE_MODELS[0];
+    }, [selectedModel, availableModels]);
 
     const [activeThemeColor, setActiveThemeColor] = useState(() => {
-        return timerConfigManager.getConfig(selectedModel)?.themeColor || (activeCfg?.color ?? Colors.primary);
+        const cfg = timerConfigManager.getConfig(selectedModel);
+        return cfg?.themeColor || (activeCfg?.color ?? Colors.primary);
     });
 
     useEffect(() => {
@@ -1097,6 +1261,21 @@ export default function CapsuleCreationScreen() {
             }
         };
     }, [navigation]);
+
+    useEffect(() => {
+        if (selectedType === 'eventcap' && activeEvent) {
+            setSelectedModel(activeEvent.capsule_model || 'pioneers_cap');
+        } else if (selectedType === 'instacap' || selectedType === 'legacycap') {
+            setSelectedModel(prev => {
+                const currentModel = availableModels.find((m: any) => m.id === prev) || 
+                                     (CAPSULE_MODELS as any).find((m: any) => m.id === prev);
+                if (currentModel?.is_event || prev === 'pioneers_cap') {
+                    return 'basicred_kap';
+                }
+                return prev;
+            });
+        }
+    }, [selectedType, activeEvent, availableModels]);
 
     useEffect(() => {
         const updateTheme = () => {
@@ -1220,7 +1399,7 @@ export default function CapsuleCreationScreen() {
             setInvitedUsers(invitedUsers.filter(u => u.id !== user.id));
         } else {
             if (invitedUsers.length >= 9) {
-                Alert.alert('Limit reached', 'A shared capsule can have a maximum of 10 users (Owner + 9 Guests).');
+                Alert.alert(t('create.limit_reached'), t('create.limit_shared_users'));
                 return;
             }
             setInvitedUsers([...invitedUsers, user]);
@@ -1242,19 +1421,19 @@ export default function CapsuleCreationScreen() {
     }, [modelSearch, modelCategory, availableModels, selectedType]);
 
     const goNext = () => {
-        if (currentStep === 'type' && !selectedType) {
-            Alert.alert('Selection Required', 'Please select a capsule format to continue.');
+        if (currentStep === 'format' && !selectedType) {
+            Alert.alert(t('create.selection_required'), t('create.select_format_first'));
             return;
         }
-        if (currentStep === 'content') {
+        if (currentStep === 'identity') {
             if (!title.trim() || !description.trim()) {
-                Alert.alert('Missing Information', 'Please enter a title and message for your capsule.');
+                Alert.alert(t('create.missing_info'), t('create.enter_title_message'));
                 return;
             }
         }
-        if (currentStep === 'schedule') {
+        if (currentStep === 'timing') {
             if (selectedType === 'instacap' && !selectedPreset && !showCustomSlider) {
-                Alert.alert('Timeline Required', 'Please select when your capsule should open.');
+                Alert.alert(t('create.timeline_required'), t('create.select_opening_date'));
                 return;
             }
         }
@@ -1305,12 +1484,12 @@ export default function CapsuleCreationScreen() {
 
         // Final validation
         if (!title.trim() || !description.trim()) {
-            Alert.alert('Required', 'Title and description are required.');
+            Alert.alert(t('create.title_required'), t('create.title_desc_required'));
             return;
         }
 
         if (selectedType === 'instacap' && !selectedPreset && !showCustomSlider) {
-            Alert.alert('Required', 'Please select an opening date.');
+            Alert.alert(t('create.title_required'), t('create.date_required'));
             return;
         }
 
@@ -1319,17 +1498,17 @@ export default function CapsuleCreationScreen() {
         try {
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) {
-                Alert.alert('Error', 'You must be logged in to create a capsule.');
+                Alert.alert(t('common.error'), t('create.login_required'));
                 setSealing(false);
                 return;
             }
             if (!selectedType) {
-                Alert.alert('Error', 'Please select a capsule type.');
+                Alert.alert(t('common.error'), t('create.type_required'));
                 setSealing(false);
                 return;
             }
 
-            // Check legacy cap limit (1 per account)
+            // Check limits
             if (selectedType === 'legacycap') {
                 const { count, error: countError } = await supabase
                     .from('capsules')
@@ -1337,16 +1516,13 @@ export default function CapsuleCreationScreen() {
                     .eq('owner_id', user.id)
                     .eq('type', 'legacycap')
                     .eq('status', 'sealed');
-
                 if (countError) throw countError;
                 if (count && count >= 1) {
-                    Alert.alert('Legacy Limit reached', 'You can only have one active Legacy Capsule at a time.');
+                    Alert.alert(t('create.legacy_limit_title'), t('create.legacy_limit_msg'));
                     setSealing(false);
                     return;
                 }
             }
-
-            // Check InstaCap limit (5 per account)
             if (selectedType === 'instacap') {
                 const { count: instaCount, error: countError } = await supabase
                     .from('capsules')
@@ -1354,21 +1530,18 @@ export default function CapsuleCreationScreen() {
                     .eq('owner_id', user.id)
                     .eq('type', 'instacap')
                     .eq('status', 'sealed');
-
                 if (countError) throw countError;
                 if (instaCount && instaCount >= 5) {
-                    Alert.alert('Limit Reached', 'You can only have up to 5 active InstaCaps at a time.');
+                    Alert.alert(t('create.instacap_limit_title'), t('create.instacap_limit_msg'));
                     setSealing(false);
                     return;
                 }
             }
 
-
             const opensAt = selectedType === 'eventcap' && activeEvent
                 ? activeEvent.event_end
                 : finalDays ? new Date(Date.now() + finalDays * 86400000).toISOString() : null;
 
-            // Prepare the insert object - removing redundant/suspect columns that might be missing from DB
             const insertData: any = {
                 owner_id: user.id,
                 type: selectedType,
@@ -1390,21 +1563,16 @@ export default function CapsuleCreationScreen() {
                 .select()
                 .single();
 
-            if (error) {
-                console.error('Sealing error (capsule):', error);
-                throw error;
-            }
+            if (error) throw error;
 
-            // invitedUsers handling (via capsule_invites table)
+            // Invites
             if (invitedUsers.length > 0 && newCapsule) {
                 const inviteData = invitedUsers.map(u => ({
                     capsule_id: newCapsule.id,
                     user_id: u.id,
                     status: 'pending'
                 }));
-                const { error: inviteError } = await supabase.from('capsule_invites').insert(inviteData);
-                if (inviteError) console.warn('Invite insertion error:', inviteError);
-
+                await supabase.from('capsule_invites').insert(inviteData);
                 const notifs = invitedUsers.map(u => ({
                     user_id: u.id,
                     sender_id: user.id,
@@ -1415,7 +1583,7 @@ export default function CapsuleCreationScreen() {
                 await supabase.from('notifications').insert(notifs);
             }
 
-            // CapAngel notification
+            // CapAngel
             if (capAngel && selectedCapAngel && newCapsule) {
                 await supabase.from('notifications').insert({
                     user_id: selectedCapAngel.id,
@@ -1426,52 +1594,92 @@ export default function CapsuleCreationScreen() {
                 });
             }
 
-            // Animation sequence
+            // ── ANIMATION PHASE ──────────────────────────────────────────
+            setLoadingAssets(true);
+            const modelsToLoad = [];
+            if (activeModel.image_open) modelsToLoad.push(Image.prefetch(activeModel.image_open));
+            if (activeModel.image) modelsToLoad.push(Image.prefetch(activeModel.image));
+            
+            try {
+                await Promise.all([...modelsToLoad, new Promise(resolve => setTimeout(resolve, 1500))]);
+            } catch (e) {
+                console.warn("Asset prefetch failing", e);
+            }
+            setLoadingAssets(false);
+
             setIsAnimatingSeal(true);
+            setSealStage('open');
+            flashAnim.setValue(0);
+            capScaleAnim.setValue(1);
+            
+            // Start Epic Animation
             Animated.sequence([
-                // Media feed "tu tu tu tu"
-                Animated.stagger(250, mediaAnims.map(anim =>
+                Animated.timing(capScaleAnim, {
+                    toValue: 1.25,
+                    duration: 1200,
+                    easing: Easing.bezier(0.4, 0, 0.2, 1),
+                    useNativeDriver: true
+                }),
+                Animated.stagger(180, mediaAnims.map(anim =>
                     Animated.timing(anim, {
-                        toValue: 120,
-                        duration: 700,
-                        easing: Easing.out(Easing.quad),
+                        toValue: 220,
+                        duration: 1800,
+                        easing: Easing.bezier(0.65, 0, 0.35, 1),
                         useNativeDriver: true
                     })
                 )),
-                Animated.delay(300),
-                // Final seal drop - slightly slower for premium feel
-                Animated.timing(dropAnim, { toValue: 100, duration: 1000, easing: Easing.bounce, useNativeDriver: true }),
-                Animated.parallel([
-                    Animated.timing(dropAnim, { toValue: 125, duration: 300, useNativeDriver: true }),
-                    Animated.sequence([
-                        Animated.timing(capScaleAnim, { toValue: 1.15, duration: 200, useNativeDriver: true }),
-                        Animated.timing(capScaleAnim, { toValue: 1, duration: 250, useNativeDriver: true })
-                    ])
-                ])
-            ]).start(() => {
-                setTimeout(() => {
-                    setIsAnimatingSeal(false);
-                    dropAnim.setValue(-300);
-                    // Reset media anims
-                    mediaAnims.forEach(a => a.setValue(-600));
+                Animated.delay(400),
+                Animated.timing(flashAnim, { 
+                    toValue: 1, 
+                    duration: 600, 
+                    easing: Easing.out(Easing.circle),
+                    useNativeDriver: true 
+                }),
+            ]).start();
 
-                    // reset
-                    setCurrentStep('type'); setSelectedType(null); setTitle(''); setDescription('');
-                    setSelectedModel('basicred_kap'); setSelectedPreset(null); setShowCustomSlider(false);
-                    setIsPublic(true); setCapAngel(false); setIsShared(false); setInvitedUsers([]);
-                    setCapAngelHandle(''); setSelectedCapAngel(null); setCapAngelSearchQuery(''); setCapAngelSearchResults([]);
-                    setModelSearch(''); setModelCategory('All');
-                    setSelectedChainId(null);
-                    setSealing(false);
+            // At peak of flash, swap and slam
+            setTimeout(() => {
+                setSealStage('closed');
+                Animated.timing(flashAnim, { toValue: 0, duration: 1600, useNativeDriver: true }).start();
+                
+                Animated.sequence([
+                    Animated.timing(capScaleAnim, { 
+                        toValue: 1.7, 
+                        duration: 250, 
+                        easing: Easing.out(Easing.back(1.5)),
+                        useNativeDriver: true 
+                    }),
+                    Animated.spring(capScaleAnim, {
+                        toValue: 1,
+                        friction: 4,
+                        tension: 50,
+                        useNativeDriver: true
+                    })
+                ]).start();
+            }, 4000);
 
-                    // Navigate to Profile
-                    navigation.navigate('Main', { screen: 'Profile' });
-                }, 2000); // Wait a bit to let the user see the sealed state
-            });
+            // Final transition
+            setTimeout(() => {
+                setIsAnimatingSeal(false);
+                setSealing(false);
+                setCurrentStep('identity');
+                setSelectedType(null);
+                setTitle('');
+                setDescription('');
+                // Navigate to the newly sealed capsule's detail page
+                navigation.reset({
+                    index: 1,
+                    routes: [
+                        { name: 'MainTabs' },
+                        { name: 'CapsuleDetail', params: { capsuleId: newCapsule.id } },
+                    ],
+                });
+            }, 7000);
+
 
         } catch (e: any) {
-            console.error('Final seal stage error:', e);
-            Alert.alert('Error', e.message ?? 'Could not save capsule.');
+            console.error('Sealing error:', e);
+            Alert.alert(t('common.error'), e.message ?? t('create.create_error'));
             setSealing(false);
         }
     };
@@ -1480,35 +1688,31 @@ export default function CapsuleCreationScreen() {
         <View style={styles.container}>
             <StatusBar barStyle="dark-content" backgroundColor={Colors.surface} />
 
-            {/* Selection Success Notification */}
-            {showSuccessNotif && (
-                <Animated.View style={[styles.notificationBadge, { transform: [{ translateY: notifAnim }] }]}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                        <Ionicons name="checkmark-circle" size={20} color={activeThemeColor} />
-                        <Text style={styles.notificationText}>
-                            CapAngel Assigned: <Text style={{ color: activeThemeColor }}>@{selectedCapAngel?.username}</Text>
-                        </Text>
-                    </View>
-                </Animated.View>
-            )}
-
             {isAnimatingSeal && (
-                <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255,255,255,0.98)', zIndex: 1000, alignItems: 'center', justifyContent: 'center' }]}>
-                    <Text style={{ fontSize: 24, fontFamily: Fonts.bold, color: activeThemeColor, marginBottom: 40 }}>Sealing your memories...</Text>
-                    <View style={{ width: 240, height: 350, alignItems: 'center' }}>
-                        {mediaAnims.map((anim, i) => (
+                <View style={[StyleSheet.absoluteFill, { backgroundColor: '#fff', zIndex: 1000, alignItems: 'center', justifyContent: 'center' }]}>
+                    <Text style={{ fontSize: 24, fontFamily: Fonts.bold, color: activeThemeColor, marginBottom: 20, textAlign: 'center' }}>
+                        {sealStage === 'open' ? 'Storing your memories...' : 'Sealed for the future'}
+                    </Text>
+                    
+                    <View style={{ width: 280, height: 400, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                        {/* Flying Media items */}
+                        {sealStage === 'open' && mediaAnims.map((anim, i) => (
                             <Animated.View key={i} style={{
                                 position: 'absolute',
-                                transform: [{ translateY: anim }],
+                                top: -50,
+                                transform: [
+                                    { translateY: anim },
+                                    { scale: anim.interpolate({ inputRange: [-600, 200], outputRange: [1, 0.4] }) }
+                                ],
                                 opacity: anim.interpolate({
-                                    inputRange: [-600, -200, 100, 150],
+                                    inputRange: [-600, -500, 180, 220],
                                     outputRange: [0, 1, 1, 0]
                                 }),
-                                zIndex: 1
+                                zIndex: 5
                             }}>
-                                <View style={{ backgroundColor: activeThemeColor + '15', padding: 12, borderRadius: 15, borderWidth: 1, borderColor: activeThemeColor + '33' }}>
+                                <View style={{ backgroundColor: activeThemeColor + '20', padding: 15, borderRadius: 20, borderWidth: 1, borderColor: activeThemeColor + '40' }}>
                                     <Ionicons
-                                        name={i === 0 ? "image" : i === 1 ? "videocam" : "musical-notes"}
+                                        name={i === 0 ? "image" : i === 1 ? "videocam" : i === 2 ? "musical-notes" : "document-text"}
                                         size={32}
                                         color={activeThemeColor}
                                     />
@@ -1516,148 +1720,134 @@ export default function CapsuleCreationScreen() {
                             </Animated.View>
                         ))}
 
-                        <Animated.View style={{ transform: [{ translateY: dropAnim }], zIndex: 2 }}>
-                            <View style={{ backgroundColor: activeThemeColor + '22', width: 60, height: 60, borderRadius: 30, alignItems: 'center', justifyContent: 'center' }}>
-                                <Ionicons name="sparkles" size={32} color={activeThemeColor} />
-                            </View>
-                        </Animated.View>
+                        {/* Flash / Shine effect */}
+                        <Animated.View style={[StyleSheet.absoluteFill, { 
+                            backgroundColor: '#fff', 
+                            zIndex: 10,
+                            opacity: flashAnim 
+                        }]} pointerEvents="none" />
 
-                        <Animated.View style={{ transform: [{ scale: capScaleAnim }], position: 'absolute', bottom: 20 }}>
-                            <View style={[
-                                Platform.select({
-                                    web: { boxShadow: `0px 10px 20px ${activeThemeColor}4D` },
-                                    ios: {
-                                        shadowColor: activeThemeColor,
-                                        shadowOffset: { width: 0, height: 10 },
-                                        shadowOpacity: 0.3,
-                                        shadowRadius: 20,
-                                    },
-                                    android: {
-                                        elevation: 10
-                                    }
-                                })
-                            ]}>
-                                <Image source={{ uri: activeModel.image }} style={{ width: 180, height: 180 }} resizeMode="contain" />
-                            </View>
+                        <Animated.View style={{ transform: [{ scale: capScaleAnim }], alignItems: 'center', justifyContent: 'center' }}>
+                            <Image 
+                                source={{ uri: sealStage === 'open' ? (activeModel.image_open || activeModel.image) : activeModel.image }} 
+                                style={{ width: 220, height: 220 }} 
+                                resizeMode="contain" 
+                            />
+                            {sealStage === 'closed' && (
+                                <Animated.View style={{ position: 'absolute', opacity: capScaleAnim }}>
+                                    <View style={{ backgroundColor: 'rgba(0,0,0,0.3)', padding: 15, borderRadius: 40 }}>
+                                        <Ionicons name="lock-closed" size={40} color="#fff" />
+                                    </View>
+                                </Animated.View>
+                            )}
                         </Animated.View>
                     </View>
                 </View>
             )}
-            <View style={[styles.safeArea, keyboardVisible && { borderBottomWidth: 0 }, { paddingTop: insets.top + 10 }]}>
+            <View 
+                style={[styles.safeArea, keyboardVisible && { borderBottomWidth: 0 }, { paddingTop: insets.top + 10 }]}
+                onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}
+            >
                 {/* Header */}
                 <View style={[styles.header, keyboardVisible && { paddingTop: 0, paddingBottom: 5 }, { paddingTop: 10 }]}>
-                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerBtn}>
+                    <TouchableOpacity activeOpacity={0.7} onPress={() => navigation.goBack()} style={styles.headerBtn}>
                         <Ionicons name="close" size={24} color={Colors.textPrimary} />
                     </TouchableOpacity>
                     <Text style={styles.headerTitle}>{t('create.title')}</Text>
                     <View style={styles.headerBtn} />
                 </View>
 
-                {/* Step Indicator */}
-                <View style={styles.stepIndicatorRow}>
-                    {STEPS.map((s, i) => {
-                        const isActive = stepIndex >= i;
-                        const isUpcoming = stepIndex < i;
-                        const colors = isActive ? [Colors.primary, Colors.primaryDark] : [Colors.border, Colors.border];
-                        return (
-                            <React.Fragment key={s}>
-                                <View style={styles.stepDotWrapper}>
-                                    <LinearGradient 
-                                        colors={isActive ? ([Colors.primary, Colors.primaryDark] as const) : ([Colors.border, Colors.border] as const)} 
-                                        style={styles.stepDot}
-                                    >
-                                        <Text style={[styles.stepNum, { color: '#fff' }]}>{i + 1}</Text>
-                                    </LinearGradient>
-                                    <Text style={[styles.stepLabel, { color: isActive ? Colors.primary : Colors.textMuted }]}>
-                                        {t(`create.${s}`).toUpperCase()}
-                                    </Text>
-                                </View>
-                                {i < STEPS.length - 1 && (
-                                    <View style={[styles.stepLine, { backgroundColor: isActive && stepIndex > i ? Colors.primary : Colors.border }]} />
-                                )}
-                            </React.Fragment>
-                        );
-                    })}
-                </View>
-
-                {/* Persistent Hero Preview - Hidden in Review step or when keyboard is visible */}
-                {currentStep !== 'review' && !keyboardVisible && (
-                    <Animated.View 
-                        collapsable={false}
-                        style={{ height: heroHeight, overflow: 'hidden' }}
-                    >
-                        <Animated.View style={[
-                            styles.heroContainer,
-                            { borderBottomColor: activeThemeColor + '22', height: 210, opacity: heroOpacity }
-                        ]}>
-                            {/* Background is now clean surface as requested */}
-
-                            {/* Premium Model Preview */}
-                            <Pressable 
-                                style={styles.heroImageContainer}
-                                onPress={() => setShowModelModal(true)}
+                {/* Step Progress Bar */}
+                <View style={styles.stepProgressWrap}>
+                    <View style={styles.stepProgressTrack}>
+                        <LinearGradient
+                            colors={[Colors.primary, Colors.primaryDark]}
+                            start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                            style={[styles.stepProgressFill, { width: `${((stepIndex + 1) / STEPS.length) * 100}%` as any }]}
+                        />
+                    </View>
+                    <View style={styles.stepProgressLabels}>
+                        {STEPS.map((s, i) => (
+                            <Text
+                                key={s}
+                                style={[styles.stepProgressLabel, { color: stepIndex >= i ? Colors.primary : Colors.textMuted }]}
                             >
-                                <Animated.View style={{ transform: [{ scale: capScaleAnim }], alignItems: 'center', justifyContent: 'center' }}>
+                                {t(`create.${s}`)}
+                            </Text>
+                        ))}
+                    </View>
+                </View>
+            </View>
+
+            {/* Persistent Hero Preview - Hidden in Review step or when keyboard is visible */}
+            {currentStep !== 'review' && !keyboardVisible && headerHeight > 0 && (
+                <Animated.View 
+                    collapsable={false}
+                    style={{ 
+                        height: 320, 
+                        paddingHorizontal: Spacing.md,
+                        position: 'absolute',
+                        top: headerHeight,
+                        left: 0, right: 0,
+                        zIndex: 5,
+                        opacity: heroOpacity,
+                        transform: [{
+                            translateY: scrollY.interpolate({
+                                inputRange: [0, 200],
+                                outputRange: [0, -220],
+                                extrapolate: 'clamp'
+                            })
+                        }]
+                    }}
+                >
+                    <Animated.View style={[styles.heroCardContainer]}>
+                        {/* Capsule — tappable to change model */}
+                        <View style={styles.heroImageWrapper}>
+                            <TouchableOpacity
+                                activeOpacity={0.9}
+                                onPress={() => setShowModelModal(true)}
+                                style={{ alignItems: 'center', justifyContent: 'center' }}
+                            >
+                                <Animated.View style={{ transform: [{ scale: capScaleAnim }], alignItems: 'center' }}>
                                     <CapsuleWithTimer
                                         modelKey={selectedModel}
-                                        source={{ uri: activeModel.image }}
+                                        source={activeModel.image ? { uri: activeModel.image } : (MODEL_IMAGES as any)[selectedModel] || (MODEL_IMAGES as any).basicred_kap}
                                         date={openingDate}
                                         chainId={selectedChainId}
-                                        capsuleType={selectedType || undefined}
-                                        style={styles.heroImage}
+                                        style={styles.heroModel}
+                                        darkerShadow={true}
                                         hideTimer={true}
                                     />
-                                    {selectedType && (
-                                        <View style={[styles.heroTypeIcon, { backgroundColor: activeThemeColor }]}>
-                                            <Ionicons name={activeCfg?.icon as any} size={16} color="#fff" />
-                                        </View>
-                                    )}
                                 </Animated.View>
-                            </Pressable>
-                            
-                            <TouchableOpacity 
-                                style={styles.changeModelBadge}
-                                onPress={() => setShowModelModal(true)}
-                                activeOpacity={0.8}
-                            >
-                                <Ionicons name="color-palette" size={14} color={activeThemeColor} />
-                                <Text style={{ fontSize: 10, fontFamily: Fonts.bold, color: activeThemeColor }}>APPEARANCE</Text>
                             </TouchableOpacity>
-                            
-                            {!keyboardVisible && (
-                                <View style={styles.heroTextContainer}>
-                                    <Text style={styles.heroTitle} numberOfLines={1}>
-                                        {title || 'Nova Capsule'}
+
+                            {/* Discrete chip below capsule */}
+                            <TouchableOpacity
+                                style={styles.changeDesignChip}
+                                activeOpacity={0.8}
+                                onPress={() => setShowModelModal(true)}
+                            >
+                                <Ionicons name="color-palette-outline" size={14} color={Colors.textSecondary} />
+                                <Text style={styles.changeDesignChipText}>{t('common.change')}</Text>
+                            </TouchableOpacity>
+                        </View>
+
+                        <View style={styles.heroTextOverlay}>
+                            <Text style={styles.heroTextTitle} numberOfLines={1}>
+                                {title || t('create.untitled_capsule')}
+                            </Text>
+                            {activeCfg && (
+                                <View style={[styles.heroTypeLabel, { backgroundColor: activeThemeColor + '15' }]}>
+                                    <Ionicons name={activeCfg.icon as any} size={12} color={activeThemeColor} />
+                                    <Text style={[styles.heroTypeText, { color: activeThemeColor }]}>
+                                        {activeCfg.title}
                                     </Text>
-                                    <View style={styles.heroBadgeRow}>
-                                        {selectedType ? (
-                                            <View style={[styles.heroBadge, { backgroundColor: activeThemeColor + '20', borderColor: activeThemeColor + '50' }]}>
-                                                <Text style={[styles.heroBadgeText, { color: activeThemeColor }]}>{activeCfg?.title.toUpperCase()}</Text>
-                                            </View>
-                                        ) : (
-                                            <View style={styles.heroBadge}>
-                                                <Text style={styles.heroPlaceholderText}>Select a creation type below</Text>
-                                            </View>
-                                        )}
-                                        {selectedType === 'instacap' && finalDays && (
-                                            <View style={styles.heroBadge}>
-                                                <Ionicons name="time-outline" size={10} color={activeThemeColor} />
-                                                <Text style={styles.heroBadgeTextSmall}>{daysToLabel(finalDays)}</Text>
-                                            </View>
-                                        )}
-                                        {selectedType === 'legacycap' && (
-                                            <View style={styles.heroBadge}>
-                                                <Ionicons name="infinite" size={10} color={activeThemeColor} />
-                                                <Text style={styles.heroBadgeTextSmall}>5 Years</Text>
-                                            </View>
-                                        )}
-                                    </View>
                                 </View>
                             )}
-                        </Animated.View>
+                        </View>
                     </Animated.View>
-                )}
-            </View>
+                </Animated.View>
+            )}
 
 
             <KeyboardAvoidingView
@@ -1668,8 +1858,12 @@ export default function CapsuleCreationScreen() {
                 <Animated.ScrollView
                     ref={scrollRef as any}
                     style={styles.scroll}
+                    scrollEnabled={scrollEnabled}
                     showsVerticalScrollIndicator={false}
-                    contentContainerStyle={styles.scrollContent}
+                    contentContainerStyle={[
+                        styles.scrollContent, 
+                        currentStep !== 'review' && !keyboardVisible && { paddingTop: 310 }
+                    ]}
                     keyboardShouldPersistTaps="handled"
                     automaticallyAdjustKeyboardInsets={true}
                     onScroll={Animated.event(
@@ -1679,237 +1873,13 @@ export default function CapsuleCreationScreen() {
                     scrollEventThrottle={16}
                 >
 
-                    {/* ═══ STEP 1: TYPE ══════════════════════════════════════════ */}
-                    {currentStep === 'type' && (
+                    {/* ═══ STEP 1: IDENTITY ══════════════════════════════════════ */}
+                    {currentStep === 'identity' && (
                         <View style={styles.step}>
                             <View style={styles.stepHeaderCenter}>
-                                <Text style={styles.stepTitleCenter}>{t('create.choose_format')}</Text>
-                                <Text style={styles.stepSubCenter}>{t('create.choose_format_sub')}</Text>
+                                <Text style={styles.stepTitleCenter}>{t('create.step1_title')}</Text>
+                                <Text style={styles.stepSubCenter}>{t('create.step1_sub')}</Text>
                             </View>
-
-                            <View style={styles.typeGridContainer}>
-                                {capsuleTypes.map((type) => {
-                                    const isActive = selectedType === type.id;
-                                    const isLocked = loadingLimits ||
-                                        (type.id === 'legacycap' && hasLegacyCap) ||
-                                        (type.id === 'instacap' && activeInstaCapCount >= 5) ||
-                                        type.disabled;
-                                    return (
-
-                                        <TouchableOpacity
-                                            key={type.id}
-                                            activeOpacity={0.7}
-                                            onPress={() => {
-                                                if (isLocked) {
-                                                    if (loadingLimits) return;
-                                                    if (type.disabled) {
-                                                        Alert.alert('Event Ended', 'This event is no longer available.');
-                                                    } else if (type.id === 'legacycap') {
-                                                        Alert.alert('Limit Reached', 'You can only have one active Legacy Capsule.');
-                                                    } else if (type.id === 'instacap') {
-                                                        Alert.alert('Limit Reached', 'You can only have up to 5 active InstaCaps.');
-                                                    }
-                                                    return;
-                                                }
-
-
-                                                // Selection logic
-                                                const prevType = selectedType;
-                                                setSelectedType(type.id);
-
-                                                if (type.id === 'eventcap' && activeEvent) {
-                                                    setSelectedModel(activeEvent.id);
-                                                } else if (prevType === 'eventcap' && selectedModel === activeEvent?.id) {
-                                                    setSelectedModel('basicred_kap');
-                                                }
-
-                                                // Trigger scale animation for visual feedback
-                                                Animated.sequence([
-                                                    Animated.timing(capScaleAnim, { toValue: 1.1, duration: 150, useNativeDriver: true }),
-                                                    Animated.timing(capScaleAnim, { toValue: 1, duration: 150, useNativeDriver: true })
-                                                ]).start();
-                                            }}
-                                            style={[
-                                                styles.modernTypeCard,
-                                                isActive && { borderColor: type.color, backgroundColor: type.color + '10' },
-                                                isLocked && { opacity: 0.5 }
-                                            ]}
-                                        >
-                                            <View style={[styles.modernTypeIconBg, { backgroundColor: isActive ? type.color : Colors.cardAlt }]}>
-                                                <Ionicons name={type.icon as any} size={28} color={isActive ? '#fff' : type.color} />
-                                            </View>
-                                            <Text style={[styles.modernTypeTitle, isActive && { color: type.color }]}>{type.title}</Text>
-                                            <Text style={styles.modernTypeTagline}>{type.tagline}</Text>
-
-                                            {isActive && (
-                                                <View style={[styles.modernCheckDot, { backgroundColor: type.color }]}>
-                                                    <Ionicons name="checkmark" size={10} color="#fff" />
-                                                </View>
-                                            )}
-                                            {isLocked && (
-                                                <View style={styles.lockedOverlay}>
-                                                    <Ionicons name="lock-closed" size={16} color={Colors.textMuted} />
-                                                </View>
-                                            )}
-                                        </TouchableOpacity>
-                                    );
-                                })}
-                            </View>
-
-                            <View style={styles.typeDetailsBox}>
-                                {selectedType ? (
-                                    <View style={styles.typeDetailContent}>
-                                        <Text style={[styles.typeDetailLabel, { color: activeThemeColor }]}>{activeCfg?.title} {t('create.strategy')}</Text>
-                                        <Text style={styles.typeDetailDesc}>{activeCfg?.description}</Text>
-                                        <View style={styles.compactRulesRow}>
-                                            {activeCfg?.rules.slice(0, 3).map((rule, ri) => (
-                                                <View key={ri} style={styles.compactRulePill}>
-                                                    <Ionicons name={rule.icon as any} size={10} color={activeThemeColor} />
-                                                    <Text style={styles.compactRuleText} numberOfLines={1}>{rule.text}</Text>
-                                                </View>
-                                            ))}
-                                        </View>
-                                    </View>
-                                ) : (
-                                    <View style={styles.typeSelectionPrompt}>
-                                        <Ionicons name="finger-print" size={32} color={Colors.border} />
-                                        <Text style={styles.typePromptText}>{t('create.tap_format')}</Text>
-                                    </View>
-                                )}
-                            </View>
-
-
-                            {/* Pioneers Event Active Banner */}
-                            {activeEvent && (
-                                <View style={styles.pioneersEventBanner}>
-                                    <LinearGradient
-                                        colors={['#f5a623', '#e8472f']}
-                                        start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-                                        style={styles.pioneersGradient}
-                                    >
-                                        <Ionicons name="rocket" size={18} color="#fff" />
-                                        <View style={{ flex: 1, marginLeft: 10 }}>
-                                            <Text style={styles.pioneersTitle}>🚀 {activeEvent.event_title} — Active</Text>
-                                            <Text style={styles.pioneersSubtitle}>
-                                                {activeEvent.event_description} • {t('create.available_until')} {new Date(activeEvent.event_end).toLocaleDateString()}
-                                            </Text>
-                                        </View>
-                                    </LinearGradient>
-                                </View>
-                            )}
-
-                        </View>
-                    )}
-
-                    {/* ═══ STEP 2: CONTENT ══════════════════════════════════════ */}
-                    {currentStep === 'content' && (
-                        <View style={styles.step}>
-                            <Text style={styles.stepTitle}>{t('create.add_your_content')}</Text>
-                            <Text style={styles.stepSub}>{t('create.what_to_seal')}</Text>
-
-                            {/* EventCap: access code */}
-                            {selectedType === 'eventcap' && (
-                                <>
-                                    <View style={[styles.infoBox, { borderColor: Colors.eventCap + '33', backgroundColor: Colors.eventCapLight }]}>
-                                        <Ionicons name="qr-code" size={20} color={Colors.eventCap} />
-                                        <View style={{ flex: 1 }}>
-                                            <Text style={[styles.infoBoxTitle, { color: Colors.eventCap }]}>{t('create.event_verification_required')}</Text>
-                                            <Text style={styles.infoBoxText}>{t('create.event_verification_desc')}</Text>
-                                        </View>
-                                    </View>
-                                    <View style={styles.inputGroup}>
-                                        <Text style={styles.inputLabel}>{t('create.event_access_code')}</Text>
-                                        <TextInput
-                                            style={[styles.textInput, { borderColor: Colors.eventCap + '55' }]}
-                                            placeholder="e.g. COACHELLA-2026-XXXX"
-                                            placeholderTextColor={Colors.textMuted}
-                                            value={eventCode} onChangeText={setEventCode}
-                                            onFocus={() => scrollRef.current?.scrollToEnd({ animated: true })}
-                                        />
-                                    </View>
-                                </>
-                            )}
-
-                            {selectedType === 'instacap' && (
-                                <View style={styles.toggleRow}>
-                                    <View style={styles.toggleInfo}>
-                                        <View style={[styles.typeIconSmall, { backgroundColor: Colors.instaCap + '15' }]}>
-                                            <Ionicons name="people" size={18} color={Colors.instaCap} />
-                                        </View>
-                                        <View>
-                                            <Text style={styles.toggleLabel}>{t('create.shared_capsule')}</Text>
-                                            <Text style={styles.toggleSub}>{t('create.invite_friends_count', { count: invitedUsers.length })}</Text>
-                                        </View>
-                                    </View>
-                                    <Switch value={isShared} onValueChange={setIsShared}
-                                        trackColor={{ false: Colors.border, true: Colors.instaCap + '66' }}
-                                        thumbColor={isShared ? Colors.instaCap : Colors.textMuted} />
-                                </View>
-                            )}
-
-                            {selectedType === 'instacap' && isShared && (
-                                <View style={styles.inputGroup}>
-                                    <Text style={styles.inputLabel}>{t('create.participants')}</Text>
-
-                                    {/* Selected users tags */}
-                                    {invitedUsers.length > 0 && (
-                                        <View style={styles.memberTagsList}>
-                                            {invitedUsers.map(u => (
-                                                <View key={u.id} style={styles.memberTag}>
-                                                    <Image source={{ uri: u.avatar_url }} style={styles.tagAvatar} />
-                                                    <Text style={styles.tagName}>{u.username}</Text>
-                                                    <TouchableOpacity onPress={() => toggleInviteUser(u)}>
-                                                        <Ionicons name="close-circle" size={16} color={Colors.textMuted} />
-                                                    </TouchableOpacity>
-                                                </View>
-                                            ))}
-                                        </View>
-                                    )}
-
-                                    <View style={styles.searchBarWrapper}>
-                                        <Ionicons name="search" size={20} color={Colors.textMuted} />
-                                        <TextInput
-                                            style={styles.searchBarInput}
-                                            placeholder="Search by username..."
-                                            placeholderTextColor={Colors.textMuted}
-                                            value={userSearchQuery}
-                                            onChangeText={setUserSearchQuery}
-                                            autoCapitalize="none"
-                                            autoCorrect={false}
-                                            spellCheck={false}
-                                            onFocus={() => scrollRef.current?.scrollToEnd({ animated: true })}
-                                        />
-                                        {searchingUsers && <ActivityIndicator size="small" color={Colors.primary} />}
-                                    </View>
-
-                                    {userSearchResults.length > 0 && (
-                                        <View style={styles.searchResults}>
-                                            {userSearchResults.filter(u => !invitedUsers.some(iu => iu.id === u.id)).map(user => (
-                                                <TouchableOpacity
-                                                    key={user.id}
-                                                    style={styles.searchResultItem}
-                                                    onPress={() => toggleInviteUser(user)}
-                                                >
-                                                    <Image source={{ uri: user.avatar_url }} style={styles.resultAvatar} />
-                                                    <View style={{ flex: 1 }}>
-                                                        <Text style={styles.resultName}>{user.display_name}</Text>
-                                                        <Text style={styles.resultUsername}>@{user.username}</Text>
-                                                    </View>
-                                                    <Ionicons name="add-circle-outline" size={24} color={Colors.primary} />
-                                                </TouchableOpacity>
-                                            ))}
-                                        </View>
-                                    )}
-
-                                    {userSearchQuery.length > 0 && userSearchResults.length === 0 && !searchingUsers && (
-                                        <View style={[styles.searchResults, { padding: 15, alignItems: 'center' }]}>
-                                            <Text style={{ color: Colors.textMuted, fontSize: 13, fontFamily: Fonts.medium }}>{t('create.no_users_found', { query: userSearchQuery })}</Text>
-                                        </View>
-                                    )}
-
-                                    <Text style={styles.helperText}>{t('create.invite_helper')}</Text>
-                                </View>
-                            )}
 
                             <View style={styles.inputGroup}>
                                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1925,6 +1895,7 @@ export default function CapsuleCreationScreen() {
                                     maxLength={31}
                                     autoCorrect={false}
                                     spellCheck={false}
+                                    onFocus={() => scrollRef.current?.scrollTo({ y: 220, animated: true })}
                                 />
                             </View>
 
@@ -1938,15 +1909,178 @@ export default function CapsuleCreationScreen() {
                                     selectionColor={activeThemeColor}
                                     autoCorrect={false}
                                     spellCheck={false}
+                                    onFocus={() => scrollRef.current?.scrollTo({ y: 220, animated: true })}
                                 />
                             </View>
 
-                            {/* Visibility */}
-                            <View style={styles.toggleRow}>
+                            <TouchableOpacity
+                                style={[styles.toggleRow, capAngel && { borderColor: activeCfg?.color ?? Colors.primary, backgroundColor: (activeCfg?.color ?? Colors.primary) + '08' }]}
+                                activeOpacity={0.9}
+                                onPress={() => setCapAngel(!capAngel)}
+                            >
+                                <View style={styles.toggleInfo}>
+                                    <Ionicons name="sparkles-outline" size={24} color={capAngel ? activeThemeColor : Colors.textMuted} />
+                                    <View>
+                                        <Text style={styles.toggleLabel}>{t('create.enable_capangel')}</Text>
+                                        <Text style={styles.toggleSub}>{t('create.guardian_spec')}</Text>
+                                    </View>
+                                </View>
+                                <Switch
+                                    value={capAngel}
+                                    onValueChange={setCapAngel}
+                                    trackColor={{ false: Colors.border, true: activeThemeColor + '66' }}
+                                    thumbColor={capAngel ? activeThemeColor : Colors.textMuted}
+                                />
+                            </TouchableOpacity>
+
+                            {capAngel && (
+                                <View style={styles.inputGroup}>
+                                    {selectedCapAngel && (
+                                        <View style={styles.memberTagsList}>
+                                            <View style={styles.memberTag}>
+                                                <Image source={{ uri: selectedCapAngel.avatar_url }} style={styles.tagAvatar} />
+                                                <Text style={styles.tagName}>{selectedCapAngel.username}</Text>
+                                                <TouchableOpacity activeOpacity={0.7} onPress={() => { setSelectedCapAngel(null); setCapAngelHandle(''); }}>
+                                                    <Ionicons name="close-circle" size={16} color={Colors.textMuted} />
+                                                </TouchableOpacity>
+                                            </View>
+                                        </View>
+                                    )}
+
+                                    {!selectedCapAngel && (
+                                        <View style={styles.autocompleteWrapper}>
+                                            <View style={styles.searchBarWrapper}>
+                                                <Ionicons name="search" size={20} color={Colors.textMuted} />
+                                                <TextInput
+                                                    style={styles.searchBarInput}
+                                                    placeholder={t('create.search_guardian')}
+                                                    placeholderTextColor={Colors.textMuted}
+                                                    value={capAngelSearchQuery}
+                                                    onChangeText={setCapAngelSearchQuery}
+                                                    autoCapitalize="none"
+                                                    onFocus={() => scrollRef.current?.scrollToEnd({ animated: true })}
+                                                />
+                                                {searchingCapAngel && <ActivityIndicator size="small" color={activeThemeColor} />}
+                                            </View>
+
+                                            {capAngelSearchResults.length > 0 && (
+                                                <View style={styles.autocompleteDropdown}>
+                                                    <ScrollView keyboardShouldPersistTaps="handled">
+                                                        {capAngelSearchResults.map(user => (
+                                                            <TouchableOpacity
+                                                                key={user.id}
+                                                                style={styles.searchResultItem}
+                                                                activeOpacity={0.7}
+                                                                onPress={() => selectCapAngel(user)}
+                                                            >
+                                                                <Image source={{ uri: user.avatar_url }} style={styles.resultAvatar} />
+                                                                <View style={{ flex: 1 }}>
+                                                                    <Text style={styles.resultName}>{user.display_name}</Text>
+                                                                    <Text style={styles.resultUsername}>@{user.username}</Text>
+                                                                </View>
+                                                                <Ionicons name="add-circle-outline" size={24} color={activeThemeColor} />
+                                                            </TouchableOpacity>
+                                                        ))}
+                                                    </ScrollView>
+                                                </View>
+                                            )}
+                                        </View>
+                                    )}
+                                </View>
+                            )}
+                        </View>
+                    )}
+
+                    {/* ═══ STEP 2: FORMAT ══════════════════════════════════════════ */}
+                    {currentStep === 'format' && (
+                        <View style={styles.step}>
+                            <View style={styles.stepHeaderCenter}>
+                                <Text style={styles.stepTitleCenter}>{t('create.step2_title')}</Text>
+                                <Text style={styles.stepSubCenter}>{t('create.step2_sub')}</Text>
+                            </View>
+
+                            <View style={styles.modernTypeRow}>
+                                {capsuleTypes.map((type) => {
+                                    const isActive = selectedType === type.id;
+                                    const isLocked = loadingLimits ||
+                                        (type.id === 'legacycap' && hasLegacyCap) ||
+                                        (type.id === 'instacap' && activeInstaCapCount >= 5) ||
+                                        type.disabled;
+                                    
+                                    const isEvent = type.id === 'eventcap';
+                                    let typeIcon;
+                                    
+                                    if (isEvent && activeEvent) {
+                                        const eventModelKey = activeEvent.capsule_model || 'pioneers_cap';
+                                        const eventImg = activeEvent.image_cover || activeEvent.image || activeModel.image;
+                                        typeIcon = <CapsuleWithTimer modelKey={eventModelKey} source={{ uri: eventImg }} date={openingDate} style={{ width: 50, height: 50 }} hideTimer={true} hideParticles={true} />;
+                                    } else {
+                                        typeIcon = <CapsuleWithTimer modelKey={selectedModel} source={{ uri: activeModel.image }} date={openingDate} style={{ width: 50, height: 50 }} hideTimer={true} hideParticles={true} />;
+                                    }
+
+                                    return (
+                                        <TouchableOpacity
+                                            key={type.id}
+                                            activeOpacity={0.8}
+                                            onPress={() => {
+                                                if (isLocked) {
+                                                    const ruleKey = type.id === 'instacap' ? 'insta' : type.id === 'legacycap' ? 'legacy' : 'event';
+                                                    Alert.alert(t('common.warning'), t(`create.${ruleKey}.rule1`));
+                                                    return;
+                                                }
+                                                setSelectedType(type.id as any);
+                                                if (type.id === 'eventcap' && activeEvent?.capsule_model) {
+                                                    setSelectedModel(activeEvent.capsule_model);
+                                                }
+                                            }}
+                                            style={[styles.typeCardV, isActive && { borderColor: type.color, backgroundColor: type.color + '0A' }, isLocked && { opacity: 0.45 }]}
+                                        >
+                                            <View style={styles.typeIconContainerV}>
+                                                {typeIcon}
+                                            </View>
+                                            <Text style={[styles.typeTitleV, { color: isActive ? type.color : Colors.textPrimary }]}>{type.title}</Text>
+                                            <View style={[styles.typeTaglinePill, isActive && { backgroundColor: type.color + '18' }]}>
+                                                <Text style={[styles.typeTaglinePillText, isActive && { color: type.color }]}>
+                                                    {type.tagline}
+                                                </Text>
+                                            </View>
+                                            {isLocked && (
+                                                <View style={styles.typeBadgeLocked}>
+                                                    <Ionicons name="lock-closed" size={11} color={Colors.textMuted} />
+                                                </View>
+                                            )}
+                                        </TouchableOpacity>
+                                    );
+                                })}
+                            </View>
+
+                            {selectedType === 'eventcap' && false && (
+                                <View style={styles.inputGroup}>
+                                    <Text style={styles.inputLabel}>Event Access Code</Text>
+                                    <TextInput
+                                        style={[styles.textInput, { borderColor: Colors.eventCap + '55' }]}
+                                        placeholder="e.g. EVENT-2026-XXXX"
+                                        placeholderTextColor={Colors.textMuted}
+                                        value={eventCode} onChangeText={setEventCode}
+                                        onFocus={() => scrollRef.current?.scrollToEnd({ animated: true })}
+                                    />
+                                </View>
+                            )}
+
+                            {selectedType && (
+                                <View style={styles.typeDetailsBox}>
+                                    <View style={styles.typeDetailContent}>
+                                        <Text style={[styles.typeDetailLabel, { color: activeThemeColor }]}>{activeCfg?.title} {t('create.strategy')}</Text>
+                                        <Text style={styles.typeDetailDesc}>{activeCfg?.description}</Text>
+                                    </View>
+                                </View>
+                            )}
+                            
+                            <View style={[styles.toggleRow, { marginTop: 20 }]}>
                                 <View style={styles.toggleInfo}>
                                     <Ionicons name={isPublic ? 'globe-outline' : 'lock-closed-outline'} size={18} color={activeThemeColor} />
                                     <View style={{ flex: 1 }}>
-                                        <Text style={styles.toggleLabel}>{isPublic ? t('create.public_capsule') : t('create.private_capsule')}</Text>
+                                        <Text style={styles.toggleLabel}>{isPublic ? t('common.public_capsule') : t('common.private_capsule')}</Text>
                                         <Text style={styles.toggleSub}>
                                             {isPublic ? t('create.public_desc') : t('create.private_desc')}
                                         </Text>
@@ -1959,17 +2093,13 @@ export default function CapsuleCreationScreen() {
                         </View>
                     )}
 
-                    {/* ═══ STEP 3: SCHEDULE ══════════════════════════════════════ */}
-                    {currentStep === 'schedule' && (
+                    {/* ═══ STEP 3: TIMING ══════════════════════════════════════ */}
+                    {currentStep === 'timing' && (
                         <View style={styles.step}>
-                            <Text style={styles.stepTitle}>{t('create.when_open')}</Text>
-                            <Text style={styles.stepSub}>
-                                {selectedType === 'legacycap'
-                                    ? t('create.legacy_open_desc')
-                                    : selectedType === 'eventcap'
-                                        ? t('create.event_open_desc')
-                                        : t('create.choose_unlock')}
-                            </Text>
+                            <View style={styles.stepHeaderCenter}>
+                                <Text style={styles.stepTitleCenter}>{t('create.step3_title')}</Text>
+                                <Text style={styles.stepSubCenter}>{t('create.step3_sub')}</Text>
+                            </View>
 
                             {/* LegacyCap fixed */}
                             {selectedType === 'legacycap' && (
@@ -1980,17 +2110,6 @@ export default function CapsuleCreationScreen() {
                                         <Text style={styles.fixedDateSub}>
                                             {t('create.opens_on', { date: displayOpeningDate })}
                                         </Text>
-                                    </View>
-                                </View>
-                            )}
-
-                            {/* EventCap fixed */}
-                            {selectedType === 'eventcap' && (
-                                <View style={[styles.fixedDateCard, { borderColor: Colors.eventCap + '44', backgroundColor: Colors.eventCapLight }]}>
-                                    <Ionicons name="earth" size={28} color={Colors.eventCap} />
-                                    <View style={{ flex: 1 }}>
-                                        <Text style={[styles.fixedDateLabel, { color: Colors.eventCap }]}>{t('create.event_sync_opening')}</Text>
-                                        <Text style={styles.fixedDateSub}>{t('create.event_sync_desc')}</Text>
                                     </View>
                                 </View>
                             )}
@@ -2037,7 +2156,14 @@ export default function CapsuleCreationScreen() {
                                                 <Text style={[styles.selectedDateLabel, { flex: 1 }]}>{t('create.custom_duration')}</Text>
                                                 <Text style={[styles.selectedDateValue, { color: Colors.instaCap }]}>{daysToLabel(customDays)}</Text>
                                             </View>
-                                            <DurationSlider days={customDays} onChange={setCustomDays} color={Colors.instaCap} />
+                                             <DurationSlider 
+                                                days={customDays} 
+                                                onChange={setCustomDays} 
+                                                color={Colors.instaCap} 
+                                                t={t}
+                                                daysToLabel={daysToLabel}
+                                                setScrollEnabled={setScrollEnabled}
+                                            />
                                         </View>
                                     )}
 
@@ -2055,160 +2181,88 @@ export default function CapsuleCreationScreen() {
                                     )}
                                 </>
                             )}
-                        </View>
-                    )}
 
-
-
-                    {/* ═══ STEP 4: CAPANGEL ═════════════════════════════════════ */}
-                    {currentStep === 'capangel' && (
-                        <View style={styles.step}>
-                            <Text style={styles.stepTitle}>{t('create.assign_capangel')}</Text>
-                            <Text style={styles.stepSub}>{t('create.capangel_desc')}</Text>
-
-                            <TouchableOpacity
-                                style={[styles.toggleRow, capAngel && { borderColor: activeCfg?.color ?? Colors.primary, backgroundColor: (activeCfg?.color ?? Colors.primary) + '08' }]}
-                                onPress={() => setCapAngel(!capAngel)}
-                            >
-                                <View style={styles.toggleInfo}>
-                                    <Ionicons name="sparkles-outline" size={24} color={capAngel ? activeThemeColor : Colors.textMuted} />
-                                    <View>
-                                        <Text style={styles.toggleLabel}>{t('create.enable_capangel')}</Text>
-                                        <Text style={styles.toggleSub}>{t('create.guardian_spec')}</Text>
+                            {/* EventCap instructions */}
+                            {selectedType === 'eventcap' && (
+                                <View style={[styles.fixedDateCard, { borderColor: Colors.eventCap + '44', backgroundColor: Colors.eventCapLight }]}>
+                                    <View style={[styles.modernTypeIconBg, { backgroundColor: Colors.eventCap, marginBottom: 0 }]}>
+                                        <Ionicons name="sync" size={24} color="#fff" />
+                                    </View>
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={[styles.fixedDateLabel, { color: Colors.eventCap }]}>{t('create.event_sync_opening')}</Text>
+                                        <Text style={styles.fixedDateSub}>
+                                            {t('create.event_sync_desc')}
+                                        </Text>
                                     </View>
                                 </View>
-                                <Switch
-                                    value={capAngel}
-                                    onValueChange={setCapAngel}
-                                    trackColor={{ false: Colors.border, true: activeThemeColor + '66' }}
-                                    thumbColor={capAngel ? activeThemeColor : Colors.textMuted}
-                                />
-                            </TouchableOpacity>
-
-                            {capAngel && (
-                                <View style={styles.inputGroup}>
-                                    <Text style={styles.inputLabel}>{t('create.guardian_selection')}</Text>
-
-                                    {selectedCapAngel && (
-                                        <View style={styles.memberTagsList}>
-                                            <View style={styles.memberTag}>
-                                                <Image source={{ uri: selectedCapAngel.avatar_url }} style={styles.tagAvatar} />
-                                                <Text style={styles.tagName}>{selectedCapAngel.username}</Text>
-                                                <TouchableOpacity onPress={() => { setSelectedCapAngel(null); setCapAngelHandle(''); }}>
-                                                    <Ionicons name="close-circle" size={16} color={Colors.textMuted} />
-                                                </TouchableOpacity>
-                                            </View>
-                                        </View>
-                                    )}
-
-                                    {!selectedCapAngel && (
-                                        <View style={styles.autocompleteWrapper}>
-                                            <View style={styles.searchBarWrapper}>
-                                                <Ionicons name="search" size={20} color={Colors.textMuted} />
-                                                <TextInput
-                                                    style={styles.searchBarInput}
-                                                    placeholder={t('create.search_guardian')}
-                                                    placeholderTextColor={Colors.textMuted}
-                                                    value={capAngelSearchQuery}
-                                                    onChangeText={setCapAngelSearchQuery}
-                                                    autoCapitalize="none"
-                                                    onFocus={() => scrollRef.current?.scrollToEnd({ animated: true })}
-                                                />
-                                                {searchingCapAngel && <ActivityIndicator size="small" color={activeThemeColor} />}
-                                            </View>
-
-                                            {capAngelSearchResults.length > 0 && (
-                                                <View style={styles.autocompleteDropdown}>
-                                                    <ScrollView keyboardShouldPersistTaps="handled">
-                                                        {capAngelSearchResults.map(user => (
-                                                            <TouchableOpacity
-                                                                key={user.id}
-                                                                style={styles.searchResultItem}
-                                                                onPress={() => selectCapAngel(user)}
-                                                            >
-                                                                <Image source={{ uri: user.avatar_url }} style={styles.resultAvatar} />
-                                                                <View style={{ flex: 1 }}>
-                                                                    <Text style={styles.resultName}>{user.display_name}</Text>
-                                                                    <Text style={styles.resultUsername}>@{user.username}</Text>
-                                                                </View>
-                                                                <Ionicons name="add-circle-outline" size={24} color={activeThemeColor} />
-                                                            </TouchableOpacity>
-                                                        ))}
-                                                    </ScrollView>
-                                                </View>
-                                            )}
-                                            {capAngelSearchQuery.length > 0 && capAngelSearchResults.length === 0 && !searchingCapAngel && (
-                                                <View style={[styles.autocompleteDropdown, { padding: 15, alignItems: 'center' }]}>
-                                                    <Text style={{ color: Colors.textMuted, fontSize: 13, fontFamily: Fonts.medium }}>{t('create.no_users_found_capangel', { query: capAngelSearchQuery })}</Text>
-                                                </View>
-                                            )}
-                                        </View>
-                                    )}
-                                    <Text style={styles.helperText}>{t('create.capangel_helper')}</Text>
-                                </View>
                             )}
-
-                            <View style={[styles.infoBox, { marginTop: 20 }]}>
-                                <Ionicons name="information-circle-outline" size={20} color={Colors.textMuted} />
-                                <Text style={styles.infoBoxText}>
-                                    {t('create.capangel_info_box')}
-                                </Text>
-                            </View>
                         </View>
                     )}
+
+
+
 
 
 
                     {/* ═══ STEP 5: REVIEW ══════════════════════════════════════ */}
                     {currentStep === 'review' && (
                         <View style={styles.step}>
-                            <Text style={styles.stepTitle}>{t('create.ready_to_seal')}</Text>
-                            <Text style={styles.stepSub}>{t('create.review_sub')}</Text>
+                            <View style={styles.stepHeaderCenter}>
+                                <Text style={styles.stepTitleCenter}>{t('create.step4_title')}</Text>
+                                <Text style={styles.stepSubCenter}>{t('create.step4_sub')}</Text>
+                            </View>
 
-                            {/* Capsule model preview - Clean PNG Hero */}
+                            {/* Review Hero — emotional, clean */}
                             <View style={styles.reviewHero}>
-                                <LinearGradient
-                                    colors={['transparent', activeThemeColor + '11', 'transparent']}
-                                    style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 260, borderRadius: 100 }}
-                                />
-                                <View style={styles.modelContainerLarge}>
-                                    <CapsuleWithTimer
-                                        modelKey={selectedModel}
-                                        source={{ uri: activeModel.image }}
-                                        date={openingDate}
-                                        chainId={selectedChainId}
-                                        capsuleType={selectedType || undefined}
-                                        style={styles.reviewHeroImg}
+                                {/* Radial glow behind capsule */}
+                                <View style={styles.reviewGlowWrap}>
+                                    <LinearGradient
+                                        colors={[activeThemeColor + '28', activeThemeColor + '00']}
+                                        style={[StyleSheet.absoluteFill, { borderRadius: 140 }]}
                                     />
-                                    <View style={[styles.cornerTypeIconLarge, { backgroundColor: activeThemeColor }]}>
-                                        <Ionicons name={activeCfg?.icon as any} size={14} color="#fff" />
+                                    <View style={styles.modelContainerLarge}>
+                                        <CapsuleWithTimer
+                                            modelKey={selectedModel}
+                                            source={{ uri: activeModel.image }}
+                                            date={openingDate}
+                                            chainId={selectedChainId}
+                                            capsuleType={selectedType || undefined}
+                                            style={styles.reviewHeroImg}
+                                            hideParticles={false}
+                                        />
+                                        <View style={[styles.cornerTypeIconLarge, { backgroundColor: activeThemeColor }]}>
+                                            <Ionicons name={activeCfg?.icon as any} size={14} color="#fff" />
+                                        </View>
                                     </View>
                                 </View>
 
-                                <View style={[styles.reviewTypeBadge, { backgroundColor: activeThemeColor + '18', borderColor: activeThemeColor + '44', marginTop: 10 }]}>
+                                <View style={[styles.reviewTypeBadge, { backgroundColor: activeThemeColor + '18', borderColor: activeThemeColor + '44', marginTop: 8 }]}>
                                     <Text style={[styles.reviewTypeBadgeText, { color: activeThemeColor }]}>{activeCfg?.title ?? t('create.capsule')}</Text>
                                 </View>
                                 <Text style={styles.reviewTitle}>{title || t('create.untitled_capsule')}</Text>
+                                <Text style={styles.reviewSubTitle}>{t('create.step4_sub')}</Text>
                             </View>
 
-                            {/* Checklist */}
+                            {/* Summary card */}
+                            <View style={styles.reviewCardSection}>
                             {[
                                 { label: t('create.type'), value: activeCfg?.title ?? '—', done: !!selectedType },
                                 { label: t('create.title'), value: title || t('create.not_set'), done: title.length > 0 },
                                 { label: t('create.duration'), value: selectedType === 'legacycap' ? t('create.five_years') : selectedType === 'eventcap' ? t('create.event_sync') : finalDays ? daysToLabel(finalDays) : t('create.not_set'), done: !!finalDays || selectedType !== 'instacap' },
                                 { label: t('create.model'), value: activeModel.label, done: true },
                                 { label: t('create.capangel'), value: capAngel ? (capAngelHandle || t('create.set')) : t('create.skipped'), done: capAngel },
-                            ].map((item, i) => (
-                                <View key={i} style={styles.reviewRow}>
+                            ].map((item, i, arr) => (
+                                <View key={i} style={[styles.reviewRow, i === arr.length - 1 && { borderBottomWidth: 0 }]}>
                                     <View style={[styles.reviewCheck,
-                                    item.done ? { backgroundColor: Colors.success + '18', borderColor: Colors.success + '55' } :
-                                        { backgroundColor: Colors.cardAlt, borderColor: Colors.border }]}>
+                                        item.done ? { backgroundColor: Colors.success + '18', borderColor: Colors.success + '44' } :
+                                            { backgroundColor: Colors.cardAlt, borderColor: Colors.border }]}>
                                         <Ionicons name={item.done ? 'checkmark' : 'remove'} size={12} color={item.done ? Colors.success : Colors.textMuted} />
                                     </View>
                                     <Text style={styles.reviewRowLabel}>{item.label}</Text>
                                     <Text style={[styles.reviewRowValue, !item.done && { color: Colors.textMuted }]}>{item.value}</Text>
                                 </View>
                             ))}
+                            </View>
 
                             {selectedType === 'legacycap' && (
                                 <View style={[styles.warningBox, { borderColor: Colors.legacyCap + '44', backgroundColor: Colors.legacyCapLight }]}>
@@ -2263,34 +2317,34 @@ export default function CapsuleCreationScreen() {
                                     <Text style={[styles.floatingNavText, { color: activeThemeColor }]}>{t('create.back').toUpperCase()}</Text>
                                 </TouchableOpacity>
                                 
-                                    <TouchableOpacity
-                                        onPress={goNext}
-                                        disabled={
-                                            (currentStep === 'type' && !selectedType) ||
-                                            (currentStep === 'content' && (!title.trim() || !description.trim())) ||
-                                            (currentStep === 'schedule' && selectedType === 'instacap' && !selectedPreset && !showCustomSlider)
-                                        }
-                                        style={[
-                                            styles.floatingNavBtn,
-                                            { flex: 1, backgroundColor: activeThemeColor },
-                                            ((currentStep === 'type' && !selectedType) ||
-                                            (currentStep === 'content' && (!title.trim() || !description.trim())) ||
-                                            (currentStep === 'schedule' && selectedType === 'instacap' && !selectedPreset && !showCustomSlider)) && { opacity: 0.3 }
-                                        ]}
-                                        activeOpacity={0.7}
-                                    >
-                                        <Text style={styles.floatingNavTextNext}>{t('create.next').toUpperCase()}</Text>
-                                        <Ionicons name="chevron-forward" size={16} color="#fff" />
-                                    </TouchableOpacity>
+                                <TouchableOpacity
+                                    onPress={goNext}
+                                    disabled={
+                                        (currentStep === 'format' && !selectedType) ||
+                                        (currentStep === 'identity' && (!title.trim() || !description.trim())) ||
+                                        (currentStep === 'timing' && selectedType === 'instacap' && !selectedPreset && !showCustomSlider)
+                                    }
+                                    style={[
+                                        styles.floatingNavBtn,
+                                        { flex: 1, backgroundColor: activeThemeColor },
+                                        ((currentStep === 'format' && !selectedType) ||
+                                        (currentStep === 'identity' && (!title.trim() || !description.trim())) ||
+                                        (currentStep === 'timing' && selectedType === 'instacap' && !selectedPreset && !showCustomSlider)) && { opacity: 0.3 }
+                                    ]}
+                                    activeOpacity={0.7}
+                                >
+                                    <Text style={styles.floatingNavTextNext}>{t('create.next').toUpperCase()}</Text>
+                                    <Ionicons name="chevron-forward" size={16} color="#fff" />
+                                </TouchableOpacity>
                             </>
                         ) : (
                             <TouchableOpacity
                                 onPress={goNext}
-                                disabled={!selectedType}
+                                disabled={!title.trim() || !description.trim()}
                                 style={[
                                     styles.floatingNavBtn,
                                     { flex: 1, backgroundColor: activeThemeColor, marginHorizontal: 10 },
-                                    (!selectedType) && { opacity: 0.3 }
+                                    (!title.trim() || !description.trim()) && { opacity: 0.3 }
                                 ]}
                                 activeOpacity={0.7}
                             >
@@ -2310,7 +2364,11 @@ export default function CapsuleCreationScreen() {
                 animationType="fade"
                 onRequestClose={() => setShowModelModal(false)}
             >
-                <Pressable style={styles.modalOverlay} onPress={() => setShowModelModal(false)}>
+                <Pressable 
+                    style={styles.modalOverlay} 
+                    onPress={() => setShowModelModal(false)}
+                    android_ripple={{ color: 'transparent' }}
+                >
                     <AnimatableModalContent
                         availableModels={availableModels}
                         selectedModel={selectedModel}
@@ -2340,6 +2398,7 @@ function AnimatableModalContent({
     selectedChainId, onSelectChain, activeThemeColor,
     selectedType, onClose
 }: any) {
+    const { t } = useTranslation();
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const slideAnim = useRef(new Animated.Value(50)).current;
 
@@ -2359,16 +2418,16 @@ function AnimatableModalContent({
         >
             <View style={styles.modalHeader}>
                 <View>
-                    <Text style={styles.modalTitle}>Customize Appearance</Text>
-                    <Text style={styles.modalSub}>Select your capsule style and chain</Text>
+                    <Text style={styles.modalTitle}>{t('create.customize')}</Text>
+                    <Text style={styles.modalSub}>{t('create.select_style')}</Text>
                 </View>
-                <TouchableOpacity onPress={onClose} style={styles.modalCloseBtn}>
+                <TouchableOpacity activeOpacity={0.7} onPress={onClose} style={styles.modalCloseBtn}>
                     <Ionicons name="close" size={24} color={Colors.textPrimary} />
                 </TouchableOpacity>
             </View>
 
             <ScrollView style={styles.modalContent} showsVerticalScrollIndicator={false}>
-                <Text style={styles.modalSectionLabel}>CAPSULE MODELS</Text>
+                <Text style={styles.modalSectionLabel}>{t('create.models')}</Text>
                 <View style={[styles.modelGrid, { paddingBottom: 20 }]}>
                     {availableModels.filter((m: any) => {
                         if (m.is_active === false) return false;
@@ -2390,21 +2449,23 @@ function AnimatableModalContent({
                     ))}
                 </View>
 
-                <Text style={styles.modalSectionLabel}>PENDANT CHAINS</Text>
+                <Text style={styles.modalSectionLabel}>{t('create.chains')}</Text>
                 <View style={styles.chainGridCompact}>
                     <TouchableOpacity
                         style={[styles.modalChainCard, !selectedChainId && { borderColor: activeThemeColor, backgroundColor: activeThemeColor + '10' }]}
+                        activeOpacity={0.8}
                         onPress={() => onSelectChain(null)}
                     >
                         <View style={styles.chainIconBgSmall}>
                             <Ionicons name="close" size={20} color={Colors.textMuted} />
                         </View>
-                        <Text style={[styles.modalChainLabel, !selectedChainId && { color: activeThemeColor }]}>None</Text>
+                        <Text style={[styles.modalChainLabel, !selectedChainId && { color: activeThemeColor }]}>{t('common.cancel')}</Text>
                     </TouchableOpacity>
                     {timerConfigManager.getChainLibrary().filter(c => c.is_active !== false).map(chain => (
                         <TouchableOpacity
                             key={chain.id}
                             style={[styles.modalChainCard, selectedChainId === chain.id && { borderColor: activeThemeColor, backgroundColor: activeThemeColor + '10' }]}
+                            activeOpacity={0.8}
                             onPress={() => onSelectChain(chain.id)}
                         >
                             <View style={styles.chainIconBgSmall}>
@@ -2418,9 +2479,10 @@ function AnimatableModalContent({
 
             <TouchableOpacity
                 style={[styles.modalConfirmBtn, { backgroundColor: activeThemeColor }]}
+                activeOpacity={0.8}
                 onPress={onClose}
             >
-                <Text style={styles.modalConfirmText}>Looks Perfect</Text>
+                <Text style={styles.modalConfirmText}>{t('common.done')}</Text>
             </TouchableOpacity>
         </Animated.View>
     );

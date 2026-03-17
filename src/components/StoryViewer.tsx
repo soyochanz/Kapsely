@@ -17,20 +17,104 @@ import { supabase } from '../lib/supabase';
 
 const { width, height } = Dimensions.get('window');
 
-const MysteryOverlay = ({ seed }: { seed: string }) => {
-    const side = parseInt(seed.replace(/-/g, '').slice(-1), 16) % 4;
+const AnimatedLikeButton = ({ 
+    hasLiked, 
+    likesCount, 
+    onPress,
+    setIsPaused
+}: { 
+    hasLiked: boolean, 
+    likesCount: number, 
+    onPress: () => void,
+    setIsPaused: (p: boolean) => void
+}) => {
+    const scaleAnim = React.useRef(new Animated.Value(1)).current;
+
+    const handlePress = () => {
+        setIsPaused(true);
+        Animated.sequence([
+            Animated.timing(scaleAnim, { toValue: 1.4, duration: 150, useNativeDriver: true }),
+            Animated.spring(scaleAnim, { toValue: 1, friction: 3, tension: 50, useNativeDriver: true })
+        ]).start();
+        onPress();
+        setTimeout(() => setIsPaused(false), 500);
+    };
+
     return (
-        <View style={RNStyleSheet.absoluteFill}>
-            <View style={[
-                { backgroundColor: '#000', position: 'absolute' },
-                side === 0 && { top: 0, left: 0, right: 0, height: '50%' },
-                side === 1 && { bottom: 0, left: 0, right: 0, height: '50%' },
-                side === 2 && { top: 0, left: 0, bottom: 0, width: '50%' },
-                side === 3 && { top: 0, right: 0, bottom: 0, width: '50%' },
-            ]} />
-        </View>
+        <TouchableOpacity 
+            style={styles.likeBtn} 
+            activeOpacity={0.9}
+            onPress={handlePress}
+        >
+            <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
+                <Ionicons 
+                    name={hasLiked ? "heart" : "heart-outline"} 
+                    size={38} 
+                    color={hasLiked ? "#FF3B30" : "#FFF"} 
+                    style={{ textShadowColor: 'rgba(0,0,0,0.6)', textShadowOffset: {width: 0, height: 2}, textShadowRadius: 8}} 
+                />
+            </Animated.View>
+            {(likesCount > 0) && (
+                <Text style={styles.likeText}>{likesCount}</Text>
+            )}
+        </TouchableOpacity>
     );
-}
+};
+
+const LikersModal = ({ visible, onClose, storyId }: { visible: boolean, onClose: () => void, storyId: string }) => {
+    const { insets } = { insets: { bottom: 20 } }; 
+    const [likers, setLikers] = useState<any[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        if (!visible) return;
+        setLoading(true);
+        supabase
+            .from('story_likes')
+            .select(`
+                user_id,
+                profiles:user_id ( id, username, display_name, avatar_url )
+            `)
+            .eq('story_id', storyId)
+            .order('created_at', { ascending: false })
+            .then(({ data }) => {
+                if (data) setLikers(data.map((d: any) => d.profiles));
+                setLoading(false);
+            });
+    }, [visible, storyId]);
+
+    return (
+        <Modal visible={visible} transparent animationType="slide">
+            <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+                <Pressable style={RNStyleSheet.absoluteFill} onPress={onClose}>
+                    <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} />
+                </Pressable>
+                <View style={{ backgroundColor: Colors.surface, borderTopLeftRadius: 25, borderTopRightRadius: 25, padding: 20, minHeight: 300, paddingBottom: 20 + insets.bottom }}>
+                    <View style={{ width: 40, height: 4, backgroundColor: Colors.border, borderRadius: 2, alignSelf: 'center', marginBottom: 20 }} />
+                    <Text style={{ fontSize: 18, fontFamily: Fonts.bold, color: Colors.textPrimary, marginBottom: 15 }}>Likes</Text>
+                    {loading ? (
+                        <Text style={{ textAlign: 'center', marginTop: 20, color: Colors.textMuted }}>Cargando...</Text>
+                    ) : likers.length === 0 ? (
+                        <Text style={{ textAlign: 'center', marginTop: 20, color: Colors.textMuted }}>Aún no hay likes.</Text>
+                    ) : (
+                        likers.map((user, i) => (
+                            <View key={i} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 15 }}>
+                                <Image source={{ uri: user.avatar_url || 'https://via.placeholder.com/150' }} style={{ width: 40, height: 40, borderRadius: 20, marginRight: 12, backgroundColor: Colors.border }} />
+                                <View style={{ flex: 1 }}>
+                                    <Text style={{ fontSize: 15, fontFamily: Fonts.bold, color: Colors.textPrimary }}>{user.display_name}</Text>
+                                    <Text style={{ fontSize: 13, fontFamily: Fonts.medium, color: Colors.textMuted }}>@{user.username}</Text>
+                                </View>
+                                <Ionicons name="heart" size={20} color="#FF3B30" />
+                            </View>
+                        ))
+                    )}
+                </View>
+            </View>
+        </Modal>
+    );
+};
+
+
 
 interface StoryViewerProps {
     visible: boolean;
@@ -56,8 +140,15 @@ export default function StoryViewer({
     const [activeIndex, setActiveIndex] = useState(0);
     const [progress] = useState(new Animated.Value(0));
     const [isPaused, setIsPaused] = useState(false);
+    
+    // Per-story states mapped by story id
+    const [likesData, setLikesData] = useState<Record<string, { count: number, hasLiked: boolean }>>({});
+    const [showLikersId, setShowLikersId] = useState<string | null>(null);
+    const lastUserGroupRef = React.useRef<any>(null);
 
     const progressRef = React.useRef(0);
+    const ownerId = userGroup?.owner_id || userGroup?.id;
+    const isOwner = ownerId === currentUserId;
 
     useEffect(() => {
         const listener = progress.addListener(({ value }) => {
@@ -70,14 +161,48 @@ export default function StoryViewer({
 
     useEffect(() => {
         if (visible && userGroup) {
+            // Start at first unread story when userGroup changes
+            if (lastUserGroupRef.current !== userGroup) {
+                lastUserGroupRef.current = userGroup;
+                const firstUnread = userGroup.stories.findIndex((s: any) => !s.is_read);
+                if (firstUnread !== -1) {
+                    setActiveIndex(firstUnread);
+                    return; // Wait for index update to trigger effect again
+                }
+            }
+
             progress.stopAnimation();
             progress.setValue(0);
             progressRef.current = 0;
+            
+            // Fetch likes info for current active story if not already loaded
+            const currentStory = userGroup.stories[activeIndex];
+            if (currentStory && !likesData[currentStory.id]) {
+                fetchLikesData(currentStory.id);
+            }
+        } else if (!visible) {
+            // Reset ref when closing to allow re-initialization next time
+            lastUserGroupRef.current = null;
         }
     }, [activeIndex, userGroup, visible]);
 
+    const fetchLikesData = async (storyId: string) => {
+        const { count } = await supabase.from('story_likes').select('*', { count: 'exact', head: true }).eq('story_id', storyId);
+        
+        let hasLiked = false;
+        if (currentUserId) {
+            const { data } = await supabase.from('story_likes').select('id').eq('story_id', storyId).eq('user_id', currentUserId).maybeSingle();
+            hasLiked = !!data;
+        }
+
+        setLikesData(prev => ({
+            ...prev,
+            [storyId]: { count: count || 0, hasLiked }
+        }));
+    };
+
     useEffect(() => {
-        if (visible && userGroup) {
+        if (visible && userGroup && !showLikersId) {
             if (!isPaused) {
                 const remainingDuration = 5000 * (1 - progressRef.current);
                 Animated.timing(progress, {
@@ -96,8 +221,39 @@ export default function StoryViewer({
             } else {
                 progress.stopAnimation();
             }
+        } else {
+            progress.stopAnimation();
         }
-    }, [visible, userGroup, activeIndex, isPaused]);
+    }, [visible, userGroup, activeIndex, isPaused, showLikersId]);
+
+    const handleToggleLike = async (storyId: string) => {
+        if (!currentUserId) return;
+        const currentData = likesData[storyId] || { count: 0, hasLiked: false };
+        
+        setLikesData(prev => ({
+            ...prev,
+            [storyId]: { 
+                count: currentData.hasLiked ? Math.max(0, currentData.count - 1) : currentData.count + 1,
+                hasLiked: !currentData.hasLiked 
+            }
+        }));
+
+        if (currentData.hasLiked) {
+            await supabase.from('story_likes').delete().eq('story_id', storyId).eq('user_id', currentUserId);
+        } else {
+            await supabase.from('story_likes').insert({ story_id: storyId, user_id: currentUserId });
+            // Send notification to the owner if not current user
+            if (ownerId && ownerId !== currentUserId) {
+                await supabase.from('notifications').insert({
+                    user_id: ownerId,
+                    sender_id: currentUserId,
+                    type: 'story_like',
+                    message: 'ha dado like a tu Flash',
+                    is_read: false
+                }).select();
+            }
+        }
+    };
 
     const nextStory = () => {
         if (activeIndex < userGroup.stories.length - 1) {
@@ -144,16 +300,36 @@ export default function StoryViewer({
                         resizeMode="cover"
                     />
 
-                    {currentStory.is_mystery && (
-                        <MysteryOverlay seed={currentStory.id} />
-                    )}
+                    <Image 
+                        source={{ uri: currentStory.media_url }} 
+                        style={styles.storyBackground}
+                        resizeMode="cover"
+                    />
 
                     <LinearGradient colors={['rgba(0,0,0,0.6)', 'transparent', 'rgba(0,0,0,0.4)']} style={RNStyleSheet.absoluteFill} />
 
                     <View style={styles.gestureOverlay}>
-                        <Pressable style={styles.gestureSide} onPress={prevStory} />
-                        <View style={{ flex: 1 }} />
-                        <Pressable style={styles.gestureSide} onPress={nextStory} />
+                        <Pressable 
+                            style={styles.gestureSide} 
+                            onPress={prevStory}
+                            onPressIn={() => setIsPaused(true)}
+                            onPressOut={() => setIsPaused(false)}
+                            onLongPress={() => {}}
+                            delayLongPress={300}
+                        />
+                        <Pressable 
+                            style={{ flex: 1 }} 
+                            onPressIn={() => setIsPaused(true)}
+                            onPressOut={() => setIsPaused(false)}
+                        />
+                        <Pressable 
+                            style={styles.gestureSide} 
+                            onPress={nextStory}
+                            onPressIn={() => setIsPaused(true)}
+                            onPressOut={() => setIsPaused(false)}
+                            onLongPress={() => {}}
+                            delayLongPress={300}
+                        />
                     </View>
 
                     <TouchableOpacity
@@ -181,6 +357,22 @@ export default function StoryViewer({
                         </BlurView>
                     </TouchableOpacity>
 
+                    {/* Like Button */}
+                    <View style={styles.floatingRight}>
+                        <AnimatedLikeButton 
+                            hasLiked={likesData[currentStory.id]?.hasLiked || false}
+                            likesCount={likesData[currentStory.id]?.count || 0}
+                            onPress={() => {
+                                if (isOwner) {
+                                    setShowLikersId(currentStory.id);
+                                } else {
+                                    handleToggleLike(currentStory.id);
+                                }
+                            }}
+                            setIsPaused={setIsPaused}
+                        />
+                    </View>
+
                     <View style={[styles.header, { paddingTop: insets.top + 15 }]}>
                         <View style={styles.progressBars}>
                             {userGroup.stories.map((s: any, i: number) => (
@@ -202,11 +394,21 @@ export default function StoryViewer({
                         </View>
 
                         <View style={styles.userInfo}>
-                            <Image source={{ uri: userGroup.avatar_url || 'https://via.placeholder.com/150' }} style={styles.avatarSmall} />
-                            <View>
-                                <Text style={styles.username}>{userGroup.username}</Text>
-                                <Text style={styles.capsuleTitle}>{currentStory.capsules.title}</Text>
-                            </View>
+                            <TouchableOpacity 
+                                style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}
+                                activeOpacity={0.8}
+                                onPress={() => {
+                                    progress.stopAnimation();
+                                    onClose();
+                                    navigation.navigate('UserProfile', { targetUserId: ownerId });
+                                }}
+                            >
+                                <Image source={{ uri: userGroup.avatar_url || 'https://via.placeholder.com/150' }} style={styles.avatarSmall} />
+                                <View>
+                                    <Text style={styles.username}>{userGroup.display_name || userGroup.username}</Text>
+                                    <Text style={styles.capsuleTitle}>{currentStory.capsules.title}</Text>
+                                </View>
+                            </TouchableOpacity>
                             <View style={{ flex: 1 }} />
                             <TouchableOpacity onPress={onClose}>
                                 <Ionicons name="close" size={32} color="#fff" />
@@ -215,6 +417,12 @@ export default function StoryViewer({
                     </View>
                 </Pressable>
             </View>
+
+            <LikersModal 
+                visible={!!showLikersId} 
+                onClose={() => setShowLikersId(null)} 
+                storyId={showLikersId || ''} 
+            />
         </Modal>
     );
 }
@@ -232,9 +440,12 @@ const styles = RNStyleSheet.create({
     avatarSmall: { width: 32, height: 32, borderRadius: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.5)' },
     username: { color: '#fff', fontSize: 14, fontFamily: Fonts.bold },
     capsuleTitle: { color: 'rgba(255,255,255,0.8)', fontSize: 12, fontFamily: Fonts.medium },
-    floatingCapsule: { position: 'absolute', bottom: 40, alignSelf: 'center' },
-    blurCapsule: { borderRadius: 20, overflow: 'hidden' },
-    floatingCapsuleInner: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8, gap: 10 },
-    floatingModelImg: { width: 24, height: 24 },
-    floatingModelText: { color: '#fff', fontSize: 13, fontFamily: Fonts.bold },
+    floatingCapsule: { position: 'absolute', bottom: 50, alignSelf: 'center', zIndex: 10 },
+    blurCapsule: { borderRadius: 28, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' },
+    floatingCapsuleInner: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 10, gap: 12 },
+    floatingModelImg: { width: 36, height: 36 },
+    floatingModelText: { color: '#fff', fontSize: 14, fontFamily: Fonts.semiBold },
+    floatingRight: { position: 'absolute', bottom: 40, right: 20, alignItems: 'center', zIndex: 10 },
+    likeBtn: { alignItems: 'center', justifyContent: 'center', gap: 4 },
+    likeText: { color: '#fff', fontSize: 13, fontFamily: Fonts.bold, textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: {width: 0, height: 1}, textShadowRadius: 4 },
 });

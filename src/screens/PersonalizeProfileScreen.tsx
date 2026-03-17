@@ -166,7 +166,7 @@ export default function PersonalizeProfileScreen() {
         <View style={styles.container}>
             <SafeAreaView style={styles.headerArea}>
                 <View style={styles.header}>
-                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+                    <TouchableOpacity activeOpacity={0.7} onPress={() => navigation.goBack()} style={styles.backBtn}>
                         <Ionicons name="chevron-back" size={24} color={Colors.textPrimary} />
                     </TouchableOpacity>
                     <Text style={styles.headerTitle}>Personalize Profile</Text>
@@ -190,6 +190,7 @@ export default function PersonalizeProfileScreen() {
                         return (
                             <TouchableOpacity 
                                 key={i}
+                                activeOpacity={0.8}
                                 style={[
                                     styles.stickerSlot, 
                                     { 
@@ -233,7 +234,7 @@ export default function PersonalizeProfileScreen() {
                         <View style={styles.modalHandle} />
                         <View style={styles.modalHeaderRow}>
                             <Text style={styles.modalTitle}>Select a Sticker</Text>
-                            <TouchableOpacity onPress={() => setShowPicker(false)}>
+                            <TouchableOpacity activeOpacity={0.7} onPress={() => setShowPicker(false)}>
                                 <Ionicons name="close" size={24} color={Colors.textPrimary} />
                             </TouchableOpacity>
                         </View>
@@ -241,6 +242,7 @@ export default function PersonalizeProfileScreen() {
                         <ScrollView contentContainerStyle={styles.stickerPickerGrid} showsVerticalScrollIndicator={false}>
                             <TouchableOpacity 
                                 style={styles.stickerOption} 
+                                activeOpacity={0.7}
                                 onPress={() => handleSelectSticker(null)}
                             >
                                 <View style={[styles.stickerOptionIcon, { backgroundColor: '#f5f5f5' }]}>

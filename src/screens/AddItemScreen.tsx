@@ -1,23 +1,30 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, TextInput, ActivityIndicator, SafeAreaView, ScrollView, Alert, Platform, Modal } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Image, TextInput, ActivityIndicator, SafeAreaView, ScrollView, Alert, Platform, Modal, StatusBar } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useTranslation } from 'react-i18next';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Audio, Video, ResizeMode } from 'expo-av';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
-import { supabase } from '../lib/supabase';
+import { BlurView } from 'expo-blur';
+import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from '../lib/supabase';
 import { decode } from 'base64-arraybuffer';
+import { LinearGradient } from 'expo-linear-gradient';
 
 export default function AddItemScreen() {
     const navigation = useNavigation<any>();
     const route = useRoute();
+    const { t } = useTranslation();
     const { capsuleId, type: contentType }: any = route.params || {};
+    const insets = useSafeAreaInsets();
 
     const [loading, setLoading] = useState(false);
     const [mediaList, setMediaList] = useState<any[]>([]);
+    const [uploadProgress, setUploadProgress] = useState<{ [key: string]: number }>({});
     const [text, setText] = useState('');
     const [caption, setCaption] = useState('');
 
@@ -90,7 +97,7 @@ export default function AddItemScreen() {
         try {
             const permission = await ImagePicker.requestCameraPermissionsAsync();
             if (permission.status !== 'granted') {
-                Alert.alert('Permission Denied', 'Please enable camera permissions in settings.');
+                Alert.alert(t('common.permission_required'), t('common.camera_permission'));
                 return;
             }
 
@@ -105,7 +112,7 @@ export default function AddItemScreen() {
             }
         } catch (e) {
             console.error('Camera error:', e);
-            Alert.alert('Error', 'Failed to open camera.');
+            Alert.alert(t('common.error'), t('common.upload_failed'));
         }
     };
 
@@ -156,6 +163,7 @@ export default function AddItemScreen() {
         if (contentType === 'audio' && !recordedUri) return;
         if ((contentType === 'image' || contentType === 'video') && mediaList.length === 0) return;
 
+        const batchId = Math.random().toString(36).substring(2, 11);
         setLoading(true);
 
         try {
@@ -203,52 +211,74 @@ export default function AddItemScreen() {
                 content: (contentType === 'audio' || contentType === 'video') && res.duration 
                     ? `${Math.floor(res.duration / 60000)}:${Math.floor((res.duration % 60000) / 1000).toString().padStart(2, '0')}`
                     : (text || null),
-                caption: caption || null,
+                caption: caption ? `${caption} !!b:${batchId}` : `!!b:${batchId}`,
             }));
 
             const { error } = await supabase.from('capsule_items').insert(entries);
 
             if (error) throw error;
 
-            Alert.alert('Success', `${entries.length} item${entries.length > 1 ? 's' : ''} added to your capsule!`);
+            Alert.alert(t('common.success'), t('common.items_added', { count: entries.length }));
             navigation.pop(2); // Go back to CapsuleDetail
         } catch (err: any) {
             console.error(err);
-            Alert.alert('Error', err.message || 'Failed to upload items');
+            Alert.alert(t('common.error'), err.message || t('common.upload_failed'));
         } finally {
             setLoading(false);
         }
     };
 
     const uploadFile = async (uri: string, type: string, userId: string, isThumbnail = false) => {
-        const ext = uri.split('.').pop() || (type === 'audio' ? 'm4a' : 'jpg');
+        let ext = 'jpg';
+        const lastDot = uri.lastIndexOf('.');
+        if (lastDot !== -1 && lastDot > uri.lastIndexOf('/')) {
+            ext = uri.substring(lastDot + 1).split('?')[0]; // Strip query params
+        } else {
+            ext = type === 'audio' ? 'm4a' : type === 'video' ? 'mp4' : 'jpg';
+        }
+
         const fileName = `${userId}/${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
         const filePath = isThumbnail ? `thumbnails/${fileName}` : `items/${fileName}`;
+        const contentType = type === 'video' ? 'video/mp4' : type === 'audio' ? 'audio/x-m4a' : 'image/jpeg';
 
-        const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
-        const body = decode(base64);
+        try {
+            const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+            const body = decode(base64);
 
-        const { error: uploadError } = await supabase.storage
-            .from('capsule-media')
-            .upload(filePath, body, {
-                contentType: type === 'video' ? 'video/mp4' : type === 'audio' ? 'audio/x-m4a' : 'image/jpeg',
-                upsert: true
-            });
+            if (!isThumbnail) {
+                setUploadProgress(prev => ({ ...prev, [uri]: 20 })); // Fake progress start
+            }
 
-        if (uploadError) throw uploadError;
+            const { data, error } = await supabase.storage
+                .from('capsule-media')
+                .upload(filePath, body, {
+                    contentType: contentType,
+                    upsert: true
+                });
 
-        const { data: { publicUrl } } = supabase.storage.from('capsule-media').getPublicUrl(filePath);
-        return publicUrl;
+            if (error) throw error;
+
+            if (!isThumbnail) {
+                setUploadProgress(prev => ({ ...prev, [uri]: 100 })); // Fake progress end
+            }
+
+            const { data: { publicUrl } } = supabase.storage.from('capsule-media').getPublicUrl(filePath);
+            return publicUrl;
+        } catch (error: any) {
+            console.error('File upload error:', error);
+            throw new Error(`Upload failed: ${error.message || 'Network error'}`);
+        }
     };
 
     return (
-        <SafeAreaView style={styles.container}>
+        <View style={[styles.container, { paddingTop: insets.top }]}>
+            <StatusBar barStyle="dark-content" backgroundColor={Colors.background} />
             <View style={styles.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()}>
+                <TouchableOpacity activeOpacity={0.7} onPress={() => navigation.goBack()}>
                     <Ionicons name="close" size={28} color={Colors.textPrimary} />
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>Add {contentType}</Text>
-                <TouchableOpacity onPress={handleUpload} disabled={loading || (contentType === 'note' && !text) || (contentType === 'audio' && !recordedUri) || ((contentType === 'image' || contentType === 'video') && mediaList.length === 0)}>
+                <TouchableOpacity activeOpacity={0.8} onPress={handleUpload} disabled={loading || (contentType === 'note' && !text) || (contentType === 'audio' && !recordedUri) || ((contentType === 'image' || contentType === 'video') && mediaList.length === 0)}>
                     {loading ? <ActivityIndicator size="small" color={Colors.primary} /> : <Text style={styles.postBtn}>Add</Text>}
                 </TouchableOpacity>
             </View>
@@ -269,6 +299,7 @@ export default function AddItemScreen() {
                     <View style={styles.recordingSection}>
                         <TouchableOpacity
                             style={[styles.recordBtn, isRecording && styles.recordBtnActive]}
+                            activeOpacity={0.9}
                             onPress={isRecording ? stopRecording : startRecording}
                         >
                             <Ionicons name={isRecording ? "stop" : "mic"} size={40} color="#fff" />
@@ -277,7 +308,7 @@ export default function AddItemScreen() {
                             {isRecording ? "Recording..." : recordedUri ? "Recording saved" : "Tap to record voice note"}
                         </Text>
                         {recordedUri && (
-                            <TouchableOpacity style={styles.retryBtn} onPress={() => setRecordedUri(null)}>
+                            <TouchableOpacity style={styles.retryBtn} activeOpacity={0.7} onPress={() => setRecordedUri(null)}>
                                 <Text style={styles.retryText}>Discard & Retry</Text>
                             </TouchableOpacity>
                         )}
@@ -287,49 +318,74 @@ export default function AddItemScreen() {
                         <View style={styles.mediaContainer}>
                             {mediaList.length === 0 ? (
                                 <View style={styles.emptyMedia}>
-                                    <TouchableOpacity style={[styles.largeChoiceBtn, { backgroundColor: Colors.primary }]} onPress={captureMedia}>
-                                        <View style={styles.choiceIconCircle}>
-                                            <Ionicons name="camera" size={32} color="#fff" />
-                                        </View>
-                                        <Text style={styles.choiceLabel}>Take Photo/Video</Text>
-                                        <Text style={styles.choiceSub}>Capture a new memory</Text>
+                                    <View style={styles.illustrationContainer}>
+                                        <View style={[styles.glowCircle, { backgroundColor: Colors.primary + '20' }]} />
+                                        <Ionicons name={contentType === 'image' ? 'images' : 'videocam'} size={80} color={Colors.primary} style={{ opacity: 0.8 }} />
+                                    </View>
+                                    
+                                    <TouchableOpacity style={styles.modernChoiceBtn} activeOpacity={0.8} onPress={captureMedia}>
+                                        <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.modernChoiceGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+                                            <View style={styles.modernIconBox}>
+                                                <Ionicons name="camera" size={32} color="#fff" />
+                                            </View>
+                                            <View>
+                                                <Text style={styles.modernChoiceLabel}>Capture Now</Text>
+                                                <Text style={styles.modernChoiceSub}>Use your camera for a new memory</Text>
+                                            </View>
+                                        </LinearGradient>
                                     </TouchableOpacity>
                                     
-                                    <TouchableOpacity style={styles.largeChoiceBtn} onPress={pickMedia}>
-                                        <View style={[styles.choiceIconCircle, { backgroundColor: Colors.border }]}>
-                                            <Ionicons name="images" size={32} color={Colors.textPrimary} />
+                                    <TouchableOpacity style={[styles.modernChoiceBtn, { backgroundColor: Colors.cardAlt }]} activeOpacity={0.8} onPress={pickMedia}>
+                                        <View style={styles.modernChoiceGrad}>
+                                            <View style={[styles.modernIconBox, { backgroundColor: Colors.primary + '15' }]}>
+                                                <Ionicons name="library" size={32} color={Colors.primary} />
+                                            </View>
+                                            <View>
+                                                <Text style={[styles.modernChoiceLabel, { color: Colors.textPrimary }]}>From Gallery</Text>
+                                                <Text style={[styles.modernChoiceSub, { color: Colors.textMuted }]}>Choose from your photos and videos</Text>
+                                            </View>
                                         </View>
-                                        <Text style={styles.choiceLabel}>Choose from Gallery</Text>
-                                        <Text style={styles.choiceSub}>Select existing media</Text>
                                     </TouchableOpacity>
                                 </View>
                             ) : (
                                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.mediaList}>
-                                    {mediaList.map((item, index) => (
-                                        <View key={index} style={styles.mediaPreviewWrapper}>
-                                            <Image source={{ uri: item.thumbnailUri || item.uri }} style={styles.mediaPreview} />
-                                            {contentType === 'video' && (
-                                                <TouchableOpacity 
-                                                    style={styles.playOverlay} 
-                                                    onPress={() => setPreviewVideo(item.uri)}
-                                                >
-                                                    <View style={styles.playCircle}>
-                                                        <Ionicons name="play" size={30} color="#fff" />
-                                                    </View>
+                                    {mediaList.map((item, index) => {
+                                        const progress = uploadProgress[item.uri] || 0;
+                                        return (
+                                            <View key={index} style={styles.mediaPreviewWrapper}>
+                                                <Image source={{ uri: item.thumbnailUri || item.uri }} style={styles.mediaPreview} />
+                                                
+                                                {loading && progress < 100 && (
+                                                    <BlurView intensity={20} tint="dark" style={styles.progressOverlay}>
+                                                        <View style={{ alignItems: 'center', width: '100%' }}>
+                                                            <Text style={styles.progressText}>{progress}%</Text>
+                                                            <View style={styles.progressTrack}>
+                                                                <View style={[styles.progressBar, { width: `${progress}%` }]} />
+                                                            </View>
+                                                        </View>
+                                                    </BlurView>
+                                                )}
+
+                                                {contentType === 'video' && (
+                                                    <TouchableOpacity 
+                                                        style={styles.playOverlay} 
+                                                        activeOpacity={0.7}
+                                                        onPress={() => setPreviewVideo(item.uri)}
+                                                    >
+                                                        <View style={styles.playCircle}>
+                                                            <Ionicons name="play" size={30} color="#fff" />
+                                                        </View>
+                                                    </TouchableOpacity>
+                                                )}
+                                                <TouchableOpacity style={styles.removeBtn} activeOpacity={0.7} onPress={() => removeMedia(index)}>
+                                                    <Ionicons name="close-circle" size={24} color="#ff4757" />
                                                 </TouchableOpacity>
-                                            )}
-                                            <TouchableOpacity style={styles.removeBtn} onPress={() => removeMedia(index)}>
-                                                <Ionicons name="close-circle" size={24} color="#ff4757" />
-                                            </TouchableOpacity>
-                                        </View>
-                                    ))}
-                                    <TouchableOpacity style={[styles.addMoreBtn, { borderStyle: 'solid', backgroundColor: Colors.primary + '11', borderColor: Colors.primary }]} onPress={captureMedia}>
-                                        <Ionicons name="camera" size={32} color={Colors.primary} />
-                                        <Text style={{ fontSize: 10, fontFamily: Fonts.bold, color: Colors.primary, marginTop: 4 }}>Capture</Text>
-                                    </TouchableOpacity>
-                                    <TouchableOpacity style={styles.addMoreBtn} onPress={pickMedia}>
-                                        <Ionicons name="images" size={32} color={Colors.textMuted} />
-                                        <Text style={{ fontSize: 10, fontFamily: Fonts.medium, color: Colors.textMuted, marginTop: 4 }}>Gallery</Text>
+                                            </View>
+                                        );
+                                    })}
+                                    <TouchableOpacity style={[styles.addMoreBtnModern, { borderStyle: 'solid', backgroundColor: Colors.primary + '08', borderColor: Colors.primary + '30' }]} activeOpacity={0.8} onPress={captureMedia}>
+                                        <Ionicons name="add" size={32} color={Colors.primary} />
+                                        <Text style={{ fontSize: 10, fontFamily: Fonts.bold, color: Colors.primary, marginTop: 4 }}>Add more</Text>
                                     </TouchableOpacity>
                                 </ScrollView>
                             )}
@@ -349,86 +405,220 @@ export default function AddItemScreen() {
                                         style={styles.fullVideo}
                                     />
                                 )}
-                                <TouchableOpacity style={styles.closeVideo} onPress={() => setPreviewVideo(null)}>
+                                <TouchableOpacity style={styles.closeVideo} activeOpacity={0.7} onPress={() => setPreviewVideo(null)}>
                                     <Ionicons name="close-circle" size={40} color="#fff" />
                                 </TouchableOpacity>
                             </View>
                         </Modal>
 
-                        <TextInput
-                            style={styles.captionInput}
-                            placeholder="Add a caption... (optional)"
-                            value={caption}
-                            onChangeText={setCaption}
-                            autoCorrect={false}
-                            spellCheck={false}
-                        />
+                        <View style={styles.captionWrapper}>
+                            <Ionicons name="chatbubble-ellipses-outline" size={20} color={Colors.primary} style={styles.captionIcon} />
+                            <TextInput
+                                style={styles.captionInputModern}
+                                placeholder="Write a caption..."
+                                placeholderTextColor={Colors.textMuted}
+                                value={caption}
+                                onChangeText={setCaption}
+                                multiline={false}
+                                autoCorrect={false}
+                                spellCheck={false}
+                            />
+                        </View>
                     </>
                 )}
             </ScrollView>
-        </SafeAreaView>
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: Colors.background },
-    header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: Spacing.md, borderBottomWidth: 1, borderBottomColor: Colors.border },
+    header: { 
+        flexDirection: 'row', 
+        alignItems: 'center', 
+        justifyContent: 'space-between', 
+        paddingHorizontal: Spacing.md, 
+        paddingVertical: Platform.OS === 'android' ? 20 : Spacing.md,
+        height: Platform.OS === 'android' ? 80 : 64,
+        borderBottomWidth: 1, 
+        borderBottomColor: Colors.border + '44'
+    },
     headerTitle: { fontSize: 18, fontFamily: Fonts.bold, color: Colors.textPrimary, textTransform: 'capitalize' },
     postBtn: { color: Colors.primary, fontFamily: Fonts.bold, fontSize: 16 },
     content: { padding: Spacing.md },
-    textInput: { fontSize: 18, fontFamily: Fonts.regular, color: Colors.textPrimary, minHeight: 200, textAlignVertical: 'top' },
+    textInput: { 
+        fontSize: 18, 
+        fontFamily: Fonts.regular, 
+        color: Colors.textPrimary, 
+        minHeight: 250, 
+        textAlignVertical: 'top',
+        backgroundColor: Colors.cardAlt,
+        borderRadius: 20,
+        padding: 20,
+        borderWidth: 1,
+        borderColor: Colors.border,
+    },
     
-    mediaContainer: { marginBottom: 20, minHeight: 200 },
-    mediaList: { gap: 12, paddingRight: 20 },
-    mediaPreviewWrapper: { width: 140, height: 248, borderRadius: 12, overflow: 'hidden', backgroundColor: Colors.cardAlt },
+    mediaContainer: { marginBottom: 30, minHeight: 280 },
+    mediaList: { paddingHorizontal: 4, gap: 16, paddingRight: 20 },
+    mediaPreviewWrapper: { 
+        width: 150, 
+        height: 260, 
+        borderRadius: 24, 
+        overflow: 'hidden', 
+        backgroundColor: Colors.cardAlt, 
+        ...Shadow.subtle,
+        borderWidth: 1,
+        borderColor: Colors.border
+    },
     mediaPreview: { width: '100%', height: '100%' },
-    removeBtn: { position: 'absolute', top: 5, right: 5, zIndex: 10 },
-    addMoreBtn: { width: 140, height: 248, borderRadius: 12, backgroundColor: Colors.cardAlt, alignItems: 'center', justifyContent: 'center', borderStyle: 'dashed', borderWidth: 2, borderColor: Colors.border },
+    removeBtn: { 
+        position: 'absolute', 
+        top: 10, 
+        right: 10, 
+        zIndex: 10,
+        backgroundColor: 'rgba(255,255,255,0.9)',
+        borderRadius: 12,
+        padding: 2
+    },
 
-    placeholder: { width: '100%', aspectRatio: 1, borderRadius: 12, backgroundColor: Colors.cardAlt, alignItems: 'center', justifyContent: 'center', borderStyle: 'dashed', borderWidth: 2, borderColor: Colors.border },
-    placeholderText: { marginTop: 10, color: Colors.textMuted, fontFamily: Fonts.medium },
-    captionInput: { borderBottomWidth: 1, borderBottomColor: Colors.border, paddingVertical: 10, fontSize: 16, fontFamily: Fonts.regular, marginTop: 10 },
-    recordingSection: { alignItems: 'center', justifyContent: 'center', paddingVertical: 50, gap: 20 },
+    captionWrapper: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: Colors.surface,
+        borderRadius: 24,
+        borderWidth: 1.5,
+        borderColor: Colors.border,
+        paddingHorizontal: 18,
+        marginTop: 20,
+        marginHorizontal: 4,
+        ...Shadow.subtle
+    },
+    captionIcon: { marginRight: 12 },
+    captionInputModern: {
+        flex: 1,
+        paddingVertical: 18,
+        fontSize: 16,
+        fontFamily: Fonts.medium,
+        color: Colors.textPrimary,
+    },
+    recordingSection: { 
+        alignItems: 'center', 
+        justifyContent: 'center', 
+        paddingVertical: 60, 
+        gap: 24,
+        backgroundColor: Colors.cardAlt,
+        borderRadius: 32,
+        marginVertical: 20
+    },
     recordBtn: {
-        width: 100, height: 100, borderRadius: 50, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center',
+        width: 110, height: 110, borderRadius: 55, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center',
         ...Platform.select({
-            web: { boxShadow: `0px 4px 10px ${Colors.primary}4D` },
             ios: {
                 shadowColor: Colors.primary,
-                shadowOffset: { width: 0, height: 4 },
-                shadowOpacity: 0.3,
-                shadowRadius: 10,
+                shadowOffset: { width: 0, height: 8 },
+                shadowOpacity: 0.4,
+                shadowRadius: 12,
             },
             android: {
-                elevation: 5,
+                elevation: 8,
             }
         })
     },
     recordBtnActive: { backgroundColor: '#ff4757', transform: [{ scale: 1.1 }] },
-    recordingLabel: { fontSize: 16, fontFamily: Fonts.semiBold, color: Colors.textSecondary },
-    retryBtn: { padding: 10 },
+    recordingLabel: { fontSize: 17, fontFamily: Fonts.semiBold, color: Colors.textSecondary },
+    retryBtn: { padding: 12, backgroundColor: '#ff475715', borderRadius: 20 },
     retryText: { color: '#ff4757', fontFamily: Fonts.bold },
 
-    playOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.2)' },
-    playCircle: { width: 50, height: 50, borderRadius: 25, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' },
+    playOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.15)' },
+    playCircle: { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.9)', alignItems: 'center', justifyContent: 'center', ...Shadow.subtle },
     videoModal: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
     fullVideo: { width: '100%', height: '80%' },
     closeVideo: { position: 'absolute', top: 50, right: 20 },
 
-    emptyMedia: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 15, paddingVertical: 40 },
-    largeChoiceBtn: { 
+    emptyMedia: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 20, paddingVertical: 40 },
+    modernChoiceBtn: { 
         width: '100%', 
         backgroundColor: Colors.surface, 
-        padding: 24, 
-        borderRadius: 20, 
+        borderRadius: 28, 
         flexDirection: 'row', 
         alignItems: 'center', 
-        gap: 20, 
+        gap: 16, 
         borderWidth: 1.5, 
         borderColor: Colors.border,
-        ...Shadow.subtle 
+        overflow: 'hidden',
+        minHeight: 120,
+        ...Shadow.card 
     },
-    choiceIconCircle: { width: 64, height: 64, borderRadius: 32, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' },
-    choiceLabel: { fontSize: 18, fontFamily: Fonts.bold, color: Colors.textPrimary },
-    choiceSub: { fontSize: 13, fontFamily: Fonts.regular, color: Colors.textMuted, marginTop: 2 },
+    modernChoiceGrad: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 28,
+        gap: 24,
+    },
+    modernIconBox: { 
+        width: 64, 
+        height: 64, 
+        borderRadius: 22, 
+        backgroundColor: 'rgba(255,255,255,0.25)', 
+        alignItems: 'center', 
+        justifyContent: 'center' 
+    },
+    modernChoiceLabel: { fontSize: 18, fontFamily: Fonts.bold, color: '#fff' },
+    modernChoiceSub: { fontSize: 14, fontFamily: Fonts.regular, color: 'rgba(255,255,255,0.85)', marginTop: 4 },
+    
+    progressOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 20,
+    },
+    progressTrack: {
+        width: '100%',
+        height: 6,
+        backgroundColor: 'rgba(255,255,255,0.2)',
+        borderRadius: 3,
+        overflow: 'hidden',
+        marginTop: 8,
+    },
+    illustrationContainer: {
+        width: 160,
+        height: 160,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginVertical: 20,
+    },
+    glowCircle: {
+        position: 'absolute',
+        width: 140,
+        height: 140,
+        borderRadius: 70,
+        opacity: 0.5,
+    },
+    progressBar: {
+        height: '100%',
+        backgroundColor: Colors.primary,
+        borderRadius: 2,
+    },
+    progressText: {
+        color: '#fff',
+        fontSize: 14,
+        fontFamily: Fonts.bold,
+        textShadowColor: 'rgba(0,0,0,0.5)',
+        textShadowOffset: { width: 0, height: 1 },
+        textShadowRadius: 3
+    },
+    addMoreBtnModern: {
+        width: 150,
+        height: 260,
+        borderRadius: 24,
+        backgroundColor: Colors.cardAlt,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 2,
+        borderColor: Colors.primary + '30',
+        borderStyle: 'dashed',
+    },
 });

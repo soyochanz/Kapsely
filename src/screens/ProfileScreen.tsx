@@ -9,6 +9,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
+import Constants from 'expo-constants';
 import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
 import { supabase } from '../lib/supabase';
@@ -23,6 +24,7 @@ import CapsuleWithTimer from '../components/CapsuleWithTimer';
 import VerifiedBadge from '../components/VerifiedBadge';
 import { timerConfigManager } from '../utils/timerConfig';
 import StoryViewer from '../components/StoryViewer';
+import { safetyService } from '../utils/safety';
 
 
 type ProfileTab = 'all' | 'opened' | 'sealed';
@@ -78,6 +80,7 @@ const ProfileCapsuleCell = React.memo(({
     return (
         <TouchableOpacity
             style={[styles.sealedCell, !cap.isAccessible && { opacity: 0.9 }]}
+            activeOpacity={0.82}
             onPress={() => {
                 if (!cap.isAccessible) {
                     Alert.alert(t('profile.private_capsule'), t('profile.private_capsule_msg'));
@@ -85,24 +88,23 @@ const ProfileCapsuleCell = React.memo(({
                 }
                 navigation.navigate('CapsuleDetail', { capsuleId: cap.id });
             }}
-            onLongPress={() => cap.isAccessible && !isSealed && isOwnProfile && capsuleMediaMap[cap.id]?.length > 1 && setPickerCapsuleId(cap.id)}
-            delayLongPress={400}
         >
             <View style={styles.sealedCellInner}>
+                {/* 1. Protagonist Visual */}
                 <View style={styles.modelContainer}>
-                    {isSealed ? (
-                        <CapsuleWithTimer
-                            modelKey={cap.model}
-                            source={{ uri: modelImg }}
-                            date={cap.opens_at}
-                            chainId={cap.chain_id}
-                            capsuleType={cap.type}
-                            style={styles.sealedImgLarge}
-                            hideParticles
-                        />
-                    ) : (
-                        <View style={styles.sealedImgLarge}>
-                            {coverUrl ? (
+                    <View style={styles.modelMainVisual}>
+                        {isSealed ? (
+                            <CapsuleWithTimer
+                                modelKey={cap.model}
+                                source={{ uri: modelImg }}
+                                date={cap.opens_at}
+                                chainId={cap.chain_id}
+                                capsuleType={cap.type}
+                                style={styles.sealedImgLarge}
+                                hideParticles
+                            />
+                        ) : (
+                            coverUrl ? (
                                 <Image source={{ uri: coverUrl }} style={styles.gridImgFull} resizeMode="cover" />
                             ) : (
                                 <CapsuleWithTimer
@@ -115,71 +117,36 @@ const ProfileCapsuleCell = React.memo(({
                                     hideTimer={true}
                                     hideParticles
                                 />
-                            )}
-                        </View>
-                    )}
-
-                    <View style={[styles.cornerTypeIcon, { backgroundColor: cfg.color }]}>
-                        <Ionicons name={cfg.icon as any} size={10} color="#fff" />
+                            )
+                        )}
                     </View>
 
-                    {cap.is_shared && (
-                        <View style={styles.sharedBadge}>
-                            <Ionicons name="people" size={10} color="#fff" />
-                            <Text style={styles.sharedBadgeText}>{t('common.shared')}</Text>
+                    {/* Minimalist badges overlay */}
+                    <View style={styles.cellBadgeContainer}>
+                        <View style={[styles.miniTypeIcon, { backgroundColor: cfg.color }]}>
+                            <Ionicons name={cfg.icon as any} size={8} color="#fff" />
                         </View>
-                    )}
-
-                    {isSealed && (
-                        <View style={styles.sealedBadgeSmall}>
-                            <Ionicons name="lock-closed" size={10} color="#fff" />
-                        </View>
-                    )}
-
-
-                </View>
-
-                {isSealed ? (
-                    <LiveTimer date={cap.opens_at} modelId={cap.model} style={styles.sealedTimer} />
-                ) : (
-                    <Text style={[styles.sealedTimer, { color: Colors.textMuted }]}>{t('common.opened')}</Text>
-                )}
-
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Text style={styles.sealedTitle} numberOfLines={1}>{cap.title}</Text>
-                    {!cap.isAccessible && (
-                        <Ionicons name="lock-closed" size={14} color="#ff4757" style={{ marginLeft: 6 }} />
-                    )}
-                </View>
-
-                <View style={[styles.membersList, !cap.is_shared && { opacity: 0, pointerEvents: 'none' }]}>
-                    <View style={styles.avatarStack}>
-                        {cap.owner_avatar_url ? (
-                            <Image source={{ uri: cap.owner_avatar_url }} style={styles.stackAvatar} />
-                        ) : (
-                            <View style={[styles.stackAvatar, { backgroundColor: Colors.border, alignItems: 'center', justifyContent: 'center' }]}>
-                                <Ionicons name="person" size={10} color={Colors.textMuted} />
+                        {cap.is_shared && (
+                            <View style={styles.miniSharedBadge}>
+                                <Ionicons name="people" size={8} color="#fff" />
+                            </View>
+                        )}
+                        {isSealed && (
+                            <View style={styles.miniSealedBadge}>
+                                <Ionicons name="lock-closed" size={8} color="#fff" />
                             </View>
                         )}
                     </View>
-                    <Text style={styles.membersCountText}>
-                        {cap.total_members || 1} {cap.total_members === 1 ? t('common.member') : t('common.members')}
-                    </Text>
                 </View>
 
-                <View style={styles.sealedMetaRow}>
-                    <View style={styles.sealedMetaItem}>
-                        <Ionicons name="images-outline" size={12} color={Colors.textMuted} />
-                        <Text style={styles.sealedMetaText}>{itemsCount}</Text>
-                    </View>
-                    <View style={styles.sealedMetaItem}>
-                        <Ionicons name="heart-outline" size={12} color={Colors.textMuted} />
-                        <Text style={styles.sealedMetaText}>{likesCount}</Text>
-                    </View>
-                    <View style={styles.sealedMetaItem}>
-                        <Ionicons name="chatbubble-outline" size={12} color={Colors.textMuted} />
-                        <Text style={styles.sealedMetaText}>{commentsCount}</Text>
-                    </View>
+                {/* 2. Primary Meta */}
+                <View style={styles.cellMetaInfo}>
+                    <Text style={styles.sealedTitle} numberOfLines={1}>{cap.title}</Text>
+                    {isSealed ? (
+                        <LiveTimer date={cap.opens_at} modelId={cap.model} style={styles.sealedTimer} />
+                    ) : (
+                        <Text style={styles.openedLabel}>{t('common.opened').toUpperCase()}</Text>
+                    )}
                 </View>
             </View>
         </TouchableOpacity>
@@ -228,6 +195,9 @@ export default function ProfileScreen() {
     const [userStories, setUserStories] = useState<any>(null);
     const [activeStoryViewer, setActiveStoryViewer] = useState(false);
 
+    const [isBlocked, setIsBlocked] = useState(false);
+    const [showUserOptions, setShowUserOptions] = useState(false);
+
 
     useEffect(() => {
         // Quick check for own profile based on session
@@ -237,6 +207,8 @@ export default function ProfileScreen() {
                 setCurrentUserId(session.user.id);
                 if (targetUserId) {
                     setIsOwnProfileState(targetUserId === session.user.id);
+                    // Check if blocked
+                    safetyService.isBlocked(session.user.id, targetUserId).then(setIsBlocked);
                 } else {
                     setIsOwnProfileState(true);
                 }
@@ -246,7 +218,8 @@ export default function ProfileScreen() {
     }, [targetUserId]);
 
     const loadData = async () => {
-        const { data: { user } } = await supabase.auth.getUser();
+        const { data: { session } } = await supabase.auth.getSession();
+        const user = session?.user;
         if (!user) return;
         const myId = user.id;
         setCurrentUserId(myId);
@@ -330,7 +303,8 @@ export default function ProfileScreen() {
 
                 if (toDelete.length > 0) {
                     opened = opened.filter((c: any) => !toDelete.includes(c));
-                    for (const c of toDelete) {
+                    // Parallel deletes — do not block with sequential awaits
+                    await Promise.all(toDelete.map(async (c: any) => {
                         await supabase.from('capsules').delete().eq('id', c.id);
                         await supabase.from('notifications').insert({
                             user_id: user.id,
@@ -339,7 +313,7 @@ export default function ProfileScreen() {
                             message: t('profile.delete_capsule_msg', { title: c.title }),
                             metadata: { capsule_id: c.id }
                         });
-                    }
+                    }));
                 }
             }
 
@@ -383,9 +357,7 @@ export default function ProfileScreen() {
     };
 
     useEffect(() => {
-        loadData();
-
-        // Listen for capsule status changes (unsealing)
+        // Realtime channel: only triggers a lightweight re-fetch on capsule updates
         const channel = supabase
             .channel('profile_capsules')
             .on('postgres_changes', {
@@ -400,7 +372,7 @@ export default function ProfileScreen() {
         return () => {
             supabase.removeChannel(channel);
         };
-    }, [targetUserId, route.params]);
+    }, [targetUserId]);
 
     useFocusEffect(
         useCallback(() => {
@@ -435,6 +407,59 @@ export default function ProfileScreen() {
                 }
             ]
         );
+    };
+
+    const handleBlockToggle = async () => {
+        if (!currentUserId || !targetUserId) return;
+        if (isBlocked) {
+            await safetyService.unblockUser(currentUserId, targetUserId);
+            setIsBlocked(false);
+            Alert.alert(t('common.ready'), t('detail.unblocked_success'));
+        } else {
+            Alert.alert(
+                t('detail.block_user'),
+                t('detail.block_confirm'),
+                [
+                    { text: t('common.cancel'), style: 'cancel' },
+                    {
+                        text: t('detail.block_user'),
+                        style: 'destructive',
+                        onPress: async () => {
+                            await safetyService.blockUser(currentUserId, targetUserId);
+                            setIsBlocked(true);
+                            Alert.alert(t('common.ready'), t('detail.blocked_success'));
+                            setShowUserOptions(false);
+                        }
+                    }
+                ]
+            );
+        }
+    };
+
+    const handleReportUser = () => {
+        if (!currentUserId || !targetUserId) return;
+        Alert.alert(
+            t('detail.report_user'),
+            t('detail.report_reason'),
+            [
+                { text: t('detail.report_types.inappropriate'), onPress: () => submitReport('inappropriate') },
+                { text: t('detail.report_types.spam'), onPress: () => submitReport('spam') },
+                { text: t('detail.report_types.harassment'), onPress: () => submitReport('harassment') },
+                { text: t('common.cancel'), style: 'cancel' }
+            ]
+        );
+    };
+
+    const submitReport = async (reason: string) => {
+        if (!currentUserId || !targetUserId) return;
+        await safetyService.report({
+            reporterId: currentUserId,
+            targetId: targetUserId,
+            targetType: 'user',
+            reason
+        });
+        Alert.alert(t('common.ready'), t('detail.report_submitted'));
+        setShowUserOptions(false);
     };
 
     const handleFollowToggle = async () => {
@@ -522,15 +547,14 @@ export default function ProfileScreen() {
             >
                 <LinearGradient
                     colors={[
-                        profile?.favorite_color ? `${profile.favorite_color}cc` : Colors.primaryDark,
-                        profile?.favorite_color || Colors.primary,
-                        profile?.favorite_color ? `${profile.favorite_color}88` : Colors.primaryLight
+                        profile?.favorite_color ? `${profile.favorite_color}99` : Colors.primaryDark,
+                        profile?.favorite_color ? `${profile.favorite_color}cc` : Colors.primary,
                     ]}
                     start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
                     style={styles.banner}
                 >
-                    <View style={styles.bannerCircle1} />
-                    <View style={styles.bannerCircle2} />
+                    <View style={styles.bannerGlow1} />
+                    <View style={styles.bannerGlow2} />
                         {/* Stickers Overlay */}
                         <View style={[StyleSheet.absoluteFill, { overflow: 'visible', pointerEvents: 'none' }]}>
                             {profileStickers.map((ps: any) => {
@@ -543,7 +567,7 @@ export default function ProfileScreen() {
                                         style={[
                                             styles.bannerSticker, 
                                             pos, 
-                                            { width: size, height: size, transform: [{ rotate: rotation }] }
+                                            { width: size, height: size, transform: [{ rotate: rotation }], opacity: 0.85 }
                                         ]}
                                         resizeMode="contain"
                                     />
@@ -551,25 +575,28 @@ export default function ProfileScreen() {
                             })}
                         </View>
 
-                        <View style={[styles.bannerActions, { paddingTop: insets.top + 20 }]}>
+                        <View style={[styles.bannerActions, { paddingTop: insets.top + (Platform.OS === 'ios' ? 10 : 20) }]}>
                             {targetUserId && (
-                                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-                                    <Ionicons name="chevron-back" size={24} color="#fff" />
+                                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerActionBtn} activeOpacity={0.7}>
+                                    <Ionicons name="chevron-back" size={22} color="#fff" />
                                 </TouchableOpacity>
                             )}
                             
                             <View style={{ flex: 1 }} />
-                            {isOwnProfile && (
-                                <TouchableOpacity style={styles.settingsBtn} onPress={() => setShowSettings(true)}>
-                                    <Ionicons name="settings-outline" size={22} color="#fff" />
-                                </TouchableOpacity>
-                            )}
+                            <TouchableOpacity 
+                                style={styles.headerActionBtn} 
+                                activeOpacity={0.7} 
+                                onPress={() => isOwnProfile ? setShowSettings(true) : setShowUserOptions(true)}
+                            >
+                                <Ionicons name={isOwnProfile ? "settings-outline" : "ellipsis-horizontal"} size={22} color="#fff" />
+                            </TouchableOpacity>
                         </View>
                 </LinearGradient>
 
                 <View style={styles.avatarStatsRow}>
                     <TouchableOpacity 
                         style={styles.avatarRing} 
+                        activeOpacity={0.9}
                         disabled={!userStories}
                         onPress={() => setActiveStoryViewer(true)}
                     >
@@ -609,12 +636,12 @@ export default function ProfileScreen() {
                         {[
                             { label: t('profile.followersCount'), value: String(followersCount) },
                             { label: t('profile.followingCount'), value: String(followingCount) },
-                            { label: t('profile.openedCapsules'), value: String(openedCaps.length) },
-                            { label: t('profile.sealedCapsules'), value: String(sealedCaps.length) },
+                            { label: t('profile.totalCapsules'), value: String(openedCaps.length + sealedCaps.length) },
                         ].map((s) => (
                             <TouchableOpacity
                                 key={s.label}
                                 style={styles.stat}
+                                activeOpacity={0.7}
                                 onPress={() => {
                                     if (s.label === t('profile.followersCount') || s.label === t('profile.followingCount')) {
                                         navigation.push('UserList', {
@@ -635,46 +662,50 @@ export default function ProfileScreen() {
 
                 <View style={styles.userInfo}>
                     <View style={styles.nameRow}>
-                        <Text style={styles.displayName}>{profile?.display_name ?? '—'}</Text>
+                        <Text style={styles.displayNameText}>{profile?.display_name ?? '—'}</Text>
                         {profile?.is_verified && <VerifiedBadge size={18} style={{ marginLeft: 2 }} />}
                     </View>
-                    <Text style={styles.handle}>@{profile?.username ?? '—'}</Text>
-                    {profile?.bio ? <Text style={styles.bio}>{profile.bio}</Text> : null}
+                    <Text style={styles.handleText}>@{profile?.username ?? '—'}</Text>
+                    
+                    {profile?.bio ? <Text style={styles.bioText}>{profile.bio}</Text> : null}
 
-                    <View style={styles.lofiBar}>
-                        <Ionicons name="gift-outline" size={14} color={Colors.primary} />
-                        <View style={styles.lofiDivider} />
-                        {profile?.birthdate ? (
-                            <Text style={[styles.lofiText, { color: Colors.textMuted }]}>
-                                {new Date(profile.birthdate).toLocaleDateString(i18n.language === 'es' ? 'es-ES' : 'en-US', { day: 'numeric', month: 'long' })}
+                    <View style={styles.profileDetailsRow}>
+                        <View style={styles.detailChip}>
+                            {profile?.birthdate ? (
+                                <Text style={{ fontSize: 13 }}>🎂</Text>
+                            ) : (
+                                <Ionicons name="calendar-outline" size={14} color={Colors.textMuted} />
+                            )}
+                            <Text style={styles.detailChipText}>
+                                {profile?.birthdate 
+                                    ? new Date(profile.birthdate).toLocaleDateString(i18n.language === 'es' ? 'es-ES' : 'en-US', { day: 'numeric', month: 'long' })
+                                    : `${t('profile.since')} ${joinYear}`}
                             </Text>
-                        ) : (
-                            <Text style={[styles.lofiText, { color: Colors.textMuted }]}>{t('profile.since')} {joinYear}</Text>
-                        )}
+                        </View>
                     </View>
 
-                    {/* Favorites Section */}
+                    {/* Favorites Section — Soft Premium Card */}
                     {(profile?.favorite_movie || profile?.favorite_song) && (
-                        <View style={styles.favoritesCard}>
+                        <View style={styles.favoritesSection}>
                             {profile?.favorite_movie && (
-                                <View style={styles.favoriteItem}>
-                                    <View style={[styles.favIconBox, { backgroundColor: '#FFEDF6' }]}>
+                                <View style={styles.favoriteCard}>
+                                    <View style={[styles.favIconCircle, { backgroundColor: '#FFEDF6' }]}>
                                         <Ionicons name="film" size={14} color="#F72585" />
                                     </View>
-                                    <View>
-                                        <Text style={styles.favLabel}>{t('profile.favoriteMovie')}</Text>
-                                        <Text style={styles.favValue}>{profile.favorite_movie}</Text>
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={styles.favoriteLabel}>{t('profile.favoriteMovie')}</Text>
+                                        <Text style={styles.favoriteValue} numberOfLines={1}>{profile.favorite_movie}</Text>
                                     </View>
                                 </View>
                             )}
                             {profile?.favorite_song && (
-                                <View style={[styles.favoriteItem, profile?.favorite_movie && { marginTop: 12 }]}>
-                                    <View style={[styles.favIconBox, { backgroundColor: '#E0F2FE' }]}>
+                                <View style={styles.favoriteCard}>
+                                    <View style={[styles.favIconCircle, { backgroundColor: '#E0F2FE' }]}>
                                         <Ionicons name="musical-notes" size={14} color="#0EA5E9" />
                                     </View>
-                                    <View>
-                                        <Text style={styles.favLabel}>{t('profile.favoriteSong')}</Text>
-                                        <Text style={styles.favValue}>{profile.favorite_song}</Text>
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={styles.favoriteLabel}>{t('profile.favoriteSong')}</Text>
+                                        <Text style={styles.favoriteValue} numberOfLines={1}>{profile.favorite_song}</Text>
                                     </View>
                                 </View>
                             )}
@@ -682,35 +713,34 @@ export default function ProfileScreen() {
                     )}
                 </View>
 
-                <View style={styles.actionButtons}>
+                <View style={styles.profileActionsContainer}>
                     {isOwnProfile ? (
-                        <View style={{ flex: 1, flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-                            <TouchableOpacity style={styles.pillActionBtn} onPress={() => setShowEdit(true)} activeOpacity={0.8}>
-                                <LinearGradient colors={[Colors.primary, Colors.primaryDark]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.pillGradient}>
-                                    <Ionicons name="create-outline" size={16} color="#fff" />
-                                    <Text style={styles.pillBtnText}>{t('profile.editProfile')}</Text>
+                        <>
+                            <TouchableOpacity style={styles.primaryProfileBtn} onPress={() => setShowEdit(true)} activeOpacity={0.82}>
+                                <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.btnGradient}>
+                                    <Text style={styles.primaryBtnText}>{t('profile.editProfile')}</Text>
                                 </LinearGradient>
                             </TouchableOpacity>
                             {profile?.is_admin && (
-                                <TouchableOpacity style={styles.pillIconBtn} activeOpacity={0.7} onPress={() => navigation.navigate('TimerConfig')}>
-                                    <Ionicons name="options-outline" size={18} color={Colors.textSecondary} />
+                                <TouchableOpacity style={styles.secondaryProfileBtn} activeOpacity={0.7} onPress={() => navigation.navigate('TimerConfig')}>
+                                    <Ionicons name="cog-outline" size={20} color={Colors.textSecondary} />
                                 </TouchableOpacity>
                             )}
-                        </View>
+                        </>
                     ) : (
                         <>
-                            <TouchableOpacity style={styles.pillActionBtn} onPress={handleFollowToggle} activeOpacity={0.8}>
+                            <TouchableOpacity style={styles.primaryProfileBtn} onPress={handleFollowToggle} activeOpacity={0.82}>
                                 <LinearGradient
-                                    colors={isFollowing ? ['#f8f9fa', '#e9ecef'] : [Colors.primary, Colors.primaryDark]}
-                                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-                                    style={[styles.pillGradient, isFollowing && { borderWidth: 1, borderColor: Colors.border }]}
+                                    colors={isFollowing ? ['#f1f2f6', '#e4e7eb'] : [Colors.primary, Colors.primaryDark]}
+                                    style={styles.btnGradient}
                                 >
-                                    <Ionicons name={isFollowing ? "person-remove-outline" : "person-add-outline"} size={16} color={isFollowing ? Colors.textPrimary : "#fff"} />
-                                    <Text style={[styles.pillBtnText, isFollowing && { color: Colors.textPrimary }]}>{isFollowing ? t('profile.followingBtn') : t('profile.followBtn')}</Text>
+                                    <Text style={[styles.primaryBtnText, isFollowing && { color: Colors.textPrimary }]}>
+                                        {isFollowing ? t('profile.followingBtn') : t('profile.followBtn')}
+                                    </Text>
                                 </LinearGradient>
                             </TouchableOpacity>
                             <TouchableOpacity
-                                style={styles.pillIconBtn}
+                                style={styles.secondaryProfileBtn}
                                 activeOpacity={0.7}
                                 onPress={async () => {
                                     if (!currentUserId || !targetUserId) return;
@@ -731,36 +761,24 @@ export default function ProfileScreen() {
                                     if (conversationIdToUse) navigation.navigate('ChatDetail', { conversationId: conversationIdToUse });
                                 }}
                             >
-                                <Ionicons name="paper-plane-outline" size={18} color={Colors.textSecondary} />
+                                <Ionicons name="chatbubble-outline" size={20} color={Colors.textSecondary} />
                             </TouchableOpacity>
                         </>
                     )}
                 </View>
 
-                <View style={styles.tabsContainer}>
-                    <View style={styles.tabsBackground}>
+                <View style={styles.profileTabsWrapper}>
+                    <View style={styles.premiumSegmentedControl}>
                         {(['all', 'opened', 'sealed'] as ProfileTab[]).map((tab) => {
                             const isActive = activeTab === tab;
                             return (
                                 <TouchableOpacity 
                                     key={tab} 
-                                    style={[styles.tab, isActive && styles.tabActive]} 
+                                    style={[styles.segmentedTab, isActive && styles.segmentedTabActive]} 
                                     onPress={() => setActiveTab(tab)}
-                                    activeOpacity={0.7}
+                                    activeOpacity={0.75}
                                 >
-                                    {isActive && (
-                                        <LinearGradient 
-                                            colors={[Colors.primary, Colors.primaryDark]} 
-                                            start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-                                            style={StyleSheet.absoluteFill}
-                                        />
-                                    )}
-                                    <Ionicons 
-                                        name={tab === 'all' ? 'albums' : tab === 'opened' ? 'lock-open' : 'lock-closed'} 
-                                        size={14} 
-                                        color={isActive ? "#fff" : Colors.textMuted} 
-                                    />
-                                    <Text style={[styles.tabText, isActive && styles.tabTextActive]}>
+                                    <Text style={[styles.segmentedText, isActive && styles.segmentedTextActive]}>
                                         {tab === 'all' ? t('profile.allCapsules') : tab === 'opened' ? t('profile.openedCapsules') : t('profile.sealedCapsules')}
                                     </Text>
                                 </TouchableOpacity>
@@ -807,13 +825,43 @@ export default function ProfileScreen() {
                             )}
                         />
                         {((activeTab === 'opened' && openedCaps.length === 0) || (activeTab === 'sealed' && sealedCaps.length === 0)) && (
-                            <View style={styles.emptyState}>
-                                <Text style={styles.emptyTitle}>{t('profile.noCapsulesFound')}</Text>
+                            <View style={styles.emptyCapsuleState}>
+                                <View style={styles.emptyIconCircle}>
+                                    <Ionicons name="cube-outline" size={32} color={Colors.textMuted} />
+                                </View>
+                                <Text style={styles.emptyCapsuleTitle}>{t('profile.noCapsulesFound')}</Text>
+                                <Text style={styles.emptyCapsuleSub}>
+                                    {activeTab === 'sealed' ? t('profile.noSealedYet') : t('profile.noOpenedYet')}
+                                </Text>
                             </View>
                         )}
                     </View>
                 </View>
             </ScrollView>
+
+            {/* User Options Modal (Report/Block) */}
+            <Modal visible={showUserOptions} transparent animationType="fade">
+                <Pressable style={styles.modalOverlay} onPress={() => setShowUserOptions(false)}>
+                    <View style={styles.optionsContent}>
+                        <View style={styles.modalBar} />
+                        <Text style={styles.optionsTitle}>{profile?.username || 'User'}</Text>
+
+                        <TouchableOpacity style={styles.deleteOption} activeOpacity={0.7} onPress={handleReportUser}>
+                            <Ionicons name="alert-circle-outline" size={22} color={Colors.textPrimary} />
+                            <Text style={[styles.deleteOptionText, { color: Colors.textPrimary }]}>{t('detail.report_user')}</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity style={styles.deleteOption} activeOpacity={0.7} onPress={handleBlockToggle}>
+                            <Ionicons name="hand-left-outline" size={22} color={Colors.eventCap} />
+                            <Text style={styles.deleteOptionText}>{isBlocked ? t('detail.unblock_user') : t('detail.block_user')}</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity style={styles.cancelOption} activeOpacity={0.7} onPress={() => setShowUserOptions(false)}>
+                            <Text style={styles.cancelOptionText}>{t('common.cancel')}</Text>
+                        </TouchableOpacity>
+                    </View>
+                </Pressable>
+            </Modal>
 
             <Modal visible={pickerCapsuleId !== null} transparent animationType="slide" onRequestClose={() => setPickerCapsuleId(null)}>
                 <TouchableOpacity style={styles.pickerOverlay} activeOpacity={1} onPress={() => setPickerCapsuleId(null)}>
@@ -828,6 +876,7 @@ export default function ProfileScreen() {
                                     <TouchableOpacity
                                         key={item.id}
                                         style={[styles.pickerThumb, isSelected && styles.pickerThumbSelected]}
+                                        activeOpacity={0.7}
                                         onPress={() => {
                                             setCoverMap(prev => ({ ...prev, [pickerCapsuleId!]: item.media_url }));
                                             setPickerCapsuleId(null);
@@ -848,48 +897,48 @@ export default function ProfileScreen() {
                     <Pressable style={styles.modalSheet}>
                         <View style={styles.pickerHandle} />
                         <Text style={styles.modalTitle}>{t('profile.settings')}</Text>
-                        <TouchableOpacity style={styles.settingsItem} onPress={() => { setShowSettings(false); navigation.navigate('PersonalizeProfile'); }}>
+                        <TouchableOpacity style={styles.settingsItem} activeOpacity={0.7} onPress={() => { setShowSettings(false); navigation.navigate('PersonalizeProfile'); }}>
                             <View style={styles.settingsItemIcon}><Ionicons name="sparkles-outline" size={18} color={Colors.primary} /></View>
                             <Text style={styles.settingsItemText}>{t('profile.personalizeProfile')}</Text>
                             <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
                         </TouchableOpacity>
-                        <TouchableOpacity style={styles.settingsItem} onPress={() => { setShowSettings(false); setShowEdit(true); }}>
+                        <TouchableOpacity style={styles.settingsItem} activeOpacity={0.7} onPress={() => { setShowSettings(false); setShowEdit(true); }}>
                             <View style={styles.settingsItemIcon}><Ionicons name="person-outline" size={18} color={Colors.textPrimary} /></View>
                             <Text style={styles.settingsItemText}>{t('profile.editProfile')}</Text>
                             <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
                         </TouchableOpacity>
-                        <TouchableOpacity style={styles.settingsItem} onPress={() => { setShowSettings(false); setShowLanguageSettings(true); }}>
+                        <TouchableOpacity style={styles.settingsItem} activeOpacity={0.7} onPress={() => { setShowSettings(false); setShowLanguageSettings(true); }}>
                             <View style={styles.settingsItemIcon}><Ionicons name="language-outline" size={18} color={Colors.textPrimary} /></View>
                             <Text style={styles.settingsItemText}>{t('profile.language')}</Text>
                             <Text style={styles.settingsItemValue}>{i18n.language === 'es' ? 'Español' : 'English'}</Text>
                             <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
                         </TouchableOpacity>
-                        <TouchableOpacity style={styles.settingsItem} onPress={() => Alert.alert(t('profile.security'), t('profile.securityComingSoon'))}>
+                        <TouchableOpacity style={styles.settingsItem} activeOpacity={0.7} onPress={() => Alert.alert(t('profile.security'), t('profile.securityComingSoon'))}>
                             <View style={styles.settingsItemIcon}><Ionicons name="lock-closed-outline" size={18} color={Colors.textPrimary} /></View>
                             <Text style={styles.settingsItemText}>{t('profile.security')}</Text>
                             <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
                         </TouchableOpacity>
-                        <TouchableOpacity style={[styles.settingsItem, (profile?.verification_status === 'pending' || profile?.verification_status === 'verified') && { opacity: 0.5 }]} onPress={handleRequestVerification} disabled={profile?.verification_status === 'pending' || profile?.verification_status === 'verified'}>
+                        <TouchableOpacity style={[styles.settingsItem, (profile?.verification_status === 'pending' || profile?.is_verified) && { opacity: 0.5 }]} activeOpacity={0.7} onPress={handleRequestVerification} disabled={profile?.verification_status === 'pending' || profile?.is_verified}>
                             <View style={styles.settingsItemIcon}><Ionicons name="checkmark-circle-outline" size={18} color={Colors.primary} /></View>
-                            <Text style={styles.settingsItemText}>{profile?.verification_status === 'pending' ? t('profile.verificationPending') : profile?.verification_status === 'verified' ? t('profile.verifiedAccount') : t('profile.requestVerification')}</Text>
+                            <Text style={styles.settingsItemText}>{profile?.is_verified ? t('profile.verifiedAccount') : profile?.verification_status === 'pending' ? t('profile.verificationPending') : t('profile.requestVerification')}</Text>
                             <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
                         </TouchableOpacity>
-                        <TouchableOpacity style={styles.settingsItem} onPress={() => { setShowSettings(false); setShowPrivacy(true); }}>
+                        <TouchableOpacity style={styles.settingsItem} activeOpacity={0.7} onPress={() => { setShowSettings(false); setShowPrivacy(true); }}>
                             <View style={styles.settingsItemIcon}><Ionicons name="shield-checkmark-outline" size={18} color={Colors.textPrimary} /></View>
                             <Text style={styles.settingsItemText}>{t('profile.privacyPolicy')}</Text>
                             <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
                         </TouchableOpacity>
-                        <TouchableOpacity style={styles.settingsItem} onPress={() => { setShowSettings(false); setShowTerms(true); }}>
+                        <TouchableOpacity style={styles.settingsItem} activeOpacity={0.7} onPress={() => { setShowSettings(false); setShowTerms(true); }}>
                             <View style={styles.settingsItemIcon}><Ionicons name="document-text-outline" size={18} color={Colors.textPrimary} /></View>
                             <Text style={styles.settingsItemText}>{t('profile.termsOfUse')}</Text>
                             <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
                         </TouchableOpacity>
 
-                        <TouchableOpacity style={[styles.settingsItem, { borderBottomWidth: 0 }]} onPress={handleLogout}>
+                        <TouchableOpacity style={[styles.settingsItem, { borderBottomWidth: 0 }]} activeOpacity={0.7} onPress={handleLogout}>
                             <View style={[styles.settingsItemIcon, { backgroundColor: Colors.error + '10' }]}><Ionicons name="log-out-outline" size={18} color={Colors.error} /></View>
                             <Text style={[styles.settingsItemText, { color: Colors.error, fontFamily: Fonts.bold }]}>{t('profile.logout')}</Text>
                         </TouchableOpacity>
-                        <View style={styles.appVersionContainer}><Text style={styles.appVersionText}>kapsely v1.0.1</Text></View>
+                        <View style={styles.appVersionContainer}><Text style={styles.appVersionText}>kapsely v{Constants.expoConfig?.version || '1.0.0'}</Text></View>
                     </Pressable>
                 </Pressable>
             </Modal>
@@ -899,7 +948,7 @@ export default function ProfileScreen() {
                     <Pressable style={styles.modalSheet}>
                         <View style={styles.pickerHandle} />
                         <View style={styles.modalHeaderRow}>
-                            <TouchableOpacity onPress={() => { setShowLanguageSettings(false); setShowSettings(true); }} style={styles.backButton}>
+                            <TouchableOpacity activeOpacity={0.7} onPress={() => { setShowLanguageSettings(false); setShowSettings(true); }} style={styles.backButton}>
                                 <Ionicons name="chevron-back" size={24} color={Colors.textPrimary} />
                             </TouchableOpacity>
                             <Text style={styles.modalTitleInline}>{t('profile.language')}</Text>
@@ -912,6 +961,7 @@ export default function ProfileScreen() {
                             <TouchableOpacity 
                                 key={lang.code} 
                                 style={styles.langItem} 
+                                activeOpacity={0.7}
                                 onPress={() => {
                                     i18n.changeLanguage(lang.code);
                                     setShowLanguageSettings(false);
@@ -932,7 +982,7 @@ export default function ProfileScreen() {
                     <Pressable style={[styles.modalSheet, { maxHeight: '80%' }]}>
                         <View style={styles.pickerHandle} />
                         <View style={styles.modalHeaderRow}>
-                            <TouchableOpacity onPress={() => { setShowPrivacy(false); setShowSettings(true); }} style={styles.backButton}>
+                            <TouchableOpacity activeOpacity={0.7} onPress={() => { setShowPrivacy(false); setShowSettings(true); }} style={styles.backButton}>
                                 <Ionicons name="chevron-back" size={24} color={Colors.textPrimary} />
                             </TouchableOpacity>
                             <Text style={styles.modalTitleInline}>{t('profile.privacyPolicy')}</Text>
@@ -951,7 +1001,7 @@ export default function ProfileScreen() {
                     <Pressable style={[styles.modalSheet, { maxHeight: '80%' }]}>
                         <View style={styles.pickerHandle} />
                         <View style={styles.modalHeaderRow}>
-                            <TouchableOpacity onPress={() => { setShowTerms(false); setShowSettings(true); }} style={styles.backButton}>
+                            <TouchableOpacity activeOpacity={0.7} onPress={() => { setShowTerms(false); setShowSettings(true); }} style={styles.backButton}>
                                 <Ionicons name="chevron-back" size={24} color={Colors.textPrimary} />
                             </TouchableOpacity>
                             <Text style={styles.modalTitleInline}>{t('profile.termsOfUse')}</Text>
@@ -986,182 +1036,178 @@ const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: Colors.background },
     centered: { justifyContent: 'center', alignItems: 'center' },
     scrollContent: { paddingBottom: 100 },
-    banner: { height: 185 },
-    bannerCircle1: { position: 'absolute', top: -30, right: -20, width: 120, height: 120, borderRadius: 60, backgroundColor: 'rgba(255,255,255,0.12)' },
-    bannerCircle2: { position: 'absolute', bottom: -10, left: 30, width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(255,255,255,0.08)' },
-    bannerSticker: {
-        position: 'absolute',
-        width: 44,
-        height: 44,
-        zIndex: 5,
-        ...Shadow.subtle
+    
+    // Banner
+    banner: { height: 180, overflow: 'hidden' },
+    bannerGlow1: { position: 'absolute', top: -40, right: -20, width: 140, height: 140, borderRadius: 70, backgroundColor: 'rgba(255,255,255,0.1)' },
+    bannerGlow2: { position: 'absolute', bottom: -20, left: 20, width: 100, height: 100, borderRadius: 50, backgroundColor: 'rgba(255,255,255,0.06)' },
+    bannerSticker: { position: 'absolute', zIndex: 5 },
+    bannerActions: { paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center' },
+    headerActionBtn: {
+        width: 38, height: 38, borderRadius: 19,
+        backgroundColor: 'rgba(0,0,0,0.15)',
+        alignItems: 'center', justifyContent: 'center'
     },
-    avatarSection: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: 20,
-        gap: 20,
-        marginTop: -50,
-    },
+
+    // Avatar & Stats
     avatarStatsRow: {
         flexDirection: 'row',
         alignItems: 'flex-end',
         paddingHorizontal: 20,
-        gap: 16,
-        marginTop: -45,
-        paddingBottom: 8,
+        marginTop: -55,
+        gap: 15,
     },
     avatarRing: {
-        width: 90,
-        height: 90,
-        borderRadius: 45,
-        justifyContent: 'center',
-        alignItems: 'center',
-        ...Shadow.subtle
+        width: 100, height: 100, borderRadius: 50,
+        backgroundColor: Colors.background,
+        padding: 4, ...Shadow.subtle
     },
     avatarRingInner: {
-        width: 86,
-        height: 86,
-        borderRadius: 43,
-        justifyContent: 'center',
-        alignItems: 'center',
-        padding: 2
+        flex: 1, borderRadius: 46,
+        alignItems: 'center', justifyContent: 'center',
+        padding: 2,
     },
-    avatar: { width: 80, height: 80, borderRadius: 40 },
-    avatarPlaceholder: { backgroundColor: Colors.cardAlt, justifyContent: 'center', alignItems: 'center' },
-    bannerActions: { paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center' },
-    backBtn: { width: 40, height: 40, justifyContent: 'center' },
-    settingsBtn: { width: 40, height: 40, justifyContent: 'center', alignItems: 'flex-end' },
+    avatar: { width: 88, height: 88, borderRadius: 44, backgroundColor: Colors.cardAlt },
+    avatarPlaceholder: { justifyContent: 'center', alignItems: 'center' },
+    
     statsRow: {
         flex: 1,
         flexDirection: 'row',
-        justifyContent: 'space-around',
-        alignItems: 'flex-end',
-        paddingBottom: 4,
+        justifyContent: 'space-between',
+        paddingBottom: Platform.OS === 'ios' ? 0 : 8,
+        paddingLeft: 4,
     },
     stat: { alignItems: 'center', flex: 1 },
     statContent: { alignItems: 'center' },
-    statValue: { fontSize: 15, fontFamily: Fonts.bold, color: Colors.textPrimary },
-    statLabel: { fontSize: 8, fontFamily: Fonts.medium, color: Colors.textMuted, marginTop: 2, textTransform: 'uppercase', letterSpacing: 0.3 },
-    userInfo: { marginTop: 15, paddingHorizontal: 20 },
+    statValue: { fontSize: Platform.OS === 'ios' ? 15 : 17, fontFamily: Fonts.bold, color: Colors.textPrimary },
+    statLabel: { fontSize: Platform.OS === 'ios' ? 9 : 10, fontFamily: Fonts.semiBold, color: Colors.textMuted, marginTop: Platform.OS === 'ios' ? 1 : 2, textTransform: 'uppercase', letterSpacing: 0.4 },
+
+    // User Info
+    userInfo: { marginTop: 16, paddingHorizontal: 20 },
     nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-    displayName: { fontSize: 22, fontFamily: Fonts.bold, color: Colors.textPrimary },
-    handle: { fontSize: 14, fontFamily: Fonts.medium, color: Colors.textMuted, marginTop: 2 },
-    bio: { fontSize: 14, fontFamily: Fonts.regular, color: Colors.textSecondary, marginTop: 10, lineHeight: 20 },
-    lofiBar: { flexDirection: 'row', alignItems: 'center', marginTop: 15, paddingVertical: 8 },
-    lofiDivider: { width: 1, height: 12, backgroundColor: Colors.border, marginHorizontal: 8 },
-    lofiText: { fontSize: 11, fontFamily: Fonts.medium, color: Colors.textSecondary },
-    pendingBadge: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 4,
-        paddingHorizontal: 12,
-        paddingVertical: 8,
-        backgroundColor: Colors.primary + '15',
-        borderRadius: BorderRadius.full,
-        borderWidth: 1,
-        borderColor: Colors.primary + '30',
+    displayNameText: { fontSize: 24, fontFamily: Fonts.bold, color: Colors.textPrimary },
+    handleText: { fontSize: 14, fontFamily: Fonts.medium, color: Colors.textMuted, marginTop: 0 },
+    bioText: { fontSize: 14, fontFamily: Fonts.regular, color: Colors.textSecondary, marginTop: 12, lineHeight: 21 },
+    profileDetailsRow: { flexDirection: 'row', alignItems: 'center', marginTop: 16 },
+    detailChip: {
+        flexDirection: 'row', alignItems: 'center', gap: 6,
+        paddingVertical: 4,
     },
-    pendingText: {
-        fontSize: 12,
-        fontFamily: Fonts.bold,
-        color: Colors.primary,
+    detailChipText: { fontSize: 12, fontFamily: Fonts.medium, color: Colors.textSecondary },
+
+    // Favorites
+    favoritesSection: { marginTop: 18, gap: 10 },
+    favoriteCard: {
+        flexDirection: 'row', alignItems: 'center', gap: 12,
+        padding: 14, backgroundColor: Colors.surface,
+        borderRadius: 16, borderWidth: 1, borderColor: Colors.divider,
     },
-    feedbackOverlay: {
-        ...StyleSheet.absoluteFillObject,
-        backgroundColor: 'rgba(0,0,0,0.6)',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 999,
+    favIconCircle: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+    favoriteLabel: { fontSize: 10, fontFamily: Fonts.bold, color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 },
+    favoriteValue: { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.textPrimary, marginTop: 1 },
+
+    // Actions
+    profileActionsContainer: { flexDirection: 'row', marginTop: 24, gap: 10, paddingHorizontal: 20 },
+    primaryProfileBtn: { flex: 4, height: 48, borderRadius: 24, overflow: 'hidden' },
+    secondaryProfileBtn: {
+        width: 48, height: 48, borderRadius: 24,
+        backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.divider,
+        alignItems: 'center', justifyContent: 'center'
     },
-    feedbackCard: {
-        width: width * 0.82,
-        backgroundColor: Colors.surface,
-        borderRadius: 28,
-        padding: 24,
-        alignItems: 'center',
-        ...Shadow.primary,
+    btnGradient: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    primaryBtnText: { color: '#fff', fontSize: 14, fontFamily: Fonts.bold, letterSpacing: 0.3 },
+
+    // Tabs
+    profileTabsWrapper: { paddingHorizontal: 20, marginTop: 24, marginBottom: 12 },
+    premiumSegmentedControl: {
+        flexDirection: 'row', backgroundColor: Colors.cardAlt,
+        borderRadius: 14, padding: 4, gap: 4, borderWidth: 1, borderColor: Colors.divider
     },
-    feedbackIcon: {
-        width: 76,
-        height: 76,
-        borderRadius: 38,
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginBottom: 20,
+    segmentedTab: {
+        flex: 1, paddingVertical: 10, alignItems: 'center',
+        justifyContent: 'center', borderRadius: 10,
     },
-    feedbackTitle: {
-        fontSize: 22,
-        fontFamily: Fonts.bold,
-        color: Colors.textPrimary,
-        marginBottom: 10,
+    segmentedTabActive: { backgroundColor: Colors.surface, ...Shadow.subtle },
+    segmentedText: { fontSize: 12, fontFamily: Fonts.medium, color: Colors.textMuted },
+    segmentedTextActive: { color: Colors.primary, fontFamily: Fonts.bold },
+
+    // Grid & Cells (REDESIGNED MINIMALIST)
+    sealedGrid: { flex: 1 },
+    sealedCell: { marginBottom: 4 },
+    sealedCellInner: {
+        borderRadius: 24, backgroundColor: Colors.surface,
+        borderWidth: 1, borderColor: Colors.divider,
+        padding: 10, gap: 10,
     },
-    feedbackSubtitle: {
-        fontSize: 15,
-        fontFamily: Fonts.medium,
-        color: Colors.textSecondary,
-        textAlign: 'center',
-        lineHeight: 22,
+    modelContainer: { width: '100%', aspectRatio: 1, position: 'relative' },
+    modelMainVisual: {
+        flex: 1, borderRadius: 18, backgroundColor: Colors.cardAlt,
+        overflow: 'hidden', alignItems: 'center', justifyContent: 'center'
     },
-    favoritesCard: {
-        marginTop: 20,
-        padding: 16,
-        backgroundColor: Colors.cardAlt,
-        borderRadius: 20,
-        borderWidth: 1,
-        borderColor: Colors.border,
-    },
-    favoriteItem: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-    favIconBox: { width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-    favLabel: { fontSize: 10, fontFamily: Fonts.bold, color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 },
-    favValue: { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.textPrimary, marginTop: 1 },
-    actionButtons: { flexDirection: 'row', marginTop: 22, gap: 10, paddingHorizontal: 18 },
-    pillActionBtn: { flex: 4, borderRadius: 12, height: 44, overflow: 'hidden' },
-    pillGradient: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
-    pillBtnText: { color: 'white', fontSize: 13, fontFamily: Fonts.semiBold, letterSpacing: 0.2 },
-    pillIconBtn: { flex: 1, height: 44, borderRadius: 12, backgroundColor: Colors.surface, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: Colors.border, ...Shadow.subtle },
-    tabsContainer: {
-        paddingHorizontal: Spacing.md,
-        marginVertical: Spacing.md,
-    },
-    tabsBackground: {
-        flexDirection: 'row',
-        backgroundColor: 'rgba(162, 105, 255, 0.08)',
-        borderRadius: 25,
-        padding: 4,
-        gap: 4,
-    },
-    tab: {
-        flex: 1,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingVertical: 10,
-        borderRadius: 22,
-        gap: 8,
-        overflow: 'hidden',
-    },
-    tabActive: {
-        ...Shadow.primary,
-    },
-    tabText: {
-        fontSize: 13,
-        fontFamily: Fonts.medium,
-        color: Colors.textMuted,
-    },
-    tabTextActive: {
-        color: '#fff',
-        fontFamily: Fonts.bold,
-    },
-    grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 2, padding: 2 },
-    gridCell: { width: (width - 6) / 3, aspectRatio: 1 },
-    gridCellInner: { flex: 1, justifyContent: 'center', alignItems: 'center', borderRadius: 4, overflow: 'hidden', backgroundColor: 'transparent' },
-    gridImg: { width: '80%', height: '80%' },
+    sealedImgLarge: { width: '85%', height: '85%' },
     gridImgFull: { width: '100%', height: '100%' },
-    sealedBadgeSmall: { position: 'absolute', top: 6, left: 6, backgroundColor: 'rgba(0,0,0,0.4)', borderRadius: 10, padding: 4 },
+    gridImg: { width: '70%', height: '70%' },
+
+    cellBadgeContainer: {
+        position: 'absolute', top: 8, right: 8,
+        flexDirection: 'row', gap: 4
+    },
+    miniTypeIcon: { width: 16, height: 16, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+    miniSharedBadge: { width: 16, height: 16, borderRadius: 8, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
+    miniSealedBadge: { width: 16, height: 16, borderRadius: 8, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' },
+
+    cellMetaInfo: { paddingHorizontal: 2, paddingBottom: 4, gap: 2 },
+    sealedTitle: { fontSize: 13, fontFamily: Fonts.bold, color: Colors.textPrimary },
+    sealedTimer: { fontSize: 11, fontFamily: Fonts.semiBold, color: Colors.primary },
+    openedLabel: { fontSize: 10, fontFamily: Fonts.bold, color: Colors.textMuted },
+
+    // Modals
+    modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+    modalSheet: {
+        backgroundColor: Colors.surface, borderTopLeftRadius: 30, borderTopRightRadius: 30,
+        paddingHorizontal: 24, paddingTop: 12, paddingBottom: 40
+    },
+    pickerHandle: { alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.divider, marginBottom: 16 },
+    modalTitle: { fontSize: 20, fontFamily: Fonts.bold, color: Colors.textPrimary, marginBottom: 12 },
+    settingsItem: {
+        flexDirection: 'row', alignItems: 'center', paddingVertical: 14,
+        borderBottomWidth: 1, borderBottomColor: Colors.divider
+    },
+    settingsItemIcon: {
+        width: 36, height: 36, borderRadius: 12,
+        backgroundColor: Colors.cardAlt, alignItems: 'center', justifyContent: 'center',
+        marginRight: 12
+    },
+    settingsItemText: { flex: 1, fontSize: 15, fontFamily: Fonts.medium, color: Colors.textPrimary },
+    settingsItemValue: { fontSize: 13, fontFamily: Fonts.regular, color: Colors.textMuted, marginRight: 8 },
+    
+    // Legacy support/others
+    feedbackOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', zIndex: 999 },
+    feedbackCard: { width: width * 0.82, backgroundColor: Colors.surface, borderRadius: 28, padding: 24, alignItems: 'center', ...Shadow.primary },
+    feedbackIcon: { width: 76, height: 76, borderRadius: 38, alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
+    feedbackTitle: { fontSize: 22, fontFamily: Fonts.bold, color: Colors.textPrimary, marginBottom: 10 },
+    feedbackSubtitle: { fontSize: 15, fontFamily: Fonts.medium, color: Colors.textSecondary, textAlign: 'center', lineHeight: 22 },
+    appVersionContainer: { alignItems: 'center', marginTop: 30 },
+    appVersionText: { fontSize: 11, fontFamily: Fonts.medium, color: Colors.textMuted },
+    emptyCapsuleState: { padding: 60, alignItems: 'center', justifyContent: 'center', width: '100%', marginTop: 20 },
+    emptyIconCircle: { width: 64, height: 64, borderRadius: 32, backgroundColor: Colors.cardAlt, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
+    emptyCapsuleTitle: { fontSize: 16, fontFamily: Fonts.bold, color: Colors.textPrimary, marginBottom: 4 },
+    emptyCapsuleSub: { fontSize: 14, fontFamily: Fonts.regular, color: Colors.textMuted, textAlign: 'center' },
+    
+    optionsContent: { backgroundColor: Colors.surface, borderTopLeftRadius: 30, borderTopRightRadius: 30, padding: 24, paddingBottom: 40 },
+    modalBar: { width: 40, height: 4, borderRadius: 2, backgroundColor: Colors.divider, alignSelf: 'center', marginBottom: 20 },
+    optionsTitle: { fontSize: 17, fontFamily: Fonts.bold, color: Colors.textPrimary, textAlign: 'center', marginBottom: 20 },
+    deleteOption: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: Colors.divider },
+    deleteOptionText: { fontSize: 16, fontFamily: Fonts.medium, color: Colors.error },
+    cancelOption: { marginTop: 12, paddingVertical: 16, alignItems: 'center' },
+    cancelOptionText: { fontSize: 16, fontFamily: Fonts.bold, color: Colors.textMuted },
+    legalText: { fontSize: 14, fontFamily: Fonts.regular, color: Colors.textSecondary, lineHeight: 22 },
+    modalHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 },
+    modalTitleInline: { fontSize: 18, fontFamily: Fonts.bold, color: Colors.textPrimary },
+    backButton: { padding: 4 },
+    langItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: Colors.divider },
     pickerOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
     pickerSheet: { backgroundColor: Colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingTop: 12, paddingBottom: 40 },
-    pickerHandle: { alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.border, marginBottom: 16 },
     pickerTitle: { fontSize: 16, fontFamily: Fonts.bold, color: Colors.textPrimary, paddingHorizontal: 20, marginBottom: 4 },
     pickerSub: { fontSize: 12, fontFamily: Fonts.regular, color: Colors.textMuted, paddingHorizontal: 20, marginBottom: 16 },
     pickerRow: { paddingHorizontal: 16, gap: 10 },
@@ -1169,66 +1215,5 @@ const styles = StyleSheet.create({
     pickerThumbSelected: { borderColor: Colors.primary },
     pickerThumbImg: { width: '100%', height: '100%' },
     pickerCheckOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center' },
-    sealedGrid: { flex: 1 },
-    sealedCell: { flex: 1, height: '100%' },
-    sealedCellInner: { flex: 1, alignItems: 'center', backgroundColor: Colors.surface, padding: 12, borderRadius: 20, borderWidth: 1, borderColor: Colors.border, ...Shadow.subtle },
-    sealedImgLarge: { width: 120, height: 120, justifyContent: 'center', alignItems: 'center', borderRadius: 12, overflow: 'hidden' },
-    sealedTimer: { fontSize: 16, fontFamily: Fonts.bold, color: Colors.primary, marginTop: 12 },
-    sealedTitle: { fontSize: 15, fontFamily: Fonts.bold, color: Colors.textPrimary, marginTop: 4, width: '100%', textAlign: 'center' },
-    sealedMetaRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12, marginTop: 10, width: '100%' },
-    sealedMetaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-    sealedMetaText: { fontSize: 12, fontFamily: Fonts.medium, color: Colors.textMuted },
-    cornerTypeIconSmall: { position: 'absolute', top: 4, right: 4, width: 14, height: 14, borderRadius: 7, alignItems: 'center', justifyContent: 'center', ...Shadow.subtle },
-    modelContainer: { position: 'relative', alignItems: 'center', width: '100%' },
-    cornerTypeIcon: { position: 'absolute', top: 5, right: 10, width: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center', ...Shadow.subtle },
-    emptyState: { padding: 50, alignItems: 'center' },
-    emptyTitle: { fontSize: 15, fontFamily: Fonts.medium, color: Colors.textMuted },
-    modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-    modalSheet: { backgroundColor: Colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 40 },
-    modalTitle: { fontSize: 18, fontFamily: Fonts.bold, color: Colors.textPrimary, marginBottom: 20 },
-    modalHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 },
-    modalTitleInline: { fontSize: 18, fontFamily: Fonts.bold, color: Colors.textPrimary },
-    backButton: { padding: 4 },
-    settingsItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: Colors.border },
-    settingsItemIcon: { width: 32, height: 32, borderRadius: 16, backgroundColor: Colors.cardAlt, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
-    settingsItemText: { flex: 1, fontSize: 15, fontFamily: Fonts.medium, color: Colors.textPrimary },
-    settingsItemValue: { fontSize: 13, fontFamily: Fonts.regular, color: Colors.textMuted, marginRight: 8 },
-    appVersionContainer: { alignItems: 'center', marginTop: 30 },
-    appVersionText: { fontSize: 12, fontFamily: Fonts.regular, color: Colors.textMuted },
-    langItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: Colors.border },
-    sharedBadge: {
-        position: 'absolute',
-        top: 6,
-        right: 32,
-        backgroundColor: Colors.primary,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 4,
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-        borderRadius: 10,
-        ...Shadow.subtle,
-    },
-    sharedBadgeText: { fontSize: 9, fontFamily: Fonts.bold, color: "#fff" },
-    membersList: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-        marginTop: 6,
-        backgroundColor: Colors.cardAlt,
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-        borderRadius: 12,
-        ...Shadow.subtle,
-    },
-    avatarStack: { flexDirection: 'row', alignItems: 'center' },
-    stackAvatar: { width: 18, height: 18, borderRadius: 9, backgroundColor: Colors.background },
-    membersCountText: { fontSize: 10, fontFamily: Fonts.medium, color: Colors.textSecondary },
-    legalText: {
-        fontSize: 14,
-        fontFamily: Fonts.regular,
-        color: Colors.textSecondary,
-        lineHeight: 22,
-    },
 });
 

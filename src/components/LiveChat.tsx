@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import {
-    View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList,
-    Image, Animated, Easing
-} from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList, Image, Animated, Easing, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import { useTranslation } from 'react-i18next';
 import { supabase } from '../lib/supabase';
 import { Colors, Fonts, Spacing, BorderRadius } from '../theme';
+import { safetyService } from '../utils/safety';
 
 interface ChatMessage {
     id: string;
@@ -31,8 +30,10 @@ interface LiveChatProps {
 }
 
 export default function LiveChat({ capsuleId, tint }: LiveChatProps) {
+    const { t } = useTranslation();
     const navigation = useNavigation<any>();
     const [messages, setMessages] = useState<ChatMessage[]>([]);
+    const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
     const [input, setInput] = useState('');
     const [userId, setUserId] = useState<string | null>(null);
     const [myProfile, setMyProfile] = useState<any>(null);
@@ -57,21 +58,26 @@ export default function LiveChat({ capsuleId, tint }: LiveChatProps) {
                         .select('username, avatar_url')
                         .eq('id', newMsg.user_id)
                         .single()
-                        .then(({ data }) => {
+                        .then(async ({ data }) => {
+                            // Check if blocked before adding
+                            const currentUser = (await supabase.auth.getUser()).data.user;
+                            if (currentUser) {
+                                const blocked = await safetyService.getAllSafetyUserIds(currentUser.id);
+                                if (blocked.includes(newMsg.user_id)) return;
+                            }
+
                             setMessages(prev => [...prev, { ...newMsg, profiles: data || undefined }]);
                             setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
                             
                             // Mark as read immediately if we're in the chat
-                            supabase.auth.getUser().then(({ data: { user } }) => {
-                                if (user) {
-                                    supabase
-                                        .from('notifications')
-                                        .update({ is_read: true })
-                                        .eq('capsule_id', capsuleId)
-                                        .eq('user_id', user.id)
-                                        .then();
-                                }
-                            });
+                            if (currentUser) {
+                                supabase
+                                    .from('notifications')
+                                    .update({ is_read: true })
+                                    .eq('capsule_id', capsuleId)
+                                    .eq('user_id', currentUser.id)
+                                    .then();
+                            }
                         });
                 }
             )
@@ -107,6 +113,13 @@ export default function LiveChat({ capsuleId, tint }: LiveChatProps) {
     };
 
     const loadMessages = async () => {
+        const { data: { user } } = await supabase.auth.getUser();
+        let blocked: string[] = [];
+        if (user) {
+            blocked = await safetyService.getAllSafetyUserIds(user.id);
+            setBlockedUserIds(blocked);
+        }
+
         const { data } = await supabase
             .from('capsule_chat')
             .select('*, profiles:user_id(username, avatar_url)')
@@ -114,12 +127,11 @@ export default function LiveChat({ capsuleId, tint }: LiveChatProps) {
             .order('created_at', { ascending: true })
             .limit(100);
         if (data) {
-            setMessages(data);
+            setMessages(data.filter(m => !blocked.includes(m.user_id)));
             setTimeout(() => flatListRef.current?.scrollToEnd({ animated: false }), 200);
         }
 
         // Mark as read
-        const { data: { user } } = await supabase.auth.getUser();
         if (user) {
             await supabase
                 .from('notifications')
@@ -172,6 +184,30 @@ export default function LiveChat({ capsuleId, tint }: LiveChatProps) {
         return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     };
 
+    const handleReportMessage = (msgId: string) => {
+        if (!userId) return;
+        Alert.alert(
+            t('detail.report_message'),
+            t('detail.report_reason'),
+            [
+                { text: t('detail.report_types.inappropriate'), onPress: () => submitReport(msgId, 'inappropriate') },
+                { text: t('detail.report_types.spam'), onPress: () => submitReport(msgId, 'spam') },
+                { text: t('common.cancel'), style: 'cancel' }
+            ]
+        );
+    };
+
+    const submitReport = async (msgId: string, reason: string) => {
+        if (!userId) return;
+        await safetyService.report({
+            reporterId: userId,
+            targetId: msgId,
+            targetType: 'chat_message',
+            reason
+        });
+        Alert.alert(t('common.ready'), t('detail.report_submitted'));
+    };
+
     const renderMessage = ({ item, index }: { item: ChatMessage; index: number }) => {
         const isMe = item.user_id === userId;
         const prevItem = messages[index - 1];
@@ -192,7 +228,11 @@ export default function LiveChat({ capsuleId, tint }: LiveChatProps) {
                         ) : null}
                     </View>
                 )}
-                <View style={[styles.bubble, isMe && { backgroundColor: tint + 'ee' }]}>
+                <TouchableOpacity 
+                    style={[styles.bubble, isMe && { backgroundColor: tint + 'ee' }]}
+                    onLongPress={() => !isMe && handleReportMessage(item.id)}
+                    activeOpacity={0.9}
+                >
                     {!isMe && showAvatar && (
                         <TouchableOpacity onPress={() => navigation.navigate('UserProfile', { targetUserId: item.user_id })}>
                             <Text style={styles.bubbleUser}>{item.profiles?.username || 'user'}</Text>
@@ -202,7 +242,7 @@ export default function LiveChat({ capsuleId, tint }: LiveChatProps) {
                     <Text style={[styles.bubbleTime, isMe && { color: 'rgba(255,255,255,0.7)', textAlign: 'right' }]}>
                         {formatTime(item.created_at)}
                     </Text>
-                </View>
+                </TouchableOpacity>
             </View>
         );
     };

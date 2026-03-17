@@ -1,7 +1,8 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Dimensions, SafeAreaView, StatusBar } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Dimensions, Platform, StatusBar } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Spacing, Shadow } from '../theme';
@@ -11,6 +12,7 @@ const { width } = Dimensions.get('window');
 export default function CreateSelectionScreen({ route }: any) {
     const navigation = useNavigation<any>();
     const { t } = useTranslation();
+    const insets = useSafeAreaInsets();
     const { capsuleId } = route.params || {};
 
     const contentItems = [
@@ -21,10 +23,10 @@ export default function CreateSelectionScreen({ route }: any) {
     ];
 
     return (
-        <SafeAreaView style={styles.container}>
+        <View style={[styles.container, { paddingTop: Math.max(insets.top, Platform.OS === 'ios' ? 44 : 20) }]}>
             <StatusBar barStyle="dark-content" />
             <View style={styles.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.closeBtn}>
+                <TouchableOpacity activeOpacity={0.7} onPress={() => navigation.goBack()} style={styles.closeBtn}>
                     <Ionicons name="close" size={28} color={Colors.textPrimary} />
                 </TouchableOpacity>
             </View>
@@ -70,6 +72,7 @@ export default function CreateSelectionScreen({ route }: any) {
                         <TouchableOpacity
                             key={item.id}
                             style={styles.gridItem}
+                            activeOpacity={0.8}
                             onPress={() => {
                                 if (capsuleId) {
                                     navigation.navigate('AddItem', { capsuleId, type: item.id });
@@ -89,7 +92,7 @@ export default function CreateSelectionScreen({ route }: any) {
                     ))}
                 </View>
             </View>
-        </SafeAreaView>
+        </View>
     );
 }
 

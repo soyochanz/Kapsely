@@ -18,6 +18,7 @@ interface CapsuleWithTimerProps {
     capsuleType?: string; // Optional type for specific particles
     isOpened?: boolean; // New prop for status
     hideParticles?: boolean; // Suppress particles (for thumbnails, notifications)
+    darkerShadow?: boolean; // Use more intense shadow
 }
 
 const CapsuleWithTimer = React.memo(({
@@ -31,6 +32,7 @@ const CapsuleWithTimer = React.memo(({
     capsuleType,
     isOpened,
     hideParticles,
+    darkerShadow,
 }: CapsuleWithTimerProps) => {
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
     const [config, setConfig] = useState(configOverride || timerConfigManager.getConfig(modelKey));
@@ -161,6 +163,7 @@ const CapsuleWithTimer = React.memo(({
                     width: width * 0.9,
                     height: width * 0.9,
                     bottom: -(width * 0.33),
+                    backgroundColor: darkerShadow ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.05)',
                 }]} />
             )}
 
@@ -173,7 +176,11 @@ const CapsuleWithTimer = React.memo(({
 
             <Image
                 source={source}
-                style={[styles.image, { zIndex: 1 }]}
+                style={[
+                    styles.image, 
+                    width > 0 ? { width, height } : {}, 
+                    { zIndex: 1 }
+                ]}
                 resizeMode="contain"
             />
             {width > 0 && !hideTimer && (

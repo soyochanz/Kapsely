@@ -223,16 +223,60 @@ export default function EditProfileScreen({ onClose }: Props) {
 
     // ── Logout ────────────────────────────────────────────────────────────────
     const handleLogout = async () => {
-        Alert.alert('Cerrar sesión', '¿Estás seguro de que quieres cerrar sesión?', [
-            { text: 'Cancelar', style: 'cancel' },
+        Alert.alert(t('common.logout') || 'Log Out', t('common.logoutConfirm') || 'Are you sure you want to log out?', [
+            { text: t('common.cancel'), style: 'cancel' },
             {
-                text: 'Cerrar sesión',
+                text: t('common.logout') || 'Log Out',
                 style: 'destructive',
                 onPress: async () => {
                     await supabase.auth.signOut();
                 }
             }
         ]);
+    };
+
+    const handleDeleteAccount = async () => {
+        if (!userId) return;
+        Alert.alert(
+            t('profile.deleteAccount'),
+            t('profile.deleteAccountConfirm'),
+            [
+                { text: t('common.cancel'), style: 'cancel' },
+                {
+                    text: t('profile.deleteAccount'),
+                    style: 'destructive',
+                    onPress: () => {
+                        Alert.alert(
+                            t('common.warning') || 'Warning',
+                            t('profile.deleteAccountWarning'),
+                            [
+                                { text: t('common.cancel'), style: 'cancel' },
+                                {
+                                    text: t('profile.deleteAccountFinal'),
+                                    style: 'destructive',
+                                    onPress: async () => {
+                                        setSaving(true);
+                                        try {
+                                            // 1. Delete user profile (cascading deletes should handle the rest)
+                                            const { error } = await supabase.from('profiles').delete().eq('id', userId);
+                                            if (error) throw error;
+
+                                            // 2. Sign out
+                                            await supabase.auth.signOut();
+                                            Alert.alert(t('common.ready'), t('profile.accountDeleted'));
+                                        } catch (e: any) {
+                                            Alert.alert('Error', e.message || 'Could not delete account');
+                                        } finally {
+                                            setSaving(false);
+                                        }
+                                    }
+                                }
+                            ]
+                        );
+                    }
+                }
+            ]
+        );
     };
 
     if (loading) {
@@ -248,11 +292,11 @@ export default function EditProfileScreen({ onClose }: Props) {
             <StatusBar barStyle="dark-content" backgroundColor={Colors.surface} />
             <SafeAreaView style={styles.safeArea}>
                 <View style={styles.header}>
-                    <TouchableOpacity onPress={() => onClose ? onClose() : navigation.goBack()} style={styles.headerBtn}>
+                    <TouchableOpacity activeOpacity={0.7} onPress={() => onClose ? onClose() : navigation.goBack()} style={styles.headerBtn}>
                         <Ionicons name="close" size={26} color={Colors.textPrimary} />
                     </TouchableOpacity>
                     <Text style={styles.headerTitle}>{t('profile.editProfile')}</Text>
-                    <TouchableOpacity onPress={handleSave} disabled={saving} style={styles.saveBtn}>
+                    <TouchableOpacity activeOpacity={0.8} onPress={handleSave} disabled={saving} style={styles.saveBtn}>
                         {saving ? <ActivityIndicator size="small" color={Colors.primary} /> : <Text style={styles.saveBtnText}>{t('common.save')}</Text>}
                     </TouchableOpacity>
                 </View>
@@ -359,12 +403,24 @@ export default function EditProfileScreen({ onClose }: Props) {
 
 
 
-                {/* Logout Button */}
+                {/* Danger Zone */}
                 <View style={styles.logoutSection}>
-                    <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout} activeOpacity={0.8}>
+                    <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout} activeOpacity={0.7}>
                         <Ionicons name="log-out-outline" size={20} color="#FF3B30" />
-                        <Text style={styles.logoutText}>Log Out</Text>
+                        <Text style={styles.logoutText}>{t('common.logout') || 'Log Out'}</Text>
                     </TouchableOpacity>
+
+                    <View style={styles.dangerZone}>
+                        <Text style={styles.dangerZoneTitle}>{t('profile.dangerZone') || 'Danger Zone'}</Text>
+                        <TouchableOpacity 
+                            style={styles.deleteBtn} 
+                            onPress={handleDeleteAccount} 
+                            activeOpacity={0.7}
+                        >
+                            <Ionicons name="trash-outline" size={18} color="#FF3B30" />
+                            <Text style={styles.deleteBtnText}>{t('profile.deleteAccount')}</Text>
+                        </TouchableOpacity>
+                    </View>
                 </View>
 
             </ScrollView>
@@ -407,7 +463,7 @@ export default function EditProfileScreen({ onClose }: Props) {
                         ))}
 
                         <TouchableOpacity style={[styles.modalConfirmBtn, { backgroundColor: favoriteColor }]}
-                            onPress={() => setShowColorPicker(false)} activeOpacity={0.85}>
+                            onPress={() => setShowColorPicker(false)} activeOpacity={0.8}>
                             <Text style={styles.modalConfirmText}>Confirm Color</Text>
                         </TouchableOpacity>
                     </Pressable>
@@ -505,6 +561,42 @@ const styles = StyleSheet.create({
     logoutText: {
         color: '#FF3B30',
         fontSize: 15,
+        fontFamily: Fonts.semiBold,
+    },
+
+    // Danger Zone
+    dangerZone: {
+        marginTop: 40,
+        width: '100%',
+        padding: Spacing.md,
+        backgroundColor: '#FFF5F5',
+        borderRadius: BorderRadius.lg,
+        borderWidth: 1,
+        borderColor: '#FFE5E5',
+    },
+    dangerZoneTitle: {
+        fontSize: 12,
+        fontFamily: Fonts.bold,
+        color: '#FF3B30',
+        textTransform: 'uppercase',
+        letterSpacing: 1,
+        marginBottom: 12,
+    },
+    deleteBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 10,
+        paddingHorizontal: 16,
+        backgroundColor: '#fff',
+        borderRadius: BorderRadius.md,
+        borderWidth: 1,
+        borderColor: '#FF3B30',
+        gap: 8,
+        alignSelf: 'flex-start',
+    },
+    deleteBtnText: {
+        color: '#FF3B30',
+        fontSize: 13,
         fontFamily: Fonts.semiBold,
     },
 

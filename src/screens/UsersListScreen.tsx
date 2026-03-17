@@ -43,6 +43,7 @@ export default function UserListScreen() {
     const renderUser = ({ item }: { item: any }) => (
         <TouchableOpacity
             style={styles.userItem}
+            activeOpacity={0.7}
             onPress={() => navigation.push('UserProfile', { targetUserId: item.id })}
         >
             {item.avatar_url ? (
@@ -59,7 +60,7 @@ export default function UserListScreen() {
                 </View>
                 <Text style={styles.username}>@{item.username}</Text>
             </View>
-            <TouchableOpacity style={styles.viewBtn}>
+            <TouchableOpacity style={styles.viewBtn} activeOpacity={0.7}>
                 <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
             </TouchableOpacity>
         </TouchableOpacity>
@@ -69,7 +70,7 @@ export default function UserListScreen() {
         <SafeAreaView style={styles.container}>
             <StatusBar barStyle="dark-content" />
             <View style={styles.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+                <TouchableOpacity activeOpacity={0.7} onPress={() => navigation.goBack()} style={styles.backBtn}>
                     <Ionicons name="chevron-back" size={24} color={Colors.textPrimary} />
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>{type === 'followers' ? 'Followers' : 'Following'}</Text>

@@ -2,7 +2,7 @@
   "expo": {
     "name": "Kapsely",
     "slug": "kapsely",
-    "version": "1.0.2",
+    "version": "2.0.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -10,7 +10,7 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#0a0a0f"
+      "backgroundColor": "#f3f1fe"
     },
     "ios": {
       "supportsTablet": false,

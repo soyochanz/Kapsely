@@ -25,7 +25,7 @@ export default function ChatScreen() {
             <View style={styles.container}>
                 <StatusBar barStyle="dark-content" />
                 <View style={[styles.detailHeader, { paddingTop: insets.top + 10 }]}>
-                    <TouchableOpacity onPress={() => setView('list')} style={styles.backBtn}>
+                    <TouchableOpacity activeOpacity={0.7} onPress={() => setView('list')} style={styles.backBtn}>
                         <Ionicons name="arrow-back" size={20} color={Colors.textPrimary} />
                     </TouchableOpacity>
                     <Image source={{ uri: selectedConv.user.avatar }} style={styles.detailAvatar} />
@@ -35,10 +35,10 @@ export default function ChatScreen() {
                             {selectedConv.user.isOnline ? '● Online' : 'Offline'}
                         </Text>
                     </View>
-                    <TouchableOpacity style={styles.detailAction}>
+                    <TouchableOpacity style={styles.detailAction} activeOpacity={0.7}>
                         <Ionicons name="lock-closed-outline" size={18} color={Colors.primary} />
                     </TouchableOpacity>
-                    <TouchableOpacity style={styles.detailAction}>
+                    <TouchableOpacity style={styles.detailAction} activeOpacity={0.7}>
                         <Ionicons name="ellipsis-vertical" size={18} color={Colors.textSecondary} />
                     </TouchableOpacity>
                 </View>
@@ -85,7 +85,7 @@ export default function ChatScreen() {
                     behavior={Platform.OS === 'ios' ? 'padding' : undefined}
                 >
                     <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 10) }]}>
-                    <TouchableOpacity style={styles.inputAction}>
+                    <TouchableOpacity activeOpacity={0.7} style={styles.inputAction}>
                         <Ionicons name="add-circle" size={26} color={Colors.primary} />
                     </TouchableOpacity>
                     <TextInput
@@ -96,10 +96,10 @@ export default function ChatScreen() {
                         onChangeText={setMessage}
                         selectionColor={Colors.primary}
                     />
-                    <TouchableOpacity style={styles.inputAction}>
+                    <TouchableOpacity activeOpacity={0.7} style={styles.inputAction}>
                         <Ionicons name="lock-closed-outline" size={20} color={Colors.textMuted} />
                     </TouchableOpacity>
-                    <TouchableOpacity>
+                    <TouchableOpacity activeOpacity={0.8}>
                         <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.sendBtnGrad}>
                             <Ionicons name="send" size={16} color="#fff" />
                         </LinearGradient>
@@ -116,7 +116,7 @@ export default function ChatScreen() {
             <View style={{ paddingTop: insets.top + 10 }}>
                 <View style={styles.header}>
                     <Text style={styles.headerTitle}>Messages</Text>
-                    <TouchableOpacity style={styles.newChatBtn}>
+                    <TouchableOpacity style={styles.newChatBtn} activeOpacity={0.7}>
                         <Ionicons name="create-outline" size={22} color={Colors.primary} />
                     </TouchableOpacity>
                 </View>
@@ -138,7 +138,7 @@ export default function ChatScreen() {
                         const ringColors: [string, string] = c.capsuleType === 'legacycap'
                             ? [Colors.legacyCap, '#b7860b'] : [Colors.instaCap, Colors.primaryDark];
                         return (
-                            <TouchableOpacity key={c.id} style={styles.sharedCapsuleItem}>
+                            <TouchableOpacity key={c.id} style={styles.sharedCapsuleItem} activeOpacity={0.8}>
                                 <LinearGradient colors={ringColors} style={styles.sharedCapsuleRing}>
                                     <Image source={{ uri: c.user.avatar }} style={styles.sharedCapsuleAvatar} />
                                 </LinearGradient>

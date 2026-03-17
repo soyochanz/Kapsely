@@ -1,11 +1,12 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Image, ActivityIndicator, StatusBar, Modal, TextInput, Alert } from 'react-native';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, Image, ActivityIndicator, StatusBar, Modal, TextInput, Alert, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
 import { supabase } from '../lib/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import SwipeableChatRow from '../components/SwipeableChatRow';
 
 export default function ChatListScreen() {
     const [loading, setLoading] = useState(true);
@@ -23,6 +24,21 @@ export default function ChatListScreen() {
         const uid = userId || currentUserId;
         if (!uid) return;
 
+        // Load deleted chats timestamps
+        const deletedKey = `deleted_chats_${uid}`;
+        const existingDeleted = await AsyncStorage.getItem(deletedKey);
+        let deletedStamps: Record<string, string> = {};
+        if (existingDeleted) {
+            try {
+                const parsed = JSON.parse(existingDeleted);
+                if (Array.isArray(parsed)) {
+                    parsed.forEach((id: string) => { deletedStamps[id] = new Date().toISOString(); });
+                } else {
+                    deletedStamps = parsed;
+                }
+            } catch (e) {}
+        }
+
         const { data, error } = await supabase
             .from('conversation_participants')
             .select(`
@@ -35,7 +51,20 @@ export default function ChatListScreen() {
             .eq('user_id', uid);
 
         if (data) {
-            const chats = await Promise.all(data.map(async (c: any) => {
+            // Filter locally deleted chats unless a new message has arrived
+            const activeData = data.filter((c: any) => {
+                const delTime = deletedStamps[c.conversation_id];
+                if (!delTime) return true;
+                
+                if (c.conversations?.last_message_at) {
+                    if (new Date(c.conversations.last_message_at).getTime() > new Date(delTime).getTime()) {
+                        return true; // New message arrived, show chat again
+                    }
+                }
+                return false;
+            });
+
+            const chats = await Promise.all(activeData.map(async (c: any) => {
                 const { data: otherPartData } = await supabase
                     .from('conversation_participants')
                     .select('user_id')
@@ -61,17 +90,12 @@ export default function ChatListScreen() {
                     .limit(1)
                     .maybeSingle();
 
-                // Determine unread: compare last message timestamp vs our last visit
                 const lastVisitKey = `chat_visited_${c.conversation_id}`;
                 const lastVisited = await AsyncStorage.getItem(lastVisitKey);
                 let unreadCount = 0;
 
                 if (lastMsg && lastMsg.sender_id !== uid) {
-                    // Message from the OTHER user
-                    if (!lastVisited || new Date(lastMsg.created_at) > new Date(lastVisited)) {
-                        // It arrived after we last visited
-                        unreadCount = 1;
-                    }
+                    unreadCount = (!lastVisited || new Date(lastMsg.created_at).getTime() > new Date(lastVisited).getTime() + 2000) ? 1 : 0;
                 }
 
                 return {
@@ -82,7 +106,6 @@ export default function ChatListScreen() {
                 };
             }));
 
-            // Sort: unread conversations first, then by last message time
             const sorted = chats
                 .filter(c => c.otherUser)
                 .sort((a, b) => {
@@ -107,7 +130,6 @@ export default function ChatListScreen() {
             setCurrentUserId(user.id);
             await loadConversations(user.id);
 
-            // Real-time: re-sort when new messages arrive
             channelRef.current = supabase
                 .channel('chat_list_realtime')
                 .on('postgres_changes', {
@@ -123,6 +145,19 @@ export default function ChatListScreen() {
             if (channelRef.current) supabase.removeChannel(channelRef.current);
         };
     }, []);
+
+    useFocusEffect(
+        useCallback(() => {
+            const refreshConversations = async () => {
+                const { data: { session } } = await supabase.auth.getSession();
+                const user = session?.user;
+                if (user) {
+                    await loadConversations(user.id);
+                }
+            };
+            refreshConversations();
+        }, [])
+    );
 
     const searchUsers = async (query: string) => {
         setSearchQuery(query);
@@ -191,55 +226,67 @@ export default function ChatListScreen() {
         }
     };
 
+    const handleDeleteConversation = async (conversationId: string) => {
+        try {
+            const { data: { session } } = await supabase.auth.getSession();
+            const uid = session?.user?.id;
+            if (!uid) return;
+
+            // 1. Update local state IMMEDIATELY
+            setConversations(prev => prev.filter(c => c.conversation_id !== conversationId));
+
+            // 2. Persist hidden status to AsyncStorage IMMEDIATELY
+            const deletedKey = `deleted_chats_${uid}`;
+            const existingDeleted = await AsyncStorage.getItem(deletedKey);
+            let deletedStamps: Record<string, string> = {};
+            if (existingDeleted) {
+                try {
+                    const parsed = JSON.parse(existingDeleted);
+                    if (Array.isArray(parsed)) {
+                        parsed.forEach((id: string) => { deletedStamps[id] = new Date().toISOString(); });
+                    } else {
+                        deletedStamps = parsed;
+                    }
+                } catch (e) {}
+            }
+            deletedStamps[conversationId] = new Date().toISOString();
+            await AsyncStorage.setItem(deletedKey, JSON.stringify(deletedStamps));
+
+            // 3. Mark as visited so unreadCount = 0
+            await AsyncStorage.setItem(`chat_visited_${conversationId}`, new Date().toISOString());
+
+            // We do NOT delete the participant record from Supabase.
+            // This maintains standard chat app behaviour: if the other person texts again, the chat will reappear.
+            // And it avoids destroying the chat for the other person since they query conversation_participants for their partner.
+            
+        } catch (error: any) {
+            console.error('Error deleting chat:', error);
+            Alert.alert('Error', 'An unexpected error occurred while deleting the chat.');
+        }
+    };
+
+
     const renderItem = ({ item }: any) => {
-        const hasUnread = item.unreadCount > 0;
         return (
-            <TouchableOpacity
-                style={[styles.chatItem, hasUnread && styles.chatItemUnread]}
+            <SwipeableChatRow
+                item={item}
+                onDelete={handleDeleteConversation}
                 onPress={() => navigation.navigate('ChatDetail', { conversationId: item.conversation_id })}
-            >
-                <TouchableOpacity onPress={() => (navigation as any).navigate('UserProfile', { targetUserId: item.otherUser.id })} style={styles.avatarWrap}>
-                    {item.otherUser?.avatar_url ? (
-                        <Image source={{ uri: item.otherUser.avatar_url }} style={styles.avatar} />
-                    ) : (
-                        <View style={styles.avatarPlaceholder}>
-                            <Ionicons name="person" size={24} color={Colors.textMuted} />
-                        </View>
-                    )}
-                    {hasUnread && <View style={styles.unreadAvatarDot} />}
-                </TouchableOpacity>
-                <View style={styles.chatInfo}>
-                    <Text style={[styles.chatName, hasUnread && styles.chatNameUnread]}>{item.otherUser?.display_name || item.otherUser?.username || 'User'}</Text>
-                    <Text style={[styles.lastMessage, hasUnread && styles.lastMessageUnread]} numberOfLines={1}>
-                        {item.lastMessage?.content || 'No messages yet'}
-                    </Text>
-                </View>
-                <View style={styles.chatRight}>
-                    {item.lastMessage && (
-                        <Text style={styles.chatTime}>
-                            {new Date(item.lastMessage.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </Text>
-                    )}
-                    {hasUnread && (
-                        <View style={styles.unreadBadge}>
-                            <Text style={styles.unreadBadgeText}>{item.unreadCount > 9 ? '9+' : item.unreadCount}</Text>
-                        </View>
-                    )}
-                </View>
-            </TouchableOpacity>
+                onAvatarPress={() => (navigation as any).navigate('UserProfile', { targetUserId: item.otherUser.id })}
+            />
         );
     };
 
     return (
-        <View style={styles.container}>
+        <View style={[styles.container, { paddingTop: insets.top + (Platform.OS === 'ios' ? 10 : 0) }]}>
             <StatusBar barStyle="dark-content" />
-            <View style={[styles.header, { paddingTop: insets.top }]}>
+            <View style={styles.header}>
                 <View style={styles.headerContent}>
-                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+                    <TouchableOpacity activeOpacity={0.7} onPress={() => navigation.goBack()} style={styles.backBtn}>
                         <Ionicons name="chevron-back" size={24} color={Colors.textPrimary} />
                     </TouchableOpacity>
                     <Text style={styles.headerTitle}>Messages</Text>
-                    <TouchableOpacity onPress={() => setShowSearch(true)} style={styles.newChatBtn}>
+                    <TouchableOpacity activeOpacity={0.7} onPress={() => setShowSearch(true)} style={styles.newChatBtn}>
                         <Ionicons name="create-outline" size={24} color={Colors.primary} />
                     </TouchableOpacity>
                 </View>
@@ -257,7 +304,7 @@ export default function ChatListScreen() {
                         <View style={styles.empty}>
                             <Ionicons name="chatbubbles-outline" size={64} color={Colors.textMuted} />
                             <Text style={styles.emptyText}>No messages yet</Text>
-                            <TouchableOpacity style={styles.startBtn} onPress={() => setShowSearch(true)}>
+                            <TouchableOpacity style={styles.startBtn} activeOpacity={0.8} onPress={() => setShowSearch(true)}>
                                 <Text style={styles.startBtnText}>Start a conversation</Text>
                             </TouchableOpacity>
                         </View>
@@ -269,7 +316,7 @@ export default function ChatListScreen() {
             <Modal visible={showSearch} animationType="slide">
                 <View style={[styles.modalContainer, { paddingTop: insets.top }]}>
                     <View style={styles.searchHeader}>
-                        <TouchableOpacity onPress={() => setShowSearch(false)}>
+                        <TouchableOpacity activeOpacity={0.7} onPress={() => setShowSearch(false)}>
                             <Ionicons name="close" size={28} color={Colors.textPrimary} />
                         </TouchableOpacity>
                         <TextInput
@@ -288,7 +335,7 @@ export default function ChatListScreen() {
                             data={searchResults}
                             keyExtractor={(item) => item.id}
                             renderItem={({ item }) => (
-                                <TouchableOpacity style={styles.userItem} onPress={() => startChat(item)}>
+                                <TouchableOpacity style={styles.userItem} activeOpacity={0.7} onPress={() => startChat(item)}>
                                     {item.avatar_url ? (
                                         <Image source={{ uri: item.avatar_url }} style={styles.userAvatar} />
                                     ) : (

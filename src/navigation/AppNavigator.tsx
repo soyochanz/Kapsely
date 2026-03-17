@@ -94,6 +94,7 @@ export default function AppNavigator() {
                 <Stack.Screen name="UserList" component={UserListScreen} />
                 <Stack.Screen name="TimerConfig" component={TimerConfigScreen} />
                 <Stack.Screen name="PersonalizeProfile" component={PersonalizeProfileScreen} />
+                <Stack.Screen name="InstagramShare" component={require('../screens/InstagramShareScreen').default} />
             </Stack.Navigator>
         </View>
     );

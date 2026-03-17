@@ -83,7 +83,6 @@ export default function LandingScreen({ onNavigateToLogin, onNavigateToRegister 
             <View style={[styles.content, { paddingTop: insets.top + 40, paddingBottom: insets.bottom + 20 }]}>
                 <View style={styles.topSection}>
                     <Animated.View style={[styles.heroIconWrapper, { transform: [{ translateY: floatY }] }]}>
-                        <View style={styles.iconGlow} />
                         <View style={styles.logoContainer}>
                             <Image
                                 source={{ uri: 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/website/Logomain.png' }}
@@ -94,9 +93,6 @@ export default function LandingScreen({ onNavigateToLogin, onNavigateToRegister 
                     </Animated.View>
 
                     <Animated.View style={[styles.textContainer, { opacity: fadeAnim, transform: [{ translateY }] }]}>
-                        <View style={styles.badge}>
-                            <Text style={styles.badgeText}>TEMPORAL PROTOCOL 2.2</Text>
-                        </View>
                         <Text style={styles.appName}>kapsely</Text>
                         <Text style={styles.slogan}>BRIDGE THROUGH TIME</Text>
 

@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '../lib/supabase';
 import { Colors, Fonts, Spacing, BorderRadius } from '../theme';
+import { safetyService } from '../utils/safety';
 
 export default function SearchScreen() {
     const insets = useSafeAreaInsets();
@@ -33,19 +34,30 @@ export default function SearchScreen() {
 
     const handleSearch = async () => {
         setSearching(true);
+        const { data: { user } } = await supabase.auth.getUser();
+        
+        let blocked: string[] = [];
+        if (user) {
+            blocked = await safetyService.getAllSafetyUserIds(user.id);
+        }
+
         const { data, error } = await supabase
             .from('profiles')
             .select('*')
             .or(`username.ilike.%${query}%,display_name.ilike.%${query}%`)
             .limit(20);
 
-        if (data) setResults(data);
+        if (data) {
+            // Filter out blocked/blocking users and current user
+            setResults(data.filter(p => !blocked.includes(p.id) && p.id !== user?.id));
+        }
         setSearching(false);
     };
 
     const renderUser = ({ item }: { item: any }) => (
         <TouchableOpacity
             style={styles.userCard}
+            activeOpacity={0.7}
             onPress={() => (navigation as any).navigate('UserProfile', { targetUserId: item.id })}
         >
             <Image
@@ -80,7 +92,7 @@ export default function SearchScreen() {
                     />
                     {searching && <ActivityIndicator size="small" color={Colors.primary} />}
                     {query.length > 0 && !searching && (
-                        <TouchableOpacity onPress={() => setQuery('')}>
+                        <TouchableOpacity activeOpacity={0.7} onPress={() => setQuery('')}>
                             <Ionicons name="close-circle" size={18} color={Colors.textMuted} />
                         </TouchableOpacity>
                     )}

@@ -103,10 +103,10 @@ export default function NotificationItem({ notification, onMarkRead, onAcceptInv
 
                 {isInvite && !isExpired && onAcceptInvite && onRejectInvite && (
                     <View style={styles.inviteActions}>
-                        <TouchableOpacity style={styles.rejectBtn} onPress={() => onRejectInvite(notification)}>
+                        <TouchableOpacity style={styles.rejectBtn} activeOpacity={0.7} onPress={() => onRejectInvite(notification)}>
                             <Text style={styles.rejectBtnText}>Reject</Text>
                         </TouchableOpacity>
-                        <TouchableOpacity style={styles.acceptBtn} onPress={() => onAcceptInvite(notification)}>
+                        <TouchableOpacity style={styles.acceptBtn} activeOpacity={0.8} onPress={() => onAcceptInvite(notification)}>
                             <Text style={styles.acceptBtnText}>Accept</Text>
                         </TouchableOpacity>
                     </View>

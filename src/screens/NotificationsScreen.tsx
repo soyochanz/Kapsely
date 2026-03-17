@@ -8,6 +8,7 @@ import SwipeableNotificationItem from '../components/SwipeableNotificationItem';
 import { Notification } from '../data/mockNotifications';
 import { supabase } from '../lib/supabase';
 import { clearBadgeCount } from '../utils/pushNotifications';
+import { safetyService } from '../utils/safety';
 
 export default function NotificationsScreen() {
     const insets = useSafeAreaInsets();
@@ -20,6 +21,8 @@ export default function NotificationsScreen() {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return;
 
+        const blocked = await safetyService.getAllSafetyUserIds(user.id);
+
         const { data, error } = await supabase
             .from('notifications')
             .select('*, sender:sender_id(username, avatar_url), capsules(title, type, model, chain_id, opens_at, owner_id)')
@@ -27,35 +30,37 @@ export default function NotificationsScreen() {
             .order('created_at', { ascending: false });
 
         if (data) {
-            const mapped: Notification[] = data.map(n => {
-                const createdDate = new Date(n.created_at);
-                const expiryDate = new Date(createdDate.getTime() + (3 * 24 * 60 * 60 * 1000));
-                const isExpired = n.type === 'capsule_invite' && new Date() > expiryDate;
+            const mapped: Notification[] = data
+                .filter(n => !blocked.includes(n.sender_id)) // Filter blocked
+                .map(n => {
+                    const createdDate = new Date(n.created_at);
+                    const expiryDate = new Date(createdDate.getTime() + (3 * 24 * 60 * 60 * 1000));
+                    const isExpired = n.type === 'capsule_invite' && new Date() > expiryDate;
 
-                return {
-                    id: n.id,
-                    type: n.type as any,
-                    user: {
-                        id: n.sender_id,
-                        username: n.sender?.username || 'Unknown',
-                        avatar: n.sender?.avatar_url || 'https://via.placeholder.com/150'
-                    },
-                    message: n.message || '',
-                    time: formatTime(n.created_at),
-                    isRead: n.is_read,
-                    capsuleId: n.capsule_id,
-                    conversationId: n.conversation_id,
-                    capsuleTitle: n.capsules?.title,
-                    capsuleType: n.capsules?.type,
-                    capsuleModel: n.capsules?.model,
-                    capsuleChainId: n.capsules?.chain_id,
-                    capsuleOpensAt: n.capsules?.opens_at,
-                    capsuleOwnerId: n.capsules?.owner_id,
-                    createdAt: n.created_at,
-                    isExpired,
-                    expiryDate,
-                };
-            });
+                    return {
+                        id: n.id,
+                        type: n.type as any,
+                        user: {
+                            id: n.sender_id,
+                            username: n.sender?.username || 'Unknown',
+                            avatar: n.sender?.avatar_url || 'https://via.placeholder.com/150'
+                        },
+                        message: n.message || '',
+                        time: formatTime(n.created_at),
+                        isRead: n.is_read,
+                        capsuleId: n.capsule_id,
+                        conversationId: n.conversation_id,
+                        capsuleTitle: n.capsules?.title,
+                        capsuleType: n.capsules?.type,
+                        capsuleModel: n.capsules?.model,
+                        capsuleChainId: n.capsules?.chain_id,
+                        capsuleOpensAt: n.capsules?.opens_at,
+                        capsuleOwnerId: n.capsules?.owner_id,
+                        createdAt: n.created_at,
+                        isExpired,
+                        expiryDate,
+                    };
+                });
             setNotifications(mapped);
         }
         setLoading(false);
@@ -183,7 +188,7 @@ export default function NotificationsScreen() {
                             <Text style={styles.headerSubtitle}>{t('notifications.unread', { count: unreadCount })}</Text>
                         )}
                     </View>
-                    <TouchableOpacity style={styles.markAllBtn} onPress={handleMarkAllRead}>
+                    <TouchableOpacity style={styles.markAllBtn} activeOpacity={0.7} onPress={handleMarkAllRead}>
                         <Ionicons name="checkmark-done" size={16} color={Colors.primary} />
                         <Text style={styles.markAllText}>{t('notifications.mark_all_read')}</Text>
                     </TouchableOpacity>

@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
     View, Text, StyleSheet, Image, PanResponder, Animated,
-    TouchableOpacity, ScrollView, SafeAreaView, StatusBar,
+    TouchableOpacity, ScrollView, StatusBar,
     Dimensions, Platform, TextInput, Modal, Alert, Switch, ActivityIndicator, Pressable
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
@@ -34,6 +35,7 @@ const FONTS = [
 
 export default function TimerConfigScreen() {
     const navigation = useNavigation();
+    const insets = useSafeAreaInsets();
     const [selectedModel, setSelectedModel] = useState<any>(MODELS[0]);
     const [allModels, setAllModels] = useState<any[]>(timerConfigManager.models.length > 0 ? timerConfigManager.models : MODELS);
     const [activeTab, setActiveTab] = useState<'timer' | 'chain' | 'face' | 'stickers' | 'models'>('timer');
@@ -434,14 +436,14 @@ export default function TimerConfigScreen() {
     };
 
     return (
-        <SafeAreaView style={styles.container}>
+        <View style={[styles.container, { paddingTop: Platform.OS === 'android' ? insets.top : 0 }]}>
             <StatusBar barStyle="dark-content" />
             <View style={styles.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+                <TouchableOpacity activeOpacity={0.7} onPress={() => navigation.goBack()} style={styles.backBtn}>
                     <Ionicons name="close" size={28} color={Colors.textPrimary} />
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>Calibration Tool</Text>
-                <TouchableOpacity onPress={reset}>
+                <TouchableOpacity activeOpacity={0.7} onPress={reset}>
                     <Text style={styles.resetBtn}>Reset</Text>
                 </TouchableOpacity>
             </View>
@@ -450,6 +452,7 @@ export default function TimerConfigScreen() {
                 <View style={styles.topTabs}>
                     <TouchableOpacity
                         style={[styles.topTab, activeTab === 'timer' && styles.activeTopTab]}
+                        activeOpacity={0.7}
                         onPress={() => setActiveTab('timer')}
                     >
                         <Ionicons name="time" size={20} color={activeTab === 'timer' ? Colors.primary : Colors.textMuted} />
@@ -457,6 +460,7 @@ export default function TimerConfigScreen() {
                     </TouchableOpacity>
                     <TouchableOpacity
                         style={[styles.topTab, activeTab === 'chain' && styles.activeTopTab]}
+                        activeOpacity={0.7}
                         onPress={() => setActiveTab('chain')}
                     >
                         <Ionicons name="link" size={20} color={activeTab === 'chain' ? Colors.primary : Colors.textMuted} />
@@ -464,6 +468,7 @@ export default function TimerConfigScreen() {
                     </TouchableOpacity>
                     <TouchableOpacity
                         style={[styles.topTab, activeTab === 'face' && styles.activeTopTab]}
+                        activeOpacity={0.7}
                         onPress={() => setActiveTab('face')}
                     >
                         <Ionicons name="happy" size={20} color={activeTab === 'face' ? Colors.primary : Colors.textMuted} />
@@ -471,6 +476,7 @@ export default function TimerConfigScreen() {
                     </TouchableOpacity>
                     <TouchableOpacity
                         style={[styles.topTab, activeTab === 'stickers' && styles.activeTopTab]}
+                        activeOpacity={0.7}
                         onPress={() => setActiveTab('stickers')}
                     >
                         <Ionicons name="sparkles" size={20} color={activeTab === 'stickers' ? Colors.primary : Colors.textMuted} />
@@ -478,6 +484,7 @@ export default function TimerConfigScreen() {
                     </TouchableOpacity>
                     <TouchableOpacity
                         style={[styles.topTab, activeTab === 'models' && styles.activeTopTab]}
+                        activeOpacity={0.7}
                         onPress={() => setActiveTab('models')}
                     >
                         <Ionicons name="cube" size={20} color={activeTab === 'models' ? Colors.primary : Colors.textMuted} />
@@ -579,7 +586,7 @@ export default function TimerConfigScreen() {
                             <Text style={styles.sectionLabelTitle}>Model Selection</Text>
                             <Text style={styles.sectionSub}>Choose or create a base capsule model</Text>
                         </View>
-                        <TouchableOpacity style={styles.addModelBtn} onPress={() => setShowAddModel(true)}>
+                        <TouchableOpacity style={styles.addModelBtn} activeOpacity={0.7} onPress={() => setShowAddModel(true)}>
                             <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.addModelIcon}>
                                 <Ionicons name="add" size={18} color="#fff" />
                             </LinearGradient>
@@ -592,6 +599,7 @@ export default function TimerConfigScreen() {
                             <TouchableOpacity
                                 key={m.id}
                                 style={[styles.modelTab, selectedModel.id === m.id && styles.activeTab]}
+                                activeOpacity={0.8}
                                 onPress={() => setSelectedModel(m)}
                             >
                                 <View style={styles.tabImgWrapper}>
@@ -613,12 +621,14 @@ export default function TimerConfigScreen() {
                                     <View style={styles.toggleRow}>
                                         <TouchableOpacity
                                             style={[styles.toggleBtn, activeConfig.format === 'standard' && styles.activeToggle]}
+                                            activeOpacity={0.7}
                                             onPress={() => updateActiveConfig({ format: 'standard' })}
                                         >
                                             <Text style={[styles.toggleText, activeConfig.format === 'standard' && styles.activeToggleText]}>H:M:S</Text>
                                         </TouchableOpacity>
                                         <TouchableOpacity
                                             style={[styles.toggleBtn, activeConfig.format === 'days' && styles.activeToggle]}
+                                            activeOpacity={0.7}
                                             onPress={() => updateActiveConfig({ format: 'days' })}
                                         >
                                             <Text style={[styles.toggleText, activeConfig.format === 'days' && styles.activeToggleText]}>Days</Text>
@@ -632,6 +642,7 @@ export default function TimerConfigScreen() {
                                             <TouchableOpacity
                                                 key={f.id}
                                                 style={[styles.fontBtn, activeConfig.fontId === f.id && styles.activeFontBtn]}
+                                                activeOpacity={0.7}
                                                 onPress={() => updateActiveConfig({ fontId: f.id })}
                                             >
                                                 <Text style={[styles.fontBtnText, activeConfig.fontId === f.id && styles.activeFontBtnText, { fontFamily: f.font }]}>Aa</Text>
@@ -647,6 +658,7 @@ export default function TimerConfigScreen() {
                                     <TouchableOpacity
                                         key={c}
                                         style={[styles.colorBubble, { backgroundColor: c }, activeConfig.color === c && styles.activeColorBubble]}
+                                        activeOpacity={0.7}
                                         onPress={() => updateActiveConfig({ color: c })}
                                     />
                                 ))}
@@ -658,6 +670,7 @@ export default function TimerConfigScreen() {
                                     <TouchableOpacity
                                         key={c}
                                         style={[styles.colorBubble, { backgroundColor: c }, activeConfig.themeColor === c && styles.activeColorBubble]}
+                                        activeOpacity={0.7}
                                         onPress={() => updateActiveConfig({ themeColor: c })}
                                     />
                                 ))}
@@ -667,10 +680,10 @@ export default function TimerConfigScreen() {
                                 <View style={styles.col}>
                                     <Text style={styles.label}>Width: {(activeConfig.w * 100).toFixed(0)}%</Text>
                                     <View style={styles.sliderTrackAlt}>
-                                        <TouchableOpacity style={styles.sliderBtnSmall} onPress={() => updateActiveConfig({ w: Math.max(0.1, activeConfig.w - 0.05) })}>
+                                        <TouchableOpacity style={styles.sliderBtnSmall} activeOpacity={0.7} onPress={() => updateActiveConfig({ w: Math.max(0.1, activeConfig.w - 0.05) })}>
                                             <Ionicons name="remove" size={16} />
                                         </TouchableOpacity>
-                                        <TouchableOpacity style={styles.sliderBtnSmall} onPress={() => updateActiveConfig({ w: Math.min(1.0, activeConfig.w + 0.05) })}>
+                                        <TouchableOpacity style={styles.sliderBtnSmall} activeOpacity={0.7} onPress={() => updateActiveConfig({ w: Math.min(1.0, activeConfig.w + 0.05) })}>
                                             <Ionicons name="add" size={16} />
                                         </TouchableOpacity>
                                     </View>
@@ -678,17 +691,17 @@ export default function TimerConfigScreen() {
                                 <View style={styles.col}>
                                     <Text style={styles.label}>Height: {(activeConfig.h * 100).toFixed(0)}%</Text>
                                     <View style={styles.sliderTrackAlt}>
-                                        <TouchableOpacity style={styles.sliderBtnSmall} onPress={() => updateActiveConfig({ h: Math.max(0.05, activeConfig.h - 0.02) })}>
+                                        <TouchableOpacity style={styles.sliderBtnSmall} activeOpacity={0.7} onPress={() => updateActiveConfig({ h: Math.max(0.05, activeConfig.h - 0.02) })}>
                                             <Ionicons name="remove" size={16} />
                                         </TouchableOpacity>
-                                        <TouchableOpacity style={styles.sliderBtnSmall} onPress={() => updateActiveConfig({ h: Math.min(0.5, activeConfig.h + 0.02) })}>
+                                        <TouchableOpacity style={styles.sliderBtnSmall} activeOpacity={0.7} onPress={() => updateActiveConfig({ h: Math.min(0.5, activeConfig.h + 0.02) })}>
                                             <Ionicons name="add" size={16} />
                                         </TouchableOpacity>
                                     </View>
                                 </View>
                             </View>
 
-                            <TouchableOpacity style={styles.saveBtn} onPress={saveChanges}>
+                            <TouchableOpacity style={styles.saveBtn} activeOpacity={0.8} onPress={saveChanges}>
                                 <Text style={styles.saveBtnText}>Save Configuration</Text>
                             </TouchableOpacity>
                         </View>
@@ -698,12 +711,14 @@ export default function TimerConfigScreen() {
                             <View style={styles.toggleRow}>
                                 <TouchableOpacity
                                     style={[styles.toggleBtn, activeConfig.showFace !== false && styles.activeToggle]}
+                                    activeOpacity={0.7}
                                     onPress={() => updateActiveConfig({ showFace: true })}
                                 >
                                     <Text style={[styles.toggleText, activeConfig.showFace !== false && styles.activeToggleText]}>ON</Text>
                                 </TouchableOpacity>
                                 <TouchableOpacity
                                     style={[styles.toggleBtn, activeConfig.showFace === false && styles.activeToggle]}
+                                    activeOpacity={0.7}
                                     onPress={() => updateActiveConfig({ showFace: false })}
                                 >
                                     <Text style={[styles.toggleText, activeConfig.showFace === false && styles.activeToggleText]}>OFF</Text>
@@ -712,18 +727,18 @@ export default function TimerConfigScreen() {
 
                             <Text style={styles.label}>Face Scale: {((activeConfig.faceScale || 1) * 100).toFixed(0)}%</Text>
                             <View style={styles.sliderTrackAlt}>
-                                <TouchableOpacity style={styles.sliderBtnSmall} onPress={() => updateActiveConfig({ faceScale: Math.max(0.2, (activeConfig.faceScale || 1) - 0.1) })}>
+                                <TouchableOpacity style={styles.sliderBtnSmall} activeOpacity={0.7} onPress={() => updateActiveConfig({ faceScale: Math.max(0.2, (activeConfig.faceScale || 1) - 0.1) })}>
                                     <Ionicons name="remove" size={16} />
                                 </TouchableOpacity>
                                 <View style={{ flex: 1, height: 4, backgroundColor: '#ddd', borderRadius: 2 }} />
-                                <TouchableOpacity style={styles.sliderBtnSmall} onPress={() => updateActiveConfig({ faceScale: Math.min(3.0, (activeConfig.faceScale || 1) + 0.1) })}>
+                                <TouchableOpacity style={styles.sliderBtnSmall} activeOpacity={0.7} onPress={() => updateActiveConfig({ faceScale: Math.min(3.0, (activeConfig.faceScale || 1) + 0.1) })}>
                                     <Ionicons name="add" size={16} />
                                 </TouchableOpacity>
                             </View>
 
                             <Text style={styles.hint}>Drag the face box in the preview to position it precisely.</Text>
 
-                            <TouchableOpacity style={styles.saveBtn} onPress={saveChanges}>
+                            <TouchableOpacity style={styles.saveBtn} activeOpacity={0.8} onPress={saveChanges}>
                                 <Text style={styles.saveBtnText}>Save Face Changes</Text>
                             </TouchableOpacity>
                         </View>
@@ -731,7 +746,7 @@ export default function TimerConfigScreen() {
                         <View style={styles.chainSection}>
                             <View style={styles.sectionHeaderInner}>
                                 <Text style={styles.label}>Select Chain from Library</Text>
-                                <TouchableOpacity style={styles.addModelBtn} onPress={() => setShowAddChain(true)}>
+                                <TouchableOpacity style={styles.addModelBtn} activeOpacity={0.7} onPress={() => setShowAddChain(true)}>
                                     <Ionicons name="add-circle" size={18} color={Colors.primary} />
                                     <Text style={styles.addModelBtnText}>New Chain</Text>
                                 </TouchableOpacity>
@@ -741,6 +756,7 @@ export default function TimerConfigScreen() {
                                     <TouchableOpacity
                                         key={c.id}
                                         style={[styles.chainCard, selectedChainId === c.id && styles.activeChainCard]}
+                                        activeOpacity={0.7}
                                         onPress={() => setSelectedChainId(c.id)}
                                     >
                                         <Image source={{ uri: c.thumbnail_url || c.image_url }} style={styles.chainImg} resizeMode="cover" />
@@ -753,16 +769,17 @@ export default function TimerConfigScreen() {
                                 <View style={styles.chainCalibration}>
                                     <Text style={styles.label}>Calibrate Scale</Text>
                                     <View style={styles.sliderTrackAlt}>
-                                        <TouchableOpacity style={styles.sliderBtnSmall} onPress={() => saveChainScale(Math.max(0.05, chainScale - 0.05))}>
+                                        <TouchableOpacity style={styles.sliderBtnSmall} activeOpacity={0.7} onPress={() => saveChainScale(Math.max(0.05, chainScale - 0.05))}>
                                             <Ionicons name="remove" size={16} />
                                         </TouchableOpacity>
                                         <Text style={{ fontSize: 12, fontFamily: Fonts.bold, width: 50, textAlign: 'center' }}>{(chainScale * 100).toFixed(0)}%</Text>
-                                        <TouchableOpacity style={styles.sliderBtnSmall} onPress={() => saveChainScale(Math.min(1.0, chainScale + 0.05))}>
+                                        <TouchableOpacity style={styles.sliderBtnSmall} activeOpacity={0.7} onPress={() => saveChainScale(Math.min(1.0, chainScale + 0.05))}>
                                             <Ionicons name="add" size={16} />
                                         </TouchableOpacity>
                                     </View>
                                     <TouchableOpacity
                                         style={[styles.saveBtn, { marginTop: 15, backgroundColor: Colors.textSecondary }]}
+                                        activeOpacity={0.8}
                                         onPress={async () => {
                                             const x = (chainPan.x as any)._value;
                                             const y = (chainPan.y as any)._value;
@@ -789,7 +806,7 @@ export default function TimerConfigScreen() {
                         <View style={styles.stickerSection}>
                             <View style={styles.sectionHeaderInner}>
                                 <Text style={styles.label}>Manage Profile Stickers</Text>
-                                <TouchableOpacity style={styles.addModelBtn} onPress={() => setShowAddSticker(true)}>
+                                <TouchableOpacity style={styles.addModelBtn} activeOpacity={0.7} onPress={() => setShowAddSticker(true)}>
                                     <Ionicons name="add-circle" size={18} color={Colors.primary} />
                                     <Text style={styles.addModelBtnText}>New Sticker</Text>
                                 </TouchableOpacity>
@@ -1153,7 +1170,7 @@ export default function TimerConfigScreen() {
                     </View>
                 </View>
             </Modal>
-        </SafeAreaView>
+        </View>
     );
 }
 

@@ -54,7 +54,10 @@ export default function ChatDetailScreen() {
         setLoading(false);
 
         // Mark chat as visited (used by ChatListScreen to determine unread status)
-        AsyncStorage.setItem(`chat_visited_${conversationId}`, new Date().toISOString());
+        const now = new Date();
+        // Add a 5 second buffer to compensate for possible clock drift between client and DB
+        now.setSeconds(now.getSeconds() + 5);
+        await AsyncStorage.setItem(`chat_visited_${conversationId}`, now.toISOString());
 
         // Also mark received messages as read in DB (best effort)
         try {
@@ -109,7 +112,12 @@ export default function ChatDetailScreen() {
             )
             .subscribe();
 
-        return () => { supabase.removeChannel(sub); };
+        return () => {
+             const now = new Date();
+             now.setSeconds(now.getSeconds() + 5);
+             AsyncStorage.setItem(`chat_visited_${conversationId}`, now.toISOString());
+             supabase.removeChannel(sub);
+        };
     }, [conversationId]);
 
     const sendMessage = async () => {
@@ -165,10 +173,11 @@ export default function ChatDetailScreen() {
         <View style={styles.container}>
             <StatusBar barStyle="dark-content" />
             <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+                <TouchableOpacity activeOpacity={0.7} onPress={() => navigation.goBack()} style={styles.backBtn}>
                     <Ionicons name="chevron-back" size={24} color={Colors.textPrimary} />
                 </TouchableOpacity>
                 <TouchableOpacity
+                    activeOpacity={0.7}
                     onPress={() => otherUser && (navigation as any).navigate('UserProfile', { targetUserId: otherUser.id })}
                     style={styles.headerUserInfo}
                 >
@@ -205,7 +214,7 @@ export default function ChatDetailScreen() {
                         placeholderTextColor={Colors.textMuted}
                         multiline
                     />
-                    <TouchableOpacity style={styles.sendBtn} onPress={sendMessage}>
+                    <TouchableOpacity style={styles.sendBtn} activeOpacity={0.8} onPress={sendMessage}>
                         <Ionicons name="send" size={20} color="#fff" />
                     </TouchableOpacity>
                 </View>
