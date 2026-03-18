@@ -3,7 +3,7 @@ import {
     View, Text, StyleSheet, Modal, Image, 
     TouchableOpacity, Animated, Easing, 
     StyleSheet as RNStyleSheet, 
-    Dimensions, Pressable, StatusBar
+    Dimensions, Pressable, StatusBar, TextInput
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -146,6 +146,11 @@ export default function StoryViewer({
     const [showLikersId, setShowLikersId] = useState<string | null>(null);
     const lastUserGroupRef = React.useRef<any>(null);
 
+    const [storyComments, setStoryComments] = useState<any[]>([]);
+    const [activeComment, setActiveComment] = useState<any>(null);
+    const [currentComment, setCurrentComment] = useState('');
+    const commentFadeAnim = React.useRef(new Animated.Value(0)).current;
+
     const progressRef = React.useRef(0);
     const ownerId = userGroup?.owner_id || userGroup?.id;
     const isOwner = ownerId === currentUserId;
@@ -175,16 +180,32 @@ export default function StoryViewer({
             progress.setValue(0);
             progressRef.current = 0;
             
-            // Fetch likes info for current active story if not already loaded
+            // Fetch likes and comments for current active story if not already loaded
             const currentStory = userGroup.stories[activeIndex];
-            if (currentStory && !likesData[currentStory.id]) {
-                fetchLikesData(currentStory.id);
+            if (currentStory) {
+                if (!likesData[currentStory.id]) {
+                    fetchLikesData(currentStory.id);
+                }
+                fetchComments(currentStory.id);
             }
         } else if (!visible) {
             // Reset ref when closing to allow re-initialization next time
             lastUserGroupRef.current = null;
         }
     }, [activeIndex, userGroup, visible]);
+
+    const fetchComments = async (storyId: string) => {
+        const { data } = await supabase
+            .from('story_comments')
+            .select(`
+                *,
+                profiles:user_id ( id, username, display_name, avatar_url )
+            `)
+            .eq('story_id', storyId)
+            .order('created_at', { ascending: true });
+        
+        if (data) setStoryComments(data);
+    };
 
     const fetchLikesData = async (storyId: string) => {
         const { count } = await supabase.from('story_likes').select('*', { count: 'exact', head: true }).eq('story_id', storyId);
@@ -225,6 +246,52 @@ export default function StoryViewer({
             progress.stopAnimation();
         }
     }, [visible, userGroup, activeIndex, isPaused, showLikersId]);
+
+    useEffect(() => {
+        if (storyComments.length === 0) {
+            setActiveComment(null);
+            return;
+        }
+
+        let index = 0;
+        setActiveComment(storyComments[0]);
+        commentFadeAnim.setValue(0);
+        Animated.timing(commentFadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
+
+        const interval = setInterval(() => {
+            Animated.timing(commentFadeAnim, { toValue: 0, duration: 400, useNativeDriver: true }).start(() => {
+                index = (index + 1) % storyComments.length;
+                setActiveComment(storyComments[index]);
+                Animated.timing(commentFadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
+            });
+        }, 3500);
+
+        return () => clearInterval(interval);
+    }, [storyComments]);
+
+    const handleSendComment = async () => {
+        if (!currentComment.trim() || !currentUserId) return;
+        const currentStory = userGroup.stories[activeIndex];
+        if (!currentStory) return;
+
+        const { data, error } = await supabase
+            .from('story_comments')
+            .insert({
+                story_id: currentStory.id,
+                user_id: currentUserId,
+                content: currentComment.trim()
+            })
+            .select(`
+                *,
+                profiles:user_id ( id, username, display_name, avatar_url )
+            `)
+            .single();
+
+        if (data) {
+            setStoryComments(prev => [...prev, data]);
+            setCurrentComment('');
+        }
+    };
 
     const handleToggleLike = async (storyId: string) => {
         if (!currentUserId) return;
@@ -333,7 +400,7 @@ export default function StoryViewer({
                     </View>
 
                     <TouchableOpacity
-                        style={styles.floatingCapsule}
+                        style={[styles.floatingCapsule, { top: insets.top + 70 }]}
                         activeOpacity={0.85}
                         onPress={() => {
                             const capsuleId = currentStory?.capsule_id || currentStory?.capsules?.id;
@@ -415,6 +482,54 @@ export default function StoryViewer({
                             </TouchableOpacity>
                         </View>
                     </View>
+
+                    {/* Metadata Overlays (Texts and Emojis) */}
+                    {currentStory.metadata?.filter && currentStory.metadata.filter !== 'none' && (
+                        <View style={[RNStyleSheet.absoluteFill, { backgroundColor: currentStory.metadata.filter === 'vintage' ? 'rgba(230, 190, 120, 0.25)' : currentStory.metadata.filter === 'warm' ? 'rgba(255, 150, 50, 0.18)' : currentStory.metadata.filter === 'cool' ? 'rgba(0, 150, 255, 0.18)' : currentStory.metadata.filter === 'dark' ? 'rgba(0,0,0,0.4)' : 'transparent' }]} pointerEvents="none" />
+                    )}
+
+                    {currentStory.metadata?.texts && currentStory.metadata.texts.map((t: any) => (
+                        <View key={t.id} style={{ position: 'absolute', top: t.y * height, left: t.x * width - 50 }}>
+                            <View style={{ backgroundColor: t.bg || 'rgba(0,0,0,0.5)', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }}>
+                                <Text style={{ color: t.color || '#fff', fontSize: 18, fontFamily: Fonts.bold }}>{t.text}</Text>
+                            </View>
+                        </View>
+                    ))}
+
+                    {currentStory.metadata?.emojis && currentStory.metadata.emojis.map((e: any) => (
+                        <Text key={e.id} style={{ position: 'absolute', top: e.y * height, left: e.x * width, fontSize: 32 }}>{e.emoji}</Text>
+                    ))}
+
+                    {/* Active Comment Overlay */}
+                    {activeComment && (
+                        <Animated.View style={[styles.floatingComment, { opacity: commentFadeAnim }]}>
+                            <Image source={{ uri: activeComment.profiles?.avatar_url || 'https://via.placeholder.com/150' }} style={styles.commentAvatar} />
+                            <View>
+                                <Text style={styles.commentUser}>@{activeComment.profiles?.username}</Text>
+                                <Text style={styles.commentText}>{activeComment.content}</Text>
+                            </View>
+                        </Animated.View>
+                    )}
+
+                    {/* Comment Input Bar */}
+                    {!isOwner && (
+                        <View style={[styles.commentBar, { bottom: Math.max(insets.bottom, 10) }]}>
+                            <TextInput
+                                style={styles.commentInput}
+                                placeholder="Responde a este Flash..."
+                                placeholderTextColor="#ccc"
+                                value={currentComment}
+                                onChangeText={setCurrentComment}
+                                onFocus={() => setIsPaused(true)}
+                                onBlur={() => setIsPaused(false)}
+                            />
+                            {currentComment.trim().length > 0 && (
+                                <TouchableOpacity style={styles.commentSend} onPress={handleSendComment}>
+                                    <Ionicons name="send" size={20} color={Colors.primary} />
+                                </TouchableOpacity>
+                            )}
+                        </View>
+                    )}
                 </Pressable>
             </View>
 
@@ -440,12 +555,19 @@ const styles = RNStyleSheet.create({
     avatarSmall: { width: 32, height: 32, borderRadius: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.5)' },
     username: { color: '#fff', fontSize: 14, fontFamily: Fonts.bold },
     capsuleTitle: { color: 'rgba(255,255,255,0.8)', fontSize: 12, fontFamily: Fonts.medium },
-    floatingCapsule: { position: 'absolute', bottom: 50, alignSelf: 'center', zIndex: 10 },
+    floatingCapsule: { position: 'absolute', alignSelf: 'center', zIndex: 10 },
     blurCapsule: { borderRadius: 28, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' },
     floatingCapsuleInner: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 10, gap: 12 },
     floatingModelImg: { width: 36, height: 36 },
     floatingModelText: { color: '#fff', fontSize: 14, fontFamily: Fonts.semiBold },
-    floatingRight: { position: 'absolute', bottom: 40, right: 20, alignItems: 'center', zIndex: 10 },
+    floatingRight: { position: 'absolute', bottom: 75, right: 20, alignItems: 'center', zIndex: 10 },
     likeBtn: { alignItems: 'center', justifyContent: 'center', gap: 4 },
     likeText: { color: '#fff', fontSize: 13, fontFamily: Fonts.bold, textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: {width: 0, height: 1}, textShadowRadius: 4 },
+    floatingComment: { position: 'absolute', bottom: 120, left: 20, right: 80, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 12, paddingVertical: 10, borderRadius: 20, zIndex: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+    commentAvatar: { width: 32, height: 32, borderRadius: 16 },
+    commentUser: { color: '#fff', fontSize: 11, fontFamily: Fonts.bold },
+    commentText: { color: '#fff', fontSize: 13, fontFamily: Fonts.regular },
+    commentBar: { position: 'absolute', left: 15, right: 15, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 25, paddingHorizontal: 15, paddingVertical: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)', zIndex: 11 },
+    commentInput: { flex: 1, color: '#fff', fontSize: 14, fontFamily: Fonts.medium, paddingVertical: 4 },
+    commentSend: { marginLeft: 10, padding: 4 },
 });

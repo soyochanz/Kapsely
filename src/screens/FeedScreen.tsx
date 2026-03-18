@@ -12,10 +12,7 @@ import { BlurView } from 'expo-blur';
 import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
 import CapsuleCard from '../components/CapsuleCard';
-import CapsuleTypePill from '../components/CapsuleTypePill';
 import CapsuleWithTimer from '../components/CapsuleWithTimer';
-
-import TimelineActivity from '../components/TimelineActivity';
 import LiveTimer from '../components/LiveTimer';
 import { supabase } from '../lib/supabase';
 import { MODEL_IMAGES } from '../constants/models';
@@ -23,17 +20,193 @@ import { timerConfigManager } from '../utils/timerConfig';
 import InteractiveTour, { TutorialStep } from '../components/InteractiveTour';
 import StoryViewer from '../components/StoryViewer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import StoryEditor from '../components/StoryEditor';
 import { safetyService } from '../utils/safety';
 
 type CapsuleType = 'instacap' | 'eventcap' | 'legacycap';
-const { width, height } = Dimensions.get('window');
-
 type FeedTab = 'following' | 'explore';
 type FilterType = CapsuleType | 'all' | 'today';
 
+const { width, height } = Dimensions.get('window');
+const FEED_CACHE_TTL = 5 * 60 * 1000;
+
+// ─── Filter config ────────────────────────────────────────────────────────────
+const FILTER_KEYS: FilterType[] = ['all', 'today', 'instacap', 'eventcap', 'legacycap'];
+
+const FILTER_META: Record<FilterType, { icon: string; label: (t: any) => string; color?: string }> = {
+    all: { icon: 'apps-outline', label: t => t('feed.all') },
+    today: { icon: 'time-outline', label: t => t('feed.opens_today'), color: '#FF416C' },
+    instacap: { icon: 'camera-outline', label: () => 'InstaCap' },
+    eventcap: { icon: 'calendar-outline', label: () => 'EventCap' },
+    legacycap: { icon: 'hourglass-outline', label: () => 'LegacyCap' },
+};
+
+// ─── Story bubble ─────────────────────────────────────────────────────────────
+const StoryBubble = React.memo(({ user, isOwn, isNew, onPress }: {
+    user: any; isOwn?: boolean; isNew?: boolean; onPress: () => void;
+}) => {
+    const scaleAnim = useRef(new Animated.Value(1)).current;
+
+    const handlePress = () => {
+        Animated.sequence([
+            Animated.timing(scaleAnim, { toValue: 0.92, duration: 70, useNativeDriver: true }),
+            Animated.spring(scaleAnim, { toValue: 1, friction: 5, tension: 120, useNativeDriver: true }),
+        ]).start();
+        onPress();
+    };
+
+    const avatarUri = user?.avatar_url || 'https://via.placeholder.com/150';
+    const label = isOwn ? 'Flash' : (user?.display_name || user?.username || 'user');
+    const hasUnread = !user?.all_read;
+
+    return (
+        <Animated.View style={[st.wrap, { transform: [{ scale: scaleAnim }] }]}>
+            <TouchableOpacity activeOpacity={1} onPress={handlePress} style={st.inner}>
+                {isOwn && !user ? (
+                    // Empty "Your Flash" slot
+                    <View style={st.addWrap}>
+                        <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={st.addRing}>
+                            <Ionicons name="add" size={22} color="#fff" />
+                        </LinearGradient>
+                    </View>
+                ) : (
+                    // Story ring
+                    hasUnread && !isOwn ? (
+                        <LinearGradient
+                            colors={[Colors.primary, Colors.primaryDark, '#00f2ff']}
+                            style={st.ring}
+                            start={{ x: 0, y: 1 }} end={{ x: 1, y: 0 }}
+                        >
+                            <View style={st.avatarWrap}>
+                                <Image source={{ uri: avatarUri }} style={st.avatar} />
+                            </View>
+                        </LinearGradient>
+                    ) : (
+                        <View style={[st.ring, st.ringRead, isOwn && { borderColor: Colors.primary + '80', borderStyle: 'dashed' }]}>
+                            <View style={st.avatarWrap}>
+                                <Image source={{ uri: avatarUri }} style={st.avatar} />
+                            </View>
+                        </View>
+                    )
+                )}
+                <Text style={[st.label, isOwn && { color: Colors.primary, fontFamily: Fonts.bold }, !hasUnread && !isOwn && { color: Colors.textMuted }]} numberOfLines={1}>
+                    {label}
+                </Text>
+            </TouchableOpacity>
+        </Animated.View>
+    );
+});
+
+const st = StyleSheet.create({
+    wrap: { alignItems: 'center', marginRight: 14 },
+    inner: { alignItems: 'center', gap: 5 },
+    ring: {
+        width: 66, height: 66, borderRadius: 33,
+        alignItems: 'center', justifyContent: 'center', padding: 2.5,
+    },
+    ringRead: {
+        borderWidth: 2, borderColor: Colors.border,
+        backgroundColor: 'transparent',
+    },
+    avatarWrap: {
+        width: 60, height: 60, borderRadius: 30,
+        backgroundColor: Colors.background,
+        alignItems: 'center', justifyContent: 'center',
+        overflow: 'hidden',
+    },
+    avatar: { width: 58, height: 58, borderRadius: 29 },
+    addWrap: { width: 66, height: 66, alignItems: 'center', justifyContent: 'center' },
+    addRing: {
+        width: 62, height: 62, borderRadius: 31,
+        alignItems: 'center', justifyContent: 'center',
+        shadowColor: Colors.primary, shadowOpacity: 0.3,
+        shadowRadius: 10, shadowOffset: { width: 0, height: 3 }, elevation: 4,
+    },
+    label: {
+        fontSize: 11, fontFamily: Fonts.medium,
+        color: Colors.textSecondary, textAlign: 'center',
+        maxWidth: 66,
+    },
+});
+
+// ─── Filter chip ──────────────────────────────────────────────────────────────
+const FilterChip = React.memo(({ filterKey, isActive, onPress, t, totalFakeMinutes, pulseAnim }: any) => {
+    const meta = FILTER_META[filterKey as FilterType];
+    const isToday = filterKey === 'today';
+    const accentColor = meta.color || Colors.primary;
+
+    const fmtTimer = (mins: number) => {
+        const h = Math.floor(mins / 60);
+        const m = mins % 60;
+        return `${h < 10 ? '0' : ''}${h}:${m < 10 ? '0' : ''}${m}`;
+    };
+
+    return (
+        <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={() => onPress(filterKey)}
+            style={[
+                fc.chip,
+                isActive && fc.chipActive,
+                !isActive && isToday && { backgroundColor: '#FF416C08', borderColor: '#FF416C30' },
+            ]}
+        >
+            {isActive && (
+                <LinearGradient
+                    colors={isToday ? ['#FF416C', '#FF4B2B'] : [Colors.primary, Colors.primaryDark]}
+                    style={StyleSheet.absoluteFill}
+                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                />
+            )}
+            <Ionicons
+                name={(isActive ? meta.icon.replace('-outline', '') : meta.icon) as any}
+                size={13}
+                color={isActive ? '#fff' : isToday ? accentColor : Colors.textSecondary}
+            />
+            <Text style={[fc.label, isActive && fc.labelActive, !isActive && isToday && { color: accentColor }]}>
+                {meta.label(t)}
+            </Text>
+            {isToday && (
+                <View style={[fc.timerBadge, isActive && { backgroundColor: 'rgba(255,255,255,0.22)' }]}>
+                    <Text style={[fc.timerText, isActive && { color: '#fff' }]}>{fmtTimer(totalFakeMinutes)}</Text>
+                </View>
+            )}
+            {isToday && isActive && (
+                <Animated.View style={[fc.liveDot, { transform: [{ scale: pulseAnim }] }]} />
+            )}
+        </TouchableOpacity>
+    );
+});
+
+const fc = StyleSheet.create({
+    chip: {
+        flexDirection: 'row', alignItems: 'center', gap: 5,
+        paddingHorizontal: 13, paddingVertical: 8,
+        borderRadius: 30, borderWidth: 1, borderColor: Colors.border,
+        backgroundColor: Colors.surface, overflow: 'hidden',
+    },
+    chipActive: { borderColor: 'transparent' },
+    label: { fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textSecondary },
+    labelActive: { color: '#fff', fontFamily: Fonts.bold },
+    timerBadge: {
+        paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8,
+        backgroundColor: 'rgba(255,65,108,0.12)',
+    },
+    timerText: { fontSize: 10, fontFamily: Fonts.bold, color: '#FF416C' },
+    liveDot: {
+        width: 5, height: 5, borderRadius: 3,
+        backgroundColor: '#fff',
+        shadowColor: '#fff', shadowOpacity: 0.8, shadowRadius: 4,
+    },
+});
+
+// ─── Main Screen ──────────────────────────────────────────────────────────────
 export default function FeedScreen() {
     const { t } = useTranslation();
     const insets = useSafeAreaInsets();
+    const navigation = useNavigation<any>();
+    const isFocused = useIsFocused();
+
     const [activeTab, setActiveTab] = useState<FeedTab>('explore');
     const [activeFilter, setActiveFilter] = useState<FilterType>('all');
     const [capsules, setCapsules] = useState<any[]>([]);
@@ -43,61 +216,58 @@ export default function FeedScreen() {
     const [stories, setStories] = useState<any[]>([]);
     const [myStory, setMyStory] = useState<any>(null);
     const [showCapsulePicker, setShowCapsulePicker] = useState(false);
-    const [pickerStep, setPickerStep] = useState<'list' | 'select' | 'animation'>('list');
+    const [pickerStep, setPickerStep] = useState<'list' | 'select' | 'animation' | 'edit'>('list');
+    const [editingItem, setEditingItem] = useState<any>(null);
     const [userCapsules, setUserCapsules] = useState<any[]>([]);
     const [selectedPickerCapsule, setSelectedPickerCapsule] = useState<any>(null);
     const [pickerItems, setPickerItems] = useState<any[]>([]);
     const [randomPreviewItem, setRandomPreviewItem] = useState<any>(null);
     const [shuffling, setShuffling] = useState(false);
-    const [totalFakeMinutes, setTotalFakeMinutes] = useState(1440); // 24 hours * 60 mins
-    const [pulseAnim] = useState(new Animated.Value(1));
-    const isFocused = useIsFocused();
-
-    useEffect(() => {
-        const interval = setInterval(() => {
-            // Decrease 1 minute every 5 seconds as requested
-            setTotalFakeMinutes(tm => (tm > 0 ? tm - 1 : 1440));
-        }, 5000);
-        return () => clearInterval(interval);
-    }, []);
-
-    useEffect(() => {
-        if (isFocused) {
-            setTotalFakeMinutes(1440);
-        }
-    }, [isFocused]);
-
-    useEffect(() => {
-        Animated.loop(
-            Animated.sequence([
-                Animated.timing(pulseAnim, { toValue: 1.2, duration: 800, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
-                Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
-            ])
-        ).start();
-    }, []);
+    const [totalFakeMinutes, setTotalFakeMinutes] = useState(1440);
     const [feedCache, setFeedCache] = useState<Record<string, { data: any[]; ts: number }>>({});
     const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
-
-    const FEED_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-
-
     const [activeStory, setActiveStory] = useState<any>(null);
-    const [activeStoryIndex, setActiveStoryIndex] = useState(0);
     const [hasUnread, setHasUnread] = useState(false);
     const [tutorialStep, setTutorialStep] = useState<TutorialStep>('IDLE');
 
-    // Story Progress Logic
-    const progress = useRef(new Animated.Value(0)).current;
+    const pulseAnim = useRef(new Animated.Value(1)).current;
     const shuffleAnim = useRef(new Animated.Value(0)).current;
     const unblurAnim = useRef(new Animated.Value(1)).current;
-    const [isPaused, setIsPaused] = useState(false);
-    const navigation = useNavigation<any>();
+    const isFirstMount = useRef(true);
 
+    // Header entrance animation
+    const headerOpacity = useRef(new Animated.Value(0)).current;
+    const headerSlide = useRef(new Animated.Value(-8)).current;
+
+    useEffect(() => {
+        Animated.parallel([
+            Animated.timing(headerOpacity, { toValue: 1, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+            Animated.timing(headerSlide, { toValue: 0, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+        ]).start();
+    }, []);
+
+    // Countdown timer
+    useEffect(() => {
+        const interval = setInterval(() => setTotalFakeMinutes(m => m > 0 ? m - 1 : 1440), 5000);
+        return () => clearInterval(interval);
+    }, []);
+
+    useEffect(() => { if (isFocused) setTotalFakeMinutes(1440); }, [isFocused]);
+
+    // Pulse animation
+    useEffect(() => {
+        Animated.loop(
+            Animated.sequence([
+                Animated.timing(pulseAnim, { toValue: 1.25, duration: 700, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+                Animated.timing(pulseAnim, { toValue: 1, duration: 700, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+            ])
+        ).start();
+    }, []);
+
+    // ─── Data loading ──────────────────────────────────────────────────────────
     const loadFeed = async (forceRefresh = false, tabOverride?: FeedTab) => {
         const tab = tabOverride ?? activeTab;
         const cacheKey = `${tab}_${activeFilter}`;
-
-        // Use TTL-aware cache
         const cached = feedCache[cacheKey];
         if (!forceRefresh && cached && (Date.now() - cached.ts) < FEED_CACHE_TTL) {
             setCapsules(cached.data);
@@ -109,49 +279,35 @@ export default function FeedScreen() {
 
         const { data: { session } } = await supabase.auth.getSession();
         const user = session?.user;
-        if (!user) {
-            setLoading(false);
-            setRefreshing(false);
-            return;
-        }
+        if (!user) { setLoading(false); setRefreshing(false); return; }
         setCurrentUserId(user.id);
 
         const blocked = await safetyService.getAllSafetyUserIds(user.id);
         setBlockedUserIds(blocked);
-        
-        // Ensure stories load with the current user context immediately
         loadStories(user.id, blocked);
 
         const { data: follows } = await supabase.from('follows').select('following_id').eq('follower_id', user.id);
         const followingIds = (follows || []).map(f => f.following_id);
 
-        // 1. Fetch ranked capsule feeds using RPC
         const rpcName = tab === 'explore' ? 'get_explore_feed' : 'get_following_feed';
-        const { data: rpcData, error: rpcError } = await supabase.rpc(rpcName, {
-            req_user_id: user.id,
-            req_filter: activeFilter,
-            req_limit: 40
+        const { data: rpcData } = await supabase.rpc(rpcName, {
+            req_user_id: user.id, req_filter: activeFilter, req_limit: 40
         });
-        
-        const capsData = (rpcData || []).map((c: any) => ({
-            ...c,
-            feedType: 'capsule'
-        }));
+        const capsData = (rpcData || []).map((c: any) => ({ ...c, feedType: 'capsule' }));
 
-        // 2. Fetch recent activity (capsule items)
         let itemsQuery = supabase.from('capsule_items')
             .select(`
                 *,
-                profiles:owner_id (username, display_name, avatar_url, is_verified),
-                capsules:capsule_id!inner (title, is_public, type, status, opens_at, model, chain_id, owner_id)
+                profiles:owner_id(username, display_name, avatar_url, is_verified),
+                capsules:capsule_id!inner(id, title, is_public, type, status, opens_at, created_at, model, description, chain_id, owner_id, profiles:owner_id(username, display_name, avatar_url, is_verified))
             `)
             .in('media_type', ['image', 'video']);
 
         if (tab === 'explore') itemsQuery = itemsQuery.eq('capsules.is_public', true);
-
         if (tab === 'following') {
-            if (followingIds.length > 0) itemsQuery = itemsQuery.in('owner_id', followingIds);
-            else itemsQuery = itemsQuery.eq('owner_id', 'impossible-id');
+            itemsQuery = followingIds.length > 0
+                ? itemsQuery.in('owner_id', followingIds)
+                : itemsQuery.eq('owner_id', 'impossible-id');
         } else {
             itemsQuery = itemsQuery.neq('owner_id', user.id);
             if (followingIds.length > 0) itemsQuery = itemsQuery.not('owner_id', 'in', `(${followingIds.join(',')})`);
@@ -159,94 +315,63 @@ export default function FeedScreen() {
 
         if (activeFilter !== 'all' && activeFilter !== 'today') itemsQuery = itemsQuery.eq('capsules.type', activeFilter);
         if (activeFilter === 'today') {
-            const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
-            const endOfDay = new Date(); endOfDay.setHours(23, 59, 59, 999);
-            itemsQuery = itemsQuery.gte('capsules.opens_at', startOfDay.toISOString()).lte('capsules.opens_at', endOfDay.toISOString());
+            const s = new Date(); s.setHours(0, 0, 0, 0);
+            const e = new Date(); e.setHours(23, 59, 59, 999);
+            itemsQuery = itemsQuery.gte('capsules.opens_at', s.toISOString()).lte('capsules.opens_at', e.toISOString());
         }
 
         const { data: itemsResponse } = await itemsQuery.order('created_at', { ascending: false }).limit(40);
         const activityData = itemsResponse || [];
 
-        // Group activity items by capsule and time proximity
         const groupedActivity: any[] = [];
         const activityProcessed = new Set();
-
-        activityData.forEach((item, idx) => {
+        activityData.forEach((item: any, idx: number) => {
             if (activityProcessed.has(item.id)) return;
             const group = [item];
             activityProcessed.add(item.id);
-            const isVisualMedia = item.media_type === 'image' || item.media_type === 'video';
-            const itemBatch = item.caption?.match(/!!b:(\w+)/)?.[1];
-
-            if (isVisualMedia && itemBatch) {
+            const batch = item.caption?.match(/!!b:(\w+)/)?.[1];
+            if ((item.media_type === 'image' || item.media_type === 'video') && batch) {
                 for (let j = idx + 1; j < activityData.length; j++) {
-                    const nextItem = activityData[j];
-                    const nextBatch = nextItem.caption?.match(/!!b:(\w+)/)?.[1];
-                    if (nextItem.capsule_id === item.capsule_id && nextBatch === itemBatch && (nextItem.media_type === 'image' || nextItem.media_type === 'video')) {
-                        group.push(nextItem);
-                        activityProcessed.add(nextItem.id);
+                    const next = activityData[j];
+                    const nextBatch = next.caption?.match(/!!b:(\w+)/)?.[1];
+                    if (next.capsule_id === item.capsule_id && nextBatch === batch && (next.media_type === 'image' || next.media_type === 'video')) {
+                        group.push(next); activityProcessed.add(next.id);
                     }
                 }
             }
-
-            // Assign a proxy score for activities based on recency to merge with ranked feed
-            const recencyMs = new Date().getTime() - new Date(item.created_at).getTime();
-            const hoursOld = Math.max(0, recencyMs / (1000 * 60 * 60));
-            // Match the RPC's max score of ~80 for recency only
-            const proxyTotalScore = Math.exp(-0.02 * hoursOld) * 80;
-
-            if (group.length > 1) {
-                groupedActivity.push({ ...item, feedType: 'activity_group', groupItems: group, count: group.length, total_score: proxyTotalScore });
-            } else {
-                groupedActivity.push({ ...item, feedType: 'activity', total_score: proxyTotalScore });
-            }
+            const hoursOld = Math.max(0, (Date.now() - new Date(item.created_at).getTime()) / 3600000);
+            const score = Math.exp(-0.02 * hoursOld) * 80;
+            groupedActivity.push(group.length > 1
+                ? { ...item, feedType: 'activity_group', groupItems: group, count: group.length, total_score: score }
+                : { ...item, feedType: 'activity', total_score: score }
+            );
         });
 
-        // 3. Merge and enforce variety rule
         let merged = [
             ...capsData.filter((c: any) => !blocked.includes(c.owner_id)),
             ...groupedActivity.filter(a => !blocked.includes(a.owner_id))
-        ];
-        
-        // Sort specifically by the RPC's total_score / proxy total_score, fallback to chronological
-        merged.sort((a, b) => {
-            const scoreA = a.total_score ?? (a.created_at ? new Date(a.created_at).getTime() / 1000000 : 0);
-            const scoreB = b.total_score ?? (b.created_at ? new Date(b.created_at).getTime() / 1000000 : 0);
-            return scoreB - scoreA;
+        ].sort((a, b) => {
+            const sa = a.total_score ?? (a.created_at ? new Date(a.created_at).getTime() / 1e6 : 0);
+            const sb = b.total_score ?? (b.created_at ? new Date(b.created_at).getTime() / 1e6 : 0);
+            return sb - sa;
         });
 
-        // Deduplicate creation vs activity posts
-        const finalMerged = merged.filter((item) => {
-            if (item.feedType === 'capsule') {
-                const activityExists = groupedActivity.some((act: any) => {
-                    const actCapId = act.capsule_id?.toString();
-                    const itemId = item.id?.toString();
-                    return actCapId && itemId && actCapId === itemId;
-                });
-
-                return !activityExists;
-            }
-            return true;
+        merged = merged.filter(item => {
+            if (item.feedType !== 'capsule') return true;
+            return !groupedActivity.some(a => a.capsule_id?.toString() === item.id?.toString());
         });
 
-        // Apply Author Fatigue Limit (Max 2 posts in a row by same author)
-        const diversifiedFeed: any[] = [];
-        for (const item of finalMerged) {
-            const authorId = item.owner_id;
-            const last2 = diversifiedFeed.slice(-2);
-            if (last2.length === 2 && last2[0].owner_id === authorId && last2[1].owner_id === authorId) {
-                continue; // Drop 3rd consecutive post
-            } else {
-                diversifiedFeed.push(item);
-            }
+        const diversified: any[] = [];
+        for (const item of merged) {
+            const last2 = diversified.slice(-2);
+            if (last2.length === 2 && last2[0].owner_id === item.owner_id && last2[1].owner_id === item.owner_id) continue;
+            diversified.push(item);
         }
 
-        setCapsules(diversifiedFeed);
-        setFeedCache(prev => ({ ...prev, [cacheKey]: { data: diversifiedFeed, ts: Date.now() } }));
+        setCapsules(diversified);
+        setFeedCache(prev => ({ ...prev, [cacheKey]: { data: diversified, ts: Date.now() } }));
         setLoading(false);
         setRefreshing(false);
-        // Pass blocked directly to avoid stale-state timing issue
-        // loadStories(blocked); // Removed this line and moved it up
     };
 
     const loadStories = async (userIdOverride?: string, blockedIds?: string[]) => {
@@ -254,238 +379,132 @@ export default function FeedScreen() {
         const user = session?.user;
         if (!user) return;
         const targetUserId = userIdOverride || user.id;
-
-        // Use passed-in blocked list to avoid stale state reads
         const blocked = blockedIds ?? blockedUserIds;
 
         const [storiesRes, readsRes] = await Promise.all([
             supabase.from('capsule_items')
-                .select(`
-                    *,
-                    profiles:owner_id(username, display_name, avatar_url, id),
-                    capsules:capsule_id(id, title, model)
-                `)
-                .eq('is_story', true)
-                .gt('expires_at', new Date().toISOString())
-                .order('created_at', { ascending: false }),
+                .select('*, profiles:owner_id(username, display_name, avatar_url, id), capsules:capsule_id(id, title, model)')
+                .eq('is_story', true).gt('expires_at', new Date().toISOString()).order('created_at', { ascending: false }),
             supabase.from('story_reads').select('story_id').eq('user_id', user.id)
         ]);
 
         const data = storiesRes.data;
         const readIds = new Set((readsRes.data || []).map(r => r.story_id));
-        // Use the explicitly passed blocked list — avoids duplicate safetyService call
-        const blocked2 = blocked;
+        if (!data) return;
 
-        if (data) {
-            const usersWithStories: any[] = [];
-            data.forEach(s => {
-                if (blocked.includes(s.owner_id)) return;
+        const usersWithStories: any[] = [];
+        data.forEach((s: any) => {
+            if (blocked.includes(s.owner_id)) return;
+            let group = usersWithStories.find(u => u.owner_id === s.owner_id);
+            if (!group) { group = { ...s.profiles, owner_id: s.owner_id, stories: [] }; usersWithStories.push(group); }
+            group.stories.push({ ...s, is_read: readIds.has(s.id) });
+        });
 
-                let userGroup = usersWithStories.find(u => u.owner_id === s.owner_id);
-                const storyWithRead = { ...s, is_read: readIds.has(s.id) };
-                if (!userGroup) {
-                    userGroup = { ...s.profiles, owner_id: s.owner_id, stories: [] };
-                    usersWithStories.push(userGroup);
-                }
-                userGroup.stories.push(storyWithRead);
-            });
-
-            // Evaluate if user has completely read ALL stories
-            const processedUsers = usersWithStories.map(u => ({
-                ...u,
-                all_read: u.stories.every((s: any) => s.is_read)
-            }));
-
-            // Sort: My story first (if exists), then others (unread first), then read
-            const sorted = processedUsers.sort((a, b) => {
-                const isMineA = a.owner_id === targetUserId;
-                const isMineB = b.owner_id === targetUserId;
-                if (isMineA && !isMineB) return -1;
-                if (!isMineA && isMineB) return 1;
-
+        const processed = usersWithStories.map(u => ({ ...u, all_read: u.stories.every((s: any) => s.is_read) }))
+            .sort((a, b) => {
+                if (a.owner_id === targetUserId) return -1;
+                if (b.owner_id === targetUserId) return 1;
                 if (a.all_read !== b.all_read) return a.all_read ? 1 : -1;
                 return 0;
             });
 
-            setStories(sorted);
-            const mine = sorted.find(u => u.owner_id === targetUserId);
-            setMyStory(mine || null);
-        }
+        setStories(processed);
+        setMyStory(processed.find(u => u.owner_id === targetUserId) || null);
     };
 
-
-
-
+    const markStoryRead = async (storyId: string) => {
+        if (!currentUserId) return;
+        await supabase.from('story_reads').upsert({ user_id: currentUserId, story_id: storyId }, { onConflict: 'user_id,story_id' });
+        setStories(prev => prev.map(u => ({
+            ...u,
+            stories: u.stories.map((s: any) => s.id === storyId ? { ...s, is_read: true } : s)
+        })).map(u => ({ ...u, all_read: u.stories.every((s: any) => s.is_read) })));
+        if (myStory) {
+            const updated = myStory.stories.map((s: any) => s.id === storyId ? { ...s, is_read: true } : s);
+            setMyStory({ ...myStory, stories: updated, all_read: updated.every((s: any) => s.is_read) });
+        }
+    };
 
     const handleYourCapPress = useCallback(async () => {
         if (tutorialStep === 'POST_YOURCAP') {
             setTutorialStep('FINISHED');
             AsyncStorage.setItem('hasSeenTutorialV2', 'true');
         }
-
         if (myStory) {
             setActiveStory(myStory);
-            setActiveStoryIndex(0);
         } else {
             if (!currentUserId) return;
-
-            // Check if user is in cooldown
             const { data: profile } = await supabase.from('profiles').select('story_cooldown_until').eq('id', currentUserId).maybeSingle();
-            if (profile?.story_cooldown_until) {
-                const cooldownDate = new Date(profile.story_cooldown_until);
-                if (cooldownDate > new Date()) {
-                    Alert.alert(t('common.warning'), t('feed.story_cooldown_active'));
-                    return;
-                }
+            if (profile?.story_cooldown_until && new Date(profile.story_cooldown_until) > new Date()) {
+                Alert.alert(t('common.warning'), t('feed.story_cooldown_active'));
+                return;
             }
-
             const { data } = await supabase.from('capsules').select('*').eq('owner_id', currentUserId);
-            if (data && data.length > 0) {
-                setUserCapsules(data);
-                setPickerStep('list');
-                setShowCapsulePicker(true);
-            } else {
-                Alert.alert(t('common.warning'), t('feed.no_capsules_yet'));
-            }
+            if (data && data.length > 0) { setUserCapsules(data); setPickerStep('list'); setShowCapsulePicker(true); }
+            else Alert.alert(t('common.warning'), t('feed.no_capsules_yet'));
         }
     }, [myStory, currentUserId, tutorialStep, t]);
 
     const handleSelectCapsuleForPicker = async (capsule: any) => {
         setSelectedPickerCapsule(capsule);
-        const { data: items } = await supabase.from('capsule_items')
-            .select('*')
-            .eq('capsule_id', capsule.id)
-            .eq('media_type', 'image');
-
-        if (!items || items.length === 0) {
-            Alert.alert(t('common.warning'), t('create.no_media'));
-            return;
-        }
-
+        const { data: items } = await supabase.from('capsule_items').select('*').eq('capsule_id', capsule.id).eq('media_type', 'image');
+        if (!items || items.length === 0) { Alert.alert(t('common.warning'), t('create.no_media')); return; }
         setPickerItems(items);
-
         if (capsule.status === 'opened') {
             setPickerStep('select');
         } else {
-            // Sealed logic: Animation
             setPickerStep('animation');
             setShuffling(true);
-
-            // Shuffling animation
-            Animated.loop(
-                Animated.sequence([
-                    Animated.timing(shuffleAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
-                    Animated.timing(shuffleAnim, { toValue: 0, duration: 300, useNativeDriver: true }),
-                ])
-            ).start();
-
-            // Randomly pick one after 2.5 seconds animation
+            Animated.loop(Animated.sequence([
+                Animated.timing(shuffleAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
+                Animated.timing(shuffleAnim, { toValue: 0, duration: 300, useNativeDriver: true }),
+            ])).start();
             setTimeout(() => {
                 const random = items[Math.floor(Math.random() * items.length)];
                 setRandomPreviewItem(random);
                 setShuffling(false);
                 shuffleAnim.stopAnimation();
-
-                // Start un-pixelating (unblur) animation
                 unblurAnim.setValue(1);
-                Animated.timing(unblurAnim, {
-                    toValue: 0,
-                    duration: 3500,
-                    useNativeDriver: true,
-                    easing: Easing.out(Easing.cubic)
-                }).start();
+                Animated.timing(unblurAnim, { toValue: 0, duration: 3500, useNativeDriver: true, easing: Easing.out(Easing.cubic) }).start();
             }, 2500);
         }
     };
 
     const rejectRandomStory = async () => {
-        const cooldownDate = new Date();
-        cooldownDate.setHours(cooldownDate.getHours() + 48);
-        const { error } = await supabase.from('profiles').update({ story_cooldown_until: cooldownDate.toISOString() }).eq('id', currentUserId);
-
-        if (error) {
-            console.error('Story cooldown error:', error);
-            Alert.alert(t('common.error'), 'Could not activate cooldown. ' + error.message);
-        }
-
-        setPickerStep('list');
-        setShowCapsulePicker(false);
-        if (!error) {
-            Alert.alert(t('common.warning'), t('feed.story_cooldown_active') || 'You declined to share this sealed memory. You cannot post a story for 48 hours.');
-        }
+        const cd = new Date(); cd.setHours(cd.getHours() + 48);
+        const { error } = await supabase.from('profiles').update({ story_cooldown_until: cd.toISOString() }).eq('id', currentUserId);
+        setPickerStep('list'); setShowCapsulePicker(false);
+        if (!error) Alert.alert(t('common.warning'), t('feed.story_cooldown_active'));
     };
 
-    const confirmStory = async (item: any) => {
-        const expiresAt = new Date();
-        expiresAt.setHours(expiresAt.getHours() + 168); // 1 Week
-
-        // Check if capsule is sealed for Mystery effect
+    const confirmStory = async (item: any, metadata: any = {}) => {
+        const expiresAt = new Date(); expiresAt.setHours(expiresAt.getHours() + 168);
         const { data: cap } = await supabase.from('capsules').select('status').eq('id', item.capsule_id).single();
-        const isMystery = cap?.status === 'sealed';
-
-
         const { error } = await supabase.from('capsule_items').insert({
-            owner_id: currentUserId,
-            capsule_id: item.capsule_id,
+            owner_id: currentUserId, capsule_id: item.capsule_id,
             media_url: item.media_url || `empty-story://${Date.now()}`,
             media_type: item.media_type || 'image',
-            is_story: true,
-            is_mystery: isMystery,
-            expires_at: expiresAt.toISOString()
+            is_story: true, is_mystery: cap?.status === 'sealed',
+            expires_at: expiresAt.toISOString(), metadata,
         });
-
-
-        if (!error) {
-            setShowCapsulePicker(false);
-            loadStories();
-        } else {
-            Alert.alert(t('common.error'), t('feed.share_error') || 'Could not share story.');
-        }
+        if (!error) { setShowCapsulePicker(false); setEditingItem(null); setPickerStep('list'); loadStories(); }
+        else Alert.alert(t('common.error'), t('feed.share_error'));
     };
 
-    const markStoryRead = async (storyId: string) => {
-        if (!currentUserId) return;
-        await supabase.from('story_reads').upsert({ user_id: currentUserId, story_id: storyId }, { onConflict: 'user_id,story_id' });
-        // Optimistic update locally
-        setStories(prev => prev.map(u => ({
-            ...u,
-            stories: u.stories.map((s: any) => s.id === storyId ? { ...s, is_read: true } : s)
-        })).map(u => ({
-            ...u,
-            all_read: u.stories.every((s: any) => s.is_read)
-        })));
-
-        // Also update myStory if it was mine
-        if (myStory) {
-            const updatedMyStories = myStory.stories.map((s: any) => s.id === storyId ? { ...s, is_read: true } : s);
-            const allRead = updatedMyStories.every((s: any) => s.is_read);
-            setMyStory({ ...myStory, stories: updatedMyStories, all_read: allRead });
-        }
-    };
-
-
-    const isFirstMount = useRef(true);
-
+    // ─── Init & effects ────────────────────────────────────────────────────────
     useEffect(() => {
-        const initTab = async () => {
+        const init = async () => {
             const { data: { session } } = await supabase.auth.getSession();
             const user = session?.user;
             if (user) {
-                const { count } = await supabase
-                    .from('follows')
-                    .select('*', { count: 'exact', head: true })
-                    .eq('follower_id', user.id);
-                
-                const correctTab: FeedTab = count && count > 0 ? 'following' : 'explore';
-                
-                setActiveTab(correctTab);
+                const { count } = await supabase.from('follows').select('*', { count: 'exact', head: true }).eq('follower_id', user.id);
+                const tab: FeedTab = count && count > 0 ? 'following' : 'explore';
+                setActiveTab(tab);
                 setCurrentUserId(user.id);
-                
-                // Allow the dependency-based useEffect to fire now
                 isFirstMount.current = false;
             }
         };
-        initTab();
+        init();
     }, []);
 
     useEffect(() => {
@@ -493,486 +512,367 @@ export default function FeedScreen() {
             loadFeed(false, activeTab);
             loadStories();
         }
-
-        const checkTutorial = async () => {
-            // Disabled temporarily per user request
-            /*
-            const hasSeen = await AsyncStorage.getItem('hasSeenTutorialV2');
-            if (!hasSeen) {
-                const savedStep = await AsyncStorage.getItem('tutorialStepV2');
-                if (savedStep) {
-                    setTutorialStep(savedStep as TutorialStep);
-                } else if (tutorialStep === 'IDLE') {
-                    setTutorialStep('WELCOME');
-                }
-            }
-            */
-        };
-        if (isFocused) checkTutorial();
     }, [activeTab, activeFilter, currentUserId, isFocused]);
-
-    useEffect(() => {
-        if (tutorialStep !== 'IDLE') {
-            AsyncStorage.setItem('tutorialStepV2', tutorialStep);
-        }
-    }, [tutorialStep]);
 
     useEffect(() => {
         const checkUnread = async () => {
             const { data: { session } } = await supabase.auth.getSession();
             const user = session?.user;
             if (!user) return;
-
-            const { data: myConvs } = await supabase
-                .from('conversation_participants')
-                .select('conversation_id')
-                .eq('user_id', user.id);
-
-            if (!myConvs || myConvs.length === 0) {
-                setHasUnread(false);
-                return;
-            }
-
-            // Load locally deleted chats so we skip them
+            const { data: myConvs } = await supabase.from('conversation_participants').select('conversation_id').eq('user_id', user.id);
+            if (!myConvs?.length) { setHasUnread(false); return; }
             const deletedKey = `deleted_chats_${user.id}`;
-            const existingDeleted = await AsyncStorage.getItem(deletedKey);
-            const deletedList: string[] = existingDeleted ? JSON.parse(existingDeleted) : [];
-
-            // Filter out deleted conversations before checking unread
+            const parsedDeleted = JSON.parse((await AsyncStorage.getItem(deletedKey)) || '[]');
+            const deletedList: string[] = Array.isArray(parsedDeleted) ? parsedDeleted : [];
             const activeConvs = myConvs.filter(c => !deletedList.includes(c.conversation_id));
-
-            if (activeConvs.length === 0) {
-                setHasUnread(false);
-                return;
-            }
-
-            // Single batched query: get last message from others for ALL active conversations
+            if (!activeConvs.length) { setHasUnread(false); return; }
             const convIds = activeConvs.map(c => c.conversation_id);
-            const { data: lastMsgs } = await supabase
-                .from('messages')
-                .select('conversation_id, created_at, sender_id')
-                .in('conversation_id', convIds)
-                .neq('sender_id', user.id)
-                .order('created_at', { ascending: false });
-
-            if (!lastMsgs || lastMsgs.length === 0) {
-                setHasUnread(false);
-                return;
-            }
-
-            // Group by conversation_id: keep only the most recent message per conversation
+            const { data: lastMsgs } = await supabase.from('messages').select('conversation_id, created_at, sender_id').in('conversation_id', convIds).neq('sender_id', user.id).order('created_at', { ascending: false });
+            if (!lastMsgs?.length) { setHasUnread(false); return; }
             const latestPerConv: Record<string, any> = {};
-            for (const msg of lastMsgs) {
-                if (!latestPerConv[msg.conversation_id]) {
-                    latestPerConv[msg.conversation_id] = msg;
-                }
-            }
-
-            // Check visit timestamps in parallel
+            for (const msg of lastMsgs) { if (!latestPerConv[msg.conversation_id]) latestPerConv[msg.conversation_id] = msg; }
             let foundUnread = false;
-            await Promise.all(
-                Object.entries(latestPerConv).map(async ([convId, msg]) => {
-                    if (foundUnread) return;
-                    const lastVisited = await AsyncStorage.getItem(`chat_visited_${convId}`);
-                    const msgTime = new Date(msg.created_at).getTime();
-                    const visitTime = lastVisited ? new Date(lastVisited).getTime() : 0;
-                    if (msgTime > visitTime + 2000) {
-                        foundUnread = true;
-                    }
-                })
-            );
+            await Promise.all(Object.entries(latestPerConv).map(async ([convId, msg]) => {
+                if (foundUnread) return;
+                const lastVisited = await AsyncStorage.getItem(`chat_visited_${convId}`);
+                if (new Date(msg.created_at).getTime() > (lastVisited ? new Date(lastVisited).getTime() : 0) + 2000) foundUnread = true;
+            }));
             setHasUnread(foundUnread);
         };
-
         checkUnread();
-
-        const channel = supabase.channel('chat_updates')
-            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, () => {
-                checkUnread();
-            })
-            .subscribe();
-
-        return () => { supabase.removeChannel(channel); };
+        const ch = supabase.channel('chat_updates').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, checkUnread).subscribe();
+        return () => { supabase.removeChannel(ch); };
     }, [isFocused]);
 
     const onRefresh = useCallback(() => {
         setRefreshing(true);
-        // Invalidate cache for current tab/filter so full reload happens
         const cacheKey = `${activeTab}_${activeFilter}`;
         setFeedCache(prev => { const n = { ...prev }; delete n[cacheKey]; return n; });
         loadFeed(true);
     }, [activeTab, activeFilter]);
 
-    // ── Memoized FlatList helpers ──
     const keyExtractor = useCallback((item: any) => item.id, []);
-    const renderItem = useCallback(({ item }: { item: any }) => (
-        item.feed_type === 'capsule' || item.feedType === 'capsule'
-            ? <CapsuleCard capsule={item} />
-            : <TimelineActivity item={item} />
-    ), []);
 
-    const FeedListHeader = useMemo(() => (
+    const renderItem = useCallback(({ item }: { item: any }) => {
+        const capsule = item.feedType === 'capsule' ? item : (Array.isArray(item.capsules) ? item.capsules[0] : item.capsules);
+        if (!capsule) return null;
+        return <CapsuleCard capsule={capsule} />;
+    }, []);
+
+    // ─── List Header ───────────────────────────────────────────────────────────
+    const ListHeader = useMemo(() => (
         <>
-            {/* ── STORIES ── */}
-            <View style={styles.storiesSection}>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.storiesContent}>
-                    {/* Your Cap */}
-                    <TouchableOpacity key="your-cap" style={styles.storyItem} activeOpacity={0.85} onPress={handleYourCapPress}>
-                        {myStory ? (
-                            <LinearGradient 
-                                colors={[Colors.primary, Colors.primaryDark, '#00f2ff']} 
-                                style={styles.storyRing}
-                                start={{ x: 0, y: 1 }}
-                                end={{ x: 1, y: 0 }}
-                            >
-                                <View style={styles.storyAvatarWrap}>
-                                    <Image source={{ uri: myStory.avatar_url || 'https://via.placeholder.com/150' }} style={styles.storyAvatar} />
-                                </View>
-                            </LinearGradient>
-                        ) : (
-                            <View style={styles.yourCapPlaceholder} pointerEvents="none">
-                                {/* Multi-layered subtle glow - Adjusted for better centering and visibility */}
-                                <LinearGradient
-                                    colors={[Colors.primary + '25', 'transparent']}
-                                    style={[styles.yourCapGlow, { width: 80, height: 80, borderRadius: 40 }]}
-                                />
-                                <LinearGradient
-                                    colors={[Colors.accent + '15', 'transparent']}
-                                    style={[styles.yourCapGlow, { width: 95, height: 95, borderRadius: 47.5, opacity: 0.5 }]}
-                                />
-                                <View style={styles.yourCapRing}>
-                                    <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.addStoryBtn}>
-                                        <Ionicons name="add" size={24} color="#fff" />
-                                    </LinearGradient>
-                                </View>
-                            </View>
-                        )}
-                        <Text style={styles.yourCapLabel}>Flash</Text>
-                    </TouchableOpacity>
+            {/* Stories bar */}
+            <View style={s.storiesSection}>
+                <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={s.storiesContent}
+                >
+                    {/* Your Flash bubble */}
+                    <StoryBubble
+                        key="your-cap"
+                        user={myStory || null}
+                        isOwn
+                        onPress={handleYourCapPress}
+                    />
 
-                    {stories.filter(u => u.owner_id !== currentUserId).map((u) => (
-                        <TouchableOpacity key={u.owner_id} style={styles.storyItem} activeOpacity={0.85} onPress={() => { setActiveStory(u); setActiveStoryIndex(0); }}>
-                            {u.all_read ? (
-                                <View style={[styles.storyRing, styles.storyRingRead]}>
-                                    <View style={styles.storyAvatarWrap}>
-                                        <Image source={{ uri: u.avatar_url || 'https://via.placeholder.com/150' }} style={styles.storyAvatar} />
-                                    </View>
-                                </View>
-                            ) : (
-                                <LinearGradient colors={[Colors.primary, Colors.primaryDark, '#00f2ff']} style={styles.storyRing} start={{ x: 0, y: 1 }} end={{ x: 1, y: 0 }}>
-                                    <View style={styles.storyAvatarWrap}>
-                                        <Image source={{ uri: u.avatar_url || 'https://via.placeholder.com/150' }} style={styles.storyAvatar} />
-                                    </View>
-                                </LinearGradient>
-                            )}
-                            <Text style={[styles.storyLabel, u.all_read && { color: Colors.textMuted }]} numberOfLines={1}>{u.display_name || u.username || 'user'}</Text>
-                        </TouchableOpacity>
-                    ))}
+                    {stories
+                        .filter(u => u.owner_id !== currentUserId)
+                        .map(u => (
+                            <StoryBubble
+                                key={u.owner_id}
+                                user={u}
+                                onPress={() => setActiveStory(u)}
+                            />
+                        ))
+                    }
                 </ScrollView>
             </View>
 
-            {/* ── FILTER BAR ── */}
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterBar} contentContainerStyle={styles.filterBarContent}>
-                {(['all', 'today', 'instacap', 'eventcap', 'legacycap'] as FilterType[]).map((key) => {
-                    const isToday = key === 'today';
-                    const isActive = activeFilter === key;
-                    const label = key === 'all' ? t('feed.all') :
-                                  key === 'today' ? t('feed.opens_today') :
-                                  key === 'instacap' ? 'InstaCap' :
-                                  key === 'eventcap' ? 'EventCap' : 'LegacyCap';
-                    
-                    const icon = key === 'all' ? 'apps-outline' :
-                                 key === 'today' ? 'time-outline' :
-                                 key === 'instacap' ? 'camera-outline' :
-                                 key === 'eventcap' ? 'calendar-outline' : 'hourglass-outline';
-
-                    return (
-                        <TouchableOpacity
-                            key={key}
-                            style={[
-                                styles.filterChip, 
-                                isActive && styles.filterChipActive,
-                                isToday && !isActive && { backgroundColor: '#FF416C10', borderColor: '#FF416C30' }
-                            ]}
-                            onPress={() => setActiveFilter(key)}
-                            activeOpacity={0.8}
-                        >
-                            {isActive ? (
-                                <LinearGradient
-                                    colors={isToday ? ['#FF416C', '#FF4B2B'] : [Colors.primary, Colors.primaryDark]}
-                                    style={StyleSheet.absoluteFill}
-                                    start={{ x: 0, y: 0 }}
-                                    end={{ x: 1, y: 0 }}
-                                />
-                            ) : null}
-                            
-                            {isToday ? (
-                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                                    <Ionicons 
-                                        name={isActive ? "time" : "time-outline"} 
-                                        size={14} 
-                                        color={isActive ? '#fff' : '#FF416C'} 
-                                    />
-                                    <Text style={[
-                                        styles.filterChipText, 
-                                        isActive && styles.filterChipTextActive,
-                                        !isActive && { color: '#FF416C' }
-                                    ]}>
-                                        {label}
-                                    </Text>
-                                    <View style={[
-                                        styles.timerBadge,
-                                        isActive && { backgroundColor: 'rgba(255,255,255,0.2)' }
-                                    ]}>
-                                        <Text style={[
-                                            styles.timerBadgeText,
-                                            isActive && { color: '#fff' }
-                                        ]}>
-                                            {`${Math.floor(totalFakeMinutes / 60) < 10 ? '0' : ''}${Math.floor(totalFakeMinutes / 60)}:${(totalFakeMinutes % 60) < 10 ? '0' : ''}${totalFakeMinutes % 60}`}
-                                        </Text>
-                                    </View>
-                                    {isActive && <Animated.View style={[styles.liveIndicator, { transform: [{ scale: pulseAnim }] }]} />}
-                                </View>
-                            ) : (
-                                <>
-                                    <Ionicons name={icon as any} size={14} color={isActive ? '#fff' : Colors.textSecondary} />
-                                    <Text style={[styles.filterChipText, isActive && styles.filterChipTextActive]}>{label}</Text>
-                                </>
-                            )}
-                        </TouchableOpacity>
-                    );
-                })}
+            {/* Filter chips */}
+            <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={s.filterBar}
+                contentContainerStyle={s.filterBarContent}
+            >
+                {FILTER_KEYS.map(key => (
+                    <FilterChip
+                        key={key}
+                        filterKey={key}
+                        isActive={activeFilter === key}
+                        onPress={setActiveFilter}
+                        t={t}
+                        totalFakeMinutes={totalFakeMinutes}
+                        pulseAnim={pulseAnim}
+                    />
+                ))}
             </ScrollView>
 
+            {/* Divider */}
+            <View style={s.feedDivider} />
+
             {loading && !refreshing && (
-                <View style={{ paddingTop: 20, alignItems: 'center' }}>
-                    <ActivityIndicator color={Colors.primary} />
+                <View style={s.loadingWrap}>
+                    <ActivityIndicator size="small" color={Colors.primary} />
                 </View>
             )}
         </>
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     ), [stories, myStory, currentUserId, activeFilter, loading, refreshing, totalFakeMinutes, handleYourCapPress]);
 
+    // ─── Render ────────────────────────────────────────────────────────────────
     return (
-        <View style={styles.container}>
+        <View style={s.root}>
             <StatusBar barStyle="dark-content" backgroundColor={Colors.background} />
 
-            {/* ── HEADER ── */}
-            <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-                <BlurView intensity={Platform.OS === 'ios' ? 80 : 100} tint="light" style={StyleSheet.absoluteFill} />
+            {/* ── HEADER ──────────────────────────────────────────────── */}
+            <Animated.View
+                style={[
+                    s.header,
+                    { paddingTop: insets.top + 6 },
+                    { opacity: headerOpacity, transform: [{ translateY: headerSlide }] },
+                ]}
+            >
+                <BlurView intensity={Platform.OS === 'ios' ? 85 : 100} tint="light" style={StyleSheet.absoluteFill} />
 
-                <View style={styles.headerContent}>
-                    {/* Brand */}
-                    <View style={styles.logoContainer}>
+                {/* Top row */}
+                <View style={s.headerRow}>
+                    {/* Logo */}
+                    <View style={s.logoRow}>
                         <Image
                             source={{ uri: 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/website/Logomain.png' }}
-                            style={styles.logo}
+                            style={s.logoImg}
                             resizeMode="contain"
                         />
-                        <Text style={styles.logoText}>kapsely</Text>
+                        <Text style={s.logoText}>kapsely</Text>
                     </View>
 
                     {/* Actions */}
-                    <View style={styles.headerActions}>
+                    <View style={s.headerActions}>
+                        {/* Create */}
                         <TouchableOpacity
-                            style={styles.iconBtn}
-                            activeOpacity={0.7}
+                            activeOpacity={0.8}
                             onPress={() => {
                                 if (tutorialStep === 'PRESS_PLUS') setTutorialStep('POST_YOURCAP');
                                 navigation.navigate('CreateSelection', { isTutorial: tutorialStep === 'PRESS_PLUS' });
                             }}
                         >
-                            <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.iconBtnGrad}>
-                                <Ionicons name="add" size={20} color="#fff" />
+                            <LinearGradient
+                                colors={[Colors.primary, Colors.primaryDark]}
+                                style={s.actionBtnPrimary}
+                                start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                            >
+                                <Ionicons name="add" size={19} color="#fff" />
                             </LinearGradient>
                         </TouchableOpacity>
 
-                        <TouchableOpacity style={styles.iconBtn} activeOpacity={0.7} onPress={() => navigation.navigate('Search')}>
-                            <View style={styles.iconBtnPlain}>
-                                <Ionicons name="search-outline" size={19} color={Colors.textPrimary} />
-                            </View>
+                        {/* Search */}
+                        <TouchableOpacity
+                            style={s.actionBtnSecondary}
+                            activeOpacity={0.7}
+                            onPress={() => navigation.navigate('Search')}
+                        >
+                            <Ionicons name="search-outline" size={18} color={Colors.textPrimary} />
                         </TouchableOpacity>
 
-                        <TouchableOpacity style={styles.iconBtn} activeOpacity={0.8} onPress={() => navigation.navigate('ChatList')}>
-                            <View style={[styles.iconBtnPlain, hasUnread && styles.iconBtnUnread]}>
-                                <Ionicons name="chatbubble-ellipses" size={17} color={hasUnread ? Colors.primary : Colors.textPrimary} />
-                                {hasUnread && <View style={styles.notifBadge} />}
-                            </View>
+                        {/* Chat */}
+                        <TouchableOpacity
+                            style={[s.actionBtnSecondary, hasUnread && s.actionBtnUnread]}
+                            activeOpacity={0.7}
+                            onPress={() => navigation.navigate('ChatList')}
+                        >
+                            <Ionicons
+                                name="chatbubble-ellipses"
+                                size={17}
+                                color={hasUnread ? Colors.primary : Colors.textPrimary}
+                            />
+                            {hasUnread && <View style={s.unreadDot} />}
                         </TouchableOpacity>
                     </View>
                 </View>
 
-                {/* ── Segmented Pill Tabs ── */}
-                <View style={styles.tabPillContainer}>
-                    <View style={styles.tabPill}>
-                        {(['following', 'explore'] as FeedTab[]).map((t_key) => (
+                {/* Tab switcher — underline style, clean */}
+                <View style={s.tabRow}>
+                    {(['following', 'explore'] as FeedTab[]).map(tab => {
+                        const isActive = activeTab === tab;
+                        return (
                             <TouchableOpacity
-                                key={t_key}
-                                style={[styles.tabPillItem, activeTab === t_key && styles.tabPillItemActive]}
-                                onPress={() => setActiveTab(t_key)}
+                                key={tab}
+                                style={[s.tab, isActive && s.tabActive]}
+                                onPress={() => setActiveTab(tab)}
                                 activeOpacity={0.7}
                             >
-                                {activeTab === t_key && (
+                                <Text style={[s.tabText, isActive && s.tabTextActive]}>
+                                    {tab === 'following' ? t('feed.following') : t('feed.explore')}
+                                </Text>
+                                {isActive && (
                                     <LinearGradient
                                         colors={[Colors.primary, Colors.primaryDark]}
-                                        style={StyleSheet.absoluteFill}
-                                        start={{ x: 0, y: 0 }}
-                                        end={{ x: 1, y: 0 }}
+                                        style={s.tabUnderline}
+                                        start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
                                     />
                                 )}
-                                <Text style={[styles.tabPillText, activeTab === t_key && styles.tabPillTextActive]}>
-                                    {t_key === 'following' ? t('feed.following') : t('feed.explore')}
-                                </Text>
                             </TouchableOpacity>
-                        ))}
-                    </View>
+                        );
+                    })}
+                    {/* Subtle separator line across full width */}
+                    <View style={s.tabBarLine} />
                 </View>
-            </View>
+            </Animated.View>
 
+            {/* ── FEED ──────────────────────────────────────────────────── */}
             <FlatList
                 data={capsules}
                 keyExtractor={keyExtractor}
                 showsVerticalScrollIndicator={false}
-                contentContainerStyle={styles.scrollContent}
+                contentContainerStyle={[s.listContent, { paddingBottom: insets.bottom + 90 }]}
                 refreshing={refreshing}
                 onRefresh={onRefresh}
-                ListHeaderComponent={FeedListHeader}
+                ListHeaderComponent={ListHeader}
                 renderItem={renderItem}
                 initialNumToRender={5}
                 maxToRenderPerBatch={5}
                 windowSize={7}
                 removeClippedSubviews={Platform.OS === 'android'}
-                ListEmptyComponent={() => !loading && (
-                    <View style={styles.emptyState}>
-                        <LinearGradient colors={[Colors.primary + '18', 'transparent']} style={styles.emptyGlow} />
-                        <View style={styles.emptyIconWrap}>
-                            <LinearGradient colors={[Colors.primary + '22', Colors.primaryLight + '11']} style={StyleSheet.absoluteFill} />
-                            <Ionicons name="time-outline" size={44} color={Colors.primary} />
+                ListEmptyComponent={() =>
+                    !loading ? (
+                        <View style={s.emptyState}>
+                            <View style={[s.emptyIconWrap, { backgroundColor: Colors.primary + '10' }]}>
+                                <Ionicons name="time-outline" size={40} color={Colors.primary} />
+                            </View>
+                            <Text style={s.emptyTitle}>Nothing here yet</Text>
+                            <Text style={s.emptySub}>
+                                When people you follow add memories to their capsules, they'll appear here.
+                            </Text>
+                            <TouchableOpacity
+                                activeOpacity={0.85}
+                                onPress={() => setActiveTab('explore')}
+                                style={s.emptyBtn}
+                            >
+                                <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={s.emptyBtnGrad}>
+                                    <Ionicons name="compass-outline" size={16} color="#fff" />
+                                    <Text style={s.emptyBtnText}>Explore capsules</Text>
+                                </LinearGradient>
+                            </TouchableOpacity>
                         </View>
-                        <Text style={styles.emptyTitle}>Nothing here yet</Text>
-                        <Text style={styles.emptyText}>When people you follow add memories to their capsules, they'll appear here.</Text>
-                        <TouchableOpacity
-                            style={styles.emptyBtn}
-                            activeOpacity={0.8}
-                            onPress={() => setActiveTab('explore')}
-                        >
-                            <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.emptyBtnGrad}>
-                                <Text style={styles.emptyBtnText}>Explore capsules</Text>
-                            </LinearGradient>
-                        </TouchableOpacity>
-                    </View>
-                )}
+                    ) : null
+                }
             />
 
-            {/* Capsule Picker Modal */}
-            <Modal 
-                visible={showCapsulePicker} 
-                transparent 
+            {/* ── CAPSULE PICKER MODAL ──────────────────────────────────── */}
+            <Modal
+                visible={showCapsulePicker}
+                transparent
                 animationType="slide"
-                onRequestClose={() => {
-                    if (pickerStep === 'animation') {
-                        rejectRandomStory();
-                    } else {
-                        setShowCapsulePicker(false);
-                    }
-                }}
+                onRequestClose={() => { pickerStep === 'animation' ? rejectRandomStory() : setShowCapsulePicker(false); }}
             >
-                <View style={styles.pickerOverlay}>
-                    <View style={styles.pickerContent}>
-                        <View style={styles.pickerHeader}>
+                <View style={s.pickerOverlay}>
+                    <View style={s.pickerSheet}>
+                        {/* Handle */}
+                        <View style={s.pickerHandle} />
+
+                        {/* Header */}
+                        <View style={s.pickerHeader}>
                             {pickerStep !== 'list' && (
-                                <TouchableOpacity 
-                                    onPress={() => {
-                                        if (pickerStep === 'animation') {
-                                            rejectRandomStory();
-                                        } else {
-                                            setPickerStep('list');
-                                        }
-                                    }} 
-                                    style={styles.pickerBack} 
-                                    activeOpacity={0.7}
+                                <TouchableOpacity
+                                    onPress={() => { pickerStep === 'animation' ? rejectRandomStory() : setPickerStep('list'); }}
+                                    style={s.pickerNavBtn} activeOpacity={0.7}
                                 >
-                                    <Ionicons name="chevron-back" size={24} color={Colors.textPrimary} />
+                                    <Ionicons name="chevron-back" size={22} color={Colors.textPrimary} />
                                 </TouchableOpacity>
                             )}
-                            <Text style={styles.pickerTitle}>
+                            <Text style={s.pickerTitle}>
                                 {pickerStep === 'list' ? 'Share as Flash' :
-                                    pickerStep === 'select' ? 'Choose Image' : 'Discovering...'}
+                                    pickerStep === 'select' ? 'Choose Image' :
+                                        pickerStep === 'edit' ? 'Edit Flash' : 'Discovering...'}
                             </Text>
-                            <TouchableOpacity 
-                                onPress={() => {
-                                    if (pickerStep === 'animation') {
-                                        rejectRandomStory();
-                                    } else {
-                                        setShowCapsulePicker(false);
-                                    }
-                                }} 
-                                activeOpacity={0.7}
+                            <TouchableOpacity
+                                onPress={() => { pickerStep === 'animation' ? rejectRandomStory() : setShowCapsulePicker(false); }}
+                                style={s.pickerNavBtn} activeOpacity={0.7}
                             >
-                                <Ionicons name="close" size={24} color={Colors.textMuted} />
+                                <Ionicons name="close" size={22} color={Colors.textMuted} />
                             </TouchableOpacity>
                         </View>
 
+                        {/* Capsule list */}
                         {pickerStep === 'list' && (
                             <ScrollView>
                                 {userCapsules.map(cap => (
-                                    <TouchableOpacity key={cap.id} style={styles.pickerItem} activeOpacity={0.8} onPress={() => handleSelectCapsuleForPicker(cap)}>
-                                        <View style={styles.pickerModelWrap}>
-                                            <Image source={{ uri: timerConfigManager.getModelImage(cap.model) || MODEL_IMAGES[cap.model] || (MODEL_IMAGES as any).basicred_kap }} style={styles.pickerModelImg} resizeMode="contain" />
+                                    <TouchableOpacity
+                                        key={cap.id} style={s.pickerItem}
+                                        activeOpacity={0.8}
+                                        onPress={() => handleSelectCapsuleForPicker(cap)}
+                                    >
+                                        <View style={s.pickerModelWrap}>
+                                            <Image
+                                                source={{ uri: timerConfigManager.getModelImage(cap.model) || MODEL_IMAGES[cap.model] || (MODEL_IMAGES as any).basicred_kap }}
+                                                style={s.pickerModelImg} resizeMode="contain"
+                                            />
                                         </View>
                                         <View style={{ flex: 1 }}>
-                                            <Text style={styles.pickerItemText}>{cap.title}</Text>
-                                            <Text style={[styles.pickerStatusLabel, { color: cap.status === 'opened' ? Colors.success : Colors.primary }]}>
+                                            <Text style={s.pickerItemTitle}>{cap.title}</Text>
+                                            <Text style={[s.pickerItemStatus, { color: cap.status === 'opened' ? Colors.success : Colors.primary }]}>
                                                 {cap.status === 'opened' ? 'Opened' : 'Sealed'}
                                             </Text>
                                         </View>
-                                        <Ionicons name="chevron-forward" size={20} color={Colors.border} />
+                                        <Ionicons name="chevron-forward" size={18} color={Colors.border} />
                                     </TouchableOpacity>
                                 ))}
                             </ScrollView>
                         )}
 
+                        {/* Image grid */}
                         {pickerStep === 'select' && (
                             <FlatList
                                 data={pickerItems}
                                 numColumns={3}
-                                keyExtractor={(item) => item.id}
+                                keyExtractor={i => i.id}
                                 renderItem={({ item }) => (
-                                    <TouchableOpacity style={styles.pickerGridItem} activeOpacity={0.8} onPress={() => confirmStory(item)}>
-                                        <Image source={{ uri: item.media_url }} style={styles.pickerGridImg} />
+                                    <TouchableOpacity
+                                        style={s.pickerGridCell}
+                                        activeOpacity={0.8}
+                                        onPress={() => { setEditingItem(item); setPickerStep('edit'); }}
+                                    >
+                                        <Image source={{ uri: item.media_url }} style={s.pickerGridImg} />
                                     </TouchableOpacity>
                                 )}
                                 contentContainerStyle={{ gap: 2 }}
                             />
                         )}
 
+                        {/* Shuffle animation */}
                         {pickerStep === 'animation' && (
-                            <View style={styles.animationContainer}>
+                            <View style={s.animWrap}>
                                 {shuffling ? (
-                                    <View style={styles.shufflingWrap}>
-                                        <Animated.View style={[styles.shufflingIcon, { transform: [{ scale: shuffleAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.2] }) }] }]}>
-                                            <Ionicons name="rocket-outline" size={64} color={Colors.primary} />
+                                    <View style={s.shuffleWrap}>
+                                        <Animated.View style={{ transform: [{ scale: shuffleAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.2] }) }] }}>
+                                            <Ionicons name="rocket-outline" size={60} color={Colors.primary} />
                                         </Animated.View>
-                                        <Text style={styles.luckyText}>{t('feed.lucky_msg')}</Text>
-                                        <Text style={styles.shufflingText}>{t('feed.shuffling_msg')}</Text>
+                                        <Text style={s.animTitle}>{t('feed.lucky_msg')}</Text>
+                                        <Text style={s.animSub}>{t('feed.shuffling_msg')}</Text>
                                     </View>
                                 ) : (
-                                    <View style={styles.previewWrap}>
-                                        <View style={styles.previewImgContainer}>
-                                            <Image source={{ uri: randomPreviewItem?.media_url }} style={styles.previewImgReal} />
+                                    <View style={{ width: '100%', alignItems: 'center' }}>
+                                        <View style={s.previewImgWrap}>
+                                            <Image source={{ uri: randomPreviewItem?.media_url }} style={s.previewImg} />
                                             <Animated.View style={[StyleSheet.absoluteFill, { opacity: unblurAnim }]}>
                                                 <BlurView intensity={50} tint="dark" style={StyleSheet.absoluteFill} />
                                                 <BlurView intensity={40} tint="light" style={StyleSheet.absoluteFill} />
                                             </Animated.View>
                                         </View>
-                                        <Text style={styles.luckyText}>A memory has surfaced!</Text>
-                                        <View style={styles.previewActions}>
-                                            <TouchableOpacity style={styles.cancelPreview} activeOpacity={0.7} onPress={rejectRandomStory}>
-                                                <Text style={styles.cancelPreviewText}>Cancel</Text>
+                                        <Text style={s.animTitle}>A memory has surfaced!</Text>
+                                        <View style={s.previewActions}>
+                                            <TouchableOpacity style={s.previewCancelBtn} activeOpacity={0.7} onPress={rejectRandomStory}>
+                                                <Text style={s.previewCancelText}>Cancel</Text>
                                             </TouchableOpacity>
-                                            <TouchableOpacity style={styles.confirmPreview} activeOpacity={0.8} onPress={() => confirmStory(randomPreviewItem)}>
-                                                <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.confirmBtnGradient}>
-                                                    <Text style={styles.confirmBtnText}>Add to Flash</Text>
+                                            <TouchableOpacity
+                                                style={s.previewConfirmBtn}
+                                                activeOpacity={0.85}
+                                                onPress={() => { setEditingItem(randomPreviewItem); setPickerStep('edit'); }}
+                                            >
+                                                <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={s.previewConfirmGrad}>
+                                                    <Text style={s.previewConfirmText}>Add to Flash</Text>
                                                 </LinearGradient>
                                             </TouchableOpacity>
                                         </View>
@@ -980,22 +880,31 @@ export default function FeedScreen() {
                                 )}
                             </View>
                         )}
+
+                        {/* Editor */}
+                        {pickerStep === 'edit' && editingItem && (
+                            <StoryEditor
+                                item={editingItem}
+                                onCancel={() => setPickerStep(selectedPickerCapsule?.status === 'opened' ? 'select' : 'animation')}
+                                onConfirm={meta => confirmStory(editingItem, meta)}
+                            />
+                        )}
                     </View>
                 </View>
             </Modal>
 
+            {/* Story viewer */}
             <StoryViewer
                 visible={!!activeStory}
                 userGroup={activeStory}
                 onClose={() => setActiveStory(null)}
                 onNextUser={() => {
-                    const currentIndex = stories.findIndex(u => u.owner_id === activeStory?.owner_id);
-                    if (currentIndex < stories.length - 1) setActiveStory(stories[currentIndex + 1]);
-                    else setActiveStory(null);
+                    const idx = stories.findIndex(u => u.owner_id === activeStory?.owner_id);
+                    setActiveStory(idx < stories.length - 1 ? stories[idx + 1] : null);
                 }}
                 onPrevUser={() => {
-                    const currentIndex = stories.findIndex(u => u.owner_id === activeStory?.owner_id);
-                    if (currentIndex > 0) setActiveStory(stories[currentIndex - 1]);
+                    const idx = stories.findIndex(u => u.owner_id === activeStory?.owner_id);
+                    if (idx > 0) setActiveStory(stories[idx - 1]);
                 }}
                 onStoryRead={markStoryRead}
                 currentUserId={currentUserId || undefined}
@@ -1003,153 +912,173 @@ export default function FeedScreen() {
 
             <InteractiveTour
                 step={tutorialStep}
-                onAction={(action) => {
-                    if (action === 'START') setTutorialStep('PRESS_PLUS');
-                }}
-                onDismiss={async () => {
-                    await AsyncStorage.setItem('hasSeenTutorialV2', 'true');
-                    setTutorialStep('FINISHED');
-                }}
+                onAction={action => { if (action === 'START') setTutorialStep('PRESS_PLUS'); }}
+                onDismiss={async () => { await AsyncStorage.setItem('hasSeenTutorialV2', 'true'); setTutorialStep('FINISHED'); }}
             />
         </View>
     );
 }
 
-const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: Colors.background },
+// ─── Styles ───────────────────────────────────────────────────────────────────
+const s = StyleSheet.create({
+    root: { flex: 1, backgroundColor: Colors.background },
 
-    // ── HEADER ──
+    // Header
     header: {
-        position: 'relative',
         backgroundColor: 'transparent',
-        borderBottomWidth: 1,
-        borderBottomColor: Colors.border,
-        overflow: 'hidden',
+        borderBottomWidth: 1, borderBottomColor: Colors.border,
+        overflow: 'hidden', zIndex: 10,
     },
-    headerContent: {
+    headerRow: {
         flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-        paddingHorizontal: Spacing.md, paddingVertical: 10,
+        paddingHorizontal: 18, paddingVertical: 10,
     },
-    logoContainer: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    logo: { width: 30, height: 30 },
-    logoText: { color: Colors.textPrimary, fontSize: 20, fontFamily: Fonts.bold, letterSpacing: -0.5 },
-    headerActions: { flexDirection: 'row', gap: 8, alignItems: 'center' },
-    iconBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-    iconBtnGrad: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', ...Shadow.primary },
-    iconBtnPlain: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.cardAlt, borderWidth: 1, borderColor: Colors.border },
-    iconBtnUnread: { borderColor: Colors.primary, backgroundColor: Colors.primaryGlow },
-    notifBadge: { position: 'absolute', top: -2, right: -2, width: 10, height: 10, borderRadius: 5, backgroundColor: Colors.error, borderWidth: 2, borderColor: '#fff' },
-
-    // ── SEGMENTED PILL TABS ──
-    tabPillContainer: { paddingHorizontal: Spacing.md, paddingBottom: 12, paddingTop: 2 },
-    tabPill: { flexDirection: 'row', backgroundColor: Colors.cardAlt, borderRadius: 999, padding: 3, borderWidth: 1, borderColor: Colors.border, alignSelf: 'flex-start' },
-    tabPillItem: { paddingHorizontal: 22, paddingVertical: 8, borderRadius: 999, overflow: 'hidden' },
-    tabPillItemActive: { ...Shadow.subtle },
-    tabPillText: { fontSize: 13, fontFamily: Fonts.semiBold, color: Colors.textMuted },
-    tabPillTextActive: { color: '#fff', fontFamily: Fonts.bold },
-
-    scroll: { flex: 1 },
-    scrollContent: { paddingBottom: 100 },
-
-    // ── STORIES ──
-    storiesSection: { paddingTop: 20, paddingBottom: 15 },
-    storiesContent: { paddingHorizontal: Spacing.md, gap: Spacing.md, paddingRight: 30 },
-    storyItem: { alignItems: 'center', gap: 6, width: 72 },
-    storyRing: { width: 70, height: 70, borderRadius: 35, alignItems: 'center', justifyContent: 'center', padding: 2.5 },
-    storyRingRead: { backgroundColor: Colors.border },
-    storyAvatarWrap: { width: 65, height: 65, borderRadius: 32.5, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
-    storyAvatar: { width: 62, height: 62, borderRadius: 31 },
-    storyLabel: { color: Colors.textSecondary, fontSize: 11, fontFamily: Fonts.medium, textAlign: 'center', maxWidth: 70 },
-    yourCapLabel: { color: Colors.primary, fontSize: 11, fontFamily: Fonts.bold, textAlign: 'center' },
-    yourCapPlaceholder: { width: 60, height: 60, alignItems: 'center', justifyContent: 'center' },
-    yourCapGlow: { position: 'absolute', alignSelf: 'center' },
-    yourCapRing: { width: 60, height: 60, borderRadius: 30, borderWidth: 2, borderColor: Colors.primary, borderStyle: 'dashed', alignItems: 'center', justifyContent: 'center' },
-    addStoryBtn: { width: 54, height: 54, borderRadius: 27, alignItems: 'center', justifyContent: 'center', ...Shadow.primary },
-
-    // ── FILTER BAR ──
-    filterBar: { marginBottom: 4, marginTop: 12 },
-    filterBarContent: { paddingHorizontal: Spacing.md, gap: 8, paddingBottom: 8 },
-    filterChip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 9, borderRadius: 999, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.surface, overflow: 'hidden' },
-    filterChipActive: { borderColor: 'transparent', ...Shadow.subtle },
-    filterChipText: { fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textSecondary },
-    filterChipTextActive: { color: '#fff', fontFamily: Fonts.bold },
-    liveIndicator: {
-        width: 6,
-        height: 6,
-        borderRadius: 3,
-        backgroundColor: '#fff',
-        shadowColor: '#fff',
-        shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.8,
-        shadowRadius: 4,
+    logoRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    logoImg: { width: 28, height: 28 },
+    logoText: {
+        fontSize: 20, fontFamily: Fonts.bold, color: Colors.textPrimary, letterSpacing: -0.5,
     },
-    timerBadge: {
-        paddingHorizontal: 6,
-        paddingVertical: 2,
-        borderRadius: 6,
-        backgroundColor: 'rgba(255, 65, 108, 0.12)',
+    headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    actionBtnPrimary: {
+        width: 34, height: 34, borderRadius: 11,
+        alignItems: 'center', justifyContent: 'center',
+        shadowColor: Colors.primary, shadowOpacity: 0.28,
+        shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 4,
     },
-    timerBadgeText: {
-        fontSize: 10,
-        fontFamily: Fonts.bold,
-        color: '#FF416C',
+    actionBtnSecondary: {
+        width: 34, height: 34, borderRadius: 11,
+        backgroundColor: Colors.cardAlt,
+        borderWidth: 1, borderColor: Colors.border,
+        alignItems: 'center', justifyContent: 'center',
+        position: 'relative',
+    },
+    actionBtnUnread: { borderColor: Colors.primary + '55', backgroundColor: Colors.primary + '08' },
+    unreadDot: {
+        position: 'absolute', top: -1, right: -1,
+        width: 8, height: 8, borderRadius: 4,
+        backgroundColor: Colors.error, borderWidth: 1.5, borderColor: Colors.background,
     },
 
-    // ── EMPTY STATE ──
-    emptyState: { alignItems: 'center', paddingTop: 60, paddingHorizontal: 40, paddingBottom: 40 },
-    emptyGlow: { position: 'absolute', top: 0, left: '10%', right: '10%', height: 200, borderRadius: 100 },
-    emptyIconWrap: { width: 100, height: 100, borderRadius: 50, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
-    emptyTitle: { fontSize: 22, fontFamily: Fonts.bold, color: Colors.textPrimary, marginBottom: 10 },
-    emptyText: { color: Colors.textSecondary, fontSize: 14, fontFamily: Fonts.medium, textAlign: 'center', lineHeight: 22, marginBottom: 28 },
+    // Tab bar
+    tabRow: {
+        flexDirection: 'row',
+        paddingHorizontal: 18,
+        position: 'relative',
+    },
+    tabBarLine: {
+        position: 'absolute', bottom: 0, left: 0, right: 0,
+        height: 1, backgroundColor: Colors.border,
+    },
+    tab: {
+        paddingVertical: 10, marginRight: 22,
+        position: 'relative',
+    },
+    tabActive: {},
+    tabText: {
+        fontSize: 14, fontFamily: Fonts.semiBold,
+        color: Colors.textMuted,
+    },
+    tabTextActive: {
+        color: Colors.textPrimary, fontFamily: Fonts.bold,
+    },
+    tabUnderline: {
+        position: 'absolute', bottom: 0, left: 0, right: 0,
+        height: 2, borderRadius: 1,
+    },
+
+    // Stories
+    storiesSection: { paddingTop: 18, paddingBottom: 14 },
+    storiesContent: { paddingHorizontal: 18 },
+
+    // Filters
+    filterBar: { marginBottom: 2 },
+    filterBarContent: { paddingHorizontal: 18, gap: 8, paddingBottom: 10 },
+
+    feedDivider: { height: 1, backgroundColor: Colors.divider, marginBottom: 4 },
+    loadingWrap: { paddingTop: 20, alignItems: 'center' },
+
+    listContent: { paddingTop: 0 },
+
+    // Empty state
+    emptyState: {
+        alignItems: 'center', paddingTop: 60, paddingHorizontal: 40, paddingBottom: 40,
+    },
+    emptyIconWrap: {
+        width: 90, height: 90, borderRadius: 45,
+        alignItems: 'center', justifyContent: 'center', marginBottom: 20,
+    },
+    emptyTitle: {
+        fontSize: 21, fontFamily: Fonts.bold, color: Colors.textPrimary,
+        marginBottom: 10, letterSpacing: -0.3,
+    },
+    emptySub: {
+        color: Colors.textSecondary, fontSize: 14, fontFamily: Fonts.regular,
+        textAlign: 'center', lineHeight: 21, marginBottom: 28,
+    },
     emptyBtn: { width: '100%', borderRadius: 16, overflow: 'hidden' },
-    emptyBtnGrad: { paddingVertical: 14, alignItems: 'center' },
-    emptyBtnText: { color: '#fff', fontFamily: Fonts.bold, fontSize: 15 },
+    emptyBtnGrad: {
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+        gap: 8, paddingVertical: 14,
+    },
+    emptyBtnText: { color: '#fff', fontFamily: Fonts.bold, fontSize: 14 },
 
-    pickerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', padding: 15 },
-    pickerContent: { backgroundColor: Colors.surface, borderRadius: 24, maxHeight: '85%', overflow: 'hidden' },
-    pickerHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 20, borderBottomWidth: 1, borderBottomColor: Colors.border },
-    pickerTitle: { fontSize: 18, fontFamily: Fonts.bold, color: Colors.textPrimary },
-    pickerBack: { marginRight: 10 },
-    pickerItem: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 15, borderBottomWidth: 1, borderBottomColor: Colors.border },
-    pickerModelWrap: { width: 50, height: 50, borderRadius: 10, backgroundColor: Colors.cardAlt, alignItems: 'center', justifyContent: 'center' },
+    // Picker modal
+    pickerOverlay: {
+        flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'flex-end',
+    },
+    pickerSheet: {
+        backgroundColor: Colors.surface,
+        borderTopLeftRadius: 28, borderTopRightRadius: 28,
+        maxHeight: '88%', overflow: 'hidden', paddingBottom: 30,
+    },
+    pickerHandle: {
+        alignSelf: 'center', width: 36, height: 4,
+        borderRadius: 2, backgroundColor: Colors.divider, marginTop: 12, marginBottom: 4,
+    },
+    pickerHeader: {
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+        paddingHorizontal: 20, paddingVertical: 14,
+        borderBottomWidth: 1, borderBottomColor: Colors.border,
+    },
+    pickerTitle: { fontSize: 17, fontFamily: Fonts.bold, color: Colors.textPrimary },
+    pickerNavBtn: {
+        width: 34, height: 34, borderRadius: 17,
+        backgroundColor: Colors.cardAlt,
+        alignItems: 'center', justifyContent: 'center',
+    },
+    pickerItem: {
+        flexDirection: 'row', alignItems: 'center', gap: 12,
+        paddingHorizontal: 20, paddingVertical: 14,
+        borderBottomWidth: 1, borderBottomColor: Colors.border,
+    },
+    pickerModelWrap: {
+        width: 48, height: 48, borderRadius: 12,
+        backgroundColor: Colors.cardAlt,
+        alignItems: 'center', justifyContent: 'center',
+    },
     pickerModelImg: { width: '80%', height: '80%' },
-    pickerItemText: { fontSize: 16, fontFamily: Fonts.bold, color: Colors.textPrimary },
-    pickerStatusLabel: { fontSize: 12, fontFamily: Fonts.medium, marginTop: 2 },
-    pickerGridItem: { width: (width - 30) / 3, aspectRatio: 1, padding: 1 },
+    pickerItemTitle: { fontSize: 15, fontFamily: Fonts.bold, color: Colors.textPrimary },
+    pickerItemStatus: { fontSize: 12, fontFamily: Fonts.medium, marginTop: 2 },
+    pickerGridCell: { width: (width) / 3, aspectRatio: 1, padding: 1 },
     pickerGridImg: { width: '100%', height: '100%' },
 
-    animationContainer: { padding: 30, alignItems: 'center' },
-    shufflingWrap: { padding: 40, alignItems: 'center' },
-    shufflingIcon: { marginBottom: 20 },
-    shufflingText: { color: Colors.textSecondary, fontFamily: Fonts.medium, textAlign: 'center' },
-    luckyText: { color: Colors.textPrimary, fontFamily: Fonts.bold, marginBottom: 20 },
-    previewWrap: { width: '100%', alignItems: 'center' },
-    previewImgContainer: { width: '100%', height: 350, borderRadius: 20, overflow: 'hidden', marginBottom: 20 },
-    previewImgReal: { width: '100%', height: '100%' },
-    previewImg: { width: '100%', height: 350, borderRadius: 20, marginBottom: 20 },
-    previewActions: { flexDirection: 'row', gap: 15, width: '100%' },
-    cancelPreview: { flex: 1, height: 54, borderRadius: 15, borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center' },
-    cancelPreviewText: { color: Colors.textSecondary, fontFamily: Fonts.bold },
-    confirmPreview: { flex: 1, height: 54, borderRadius: 15, overflow: 'hidden' },
-    confirmBtnGradient: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-    confirmBtnText: { color: '#fff', fontFamily: Fonts.bold },
-
-    storyViewer: { flex: 1, backgroundColor: '#000' },
-    storyBackground: { width: width, height: height },
-    storySafeHeader: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10 },
-    progressBars: { flexDirection: 'row', paddingHorizontal: 10, paddingTop: 10, gap: 5 },
-    progressBarBg: { flex: 1, height: 2, backgroundColor: 'rgba(255,255,255,0.3)', borderRadius: 1, overflow: 'hidden' },
-    progressBarFill: { height: '100%', backgroundColor: '#fff' },
-    storyHeader: { flexDirection: 'row', alignItems: 'center', padding: 15, gap: 12 },
-    storyAvatarSmall: { width: 36, height: 36, borderRadius: 18, borderWidth: 1, borderColor: '#fff' },
-    storyUser: { color: '#fff', fontSize: 14, fontFamily: Fonts.bold },
-    storyTime: { color: 'rgba(255,255,255,0.8)', fontSize: 11 },
-    gestureOverlay: { ...StyleSheet.absoluteFillObject, flexDirection: 'row' },
-    gestureSide: { flex: 1 },
-    floatingCapsule: { position: 'absolute', bottom: 100, alignSelf: 'center', borderRadius: 25, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
-    blurCapsule: { paddingHorizontal: 20, paddingVertical: 10 },
-    floatingCapsuleInner: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-    floatingModelImg: { width: 28, height: 28 },
-    floatingModelText: { color: '#fff', fontSize: 14, fontFamily: Fonts.bold },
+    animWrap: { padding: 28, alignItems: 'center' },
+    shuffleWrap: { alignItems: 'center', gap: 14, paddingVertical: 20 },
+    animTitle: { fontSize: 17, fontFamily: Fonts.bold, color: Colors.textPrimary, textAlign: 'center' },
+    animSub: { fontSize: 13, color: Colors.textSecondary, fontFamily: Fonts.medium, textAlign: 'center' },
+    previewImgWrap: {
+        width: '100%', height: 320, borderRadius: 20,
+        overflow: 'hidden', marginBottom: 20,
+    },
+    previewImg: { width: '100%', height: '100%' },
+    previewActions: { flexDirection: 'row', gap: 12, width: '100%' },
+    previewCancelBtn: {
+        flex: 1, height: 52, borderRadius: 16,
+        borderWidth: 1.5, borderColor: Colors.border,
+        alignItems: 'center', justifyContent: 'center',
+    },
+    previewCancelText: { color: Colors.textSecondary, fontFamily: Fonts.semiBold, fontSize: 14 },
+    previewConfirmBtn: { flex: 1, height: 52, borderRadius: 16, overflow: 'hidden' },
+    previewConfirmGrad: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    previewConfirmText: { color: '#fff', fontFamily: Fonts.bold, fontSize: 14 },
 });
-

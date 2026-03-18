@@ -1,5 +1,5 @@
 import React from 'react';
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
 import FeedScreen from '../screens/FeedScreen';
 import NotificationsScreen from '../screens/NotificationsScreen';
 import CapsuleCreationScreen from '../screens/CapsuleCreationScreen';
@@ -24,7 +24,7 @@ import { Colors } from '../theme';
 import { navigationRef } from '../../App';
 
 
-const Tab = createBottomTabNavigator();
+const Tab = createMaterialTopTabNavigator();
 const Stack = createStackNavigator();
 
 const FeedStack = createStackNavigator();
@@ -67,12 +67,12 @@ function ProfileStackNavigator() {
 function TabNavigator() {
     return (
         <Tab.Navigator
-            tabBar={(props) => <TabBar {...props} />}
-            screenOptions={{ headerShown: false }}
+            tabBar={(props: any) => <TabBar {...props} />}
+            tabBarPosition="bottom"
+            screenOptions={{}}
         >
             <Tab.Screen name="Feed" component={FeedStackNavigator} />
             <Tab.Screen name="Notifications" component={NotifStackNavigator} />
-            <Tab.Screen name="Create" component={CapsuleCreationScreen} />
             <Tab.Screen name="Search" component={SearchStackNavigator} />
             <Tab.Screen name="Profile" component={ProfileStackNavigator} />
         </Tab.Navigator>
@@ -89,11 +89,13 @@ export default function AppNavigator() {
                 <Stack.Screen name="ChatList" component={ChatListScreen} />
                 <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />
                 <Stack.Screen name="CreateSelection" component={CreateSelectionScreen} />
+                <Stack.Screen name="CapsuleCreation" component={CapsuleCreationScreen} />
                 <Stack.Screen name="CapsuleSelector" component={CapsuleSelectorScreen} />
                 <Stack.Screen name="AddItem" component={AddItemScreen} />
                 <Stack.Screen name="UserList" component={UserListScreen} />
                 <Stack.Screen name="TimerConfig" component={TimerConfigScreen} />
                 <Stack.Screen name="PersonalizeProfile" component={PersonalizeProfileScreen} />
+                <Stack.Screen name="KapsBox" component={require('../screens/KapsBoxScreen').default} />
                 <Stack.Screen name="InstagramShare" component={require('../screens/InstagramShareScreen').default} />
             </Stack.Navigator>
         </View>

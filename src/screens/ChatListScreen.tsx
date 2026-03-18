@@ -16,6 +16,7 @@ export default function ChatListScreen() {
     const [searchResults, setSearchResults] = useState<any[]>([]);
     const [searching, setSearching] = useState(false);
     const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+    const [startingChatId, setStartingChatId] = useState<string | null>(null);
     const insets = useSafeAreaInsets();
     const navigation = useNavigation<any>();
     const channelRef = useRef<any>(null);
@@ -184,45 +185,25 @@ export default function ChatListScreen() {
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) return;
 
-            const { data: userConvs } = await supabase
-                .from('conversation_participants')
-                .select('conversation_id')
-                .eq('user_id', user.id);
+            setStartingChatId(targetUser.id);
+            const { data: convId, error } = await supabase.rpc('get_existing_conversation', {
+                user_a: user.id,
+                user_b: targetUser.id
+            });
 
-            const convIds = (userConvs || []).map(c => c.conversation_id);
-            let existing = null;
-            if (convIds.length > 0) {
-                const { data } = await supabase
-                    .from('conversation_participants')
-                    .select('conversation_id')
-                    .in('conversation_id', convIds)
-                    .eq('user_id', targetUser.id)
-                    .maybeSingle();
-                existing = data;
-            }
+            if (error) throw error;
 
-            if (existing) {
-                setShowSearch(false);
-                navigation.navigate('ChatDetail', { conversationId: (existing as any).conversation_id });
+            setShowSearch(false);
+            if (convId) {
+                navigation.navigate('ChatDetail', { conversationId: convId });
             } else {
-                const { data: newConv, error: convError } = await supabase.from('conversations').insert({
-                    last_message_at: new Date().toISOString()
-                }).select().single();
-
-                if (convError) throw convError;
-                if (newConv) {
-                    const { error: partError } = await supabase.from('conversation_participants').insert([
-                        { conversation_id: newConv.id, user_id: user.id },
-                        { conversation_id: newConv.id, user_id: targetUser.id }
-                    ]);
-                    if (partError) throw partError;
-                    setShowSearch(false);
-                    navigation.navigate('ChatDetail', { conversationId: newConv.id });
-                }
+                navigation.navigate('ChatDetail', { conversationId: 'new', otherUser: targetUser });
             }
         } catch (error: any) {
             console.error('Error starting chat:', error);
             Alert.alert('Error', 'Could not start conversation: ' + (error.message || 'Unknown error'));
+        } finally {
+            setStartingChatId(null);
         }
     };
 
@@ -335,7 +316,7 @@ export default function ChatListScreen() {
                             data={searchResults}
                             keyExtractor={(item) => item.id}
                             renderItem={({ item }) => (
-                                <TouchableOpacity style={styles.userItem} activeOpacity={0.7} onPress={() => startChat(item)}>
+                                <TouchableOpacity style={styles.userItem} activeOpacity={0.7} onPress={() => startChat(item)} disabled={!!startingChatId}>
                                     {item.avatar_url ? (
                                         <Image source={{ uri: item.avatar_url }} style={styles.userAvatar} />
                                     ) : (
@@ -343,10 +324,13 @@ export default function ChatListScreen() {
                                             <Ionicons name="person" size={20} color={Colors.textMuted} />
                                         </View>
                                     )}
-                                    <View>
+                                    <View style={{ flex: 1 }}>
                                         <Text style={styles.userName}>{item.display_name || item.username}</Text>
                                         <Text style={styles.userHandle}>@{item.username}</Text>
                                     </View>
+                                    {startingChatId === item.id && (
+                                        <ActivityIndicator size="small" color={Colors.primary} />
+                                    )}
                                 </TouchableOpacity>
                             )}
                             ListEmptyComponent={

@@ -16,7 +16,7 @@ import { timerConfigManager } from './src/utils/timerConfig';
 
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Platform } from 'react-native';
-import { registerForPushNotificationsAsync, savePushToken, setupNotificationHandlers, clearBadgeCount } from './src/utils/pushNotifications';
+import { registerForPushNotificationsAsync, savePushToken, setupNotificationHandlers, setupResponseListener, clearBadgeCount } from './src/utils/pushNotifications';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import './src/i18n/config';
@@ -88,6 +88,16 @@ export default function App() {
 
     return () => listener.subscription.unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!session) return;
+    const subscription = setupResponseListener(navigationRef);
+    return () => {
+      if (subscription && typeof subscription.remove === 'function') {
+        subscription.remove();
+      }
+    };
+  }, [session]);
 
   const onLayoutRootView = async () => {
     if (fontsLoaded && authChecked) await SplashScreen.hideAsync();

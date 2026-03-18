@@ -39,7 +39,7 @@ export default function CreateSelectionScreen({ route }: any) {
                     <>
                         <TouchableOpacity
                             style={styles.primaryBtn}
-                            onPress={() => navigation.navigate('Main', { screen: 'Create' })}
+                            onPress={() => navigation.navigate('CapsuleCreation')}
                             activeOpacity={0.9}
                         >
                             <LinearGradient

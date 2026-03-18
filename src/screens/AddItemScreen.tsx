@@ -14,6 +14,7 @@ import { BlurView } from 'expo-blur';
 import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from '../lib/supabase';
 import { decode } from 'base64-arraybuffer';
 import { LinearGradient } from 'expo-linear-gradient';
+import Slider from '@react-native-community/slider';
 
 export default function AddItemScreen() {
     const navigation = useNavigation<any>();
@@ -34,6 +35,13 @@ export default function AddItemScreen() {
     const [recordedUri, setRecordedUri] = useState<string | null>(null);
     const [audioDuration, setAudioDuration] = useState<number | null>(null);
     const [previewVideo, setPreviewVideo] = useState<string | null>(null);
+
+    // Video Trimming State
+    const [trimModalVisible, setTrimModalVisible] = useState(false);
+    const [trimmingIndex, setTrimmingIndex] = useState<number | null>(null);
+    const [trimStart, setTrimStart] = useState(0);
+    const [trimEnd, setTrimEnd] = useState(0);
+    const [trimSeekingValue, setTrimSeekingValue] = useState<number | null>(null);
 
     useEffect(() => {
         return () => {
@@ -116,8 +124,50 @@ export default function AddItemScreen() {
         }
     };
 
+    const [lastSource, setLastSource] = useState<'camera' | 'gallery' | null>(null);
+
+    const captureMediaWithTrack = () => {
+        setLastSource('camera');
+        captureMedia();
+    };
+
+    const pickMediaWithTrack = () => {
+        setLastSource('gallery');
+        pickMedia();
+    };
+
+    const handleAddMore = () => {
+        if (lastSource === 'gallery') {
+            pickMedia();
+        } else if (lastSource === 'camera') {
+            captureMedia();
+        } else {
+            pickMedia(); // fallback
+        }
+    };
+
     const removeMedia = (index: number) => {
         setMediaList(prev => prev.filter((_, i) => i !== index));
+    };
+
+    const openTrimModal = (index: number) => {
+        const item = mediaList[index];
+        if (!item) return;
+        setTrimmingIndex(index);
+        setTrimStart(item.trimStart || 0);
+        setTrimEnd(item.trimEnd || item.duration || 0);
+        setTrimModalVisible(true);
+    };
+
+    const saveTrim = () => {
+        if (trimmingIndex === null) return;
+        setMediaList(prev => prev.map((item, idx) => 
+            idx === trimmingIndex 
+                ? { ...item, trimStart, trimEnd, duration: trimEnd - trimStart } 
+                : item
+        ));
+        setTrimModalVisible(false);
+        setTrimmingIndex(null);
     };
 
     const startRecording = async () => {
@@ -202,17 +252,31 @@ export default function AddItemScreen() {
             const uploadResults = await Promise.all(uploadTasks);
 
             // Create entries in DB
-            const entries = uploadResults.map((res: any) => ({
-                capsule_id: capsuleId,
-                owner_id: user.id,
-                media_url: res.mediaUrl || (contentType === 'note' ? 'text://note' : ''),
-                thumbnail_url: res.thumbUrl || '',
-                media_type: contentType,
-                content: (contentType === 'audio' || contentType === 'video') && res.duration 
-                    ? `${Math.floor(res.duration / 60000)}:${Math.floor((res.duration % 60000) / 1000).toString().padStart(2, '0')}`
-                    : (text || null),
-                caption: caption ? `${caption} !!b:${batchId}` : `!!b:${batchId}`,
-            }));
+            const entries = uploadResults.map((res: any, idx: number) => {
+                const mediaItem = mediaList[idx] || {};
+                let contentStr = text || null;
+
+                if (contentType === 'video' || contentType === 'audio') {
+                    const dur = mediaItem.duration || res.duration;
+                    const min = Math.floor(dur / 60000);
+                    const sec = Math.floor((dur % 60000) / 1000).toString().padStart(2, '0');
+                    contentStr = `${min}:${sec}`;
+
+                    if (mediaItem.trimStart !== undefined && mediaItem.trimEnd !== undefined) {
+                        contentStr += `|${mediaItem.trimStart}-${mediaItem.trimEnd}`;
+                    }
+                }
+
+                return {
+                    capsule_id: capsuleId,
+                    owner_id: user.id,
+                    media_url: res.mediaUrl || (contentType === 'note' ? 'text://note' : ''),
+                    thumbnail_url: res.thumbUrl || '',
+                    media_type: contentType,
+                    content: contentStr,
+                    caption: caption ? `${caption} !!b:${batchId}` : `!!b:${batchId}`,
+                };
+            });
 
             const { error } = await supabase.from('capsule_items').insert(entries);
 
@@ -232,34 +296,38 @@ export default function AddItemScreen() {
         let ext = 'jpg';
         const lastDot = uri.lastIndexOf('.');
         if (lastDot !== -1 && lastDot > uri.lastIndexOf('/')) {
-            ext = uri.substring(lastDot + 1).split('?')[0]; // Strip query params
+            ext = uri.substring(lastDot + 1).split('?')[0];
         } else {
-            ext = type === 'audio' ? 'm4a' : type === 'video' ? 'mp4' : 'jpg';
+            ext = type === 'video' ? 'mp4' : type === 'audio' ? 'm4a' : 'jpg';
         }
 
         const fileName = `${userId}/${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
         const filePath = isThumbnail ? `thumbnails/${fileName}` : `items/${fileName}`;
-        const contentType = type === 'video' ? 'video/mp4' : type === 'audio' ? 'audio/x-m4a' : 'image/jpeg';
 
         try {
-            const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
-            const body = decode(base64);
-
             if (!isThumbnail) {
-                setUploadProgress(prev => ({ ...prev, [uri]: 20 })); // Fake progress start
+                setUploadProgress(prev => ({ ...prev, [uri]: 20 }));
             }
+
+            // --- Memory Safe Upload using FormData ---
+            const formData = new FormData();
+            formData.append('file', {
+                uri: Platform.OS === 'android' ? uri : uri.replace('file://', ''),
+                name: `file.${ext}`,
+                type: type === 'video' ? 'video/mp4' : type === 'audio' ? 'audio/x-m4a' : 'image/jpeg'
+            } as any);
 
             const { data, error } = await supabase.storage
                 .from('capsule-media')
-                .upload(filePath, body, {
-                    contentType: contentType,
+                .upload(filePath, formData, {
+                    contentType: 'multipart/form-data',
                     upsert: true
                 });
 
             if (error) throw error;
 
             if (!isThumbnail) {
-                setUploadProgress(prev => ({ ...prev, [uri]: 100 })); // Fake progress end
+                setUploadProgress(prev => ({ ...prev, [uri]: 100 }));
             }
 
             const { data: { publicUrl } } = supabase.storage.from('capsule-media').getPublicUrl(filePath);
@@ -323,7 +391,7 @@ export default function AddItemScreen() {
                                         <Ionicons name={contentType === 'image' ? 'images' : 'videocam'} size={80} color={Colors.primary} style={{ opacity: 0.8 }} />
                                     </View>
                                     
-                                    <TouchableOpacity style={styles.modernChoiceBtn} activeOpacity={0.8} onPress={captureMedia}>
+                                    <TouchableOpacity style={styles.modernChoiceBtn} activeOpacity={0.8} onPress={captureMediaWithTrack}>
                                         <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.modernChoiceGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
                                             <View style={styles.modernIconBox}>
                                                 <Ionicons name="camera" size={32} color="#fff" />
@@ -335,7 +403,7 @@ export default function AddItemScreen() {
                                         </LinearGradient>
                                     </TouchableOpacity>
                                     
-                                    <TouchableOpacity style={[styles.modernChoiceBtn, { backgroundColor: Colors.cardAlt }]} activeOpacity={0.8} onPress={pickMedia}>
+                                    <TouchableOpacity style={[styles.modernChoiceBtn, { backgroundColor: Colors.cardAlt }]} activeOpacity={0.8} onPress={pickMediaWithTrack}>
                                         <View style={styles.modernChoiceGrad}>
                                             <View style={[styles.modernIconBox, { backgroundColor: Colors.primary + '15' }]}>
                                                 <Ionicons name="library" size={32} color={Colors.primary} />
@@ -377,13 +445,24 @@ export default function AddItemScreen() {
                                                         </View>
                                                     </TouchableOpacity>
                                                 )}
+
+                                                {contentType === 'video' && (
+                                                    <TouchableOpacity 
+                                                        style={styles.trimBtnOverlay} 
+                                                        activeOpacity={0.8}
+                                                        onPress={() => openTrimModal(index)}
+                                                    >
+                                                        <Ionicons name="cut" size={16} color="#fff" />
+                                                    </TouchableOpacity>
+                                                )}
+
                                                 <TouchableOpacity style={styles.removeBtn} activeOpacity={0.7} onPress={() => removeMedia(index)}>
                                                     <Ionicons name="close-circle" size={24} color="#ff4757" />
                                                 </TouchableOpacity>
                                             </View>
                                         );
                                     })}
-                                    <TouchableOpacity style={[styles.addMoreBtnModern, { borderStyle: 'solid', backgroundColor: Colors.primary + '08', borderColor: Colors.primary + '30' }]} activeOpacity={0.8} onPress={captureMedia}>
+                                    <TouchableOpacity style={[styles.addMoreBtnModern, { borderStyle: 'solid', backgroundColor: Colors.primary + '08', borderColor: Colors.primary + '30' }]} activeOpacity={0.8} onPress={handleAddMore}>
                                         <Ionicons name="add" size={32} color={Colors.primary} />
                                         <Text style={{ fontSize: 10, fontFamily: Fonts.bold, color: Colors.primary, marginTop: 4 }}>Add more</Text>
                                     </TouchableOpacity>
@@ -411,6 +490,72 @@ export default function AddItemScreen() {
                             </View>
                         </Modal>
 
+                        <Modal visible={trimModalVisible} transparent animationType="slide">
+                            <View style={styles.trimModalContainer}>
+                                <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFill} />
+                                <View style={styles.trimContent}>
+                                    <Text style={styles.trimTitle}>Trim Video</Text>
+                                    
+                                    {trimmingIndex !== null && mediaList[trimmingIndex] && (
+                                        <Video
+                                            source={{ uri: mediaList[trimmingIndex].uri }}
+                                            rate={1.0}
+                                            volume={1.0}
+                                            isMuted={false}
+                                            resizeMode={ResizeMode.CONTAIN}
+                                            shouldPlay={trimSeekingValue === null}
+                                            useNativeControls={false}
+                                            style={styles.trimVideoPreview}
+                                            positionMillis={trimSeekingValue !== null ? trimSeekingValue : trimStart}
+                                        />
+                                    )}
+
+                                    <View style={styles.sliderGroup}>
+                                        <Text style={styles.sliderLabel}>Start: {Math.floor(trimStart / 1000)}s</Text>
+                                        <Slider
+                                            style={{ width: '100%', height: 40 }}
+                                            minimumValue={0}
+                                            maximumValue={trimmingIndex !== null ? (mediaList[trimmingIndex]?.duration || 0) : 1000}
+                                            value={trimStart}
+                                            onValueChange={(val) => {
+                                                setTrimStart(Math.min(val, trimEnd - 1000));
+                                                setTrimSeekingValue(val);
+                                            }}
+                                            onSlidingComplete={() => setTrimSeekingValue(null)}
+                                            minimumTrackTintColor={Colors.primary}
+                                            maximumTrackTintColor="#ffffff33"
+                                            thumbTintColor="#fff"
+                                        />
+
+                                        <Text style={styles.sliderLabel}>End: {Math.floor(trimEnd / 1000)}s</Text>
+                                        <Slider
+                                            style={{ width: '100%', height: 40 }}
+                                            minimumValue={0}
+                                            maximumValue={trimmingIndex !== null ? (mediaList[trimmingIndex]?.duration || 0) : 1000}
+                                            value={trimEnd}
+                                            onValueChange={(val) => {
+                                                setTrimEnd(Math.max(val, trimStart + 1000));
+                                                setTrimSeekingValue(val);
+                                            }}
+                                            onSlidingComplete={() => setTrimSeekingValue(null)}
+                                            minimumTrackTintColor="#ffffff33"
+                                            maximumTrackTintColor={Colors.primary}
+                                            thumbTintColor="#fff"
+                                        />
+                                    </View>
+
+                                    <View style={styles.trimActions}>
+                                        <TouchableOpacity style={[styles.trimActionBtn, { backgroundColor: '#ff475715' }]} onPress={() => setTrimModalVisible(false)}>
+                                            <Text style={{ color: '#ff4757', fontFamily: Fonts.bold }}>Cancel</Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity style={[styles.trimActionBtn, { backgroundColor: Colors.primary }]} onPress={saveTrim}>
+                                            <Text style={{ color: '#fff', fontFamily: Fonts.bold }}>Save</Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                </View>
+                            </View>
+                        </Modal>
+
                         <View style={styles.captionWrapper}>
                             <Ionicons name="chatbubble-ellipses-outline" size={20} color={Colors.primary} style={styles.captionIcon} />
                             <TextInput
@@ -427,6 +572,14 @@ export default function AddItemScreen() {
                     </>
                 )}
             </ScrollView>
+            {loading && (
+                <View style={{ ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
+                    <ActivityIndicator size="large" color={Colors.primary} />
+                    <Text style={{ marginTop: 16, fontFamily: Fonts.bold, color: Colors.textPrimary, fontSize: 16 }}>
+                        {mediaList.length > 0 ? "Uploading media..." : "Processing media..."}
+                    </Text>
+                </View>
+            )}
         </View>
     );
 }
@@ -621,4 +774,21 @@ const styles = StyleSheet.create({
         borderColor: Colors.primary + '30',
         borderStyle: 'dashed',
     },
+    trimBtnOverlay: {
+        position: 'absolute',
+        top: 10,
+        left: 10,
+        zIndex: 10,
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        borderRadius: 12,
+        padding: 5
+    },
+    trimModalContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+    trimContent: { width: '85%', backgroundColor: 'rgba(0,0,0,0.85)', borderRadius: 24, padding: 25, borderWidth: 1, borderColor: '#ffffff22' },
+    trimTitle: { fontSize: 18, fontFamily: Fonts.bold, color: '#fff', textAlign: 'center', marginBottom: 20 },
+    trimVideoPreview: { width: '100%', height: 200, borderRadius: 12, marginBottom: 20 },
+    sliderGroup: { marginVertical: 10 },
+    sliderLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 13, fontFamily: Fonts.medium, marginTop: 10 },
+    trimActions: { flexDirection: 'row', justifyContent: 'space-between', gap: 15, marginTop: 25 },
+    trimActionBtn: { flex: 1, paddingVertical: 14, borderRadius: 15, alignItems: 'center' },
 });

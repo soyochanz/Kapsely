@@ -1,200 +1,217 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, Animated } from 'react-native';
-import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
+import { Colors, Fonts } from '../theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
 
+// ─── Config ───────────────────────────────────────────────────────────────────
 const TAB_CONFIG = [
-    { name: 'Feed', icon: 'home-outline', iconActive: 'home', label: 'Home' },
-    { name: 'Notifications', icon: 'notifications-outline', iconActive: 'notifications', label: 'Alerts' },
-    { name: 'Create', icon: 'add', iconActive: 'add', label: '', isCenter: true },
-    { name: 'Search', icon: 'search-outline', iconActive: 'search', label: 'Search' },
-    { name: 'Profile', icon: 'person-outline', iconActive: 'person', label: 'Profile' },
+    { name: 'Feed', icon: 'home-outline' as const, iconActive: 'home' as const },
+    { name: 'Notifications', icon: 'notifications-outline' as const, iconActive: 'notifications' as const },
+    { name: 'Create', icon: 'add' as const, iconActive: 'add' as const, isCenter: true },
+    { name: 'Search', icon: 'search-outline' as const, iconActive: 'search' as const },
+    { name: 'Profile', icon: 'person-outline' as const, iconActive: 'person' as const },
 ];
 
-function TabItem({ route, index, state, navigation, cfg, badgeCount }: { route: any, index: number, state: any, navigation: any, cfg: any, badgeCount?: number }) {
+export const TAB_BAR_HEIGHT = 80;
+
+// ─── Single tab ───────────────────────────────────────────────────────────────
+function TabItem({ route, index, state, navigation, cfg, hasBadge }: {
+    route: any; index: number; state: any; navigation: any; cfg: typeof TAB_CONFIG[0]; hasBadge?: boolean;
+}) {
     const isFocused = state.index === index;
-    const animatedScale = React.useRef(new Animated.Value(isFocused ? 1.1 : 1)).current;
+    const scale = React.useRef(new Animated.Value(1)).current;
 
     React.useEffect(() => {
-        Animated.spring(animatedScale, {
-            toValue: isFocused ? 1.15 : 1,
+        Animated.spring(scale, {
+            toValue: isFocused ? 1.08 : 1,
             useNativeDriver: true,
-            tension: 50,
-            friction: 7,
+            tension: 80,
+            friction: 8,
         }).start();
     }, [isFocused]);
 
     const onPress = () => {
         const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
-        if (route.name === 'Create') {
-            // Always navigate to CreateSelection regardless of focus state
-            // setTimeout(0) lets React flush before navigating (fixes iOS Expo Go rendering bug)
-            setTimeout(() => {
-                (navigation as any).navigate('CreateSelection');
-            }, 0);
-            return;
-        }
-        if (!isFocused && !event.defaultPrevented) {
-            navigation.navigate(route.name);
-        }
+        if (!isFocused && !event.defaultPrevented) navigation.navigate(route.name);
     };
-
-    if (cfg.isCenter) {
-        return (
-            <View key={route.key} style={styles.centerContainer}>
-                <TouchableOpacity
-                    onPress={onPress}
-                    style={styles.centerBtnWrapper}
-                    activeOpacity={0.8}
-                >
-                    <LinearGradient
-                        colors={[Colors.primaryLight, Colors.primary, Colors.primaryDark]}
-                        start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-                        style={styles.centerBtn}
-                    >
-                        <Ionicons name="add" size={32} color="#fff" />
-                    </LinearGradient>
-                </TouchableOpacity>
-            </View>
-        );
-    }
 
     return (
         <TouchableOpacity
-            key={route.key}
             onPress={onPress}
-            style={styles.tab}
-            activeOpacity={0.7}
+            style={s.tab}
+            activeOpacity={0.75}
         >
-            <Animated.View style={[styles.iconContainer, { transform: [{ scale: animatedScale }] }]}>
+            <Animated.View
+                style={[
+                    s.iconWrap,
+                    isFocused && s.iconWrapActive,
+                    { transform: [{ scale }] },
+                ]}
+            >
+                {isFocused ? (
+                    // Filled squircle with gradient when active
+                    <LinearGradient
+                        colors={[Colors.primaryLight || '#b48aff', Colors.primary, Colors.primaryDark]}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={[StyleSheet.absoluteFill, { borderRadius: 13 }]}
+                    />
+                ) : null}
+
                 <Ionicons
-                    name={(isFocused ? cfg.iconActive : cfg.icon) as any}
-                    size={28}
-                    color={isFocused ? Colors.primary : Colors.textMuted}
+                    name={isFocused ? cfg.iconActive : cfg.icon}
+                    size={20}
+                    color={isFocused ? '#fff' : Colors.textMuted}
                 />
-                {badgeCount !== undefined && badgeCount > 0 && (
-                    <View style={styles.badge}>
-                        <Text style={styles.badgeText}>{badgeCount > 9 ? '9+' : badgeCount}</Text>
-                    </View>
+
+                {/* Badge dot — only when inactive, no number */}
+                {hasBadge && !isFocused && (
+                    <View style={s.badgeDot} />
                 )}
-                {isFocused && <View style={styles.activeDot} />}
             </Animated.View>
         </TouchableOpacity>
     );
 }
 
-export const TAB_BAR_HEIGHT = 84;
+// ─── Center create button ─────────────────────────────────────────────────────
+function CenterTab({ navigation }: { navigation: any }) {
+    const scale = React.useRef(new Animated.Value(1)).current;
 
-export default function TabBar(props: BottomTabBarProps) {
-    const { state } = props;
+    const onPress = () => {
+        Animated.sequence([
+            Animated.timing(scale, { toValue: 0.9, duration: 80, useNativeDriver: true }),
+            Animated.spring(scale, { toValue: 1, friction: 4, tension: 80, useNativeDriver: true }),
+        ]).start();
+        setTimeout(() => {
+            const parent = navigation.getParent();
+            if (parent) parent.navigate('CreateSelection');
+            else navigation.navigate('CreateSelection');
+        }, 0);
+    };
+
+    return (
+        <View style={s.centerTab}>
+            <TouchableOpacity onPress={onPress} activeOpacity={0.85}>
+                <Animated.View style={{ transform: [{ scale }] }}>
+                    <LinearGradient
+                        colors={[Colors.primaryLight || '#b48aff', Colors.primary, Colors.primaryDark]}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={s.centerBtn}
+                    >
+                        <Ionicons name="add" size={24} color="#fff" />
+                    </LinearGradient>
+                </Animated.View>
+            </TouchableOpacity>
+        </View>
+    );
+}
+
+// ─── Main TabBar ──────────────────────────────────────────────────────────────
+export default function TabBar(props: any) {
+    const { state, navigation } = props;
     const insets = useSafeAreaInsets();
     const [unreadCount, setUnreadCount] = React.useState(0);
 
-    const fetchUnreadCount = React.useCallback(async () => {
+    const fetchUnread = React.useCallback(async () => {
         const { data: { session } } = await supabase.auth.getSession();
         const user = session?.user;
         if (!user) return;
-
         const { count } = await supabase
             .from('notifications')
             .select('*', { count: 'exact', head: true })
             .eq('user_id', user.id)
             .eq('is_read', false);
-        
         setUnreadCount(count || 0);
     }, []);
 
     React.useEffect(() => {
-        fetchUnreadCount();
-
-        // Real-time subscription for unread count — listen to both INSERT and UPDATE
-        const channel = supabase
-            .channel('tabbar_notifs')
-            .on('postgres_changes', {
-                event: 'INSERT',
-                schema: 'public',
-                table: 'notifications'
-            }, fetchUnreadCount)
-            .on('postgres_changes', {
-                event: 'UPDATE',
-                schema: 'public',
-                table: 'notifications'
-            }, fetchUnreadCount)
+        fetchUnread();
+        const channel = supabase.channel('tabbar_notifs')
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, fetchUnread)
+            .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'notifications' }, fetchUnread)
             .subscribe();
+        return () => { supabase.removeChannel(channel); };
+    }, [fetchUnread]);
 
-        return () => {
-            supabase.removeChannel(channel);
-        };
-    }, [fetchUnreadCount]);
+    React.useEffect(() => { fetchUnread(); }, [state.index]);
 
-    // Refresh badge when the current tab changes (e.g., after visiting Notifications)
-    React.useEffect(() => {
-        fetchUnreadCount();
-    }, [state.index]);
-    
-    // Determine bottom position based on device navigation type
-    const hasOnScreenButtons = Platform.OS === 'android' && insets.bottom > 20;
-    const bottomPos = Platform.OS === 'ios' ? 24 : (hasOnScreenButtons ? (12 + insets.bottom) : 24);
-
+    // Hide bar if current tab opts out
     const focusedRoute = state.routes[state.index];
-    const focusedDescriptor = props.descriptors[focusedRoute.key];
-    const focusedOptions = focusedDescriptor.options;
+    const focusedOptions = props.descriptors[focusedRoute.key]?.options;
+    if ((focusedOptions?.tabBarStyle as any)?.display === 'none') return null;
 
-    if ((focusedOptions.tabBarStyle as any)?.display === 'none') {
-        return null;
-    }
+    // Bottom offset
+    const bottomOffset = Platform.OS === 'ios'
+        ? Math.max(insets.bottom, 16)
+        : insets.bottom > 20
+            ? insets.bottom + 8
+            : 20;
 
     return (
-        <View style={[styles.outerWrapper, { bottom: bottomPos }]}>
-            <View style={styles.bar}>
-                {state.routes.map((route, index) => (
-                    <TabItem
-                        key={route.key}
-                        route={route}
-                        index={index}
-                        state={state}
-                        navigation={props.navigation}
-                        cfg={TAB_CONFIG[index]}
-                        badgeCount={TAB_CONFIG[index].name === 'Notifications' ? unreadCount : 0}
-                    />
-                ))}
+        <View style={[s.outerWrap, { bottom: bottomOffset }]}>
+            <View style={s.bar}>
+                {TAB_CONFIG.map((cfg, idx) => {
+                    if (cfg.isCenter) {
+                        return <CenterTab key="center" navigation={navigation} />;
+                    }
+
+                    // Map visual index → route index (skip center slot)
+                    const routeIndex = idx < 2 ? idx : idx - 1;
+                    const route = state.routes[routeIndex];
+                    if (!route) return null;
+
+                    return (
+                        <TabItem
+                            key={route.key}
+                            route={route}
+                            index={routeIndex}
+                            state={state}
+                            navigation={navigation}
+                            cfg={cfg}
+                            hasBadge={cfg.name === 'Notifications' && unreadCount > 0}
+                        />
+                    );
+                })}
             </View>
         </View>
     );
 }
 
-const styles = StyleSheet.create({
-    outerWrapper: {
+// ─── Styles ───────────────────────────────────────────────────────────────────
+const s = StyleSheet.create({
+    outerWrap: {
         position: 'absolute',
-        bottom: Platform.OS === 'ios' ? 24 : 12,
-        left: 16,
-        right: 16,
+        left: 20,
+        right: 20,
         zIndex: 1000,
     },
+
     bar: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#fff',
-        borderRadius: 32,
-        height: 72,
-        paddingHorizontal: 12,
-        borderWidth: 1.5,
-        borderColor: 'rgba(166, 110, 255, 0.1)',
+        height: 62,
+        borderRadius: 30,
+        paddingHorizontal: 6,
+
+        backgroundColor: '#FFFFFF',
+        borderWidth: 1,
+        borderColor: 'rgba(0,0,0,0.06)',
+
         ...Platform.select({
-            web: { boxShadow: '0px 10px 40px rgba(166, 110, 255, 0.15)' },
             ios: {
-                shadowColor: Colors.primary,
-                shadowOffset: { width: 0, height: 10 },
-                shadowOpacity: 0.1,
+                shadowColor: 'rgba(0,0,0,0.12)',
+                shadowOffset: { width: 0, height: 4 },
+                shadowOpacity: 1,
                 shadowRadius: 20,
             },
-            android: {
-                elevation: 8,
-            }
+            android: { elevation: 8 },
+            web: {
+                boxShadow: '0 4px 28px rgba(0,0,0,0.09), 0 0 0 0.5px rgba(0,0,0,0.04)',
+            },
         }),
     },
 
@@ -205,71 +222,62 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         height: '100%',
     },
-    iconContainer: {
+    iconWrap: {
+        width: 40,
+        height: 40,
+        borderRadius: 13,
         alignItems: 'center',
         justifyContent: 'center',
-        height: 32,
         position: 'relative',
+        overflow: 'hidden',
     },
-    activeDot: {
-        position: 'absolute',
-        bottom: -2,
-        width: 4,
-        height: 4,
-        borderRadius: 2,
-        backgroundColor: Colors.primary,
-    },
-
-    // ── Center Create ──
-    centerContainer: {
-        flex: 1.2,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    centerBtnWrapper: {
-        marginTop: -32,
-        borderRadius: 30,
-        backgroundColor: 'transparent',
+    iconWrapActive: {
+        // shadow for the active squircle
         ...Platform.select({
-            web: { boxShadow: `0px 12px 24px ${Colors.primary}50` },
             ios: {
                 shadowColor: Colors.primary,
-                shadowOffset: { width: 0, height: 10 },
-                shadowOpacity: 0.4,
-                shadowRadius: 15,
+                shadowOffset: { width: 0, height: 3 },
+                shadowOpacity: 0.3,
+                shadowRadius: 8,
             },
-            android: {
-                elevation: 12,
-            }
+            android: { elevation: 4 },
         }),
     },
-    centerBtn: {
-        width: 56,
-        height: 56,
-        borderRadius: 28,
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderWidth: 4,
-        borderColor: '#fff',
-    },
-    badge: {
+
+    // Badge — just a dot, no number
+    badgeDot: {
         position: 'absolute',
-        top: -4,
-        right: -8,
-        backgroundColor: Colors.eventCap, // Using a red-ish color from theme
-        minWidth: 18,
-        height: 18,
-        borderRadius: 9,
-        alignItems: 'center',
-        justifyContent: 'center',
+        top: 6,
+        right: 6,
+        width: 7,
+        height: 7,
+        borderRadius: 4,
+        backgroundColor: '#E24B4A',
         borderWidth: 1.5,
         borderColor: '#fff',
     },
-    badgeText: {
-        color: '#fff',
-        fontSize: 10,
-        fontFamily: Fonts.bold,
-        lineHeight: 12,
+
+    // ── Center create ──
+    centerTab: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    centerBtn: {
+        width: 44,
+        height: 44,
+        borderRadius: 14,       // squircle, matches the active tabs
+        alignItems: 'center',
+        justifyContent: 'center',
+        ...Platform.select({
+            ios: {
+                shadowColor: Colors.primary,
+                shadowOffset: { width: 0, height: 4 },
+                shadowOpacity: 0.38,
+                shadowRadius: 10,
+            },
+            android: { elevation: 6 },
+            web: { boxShadow: `0 4px 16px ${Colors.primary}55` },
+        }),
     },
 });
-

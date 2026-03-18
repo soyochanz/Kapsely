@@ -74,6 +74,76 @@ export function setupNotificationHandlers() {
     });
 }
 
+export function setupResponseListener(navigationRef: any) {
+    const subscription = Notifications.addNotificationResponseReceivedListener(response => {
+        const data = response.notification.request.content.data;
+        console.log('[NotificationResponse] Received:', data);
+        if (data && data.screen) {
+            if (navigationRef.isReady()) {
+                navigationRef.navigate(data.screen, data.params);
+            } else {
+                const unsubscribe = navigationRef.addListener('state', () => {
+                    if (navigationRef.isReady()) {
+                        navigationRef.navigate(data.screen, data.params);
+                        unsubscribe();
+                    }
+                });
+            }
+        }
+    });
+
+    // Handle when app is opened from a closed state by a notification
+    Notifications.getLastNotificationResponseAsync().then(response => {
+        const data = response?.notification?.request?.content?.data;
+        if (data && data.screen) {
+            console.log('[NotificationResponse] Cold start data:', data);
+            const checkReady = setInterval(() => {
+                if (navigationRef.isReady()) {
+                    navigationRef.navigate(data.screen, data.params);
+                    clearInterval(checkReady);
+                }
+            }, 500);
+            setTimeout(() => clearInterval(checkReady), 5000); // safety timeout
+        }
+    });
+
+    return subscription;
+}
+
 export async function clearBadgeCount() {
     await Notifications.setBadgeCountAsync(0);
+}
+
+export async function sendPushNotification(targetUserId: string, title: string, body: string, data: any = {}) {
+    try {
+        // 1. Fetch user setting and token
+        const { data: profile, error } = await supabase
+            .from('profiles')
+            .select('push_token, push_notifications_enabled')
+            .eq('id', targetUserId)
+            .maybeSingle();
+
+        if (error || !profile?.push_token) return;
+        if (profile.push_notifications_enabled === false) return; // User disabled all
+
+        console.log(`[PushNotifications] attempt send to ${targetUserId}. Token: ${profile.push_token}`);
+
+        // 2. Send to Expo Push Service
+        const res = await fetch('https://exp.host/--/api/v2/push/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                to: profile.push_token,
+                title: title,
+                body: body,
+                data: { ...data, sender: 'kapsely' },
+                sound: 'default',
+            }),
+        });
+
+        const resJson = await res.json();
+        console.log(`[PushNotifications] response from Expo:`, resJson);
+    } catch (e) {
+        console.error('sendPushNotification error:', e);
+    }
 }

@@ -9,6 +9,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { Colors, Fonts, Spacing, BorderRadius } from '../theme';
 import { supabase } from '../lib/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { sendPushNotification } from '../utils/pushNotifications';
 
 export default function ChatDetailScreen() {
     const [loading, setLoading] = useState(true);
@@ -26,6 +27,14 @@ export default function ChatDetailScreen() {
         const user = session?.user;
         if (!user) return;
         setCurrentUserId(user.id);
+
+        if (conversationId === 'new') {
+            if (route.params.otherUser) {
+                setOtherUser(route.params.otherUser);
+            }
+            setLoading(false);
+            return;
+        }
 
         // Fetch other participant record
         const { data: partData } = await supabase
@@ -82,6 +91,8 @@ export default function ChatDetailScreen() {
     useEffect(() => { 
         loadData(); 
 
+        if (conversationId === 'new') return;
+
         const sub = supabase
             .channel(`chat-${conversationId}`)
             .on(
@@ -125,11 +136,26 @@ export default function ChatDetailScreen() {
         const msg = newMessage.trim();
         setNewMessage('');
 
+        let activeConvId = conversationId;
+
+        if (activeConvId === 'new') {
+            const { data: newId, error: createError } = await supabase.rpc('get_or_create_conversation', {
+                user_a: currentUserId,
+                user_b: otherUser?.id
+            });
+            if (createError || !newId) {
+                console.error('Failed to create chat:', createError);
+                return;
+            }
+            activeConvId = newId;
+            (navigation as any).setParams({ conversationId: newId });
+        }
+
         // Optimistic local add
         const tempId = `temp_${Date.now()}`;
         const tempMsg = {
             id: tempId,
-            conversation_id: conversationId,
+            conversation_id: activeConvId,
             sender_id: currentUserId,
             content: msg,
             created_at: new Date().toISOString(),
@@ -138,7 +164,7 @@ export default function ChatDetailScreen() {
         setMessages(prev => [...prev, tempMsg]);
 
         const { data, error } = await supabase.from('messages').insert({
-            conversation_id: conversationId,
+            conversation_id: activeConvId,
             sender_id: currentUserId,
             content: msg
         }).select().single();
@@ -147,7 +173,10 @@ export default function ChatDetailScreen() {
             // Replace temp message with real one (has correct db-generated ID & timestamp)
             setMessages(prev => prev.map(m => m.id === tempId ? data : m));
             try {
-                await supabase.from('conversations').update({ last_message_at: new Date() }).eq('id', conversationId);
+                await supabase.from('conversations').update({ last_message_at: new Date() }).eq('id', activeConvId);
+                if (otherUser?.id) {
+                    sendPushNotification(otherUser.id, `💬 Mensaje nuevo`, msg, { screen: 'ChatDetail', params: { conversationId: activeConvId } });
+                }
             } catch (e) {
                 console.warn('Could not update last_message_at:', e);
             }
