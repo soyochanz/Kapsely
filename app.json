@@ -19,6 +19,7 @@
         "ITSAppUsesNonExemptEncryption": false,
         "NSCameraUsageDescription": "Allow $(PRODUCT_NAME) to access your camera to capture memories for your capsules.",
         "NSMicrophoneUsageDescription": "Allow $(PRODUCT_NAME) to access your microphone for recording voice notes.",
+        "NSUserTrackingUsageDescription": "We use your data to provide personalized ads and improve your experience.",
         "NSPhotoLibraryUsageDescription": "Allow $(PRODUCT_NAME) to access your photo library to choose memories for your capsules."
       }
     },
@@ -44,7 +45,8 @@
       "expo-font",
       "@react-native-community/datetimepicker",
       "expo-audio",
-      "expo-video"
+      "expo-video",
+      "expo-tracking-transparency"
     ],
     "web": {
       "favicon": "./assets/favicon.png",

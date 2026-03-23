@@ -233,6 +233,18 @@ export default function EditProfileScreen({ onClose }: Props) {
 
     const handleDeleteAccount = async () => {
         if (!userId) return;
+        
+        // IMPORTANT: For true permanent deletion from Supabase Auth, 
+        // the user MUST add this function in their Supabase SQL Editor:
+        /*
+        CREATE OR REPLACE FUNCTION delete_user_permanently()
+        RETURNS void AS $$
+        BEGIN
+          DELETE FROM auth.users WHERE id = auth.uid();
+        END;
+        $$ LANGUAGE plpgsql SECURITY DEFINER;
+        */
+
         Alert.alert(
             t('profile.deleteAccount'),
             t('profile.deleteAccountConfirm'),
@@ -255,21 +267,28 @@ export default function EditProfileScreen({ onClose }: Props) {
                                         try {
                                             if (!userId) throw new Error('User info not loaded');
 
-                                            // 1. Delete user data incrementally to avoid FK violations (precautionary)
+                                            // 1. Delete user data incrementally to avoid FK violations
                                             await supabase.from('notifications').delete().eq('user_id', userId);
                                             await supabase.from('capsule_invites').delete().eq('user_id', userId);
                                             await supabase.from('capsules').delete().eq('owner_id', userId);
+                                            await supabase.from('follows').delete().or(`follower_id.eq.${userId},following_id.eq.${userId}`);
 
-                                            // 2. Delete user profile (This is the primary user identifier)
-                                            const { error: profileError } = await supabase.from('profiles').delete().eq('id', userId);
-                                            if (profileError) {
-                                                console.warn('Profile deletion had a warning:', profileError);
-                                                // We don't throw because we want to at least log out the user even if profile delete is stuck
-                                            }
+                                            // 2. Clear profile
+                                            await supabase.from('profiles').delete().eq('id', userId);
 
-                                            // 3. Clear all locally stored authentication and session data
+                                            // 3. PERMANENT DELETION: Attempt to delete the auth account via RPC
+                                            // This is the only way to prevent the user from logging in again with the same credentials
+                                            const { error: rpcError } = await supabase.rpc('delete_user_permanently');
+                                            
+                                            // 4. Ensure sign out and local data cleanup
                                             await supabase.auth.signOut();
-                                            Alert.alert('✅ Done', 'Account and personal data were deleted.');
+                                            
+                                            if (rpcError) {
+                                                console.warn('RPC deletion might have failed (did you add the SQL function?):', rpcError);
+                                                Alert.alert('✅ Logout Successful', 'Your profile was deleted. Note: To permanently disable the login, make sure the backend function is active.');
+                                            } else {
+                                                Alert.alert('✅ Account Deleted', 'Your account has been permanently deleted.');
+                                            }
                                         } catch (e: any) {
                                             console.error('Delete flow failure:', e);
                                             Alert.alert('Error', e.message || 'Deletion failed. Please contact support.');

@@ -44,6 +44,7 @@
     "expo-sharing": "~14.0.8",
     "expo-splash-screen": "~31.0.13",
     "expo-status-bar": "~3.0.1",
+    "expo-tracking-transparency": "~6.0.8",
     "expo-video": "~3.0.16",
     "expo-video-thumbnails": "~10.0.8",
     "i18next": "^25.8.17",

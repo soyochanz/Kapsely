@@ -12,6 +12,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
+import { requestTrackingPermissionsAsync, getTrackingPermissionsAsync } from 'expo-tracking-transparency';
 import CapsuleCard from '../components/CapsuleCard';
 import CapsuleWithTimer from '../components/CapsuleWithTimer';
 import LiveTimer from '../components/LiveTimer';
@@ -248,6 +249,33 @@ export default function FeedScreen() {
     const headerOpacity = useRef(new Animated.Value(0)).current;
     const headerSlide = useRef(new Animated.Value(-8)).current;
     const isFirstMount = useRef(true);
+    const [showATTModal, setShowATTModal] = useState(false);
+
+    useEffect(() => {
+        const checkATT = async () => {
+            if (Platform.OS !== 'ios') return;
+            
+            // Wait 2 seconds as requested
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // Check if already asked
+            const alreadyAsked = await AsyncStorage.getItem('att_asked');
+            if (alreadyAsked) return;
+
+            const { status } = await getTrackingPermissionsAsync();
+            if (status === 'undetermined') {
+                setShowATTModal(true);
+            }
+        };
+        checkATT();
+    }, []);
+
+    const handleATTContinue = async () => {
+        setShowATTModal(false);
+        const { status } = await requestTrackingPermissionsAsync();
+        await AsyncStorage.setItem('att_asked', 'true');
+        console.log('Tracking permission status:', status);
+    };
 
     const flatListRef = useRef<any>(null);
     const storiesScrollRef = useRef<ScrollView>(null);
@@ -1097,6 +1125,26 @@ export default function FeedScreen() {
                     setTutorialStep('FINISHED');
                 }}
             />
+
+            {/* ATT Modal */}
+            <Modal visible={showATTModal} transparent animationType="fade">
+                <View style={attStyles.overlay}>
+                    <View style={attStyles.sheet}>
+                        <View style={attStyles.iconRing}>
+                            <Ionicons name="shield-checkmark-outline" size={32} color={Colors.primary} />
+                        </View>
+                        <Text style={attStyles.title}>Privacy Matters</Text>
+                        <Text style={attStyles.desc}>
+                            We use your data to show relevant ads and improve the app experience. Your choices here help us keep Kapsely free and personalized.
+                        </Text>
+                        <TouchableOpacity style={attStyles.btn} activeOpacity={0.8} onPress={handleATTContinue}>
+                            <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={attStyles.btnGrad}>
+                                <Text style={attStyles.btnText}>Continue</Text>
+                            </LinearGradient>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
         </View>
     );
 }
@@ -1190,4 +1238,15 @@ const s = StyleSheet.create({
     previewConfirmBtn: { flex: 1, height: 52, borderRadius: 16, overflow: 'hidden' },
     previewConfirmGrad: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     previewConfirmText: { color: '#fff', fontFamily: Fonts.bold, fontSize: 14 },
+});
+
+const attStyles = StyleSheet.create({
+    overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center', padding: 25 },
+    sheet: { backgroundColor: Colors.surface, borderRadius: 28, padding: 25, alignItems: 'center', width: '100%', maxWidth: 340, ...Shadow.primary },
+    iconRing: { width: 64, height: 64, borderRadius: 32, backgroundColor: Colors.primary + '10', alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
+    title: { fontSize: 22, fontFamily: Fonts.bold, color: Colors.textPrimary, marginBottom: 12, textAlign: 'center' },
+    desc: { fontSize: 15, fontFamily: Fonts.regular, color: Colors.textSecondary, textAlign: 'center', lineHeight: 22, marginBottom: 30 },
+    btn: { width: '100%', borderRadius: 18, overflow: 'hidden' },
+    btnGrad: { paddingVertical: 15, alignItems: 'center' },
+    btnText: { color: '#fff', fontSize: 16, fontFamily: Fonts.bold },
 });
