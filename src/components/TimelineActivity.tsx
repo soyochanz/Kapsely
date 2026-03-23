@@ -321,7 +321,7 @@ export default React.memo(function TimelineActivity({ item }: TimelineActivityPr
                             <Text style={styles.previewText} numberOfLines={1}>
                                 {item.feedType === 'activity_group'
                                     ? `New collection · ${item.count} items`
-                                    : isAudio ? `Voice Note · ${item.content || '--:--'}` : isNote ? 'Written Note' : ((item.caption?.replace(/\s!!b:\w+/, '').trim()) || (item.media_type === 'video' ? `Video · ${item.content || '--:--'}` : (item.content || `New ${item.media_type}`)))
+                                    : isAudio ? `Voice Note · ${item.content || '--:--'}` : isNote ? 'Written Note' : ((item.caption?.replace(/!!b:\w+/, '').trim()) || (item.media_type === 'video' ? `Video · ${item.content || '--:--'}` : ''))
                                 }
                             </Text>
                             {isAudio && (

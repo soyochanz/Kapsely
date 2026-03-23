@@ -16,7 +16,6 @@ import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
 import { timerConfigManager, ModelTimerConfig, DEFAULT_CONFIGS, ChainItem, ModelChainConfig } from '../utils/timerConfig';
 import { supabase } from '../lib/supabase';
 import LiveTimer from '../components/LiveTimer';
-import CuteFace from '../components/CuteFace';
 import { LinearGradient } from 'expo-linear-gradient';
 import { CAPSULE_MODELS } from '../constants/models';
 
@@ -38,7 +37,7 @@ export default function TimerConfigScreen() {
     const insets = useSafeAreaInsets();
     const [selectedModel, setSelectedModel] = useState<any>(MODELS[0]);
     const [allModels, setAllModels] = useState<any[]>(timerConfigManager.models.length > 0 ? timerConfigManager.models : MODELS);
-    const [activeTab, setActiveTab] = useState<'timer' | 'chain' | 'face' | 'stickers' | 'models'>('timer');
+    const [activeTab, setActiveTab] = useState<'timer' | 'chain' | 'stickers' | 'models'>('timer');
     const [selectedChainId, setSelectedChainId] = useState<string | null>(null);
     const [isDragging, setIsDragging] = useState(false);
 
@@ -176,40 +175,6 @@ export default function TimerConfigScreen() {
     useEffect(() => {
         pan.setValue({ x: activeConfig.x * FRAME_SIZE, y: activeConfig.y * FRAME_SIZE });
     }, [selectedModel.id, activeConfig.x, activeConfig.y, activeTab === 'timer']);
-
-    // --- FACE POSITIONING ---
-    const facePan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
-    useEffect(() => {
-        facePan.setValue({
-            x: (activeConfig.faceX ?? activeConfig.x) * FRAME_SIZE,
-            y: (activeConfig.faceY ?? (activeConfig.y + activeConfig.h + 0.046)) * FRAME_SIZE
-        });
-    }, [selectedModel.id, activeConfig.faceX, activeConfig.faceY, activeConfig.x, activeConfig.y, activeConfig.h, activeTab === 'face']);
-
-    const faceResponder = useRef(
-        PanResponder.create({
-            onMoveShouldSetPanResponder: () => true,
-            onPanResponderGrant: () => {
-                setIsDragging(true);
-                const x = (facePan.x as any)._value;
-                const y = (facePan.y as any)._value;
-                facePan.setOffset({ x, y });
-                facePan.setValue({ x: 0, y: 0 });
-            },
-            onPanResponderMove: Animated.event([null, { dx: facePan.x, dy: facePan.y }], { useNativeDriver: false }),
-            onPanResponderRelease: () => {
-                setIsDragging(false);
-                facePan.flattenOffset();
-                const x = (facePan.x as any)._value;
-                const y = (facePan.y as any)._value;
-                updateActiveConfigById(currentModelIdRef.current, {
-                    faceX: Math.max(0, Math.min(1, x / FRAME_SIZE)),
-                    faceY: Math.max(0, Math.min(1, y / FRAME_SIZE))
-                });
-            },
-            onPanResponderTerminate: () => setIsDragging(false),
-        })
-    ).current;
 
     // --- CHAIN POSITIONING ---
     const chainPan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
@@ -467,14 +432,6 @@ export default function TimerConfigScreen() {
                         <Text style={[styles.topTabText, activeTab === 'chain' && styles.activeTopTabText]}>Chains</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                        style={[styles.topTab, activeTab === 'face' && styles.activeTopTab]}
-                        activeOpacity={0.7}
-                        onPress={() => setActiveTab('face')}
-                    >
-                        <Ionicons name="happy" size={20} color={activeTab === 'face' ? Colors.primary : Colors.textMuted} />
-                        <Text style={[styles.topTabText, activeTab === 'face' && styles.activeTopTabText]}>Face</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
                         style={[styles.topTab, activeTab === 'stickers' && styles.activeTopTab]}
                         activeOpacity={0.7}
                         onPress={() => setActiveTab('stickers')}
@@ -514,31 +471,6 @@ export default function TimerConfigScreen() {
                                     configOverride={activeConfig}
                                     style={{ fontSize: Math.max(10, (FRAME_SIZE * activeConfig.h) * 0.55) }}
                                 />
-                            </Animated.View>
-                        ) : activeTab === 'face' ? (
-                            <Animated.View
-                                style={{
-                                    position: 'absolute',
-                                    left: facePan.x,
-                                    top: facePan.y,
-                                    width: 0,
-                                    height: 0,
-                                    zIndex: 10,
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                }}
-                                {...faceResponder.panHandlers}
-                            >
-                                <View style={{
-                                    width: (activeConfig.w || 0.3) * FRAME_SIZE,
-                                    height: 40,
-                                    borderWidth: 1, borderColor: '#ff69b4',
-                                    borderStyle: 'dashed',
-                                    backgroundColor: 'rgba(255, 105, 180, 0.1)',
-                                    alignItems: 'center', justifyContent: 'center',
-                                }}>
-                                    <CuteFace scale={activeConfig.faceScale || 1} overrideExpression="standard" />
-                                </View>
                             </Animated.View>
                         ) : (
                             selectedChainId && (
@@ -703,43 +635,6 @@ export default function TimerConfigScreen() {
 
                             <TouchableOpacity style={styles.saveBtn} activeOpacity={0.8} onPress={saveChanges}>
                                 <Text style={styles.saveBtnText}>Save Configuration</Text>
-                            </TouchableOpacity>
-                        </View>
-                    ) : activeTab === 'face' ? (
-                        <View style={styles.faceCalibration}>
-                            <Text style={styles.label}>Show Cute Face</Text>
-                            <View style={styles.toggleRow}>
-                                <TouchableOpacity
-                                    style={[styles.toggleBtn, activeConfig.showFace !== false && styles.activeToggle]}
-                                    activeOpacity={0.7}
-                                    onPress={() => updateActiveConfig({ showFace: true })}
-                                >
-                                    <Text style={[styles.toggleText, activeConfig.showFace !== false && styles.activeToggleText]}>ON</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity
-                                    style={[styles.toggleBtn, activeConfig.showFace === false && styles.activeToggle]}
-                                    activeOpacity={0.7}
-                                    onPress={() => updateActiveConfig({ showFace: false })}
-                                >
-                                    <Text style={[styles.toggleText, activeConfig.showFace === false && styles.activeToggleText]}>OFF</Text>
-                                </TouchableOpacity>
-                            </View>
-
-                            <Text style={styles.label}>Face Scale: {((activeConfig.faceScale || 1) * 100).toFixed(0)}%</Text>
-                            <View style={styles.sliderTrackAlt}>
-                                <TouchableOpacity style={styles.sliderBtnSmall} activeOpacity={0.7} onPress={() => updateActiveConfig({ faceScale: Math.max(0.2, (activeConfig.faceScale || 1) - 0.1) })}>
-                                    <Ionicons name="remove" size={16} />
-                                </TouchableOpacity>
-                                <View style={{ flex: 1, height: 4, backgroundColor: '#ddd', borderRadius: 2 }} />
-                                <TouchableOpacity style={styles.sliderBtnSmall} activeOpacity={0.7} onPress={() => updateActiveConfig({ faceScale: Math.min(3.0, (activeConfig.faceScale || 1) + 0.1) })}>
-                                    <Ionicons name="add" size={16} />
-                                </TouchableOpacity>
-                            </View>
-
-                            <Text style={styles.hint}>Drag the face box in the preview to position it precisely.</Text>
-
-                            <TouchableOpacity style={styles.saveBtn} activeOpacity={0.8} onPress={saveChanges}>
-                                <Text style={styles.saveBtnText}>Save Face Changes</Text>
                             </TouchableOpacity>
                         </View>
                     ) : activeTab === 'chain' ? (

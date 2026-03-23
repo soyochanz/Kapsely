@@ -13,6 +13,7 @@ import { MODEL_IMAGES, MODEL_IMAGES_OPEN } from '../constants/models';
 import CapsuleWithTimer from './CapsuleWithTimer';
 import VerifiedBadge from './VerifiedBadge';
 import { timerConfigManager } from '../utils/timerConfig';
+import { cardMediaCache } from '../utils/mediaCache';
 
 const { width } = Dimensions.get('window');
 
@@ -49,6 +50,7 @@ const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp }: { capsule: 
     const [postsCount, setPostsCount] = useState(0);
     const [mediaCollage, setMediaCollage] = useState<any[]>([]);
     const [latestItem, setLatestItem] = useState<any>(null);
+    const [latestItemLoaded, setLatestItemLoaded] = useState(false);
     const [isLocked, setIsLocked] = useState(isLockedProp || false);
 
     const cfg = typeConfig[capsule.type as keyof typeof typeConfig] || typeConfig.legacycap;
@@ -81,56 +83,55 @@ const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp }: { capsule: 
     }, [capsule.model]);
 
     useEffect(() => {
+        let isMounted = true;
         const init = async () => {
             const { data: { session } } = await supabase.auth.getSession();
             const user = session?.user;
             if (user) {
-                setCurrentUserId(user.id);
+                if (isMounted) setCurrentUserId(user.id);
                 const hasAccess = capsule.is_public || capsule.owner_id === user.id || capsule.is_participant;
-                if (isLockedProp === undefined) setIsLocked(!hasAccess);
-            } else if (isLockedProp === undefined) {
+                if (isLockedProp === undefined && isMounted) setIsLocked(!hasAccess);
+            } else if (isLockedProp === undefined && isMounted) {
                 setIsLocked(!capsule.is_public);
             }
 
-            if (capsule.likes_count !== undefined) {
+            if (capsule.likes_count !== undefined && isMounted) {
                 setLikeCount(capsule.likes_count || 0);
                 setCommentCount(capsule.comments_count || 0);
                 setPostsCount(capsule.posts_count || 0);
                 setIsLiked(!!capsule.is_liked);
                 setIsFollowed(!!capsule.is_followed);
-                const [latestRes, collageRes] = await Promise.all([
-                    supabase.from('capsule_items').select('media_url, media_type, thumbnail_url, content, caption').eq('capsule_id', capsule.id).order('created_at', { ascending: false }).limit(1).maybeSingle(),
-                    capsule.status === 'opened'
-                        ? supabase.from('capsule_items').select('media_url, media_type').eq('capsule_id', capsule.id).in('media_type', ['image', 'video']).order('created_at', { ascending: true }).limit(4)
-                        : Promise.resolve({ data: [] }),
-                ]);
-                if (latestRes?.data) setLatestItem(Array.isArray(latestRes.data) ? latestRes.data[0] : latestRes.data);
-                if (collageRes?.data?.length) setMediaCollage(collageRes.data);
-            } else {
-                const [likesRes, commentsRes, postsRes, latestRes, likeCheckRes, followRes, collageRes] = await Promise.all([
-                    supabase.from('likes').select('*', { count: 'exact', head: true }).eq('capsule_id', capsule.id),
-                    supabase.from('comments').select('*', { count: 'exact', head: true }).eq('capsule_id', capsule.id),
-                    supabase.from('capsule_items').select('*', { count: 'exact', head: true }).eq('capsule_id', capsule.id),
-                    supabase.from('capsule_items').select('media_url, media_type, thumbnail_url, content, caption').eq('capsule_id', capsule.id).order('created_at', { ascending: false }).limit(1).maybeSingle(),
-                    user ? supabase.from('likes').select('id').eq('capsule_id', capsule.id).eq('user_id', user.id).maybeSingle() : Promise.resolve({ data: null }),
-                    (user && user.id !== capsule.owner_id)
-                        ? supabase.from('follows').select('id').eq('follower_id', user.id).eq('following_id', capsule.owner_id).maybeSingle()
-                        : Promise.resolve({ data: null }),
-                    capsule.status === 'opened'
-                        ? supabase.from('capsule_items').select('media_url, media_type').eq('capsule_id', capsule.id).in('media_type', ['image', 'video']).order('created_at', { ascending: true }).limit(4)
-                        : Promise.resolve({ data: [] }),
-                ]);
-                setLikeCount(likesRes.count || 0);
-                setCommentCount(commentsRes.count || 0);
-                setPostsCount(postsRes.count || 0);
-                if (latestRes?.data) setLatestItem(Array.isArray(latestRes.data) ? latestRes.data[0] : latestRes.data);
-                setIsLiked(!!likeCheckRes?.data);
-                setIsFollowed(!!followRes?.data);
-                if (collageRes?.data?.length) setMediaCollage(collageRes.data);
+
+                // Fetch media from cache if available to save network calls
+                const cached = cardMediaCache.get(capsule.id);
+                if (cached) {
+                    setLatestItem(cached.latestItem);
+                    setMediaCollage(cached.collage);
+                    setLatestItemLoaded(true);
+                } else {
+                    const [latestRes, collageRes] = await Promise.all([
+                        supabase.from('capsule_items').select('media_url, media_type, thumbnail_url, content, caption').eq('capsule_id', capsule.id).order('created_at', { ascending: false }).limit(1).maybeSingle(),
+                        capsule.status === 'opened'
+                            ? supabase.from('capsule_items').select('media_url, media_type').eq('capsule_id', capsule.id).in('media_type', ['image', 'video']).order('created_at', { ascending: true }).limit(4)
+                            : Promise.resolve({ data: [] }),
+                    ]);
+
+                    const fetchedLatest = latestRes?.data ? (Array.isArray(latestRes.data) ? latestRes.data[0] : latestRes.data) : null;
+                    const fetchedCollage = collageRes?.data?.length ? collageRes.data : [];
+
+                    cardMediaCache.set(capsule.id, { latestItem: fetchedLatest, collage: fetchedCollage });
+
+                    if (isMounted) {
+                        setLatestItem(fetchedLatest);
+                        setMediaCollage(fetchedCollage);
+                        setLatestItemLoaded(true);
+                    }
+                }
             }
         };
         init();
-    }, [capsule.id]);
+        return () => { isMounted = false; };
+    }, [capsule.id, capsule.likes_count, capsule.is_public, capsule.owner_id, capsule.status]);
 
     const handleFollow = async () => {
         if (!currentUserId || currentUserId === capsule.owner_id) return;
@@ -172,7 +173,8 @@ const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp }: { capsule: 
     const profile = capsule.profiles || { username: 'user', avatar_url: null };
     const isOpened = capsule.status === 'opened';
     const isSealed = capsule.status === 'sealed';
-    const isVideoPost = isSealed && latestItem?.media_type === 'video';
+    // Only consider it a video post once we've confirmed the latest item (avoids capsule→video flicker)
+    const isVideoPost = isSealed && latestItemLoaded && latestItem?.media_type === 'video';
 
     return (
         <TouchableOpacity activeOpacity={0.95} onPress={handlePress} style={s.card}>

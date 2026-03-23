@@ -99,9 +99,34 @@ export default function App() {
     };
   }, [session]);
 
-  const onLayoutRootView = async () => {
-    if (fontsLoaded && authChecked) await SplashScreen.hideAsync();
-  };
+  useEffect(() => {
+    if (fontsLoaded && authChecked) {
+      // Small delay to ensure everything is rendered
+      const timer = setTimeout(async () => {
+        try {
+          await SplashScreen.hideAsync();
+        } catch (e) {
+          console.warn('Error hiding splash screen:', e);
+        }
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [fontsLoaded, authChecked]);
+
+  // Safety timer to hide splash screen even if something hangs
+  useEffect(() => {
+    const safetyTimer = setTimeout(async () => {
+      if (authChecked && fontsLoaded) return;
+      console.warn('Safety timer triggered: hiding splash screen due to timeout');
+      setAuthChecked(true); 
+      try {
+        await SplashScreen.hideAsync();
+      } catch (e) {}
+    }, 6000); // 6 seconds max for splash screen
+    return () => clearTimeout(safetyTimer);
+  }, []);
+
+  const onLayoutRootView = undefined;
 
   if (!fontsLoaded || !authChecked) {
     return (
@@ -130,7 +155,6 @@ export default function App() {
           { flex: 1, backgroundColor: Colors.background },
           Platform.OS === 'web' && ({ height: '100vh', width: '100vw' } as any)
         ]}
-        onLayout={onLayoutRootView}
       >
         <StatusBar style="dark" backgroundColor={Colors.background} />
         <NavigationContainer ref={navigationRef} theme={navTheme}>

@@ -11,7 +11,7 @@ import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
 import { supabase } from '../lib/supabase';
 import { sendPushNotification } from '../utils/pushNotifications';
 
-export default function KapsBoxScreen() {
+export default function InboxScreen() {
     const insets = useSafeAreaInsets();
     const navigation = useNavigation();
     const route = useRoute<any>();
@@ -73,7 +73,7 @@ export default function KapsBoxScreen() {
             Alert.alert('Success', 'Question sent anonymously!');
             setNewQuestion('');
             // Trigger Push Notification to Profile Owner
-            sendPushNotification(profileId, "📮 Kaps Box", "¡Tienes una nueva pregunta anónima!", { screen: 'KapsBox', params: { profileId: profileId } });
+            sendPushNotification(profileId, "📮 Inbox", "¡Tienes una nueva pregunta anónima!", { screen: 'Inbox', params: { profileId: profileId } });
         }
         setLoading(false);
     };
@@ -159,7 +159,7 @@ export default function KapsBoxScreen() {
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
                     <Ionicons name="chevron-back" size={24} color={Colors.textPrimary} />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>📮 Kaps Box</Text>
+                <Text style={styles.headerTitle}>📮 Inbox</Text>
                 {isOwner && !isMonday && (
                     <TouchableOpacity style={styles.archiveBtn} onPress={handleArchiveAll}>
                         <Ionicons name="archive" size={16} color={'#ff4757'} />

@@ -17,6 +17,7 @@ import { MODEL_IMAGES, MODEL_TINTS, MODEL_IMAGES_OPEN } from '../constants/model
 import LiveTimer from '../components/LiveTimer';
 import CapsuleWithTimer from '../components/CapsuleWithTimer';
 import VerifiedBadge from '../components/VerifiedBadge';
+import SupportModal from '../components/SupportModal';
 import { timerConfigManager } from '../utils/timerConfig';
 import { sendPushNotification } from '../utils/pushNotifications';
 import StoryViewer from '../components/StoryViewer';
@@ -155,6 +156,7 @@ export default function ProfileScreen() {
     const [showPrivacy, setShowPrivacy] = useState(false);
     const [showTerms, setShowTerms] = useState(false);
     const [showPushSettings, setShowPushSettings] = useState(false);
+    const [showSupportModal, setShowSupportModal] = useState(false);
 
     const [pushEnabled, setPushEnabled] = useState(true);
     const [pushQuestions, setPushQuestions] = useState(true);
@@ -648,13 +650,13 @@ export default function ProfileScreen() {
                 <TouchableOpacity
                     style={s.kapsBoxCard}
                     activeOpacity={0.85}
-                    onPress={() => navigation.navigate('KapsBox', { profileId: profileId || currentUserId })}
+                    onPress={() => navigation.navigate('Inbox', { profileId: profileId || currentUserId })}
                 >
                     <View style={[s.kapsBoxIconWrap, { backgroundColor: accentColor + '18' }]}>
                         <Ionicons name="mail-unread" size={18} color={accentColor} />
                     </View>
                     <View style={{ flex: 1 }}>
-                        <Text style={s.kapsBoxTitle}>📮  Kaps Box</Text>
+                        <Text style={s.kapsBoxTitle}>📮  Inbox</Text>
                         <Text style={s.kapsBoxSub}>
                             {new Date().getDay() === 1 ? 'Reveals day! View current answers.' : 'Send anonymous questions here!'}
                         </Text>
@@ -787,9 +789,18 @@ export default function ProfileScreen() {
             </Modal>
 
             {/* Settings */}
-            <Modal visible={showSettings} transparent animationType="slide" onRequestClose={() => setShowSettings(false)}>
-                <Pressable style={s.overlay} onPress={() => setShowSettings(false)}>
-                    <Pressable style={s.sheet}>
+            <Modal
+                visible={showSettings}
+                transparent={Platform.OS === 'android'}
+                animationType="slide"
+                presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : 'overFullScreen'}
+                onRequestClose={() => setShowSettings(false)}
+            >
+                <Pressable
+                    style={[s.overlay, Platform.OS === 'ios' && { backgroundColor: Colors.surface }]}
+                    onPress={() => setShowSettings(false)}
+                >
+                    <Pressable style={[s.sheet, Platform.OS === 'ios' && { borderTopLeftRadius: 0, borderTopRightRadius: 0, paddingTop: 20 }]}>
                         <View style={s.sheetHandle} />
                         <Text style={s.sheetTitle}>{t('profile.settings')}</Text>
 
@@ -798,7 +809,8 @@ export default function ProfileScreen() {
                             { icon: 'person-outline', color: Colors.textSecondary, label: t('profile.editProfile'), onPress: () => { setShowSettings(false); setShowEdit(true); } },
                             { icon: 'language-outline', color: Colors.textSecondary, label: t('profile.language'), value: i18n.language === 'es' ? 'Español' : 'English', onPress: () => { setShowSettings(false); setShowLanguageSettings(true); } },
                             { icon: 'notifications-outline', color: Colors.textSecondary, label: t('profile.push_notifications', 'Notificaciones Push'), onPress: () => { setShowSettings(false); setShowPushSettings(true); } },
-                            { icon: 'lock-closed-outline', color: Colors.textSecondary, label: t('profile.security'), onPress: () => Alert.alert(t('profile.security'), t('profile.securityComingSoon')) },
+                            { icon: 'help-buoy-outline', color: Colors.textSecondary, label: t('profile.support', 'Ayuda y Soporte'), onPress: () => { setShowSettings(false); setShowSupportModal(true); } },
+                            { icon: 'lock-closed-outline', color: Colors.textSecondary, label: t('profile.security', 'Seguridad'), onPress: () => Alert.alert(t('profile.security', 'Seguridad'), t('profile.securityComingSoon')) },
                             {
                                 icon: 'checkmark-circle-outline', color: Colors.primary,
                                 label: profile?.is_verified ? t('profile.verifiedAccount') : profile?.verification_status === 'pending' ? t('profile.verificationPending') : t('profile.requestVerification'),
@@ -836,10 +848,22 @@ export default function ProfileScreen() {
                 </Pressable>
             </Modal>
 
+            {/* Support Ticket Modal */}
+            <SupportModal visible={showSupportModal} onClose={() => setShowSupportModal(false)} userId={currentUserId!} />
+
             {/* Language */}
-            <Modal visible={showLanguageSettings} transparent animationType="slide" onRequestClose={() => setShowLanguageSettings(false)}>
-                <Pressable style={s.overlay} onPress={() => setShowLanguageSettings(false)}>
-                    <Pressable style={s.sheet}>
+            <Modal
+                visible={showLanguageSettings}
+                transparent={Platform.OS === 'android'}
+                animationType="slide"
+                presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : 'overFullScreen'}
+                onRequestClose={() => setShowLanguageSettings(false)}
+            >
+                <Pressable
+                    style={[s.overlay, Platform.OS === 'ios' && { backgroundColor: Colors.surface }]}
+                    onPress={() => setShowLanguageSettings(false)}
+                >
+                    <Pressable style={[s.sheet, Platform.OS === 'ios' && { borderTopLeftRadius: 0, borderTopRightRadius: 0, paddingTop: 20 }]}>
                         <View style={s.sheetHandle} />
                         <View style={s.sheetNav}>
                             <TouchableOpacity onPress={() => { setShowLanguageSettings(false); setShowSettings(true); }} style={s.sheetNavBack}>

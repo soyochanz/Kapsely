@@ -110,7 +110,7 @@ export default function SwipeableChatRow({
                             <Image source={{ uri: item.otherUser.avatar_url }} style={styles.avatar} />
                         ) : (
                             <View style={styles.avatarPlaceholder}>
-                                <Ionicons name="person" size={24} color={Colors.textMuted} />
+                                <Ionicons name={item.is_group ? "people" : "person"} size={24} color={Colors.textMuted} />
                             </View>
                         )}
                         {hasUnread && <View style={styles.unreadAvatarDot} />}

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
     View, Text, StyleSheet, Image, ScrollView, TouchableOpacity,
     TextInput, Dimensions, Animated, StatusBar, Alert, ActivityIndicator,
-    Modal, FlatList, KeyboardAvoidingView, Platform, Pressable, Share, Linking, SectionList, Keyboard
+    Modal, FlatList, KeyboardAvoidingView, Platform, Pressable, SectionList, Keyboard
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
@@ -15,73 +15,49 @@ import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Spacing, Shadow, BorderRadius } from '../theme';
 import { supabase } from '../lib/supabase';
 import { sendPushNotification } from '../utils/pushNotifications';
-
-const { width, height } = Dimensions.get('window');
-const GRID_COLS = 3;
-const GRID_GAP = 4;
-const SECTION_PAD = Spacing.md * 2;
-const ITEM_SIZE = (width - SECTION_PAD - GRID_GAP * (GRID_COLS - 1)) / GRID_COLS;
-const ITEM_HEIGHT = (ITEM_SIZE * 16) / 9;
-
 import { MODEL_IMAGES, MODEL_TINTS, MODEL_IMAGES_OPEN } from '../constants/models';
-
 import LiveTimer from '../components/LiveTimer';
 import CapsuleWithTimer from '../components/CapsuleWithTimer';
 import LiveChat from '../components/LiveChat';
 import VerifiedBadge from '../components/VerifiedBadge';
 import { timerConfigManager } from '../utils/timerConfig';
 import { safetyService, ReportType } from '../utils/safety';
+import { useWebDragScroll } from '../utils/useWebDragScroll';
 
 
+const { width, height } = Dimensions.get('window');
+const GRID_COLS = 3;
+const GRID_GAP = 3;
+const SECTION_PAD = Spacing.md * 2;
+const ITEM_SIZE = (width - SECTION_PAD - GRID_GAP * (GRID_COLS - 1)) / GRID_COLS;
+const ITEM_HEIGHT = (ITEM_SIZE * 4) / 3;
 
-// Sub-component for stable hooks
-const AudioController = ({ uri, onFinish }: { uri: string | null, onFinish: () => void }) => {
+// ─── Waveform heights for audio grid cells ────────────────────────────────────
+const WAVEFORM_BARS = [5, 10, 18, 28, 38, 44, 36, 26, 40, 32, 22, 30, 20, 13, 6];
+
+// ─── Audio controller ─────────────────────────────────────────────────────────
+const AudioController = ({ uri, onFinish }: { uri: string | null; onFinish: () => void }) => {
     const player = useAudioPlayer(uri ? { uri } : null);
-    const playStatus = useAudioPlayerStatus(player);
-
-    useEffect(() => {
-        if (uri && player) player.play();
-        else if (!uri && player) player.pause();
-    }, [uri, player]);
-
-    useEffect(() => {
-        if (playStatus.didJustFinish) onFinish();
-    }, [playStatus.didJustFinish]);
-
+    const status = useAudioPlayerStatus(player);
+    useEffect(() => { if (uri && player) player.play(); else if (!uri && player) player.pause(); }, [uri, player]);
+    useEffect(() => { if (status.didJustFinish) onFinish(); }, [status.didJustFinish]);
     return null;
 };
 
-const VideoWithTrim = ({ item, isActive, style }: { item: any, isActive: boolean, style: any }) => {
-    const contentParts = item.content ? item.content.split('|') : [];
-    const trimData = contentParts[1] ? contentParts[1].split('-') : [];
-    const trimStart = trimData[0] ? parseInt(trimData[0], 10) : 0;
-    const trimEnd = trimData[1] ? parseInt(trimData[1], 10) : null;
-    const videoRef = React.useRef<any>(null);
-
-    const onPlaybackStatusUpdate = (status: any) => {
-        if (trimEnd && status.positionMillis >= trimEnd) {
-            videoRef.current?.pauseAsync();
-            videoRef.current?.setPositionAsync(trimStart);
-        }
+// ─── Video with trim ──────────────────────────────────────────────────────────
+const VideoWithTrim = ({ item, isActive, style }: { item: any; isActive: boolean; style: any }) => {
+    const parts = item.content ? item.content.split('|') : [];
+    const trim = parts[1] ? parts[1].split('-') : [];
+    const trimStart = trim[0] ? parseInt(trim[0], 10) : 0;
+    const trimEnd = trim[1] ? parseInt(trim[1], 10) : null;
+    const ref = useRef<any>(null);
+    const onStatus = (s: any) => {
+        if (trimEnd && s.positionMillis >= trimEnd) { ref.current?.pauseAsync(); ref.current?.setPositionAsync(trimStart); }
     };
-
-    return (
-        <Video
-            ref={videoRef}
-            source={{ uri: item.media_url }}
-            rate={1.0}
-            volume={1.0}
-            isMuted={false}
-            resizeMode={ResizeMode.CONTAIN}
-            shouldPlay={isActive}
-            useNativeControls
-            style={style}
-            positionMillis={trimStart}
-            onPlaybackStatusUpdate={onPlaybackStatusUpdate}
-        />
-    );
+    return <Video ref={ref} source={{ uri: item.media_url }} rate={1} volume={1} isMuted={false} resizeMode={ResizeMode.CONTAIN} shouldPlay={isActive} useNativeControls style={style} positionMillis={trimStart} progressUpdateIntervalMillis={500} onPlaybackStatusUpdate={onStatus} />;
 };
 
+// ─── Main screen ──────────────────────────────────────────────────────────────
 export default function CapsuleDetailScreen() {
     const { t } = useTranslation();
     const navigation = useNavigation<any>();
@@ -96,7 +72,6 @@ export default function CapsuleDetailScreen() {
     const [flashAnim] = useState(new Animated.Value(0));
     const [modelTint, setModelTint] = useState<string | null>(null);
 
-    // Social states
     const [comment, setComment] = useState('');
     const [comments, setComments] = useState<any[]>([]);
     const [likeCount, setLikeCount] = useState(0);
@@ -105,208 +80,141 @@ export default function CapsuleDetailScreen() {
     const [invites, setInvites] = useState<any[]>([]);
     const [acceptedMembers, setAcceptedMembers] = useState<any[]>([]);
 
-    // Media Viewer state
     const [viewerVisible, setViewerVisible] = useState(false);
     const [initialIndex, setInitialIndex] = useState(0);
     const [activeViewerIndex, setActiveViewerIndex] = useState(0);
 
-    const [page, setPage] = useState(1);
     const [filterType, setFilterType] = useState('all');
     const [filterSort, setFilterSort] = useState('newest');
+    const [page, setPage] = useState(1);
 
     const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null);
-
     const [isFollowedOwner, setIsFollowedOwner] = useState(false);
-
     const [showOptions, setShowOptions] = useState(false);
     const [showQRModal, setShowQRModal] = useState(false);
     const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
-
-    const isSealed = capsule?.status === 'sealed';
-    const [modelImg, setModelImg] = useState<string>(() => {
-        if (!capsule) return (MODEL_IMAGES as any).basicred_kap;
-        return isSealed
-            ? (timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || (MODEL_IMAGES as any).basicred_kap)
-            : (timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model as keyof typeof MODEL_IMAGES_OPEN] || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || (MODEL_IMAGES as any).basicred_kap);
-    });
-
-    useEffect(() => {
-        if (!capsule) return;
-        const updateModel = () => {
-            const nextImg = isSealed
-                ? (timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || (MODEL_IMAGES as any).basicred_kap)
-                : (timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model as keyof typeof MODEL_IMAGES_OPEN] || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || (MODEL_IMAGES as any).basicred_kap);
-            setModelImg(nextImg);
-        };
-        const unsubscribe = timerConfigManager.subscribe(updateModel);
-        updateModel();
-        return unsubscribe;
-    }, [capsule?.model, isSealed]);
+    const [playingAudio, setPlayingAudio] = useState<string | null>(null);
 
     const timerRef = useRef<NodeJS.Timeout | null>(null);
     const insets = useSafeAreaInsets();
-    const [playingAudio, setPlayingAudio] = useState<string | null>(null);
 
-    const toggleAudio = (url: string) => {
-        if (playingAudio === url) {
-            setPlayingAudio(null);
-            return;
-        }
-        setPlayingAudio(url);
-    };
+    const isSealed = capsule?.status === 'sealed';
+    const [modelImg, setModelImg] = useState<string>(() => (MODEL_IMAGES as any).basicred_kap);
 
-    const handleFollowToggle = async (targetId: string, isFollowed: boolean, setIsFollowed: (val: boolean) => void) => {
-        if (!userId || userId === targetId) return;
-        if (isFollowed) {
-            await supabase.from('follows').delete().eq('follower_id', userId).eq('following_id', targetId);
-            setIsFollowed(false);
-        } else {
-            await supabase.from('follows').insert({ follower_id: userId, following_id: targetId });
-            setIsFollowed(true);
-            await supabase.from('notifications').insert({
-                user_id: targetId,
-                sender_id: userId,
-                type: 'follow',
-                message: t('common.started_following_you'),
-            });
-        }
-    };
+    const sectionListRef = useRef<SectionList>(null);
+    useWebDragScroll(sectionListRef);
 
-    const filteredAndPaginatedData = useMemo(() => {
-        let result = [...items];
-
-        if (filterType !== 'all') {
-            result = result.filter(item => item.media_type === filterType);
-        }
-
-        result.sort((a, b) => {
-            const dateA = new Date(a.created_at).getTime();
-            const dateB = new Date(b.created_at).getTime();
-            return filterSort === 'newest' ? dateB - dateA : dateA - dateB;
-        });
-
-        const pagesArray = [];
-        for (let i = 0; i < result.length; i += 9) {
-            pagesArray.push(result.slice(i, i + 9));
-        }
-
-        const startIndex = (page - 1) * 9;
-        const sliced = result.slice(startIndex, startIndex + 9);
-        
-        return {
-            pagedItems: pagesArray,
-            paginatedItems: sliced,
-            totalItems: result.length,
-            totalPages: pagesArray.length || 1
+    useEffect(() => {
+        if (!capsule) return;
+        const update = () => {
+            setModelImg(isSealed
+                ? (timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model] || (MODEL_IMAGES as any).basicred_kap)
+                : (timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model] || MODEL_IMAGES[capsule.model] || (MODEL_IMAGES as any).basicred_kap)
+            );
         };
+        const unsub = timerConfigManager.subscribe(update);
+        update();
+        return unsub;
+    }, [capsule?.model, isSealed]);
+
+    // ── Derived values ────────────────────────────────────────────────────────
+    const activeModelTint = capsule ? ((MODEL_TINTS as any)[capsule.model] || '#a269ff') : '#a269ff';
+    const tint = modelTint || activeModelTint;
+    const isOwner = userId === capsule?.owner_id;
+    const acceptedInvitesCount = invites?.filter(i => i.status === 'accepted').length || 0;
+    const isLegacyAccepted = capsule?.invited_user_id && capsule?.invite_status === 'accepted';
+    const totalMembers = 1 + acceptedInvitesCount + (isLegacyAccepted ? 1 : 0);
+    const isMember = isOwner ||
+        invites?.some(i => i.user_id === userId && i.status === 'accepted') ||
+        (capsule?.invite_status === 'accepted' && capsule?.invited_user_id === userId);
+    const hasWaiting = (invites?.filter(i => i.status === 'pending').length || 0) > 0 && isOwner;
+    const hasRequestedOpen = capsule?.open_requests?.includes(userId || '') || false;
+    const reqCount = capsule?.open_requests?.length || 0;
+    const canBeOpened = capsule?.opens_at ? new Date(capsule.opens_at) <= new Date() : true;
+
+    const now_val = new Date();
+    const opensAt = capsule?.opens_at ? new Date(capsule.opens_at) : null;
+    const chatStart = opensAt ? new Date(opensAt.getTime() - 86400000) : null;
+    const chatEnd = opensAt ? new Date(opensAt.getTime() + 18000000) : null;
+    const showChat = chatStart && chatEnd && now_val >= chatStart && now_val <= chatEnd;
+
+    // ── Filtered / paginated data ─────────────────────────────────────────────
+    const filteredData = useMemo(() => {
+        let result = [...items];
+        if (filterType !== 'all') result = result.filter(i => i.media_type === filterType);
+        result.sort((a, b) => {
+            const da = new Date(a.created_at).getTime(), db = new Date(b.created_at).getTime();
+            return filterSort === 'newest' ? db - da : da - db;
+        });
+        const perPage = 9;
+        const totalPages = Math.max(1, Math.ceil(result.length / perPage));
+        const paged = result.slice((page - 1) * perPage, page * perPage);
+        const pagedAll: any[][] = [];
+        for (let i = 0; i < result.length; i += perPage) pagedAll.push(result.slice(i, i + perPage));
+        return { paged, pagedAll, totalPages, total: result.length };
     }, [items, filterType, filterSort, page]);
 
-    const displayGroups = useMemo(() => {
-        const { paginatedItems } = filteredAndPaginatedData;
-        return paginatedItems.reduce((acc: any, item: any) => {
-            const date = new Date(item.created_at);
-            const monthStr = date.toLocaleString('default', { month: 'long' });
-            const key = `${monthStr} ${date.getFullYear()}`;
+    // Group by month for opened view
+    const displayGroups = useMemo(() =>
+        filteredData.paged.reduce((acc: any, item: any) => {
+            const d = new Date(item.created_at);
+            const key = `${d.toLocaleString('default', { month: 'long' })} ${d.getFullYear()}`;
             if (!acc[key]) acc[key] = [];
             acc[key].push(item);
             return acc;
-        }, {});
-    }, [filteredAndPaginatedData]);
-
-    useFocusEffect(
-        useCallback(() => {
-            loadData();
-        }, [capsuleId])
+        }, {}),
+        [filteredData.paged]
     );
 
+    // ── Data loading ──────────────────────────────────────────────────────────
+    useFocusEffect(useCallback(() => { loadData(); }, [capsuleId]));
+
     useEffect(() => {
-        if (capsuleId) {
-            loadData();
-
-            // Listen to capsule changes
-            const capChannel = supabase.channel(`capsule-${capsuleId}-detail`)
-                .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'capsules', filter: `id=eq.${capsuleId}` }, payload => {
-                    const updated = payload.new;
-                    console.log('Realtime Capsule Update:', updated);
-
-                    setCapsule((prev: any) => {
-                        if (!prev) return { ...updated };
-                        const merged = { ...prev, ...updated };
-
-                        // IMPORTANT: Sync the opening animation for all users
-                        if (updated.is_opening && updated.opening_at && !prev.is_opening && merged.status === 'sealed') {
-                            startGlobalCountdown(updated.opening_at);
-                        }
-
-                        return merged;
-                    });
-
-                    if (updated.status === 'opened') {
-                        setIsOpening(false);
-                        if (timerRef.current) clearInterval(timerRef.current);
-                    }
-                })
-                .subscribe();
-
-            // Listen to invite changes
-            const inviteChannel = supabase.channel(`capsule-${capsuleId}-invites`)
-                .on('postgres_changes', { event: '*', schema: 'public', table: 'capsule_invites', filter: `capsule_id=eq.${capsuleId}` }, () => {
-                    // Just reload everything when invites change
-                    loadData();
-                })
-                .subscribe();
-
-            return () => {
-                supabase.removeChannel(capChannel);
-                supabase.removeChannel(inviteChannel);
-                if (timerRef.current) clearInterval(timerRef.current);
-            };
-        }
+        if (!capsuleId) return;
+        loadData();
+        const capCh = supabase.channel(`capsule-${capsuleId}-detail`)
+            .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'capsules', filter: `id=eq.${capsuleId}` }, payload => {
+                const updated = payload.new;
+                setCapsule((prev: any) => {
+                    if (!prev) return { ...updated };
+                    const merged = { ...prev, ...updated };
+                    if (updated.is_opening && updated.opening_at && !prev.is_opening && merged.status === 'sealed') startGlobalCountdown(updated.opening_at);
+                    return merged;
+                });
+                if (updated.status === 'opened') { setIsOpening(false); if (timerRef.current) clearInterval(timerRef.current); }
+            })
+            .subscribe();
+        const invCh = supabase.channel(`capsule-${capsuleId}-invites`)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'capsule_invites', filter: `capsule_id=eq.${capsuleId}` }, loadData)
+            .subscribe();
+        return () => { supabase.removeChannel(capCh); supabase.removeChannel(invCh); if (timerRef.current) clearInterval(timerRef.current); };
     }, [capsuleId]);
 
     const startGlobalCountdown = (openingAtStr: string) => {
         setIsOpening(true);
         if (timerRef.current) clearInterval(timerRef.current);
         timerRef.current = setInterval(() => {
-            const now = new Date().getTime();
-            const target = new Date(openingAtStr).getTime();
-            const diff = Math.max(0, Math.ceil((target - now) / 1000));
+            const diff = Math.max(0, Math.ceil((new Date(openingAtStr).getTime() - Date.now()) / 1000));
             setOpeningTimer(diff);
-
-            // Epic visual feedback as timer gets closer
-            if (diff <= 3 && diff > 0) {
-                // Vibration or haptic could go here
-            }
-
-            if (diff <= 0) {
-                if (timerRef.current) clearInterval(timerRef.current);
-                triggerFlash();
-            }
+            if (diff <= 0) { if (timerRef.current) clearInterval(timerRef.current); triggerFlash(); }
         }, 1000);
     };
 
     const formatTime = (dateStr: string) => {
-        const now = new Date();
-        const past = new Date(dateStr);
-        const diff = now.getTime() - past.getTime();
-        const minutes = Math.floor(diff / 60000);
-        if (minutes < 1) return t('common.just_now');
-        if (minutes < 60) return t('common.m_ago', { count: minutes });
-        const hours = Math.floor(minutes / 60);
-        if (hours < 24) return t('common.h_ago', { count: hours });
-        const days = Math.floor(hours / 24);
-        return t('common.d_ago', { count: days });
+        const diff = Date.now() - new Date(dateStr).getTime();
+        const m = Math.floor(diff / 60000);
+        if (m < 1) return t('common.just_now');
+        if (m < 60) return t('common.m_ago', { count: m });
+        const h = Math.floor(m / 60);
+        if (h < 24) return t('common.h_ago', { count: h });
+        return t('common.d_ago', { count: Math.floor(h / 24) });
     };
 
     const loadData = async () => {
         const { data: { user } } = await supabase.auth.getUser();
         setUserId(user?.id ?? null);
-        
         let blocked: string[] = [];
-        if (user) {
-            const blocked = await safetyService.getAllSafetyUserIds(user.id);
-            setBlockedUserIds(blocked);
-        }
+        if (user) { blocked = await safetyService.getAllSafetyUserIds(user.id); setBlockedUserIds(blocked); }
 
         const [capRes, itemsRes, likesRes, commentsRes, myLikeRes, invitesRes] = await Promise.all([
             supabase.from('capsules').select('*, profiles:owner_id(*)').eq('id', capsuleId).maybeSingle(),
@@ -314,137 +222,61 @@ export default function CapsuleDetailScreen() {
             supabase.from('likes').select('*', { count: 'exact', head: true }).eq('capsule_id', capsuleId),
             supabase.from('comments').select('*, profiles:user_id(*), comment_likes(user_id)').eq('capsule_id', capsuleId).order('created_at', { ascending: false }),
             user ? supabase.from('likes').select('*').eq('capsule_id', capsuleId).eq('user_id', user.id).maybeSingle() : { data: null },
-            supabase.from('capsule_invites').select('*, profiles:user_id(*)').eq('capsule_id', capsuleId)
+            supabase.from('capsule_invites').select('*, profiles:user_id(*)').eq('capsule_id', capsuleId),
         ]);
+
         if (capRes.data) {
             setCapsule(capRes.data);
             const cfg = timerConfigManager.getConfig(capRes.data.model);
             setModelTint(cfg?.themeColor || MODEL_TINTS[capRes.data.model] || '#a269ff');
 
-            const allMemberIds = [capRes.data.owner_id];
-            const accepted = invitesRes.data?.filter((i: any) => i.status === 'accepted').map((i: any) => i.profiles) || [];
-            accepted.forEach((m: any) => allMemberIds.push(m.id));
-
-            let followedSet = new Set<string>();
+            const allMemberIds = [capRes.data.owner_id, ...(invitesRes.data?.filter((i: any) => i.status === 'accepted').map((i: any) => i.profiles?.id) || [])];
+            let followed = new Set<string>();
             if (user) {
-                const { data: followIds } = await supabase.from('follows')
-                    .select('following_id')
-                    .eq('follower_id', user.id)
-                    .in('following_id', allMemberIds);
-                
-                followIds?.forEach(f => followedSet.add(f.following_id));
+                const { data: fids } = await supabase.from('follows').select('following_id').eq('follower_id', user.id).in('following_id', allMemberIds);
+                fids?.forEach(f => followed.add(f.following_id));
             }
-
-            setIsFollowedOwner(followedSet.has(capRes.data.owner_id));
-            setAcceptedMembers(accepted.map((m: any) => ({ ...m, isFollowed: followedSet.has(m.id) })));
+            setIsFollowedOwner(followed.has(capRes.data.owner_id));
+            setAcceptedMembers((invitesRes.data?.filter((i: any) => i.status === 'accepted').map((i: any) => ({ ...i.profiles, isFollowed: followed.has(i.profiles?.id) }))) || []);
 
             if (capRes.data.is_opening && capRes.data.status !== 'opened' && capRes.data.opening_at) {
                 const target = new Date(capRes.data.opening_at).getTime();
-                const now = new Date().getTime();
-                if (target > now) {
-                    startGlobalCountdown(capRes.data.opening_at);
-                } else {
-                    // It should already be open, fix status locally if needed or just wait for triggerFlash
-                    setCapsule((prev: any) => ({ ...prev, status: 'opened', is_opening: false }));
-                }
+                if (target > Date.now()) startGlobalCountdown(capRes.data.opening_at);
+                else setCapsule((p: any) => ({ ...p, status: 'opened', is_opening: false }));
             }
         }
-        if (itemsRes.data) {
-            // Filter items from blocked users
-            setItems(itemsRes.data.filter((i: any) => !blocked.includes(i.owner_id)));
-        }
+        if (itemsRes.data) setItems(itemsRes.data.filter((i: any) => !blocked.includes(i.owner_id)));
         setLikeCount(likesRes.count || 0);
-        const processedComments = (commentsRes.data || [])
-            .filter((c: any) => !blocked.includes(c.user_id)) // Filter comments from blocked users
-            .map((c: any) => ({
-                ...c,
-                myLike: user ? c.comment_likes?.some((l: any) => l.user_id === user.id) : false,
-                likeCount: c.comment_likes?.length || 0
-            }));
-        setComments(processedComments);
+        setComments((commentsRes.data || []).filter((c: any) => !blocked.includes(c.user_id)).map((c: any) => ({ ...c, myLike: user ? c.comment_likes?.some((l: any) => l.user_id === user.id) : false, likeCount: c.comment_likes?.length || 0 })));
         setIsLiked(!!myLikeRes.data);
-        if (invitesRes.data) {
-            setInvites(invitesRes.data);
-        }
+        if (invitesRes.data) setInvites(invitesRes.data);
         setLoading(false);
     };
 
-    const handleReportCapsule = () => {
-        if (!userId || !capsule) return;
-        Alert.alert(
-            t('detail.report_capsule'),
-            t('detail.report_reason'),
-            [
-                { text: t('detail.report_types.inappropriate'), onPress: () => submitReport(capsuleId, 'capsule', 'inappropriate') },
-                { text: t('detail.report_types.spam'), onPress: () => submitReport(capsuleId, 'capsule', 'spam') },
-                { text: t('common.cancel'), style: 'cancel' }
-            ]
-        );
-    };
-
-    const handleReportItem = (itemId: string) => {
-        if (!userId) return;
-        Alert.alert(
-            t('detail.report_content'),
-            t('detail.report_reason'),
-            [
-                { text: t('detail.report_types.inappropriate'), onPress: () => submitReport(itemId, 'capsule_item', 'inappropriate') },
-                { text: t('detail.report_types.spam'), onPress: () => submitReport(itemId, 'capsule_item', 'spam') },
-                { text: t('common.cancel'), style: 'cancel' }
-            ]
-        );
-    };
-
-    const submitReport = async (targetId: string, targetType: ReportType, reason: string) => {
-        if (!userId) return;
-        await safetyService.report({
-            reporterId: userId,
-            targetId,
-            targetType,
-            reason
-        });
-        Alert.alert(t('common.ready'), t('detail.report_submitted'));
-        setShowOptions(false);
+    // ── Actions ───────────────────────────────────────────────────────────────
+    const handleFollowToggle = async (targetId: string, isFollowed: boolean, setIsFollowed: (v: boolean) => void) => {
+        if (!userId || userId === targetId) return;
+        if (isFollowed) {
+            await supabase.from('follows').delete().eq('follower_id', userId).eq('following_id', targetId);
+            setIsFollowed(false);
+        } else {
+            await supabase.from('follows').insert({ follower_id: userId, following_id: targetId });
+            setIsFollowed(true);
+            await supabase.from('notifications').insert({ user_id: targetId, sender_id: userId, type: 'follow', message: t('common.started_following_you') });
+        }
     };
 
     const handleRequestOpen = async () => {
         if (!userId || !capsule) return;
-
-        // Use RPC for atomic update to avoid race conditions in shared capsules
-        const { data, error } = await supabase.rpc('request_capsule_open_v4', {
-            target_capsule_id: capsuleId,
-            requester_user_id: userId
-        });
-
-        if (error) {
-            console.error('Error requesting open:', error);
-            return;
-        }
-
+        const { data, error } = await supabase.rpc('request_capsule_open_v4', { target_capsule_id: capsuleId, requester_user_id: userId });
+        if (error) { console.error(error); return; }
         if (data) {
-            // Update local state immediately with DB truth
-            setCapsule((prev: any) => ({
-                ...prev,
-                open_requests: data.open_requests,
-                is_opening: data.is_opening,
-                opening_at: data.opening_at
-            }));
-
+            setCapsule((p: any) => ({ ...p, open_requests: data.open_requests, is_opening: data.is_opening, opening_at: data.opening_at }));
             if (data.is_opening && data.opening_at) {
                 startGlobalCountdown(data.opening_at);
-
-                // Notify others ONLY if the capsule wasn't already opening
                 if (!capsule.is_opening) {
-                    const acceptedInvites = invites?.filter(i => i.status === 'accepted') || [];
-                    const members = [capsule.owner_id, ...acceptedInvites.map(i => i.user_id)];
-                    for (const member of members) {
-                        if (member !== userId) {
-                            await supabase.from('notifications').insert({
-                                user_id: member, sender_id: userId, type: 'capsule_opened', capsule_id: capsuleId,
-                                message: t('detail.opening_now')
-                            });
-                        }
-                    }
+                    const members = [capsule.owner_id, ...(invites?.filter(i => i.status === 'accepted').map(i => i.user_id) || [])];
+                    for (const m of members) { if (m !== userId) await supabase.from('notifications').insert({ user_id: m, sender_id: userId, type: 'capsule_opened', capsule_id: capsuleId, message: t('detail.opening_now') }); }
                 }
             }
         }
@@ -456,8 +288,7 @@ export default function CapsuleDetailScreen() {
             Animated.timing(flashAnim, { toValue: 1, duration: 400, useNativeDriver: true }),
             Animated.timing(flashAnim, { toValue: 0, duration: 800, useNativeDriver: true }),
         ]).start(async () => {
-            setCapsule((prev: any) => ({ ...prev, status: 'opened', is_opening: false }));
-            // Finalize in DB using RPC so any participant can do it
+            setCapsule((p: any) => ({ ...p, status: 'opened', is_opening: false }));
             await supabase.rpc('set_capsule_opened', { target_capsule_id: capsuleId });
         });
     };
@@ -466,326 +297,239 @@ export default function CapsuleDetailScreen() {
         if (!userId) return;
         if (isLiked) {
             await supabase.from('likes').delete().eq('capsule_id', capsuleId).eq('user_id', userId);
-            setLikeCount(prev => prev - 1);
-            setIsLiked(false);
+            setLikeCount(p => p - 1); setIsLiked(false);
         } else {
             await supabase.from('likes').insert({ capsule_id: capsuleId, user_id: userId });
-            setLikeCount(prev => prev + 1);
-            setIsLiked(true);
+            setLikeCount(p => p + 1); setIsLiked(true);
             if (capsule.owner_id !== userId) {
-                await supabase.from('notifications').insert({
-                    user_id: capsule.owner_id, sender_id: userId, type: 'like', capsule_id: capsuleId, message: t('detail.liked_your_capsule')
-                });
-                sendPushNotification(capsule.owner_id, "❤️ ¡Nuevo Me Gusta!", `A alguien le ha gustado tu cápsula.`, { screen: 'CapsuleDetail', params: { capsuleId } });
+                await supabase.from('notifications').insert({ user_id: capsule.owner_id, sender_id: userId, type: 'like', capsule_id: capsuleId, message: t('detail.liked_your_capsule') });
+                sendPushNotification(capsule.owner_id, "❤️ Nuevo Me Gusta!", 'A alguien le ha gustado tu cápsula.', { screen: 'CapsuleDetail', params: { capsuleId } });
             }
         }
     };
 
-    const handleLikeComment = async (commentId: string) => {
+    const handleLikeComment = async (cid: string) => {
         if (!userId) return;
-        const commentToUpdate = comments.find(c => c.id === commentId);
-        if (!commentToUpdate) return;
-        if (commentToUpdate.myLike) {
-            await supabase.from('comment_likes').delete().eq('comment_id', commentId).eq('user_id', userId);
-            setComments(comments.map(c => c.id === commentId ? { ...c, myLike: false, likeCount: c.likeCount - 1 } : c));
+        const c = comments.find(x => x.id === cid);
+        if (!c) return;
+        if (c.myLike) {
+            await supabase.from('comment_likes').delete().eq('comment_id', cid).eq('user_id', userId);
+            setComments(cs => cs.map(x => x.id === cid ? { ...x, myLike: false, likeCount: x.likeCount - 1 } : x));
         } else {
-            await supabase.from('comment_likes').insert({ comment_id: commentId, user_id: userId });
-            setComments(comments.map(c => c.id === commentId ? { ...c, myLike: true, likeCount: c.likeCount + 1 } : c));
+            await supabase.from('comment_likes').insert({ comment_id: cid, user_id: userId });
+            setComments(cs => cs.map(x => x.id === cid ? { ...x, myLike: true, likeCount: x.likeCount + 1 } : x));
         }
     };
 
     const handleSendComment = async () => {
         if (!comment.trim() || !userId) return;
         Keyboard.dismiss();
-        const { data } = await supabase.from('comments').insert({
-            capsule_id: capsuleId, user_id: userId, content: comment.trim()
-        }).select('*, profiles:user_id(*)').maybeSingle();
+        const { data } = await supabase.from('comments').insert({ capsule_id: capsuleId, user_id: userId, content: comment.trim() }).select('*, profiles:user_id(*)').maybeSingle();
         if (data) {
             setComments([{ ...data, myLike: false, likeCount: 0 }, ...comments]);
             setComment('');
             setHighlightedCommentId(data.id);
-            setTimeout(() => setHighlightedCommentId(null), 1000);
+            setTimeout(() => setHighlightedCommentId(null), 1200);
             if (capsule.owner_id !== userId) {
-                await supabase.from('notifications').insert({
-                    user_id: capsule.owner_id, sender_id: userId, type: 'comment', capsule_id: capsuleId,
-                    message: t('detail.commented', { text: `${comment.trim().substring(0, 30)}${comment.trim().length > 30 ? '...' : ''}` })
-                });
-                sendPushNotification(capsule.owner_id, "💬 Nuevo Comentario", `Han comentado en tu cápsula.`, { screen: 'CapsuleDetail', params: { capsuleId } });
+                await supabase.from('notifications').insert({ user_id: capsule.owner_id, sender_id: userId, type: 'comment', capsule_id: capsuleId, message: t('detail.commented', { text: comment.trim().substring(0, 30) }) });
+                sendPushNotification(capsule.owner_id, "💬 Nuevo Comentario", 'Han comentado en tu cápsula.', { screen: 'CapsuleDetail', params: { capsuleId } });
             }
         }
     };
 
-    const executeDelete = async () => {
-        setShowOptions(false);
-        setLoading(true);
-        try {
-            // 1. Fetch storage files to delete manually (not handled by CASCADE)
-            const { data: itemsToDelete } = await supabase
-                .from('capsule_items')
-                .select('media_url, thumbnail_url')
-                .eq('capsule_id', capsuleId);
-
-            if (itemsToDelete && itemsToDelete.length > 0) {
-                const filesToDelete: string[] = [];
-                const baseUrl = "https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/capsule-media/";
-                itemsToDelete.forEach(item => {
-                    if (item.media_url?.startsWith(baseUrl)) {
-                        filesToDelete.push(item.media_url.replace(baseUrl, "").split('?')[0]);
-                    }
-                    if (item.thumbnail_url?.startsWith(baseUrl)) {
-                        filesToDelete.push(item.thumbnail_url.replace(baseUrl, "").split('?')[0]);
-                    }
-                });
-                if (filesToDelete.length > 0) {
-                    await supabase.storage.from('capsule-media').remove(filesToDelete);
-                }
-            }
-
-            // 2. Delete the capsule — securely bypass cascading RLS failures
-            const { error } = await supabase
-                .rpc('delete_capsule', { p_capsule_id: capsuleId });
-
-            if (!error) {
-                navigation.goBack();
-            } else {
-                throw error;
-            }
-        } catch (err: any) {
-            console.error('Error deleting capsule:', err);
-            if (Platform.OS === 'web') {
-                window.alert(t('detail.delete_error'));
-            } else {
-                Alert.alert(t('common.error'), t('detail.delete_error'));
-            }
-        } finally {
-            setLoading(false);
-        }
+    const handleDeleteComment = (cid: string) => {
+        Alert.alert(t('detail.delete_comment_title'), t('detail.delete_comment_confirm'), [
+            { text: t('common.cancel'), style: 'cancel' },
+            { text: t('common.delete'), style: 'destructive', onPress: async () => { const { error } = await supabase.from('comments').delete().eq('id', cid); if (!error) setComments(cs => cs.filter(c => c.id !== cid)); } }
+        ]);
     };
 
     const handleDeleteCapsule = () => {
-        if (Platform.OS === 'web') {
-            const confirmed = window.confirm(t('detail.delete_capsule_msg') || 'Are you sure?');
-            if (confirmed) {
-                executeDelete();
-            }
-        } else {
-            Alert.alert(
-                t('detail.delete_capsule_title'),
-                t('detail.delete_capsule_msg'),
-                [
-                    { text: t('detail.keep_it'), style: "cancel" },
-                    { text: t('common.delete'), style: "destructive", onPress: executeDelete }
-                ]
-            );
-        }
+        const exec = async () => {
+            setShowOptions(false); setLoading(true);
+            try {
+                const { data: toDelete } = await supabase.from('capsule_items').select('media_url, thumbnail_url').eq('capsule_id', capsuleId);
+                if (toDelete?.length) {
+                    const base = 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/capsule-media/';
+                    const files = toDelete.flatMap(i => [i.media_url, i.thumbnail_url].filter(u => u?.startsWith(base)).map(u => u!.replace(base, '').split('?')[0]));
+                    if (files.length) await supabase.storage.from('capsule-media').remove(files);
+                }
+                const { error } = await supabase.rpc('delete_capsule', { p_capsule_id: capsuleId });
+                if (!error) navigation.goBack(); else throw error;
+            } catch (err: any) { Alert.alert(t('common.error'), t('detail.delete_error')); }
+            finally { setLoading(false); }
+        };
+        Alert.alert(t('detail.delete_capsule_title'), t('detail.delete_capsule_msg'), [
+            { text: t('detail.keep_it'), style: 'cancel' },
+            { text: t('common.delete'), style: 'destructive', onPress: exec }
+        ]);
     };
 
-    const handleDeleteComment = (commentId: string) => {
-        Alert.alert(
-            t('detail.delete_comment_title'),
-            t('detail.delete_comment_confirm'),
-            [
-                { text: t('common.cancel'), style: "cancel" },
-                {
-                    text: t('common.delete'),
-                    style: "destructive",
-                    onPress: async () => {
-                        const { error } = await supabase.from('comments').delete().eq('id', commentId);
-                        if (!error) {
-                            setComments(comments.filter(c => c.id !== commentId));
-                        } else {
-                            Alert.alert('Error', 'Could not delete comment.');
-                        }
-                    }
-                }
-            ]
+    const handleReportCapsule = () => {
+        if (!userId) return;
+        Alert.alert(t('detail.report_capsule'), t('detail.report_reason'), [
+            { text: t('detail.report_types.inappropriate'), onPress: () => submitReport(capsuleId, 'capsule', 'inappropriate') },
+            { text: t('detail.report_types.spam'), onPress: () => submitReport(capsuleId, 'capsule', 'spam') },
+            { text: t('common.cancel'), style: 'cancel' },
+        ]);
+    };
+
+    const handleReportItem = (itemId: string) => {
+        if (!userId) return;
+        Alert.alert(t('detail.report_content'), t('detail.report_reason'), [
+            { text: t('detail.report_types.inappropriate'), onPress: () => submitReport(itemId, 'capsule_item', 'inappropriate') },
+            { text: t('detail.report_types.spam'), onPress: () => submitReport(itemId, 'capsule_item', 'spam') },
+            { text: t('common.cancel'), style: 'cancel' },
+        ]);
+    };
+
+    const submitReport = async (targetId: string, targetType: ReportType, reason: string) => {
+        if (!userId) return;
+        await safetyService.report({ reporterId: userId, targetId, targetType, reason });
+        Alert.alert(t('common.ready'), t('detail.report_submitted'));
+        setShowOptions(false);
+    };
+
+    const openViewer = (index: number) => { setInitialIndex(index); setActiveViewerIndex(index); setViewerVisible(true); };
+    const toggleAudio = (url: string) => setPlayingAudio(p => p === url ? null : url);
+
+    // ── Filter chips (shared) ─────────────────────────────────────────────────
+    const FilterBar = () => {
+        const filterScrollRef = useRef<ScrollView>(null);
+        useWebDragScroll(filterScrollRef);
+
+        return (
+            <ScrollView ref={filterScrollRef} horizontal showsHorizontalScrollIndicator={false} style={s.filterScroll} contentContainerStyle={s.filterContent}>
+                {(['all', 'image', 'video', 'note', 'audio'] as const).map(type => {
+                    const icons = { all: 'apps-outline', image: 'image-outline', video: 'videocam-outline', note: 'document-text-outline', audio: 'mic-outline' } as const;
+                    const isActive = filterType === type;
+                    return (
+                        <TouchableOpacity
+                            key={type}
+                            style={[s.filterChip, isActive && { backgroundColor: tint, borderColor: tint }]}
+                            onPress={() => { setFilterType(type); setPage(1); }}
+                        >
+                            <Ionicons name={icons[type]} size={13} color={isActive ? '#fff' : Colors.textSecondary} />
+                            <Text style={[s.filterChipText, isActive && { color: '#fff' }]}>
+                                {type.charAt(0).toUpperCase() + type.slice(1)}
+                            </Text>
+                        </TouchableOpacity>
+                    );
+                })}
+                <TouchableOpacity style={s.filterChip} onPress={() => { setFilterSort(p => p === 'newest' ? 'oldest' : 'newest'); setPage(1); }}>
+                    <Ionicons name={filterSort === 'newest' ? 'arrow-down' : 'arrow-up'} size={13} color={Colors.textSecondary} />
+                    <Text style={s.filterChipText}>{filterSort === 'newest' ? 'Newest' : 'Oldest'}</Text>
+                </TouchableOpacity>
+            </ScrollView>
         );
     };
 
-    const handleShareInstagram = () => {
-        setShowOptions(false);
-        navigation.navigate('InstagramShare' as any, { capsule });
-    };
 
-
-
-    const canBeOpened = capsule?.opens_at ? new Date(capsule.opens_at) <= new Date() : true;
-    const activeModelTint = capsule ? ((MODEL_TINTS as any)[capsule.model] || '#a269ff') : '#a269ff';
-    const tint = modelTint || activeModelTint;
-    const isOwner = userId === capsule?.owner_id;
-
-    const acceptedInvitesCount = invites?.filter(i => i.status === 'accepted').length || 0;
-    const isLegacyAccepted = capsule?.invited_user_id && capsule?.invite_status === 'accepted';
-    const totalMembers = 1 + acceptedInvitesCount + (isLegacyAccepted ? 1 : 0);
-    const isMember = isOwner ||
-        (invites?.some(i => i.user_id === userId && i.status === 'accepted')) ||
-        (capsule?.invite_status === 'accepted' && capsule?.invited_user_id === userId);
-    const waitingCount = invites?.filter(i => i.status === 'pending').length || 0;
-    const hasWaiting = waitingCount > 0 && isOwner;
-    const hasRequestedOpen = capsule?.open_requests?.includes(userId || '') || false;
-    const reqCount = capsule?.open_requests?.length || 0;
-
-    const now_val = new Date();
-    const opensAt = capsule?.opens_at ? new Date(capsule.opens_at) : null;
-    const chatStart = opensAt ? new Date(opensAt.getTime() - 24 * 60 * 60 * 1000) : null;
-    const chatEnd = opensAt ? new Date(opensAt.getTime() + 5 * 60 * 60 * 1000) : null;
-    const showChat = chatStart && chatEnd && now_val >= chatStart && now_val <= chatEnd;
-
-
-
-    if (loading && !capsule) return (
-        <View style={[styles.container, styles.centered]}>
-            <ActivityIndicator color={Colors.primary} size="large" />
-        </View>
-    );
-
+    // ── Loading / not found ───────────────────────────────────────────────────
+    if (loading && !capsule) return <View style={[s.root, s.centered]}><ActivityIndicator color={Colors.primary} size="large" /></View>;
     if (!capsule) return (
-        <View style={[styles.container, styles.centered]}>
-            <TouchableOpacity 
-                style={[styles.backBtn, { position: 'absolute', top: insets.top + 10, left: 15 }]} 
-                activeOpacity={0.7}
-                onPress={() => navigation.goBack()}
-            >
-                <Ionicons name="close" size={28} color={Colors.textPrimary} />
+        <View style={[s.root, s.centered]}>
+            <TouchableOpacity style={[s.iconBtn, { position: 'absolute', top: insets.top + 10, left: 15 }]} onPress={() => navigation.goBack()}>
+                <Ionicons name="close" size={26} color={Colors.textPrimary} />
             </TouchableOpacity>
-            <Ionicons name="alert-circle-outline" size={48} color={Colors.textMuted} style={{ marginBottom: 15 }} />
-            <Text style={{ color: Colors.textMuted, fontFamily: Fonts.medium, fontSize: 16 }}>{t('detail.not_found')}</Text>
-            <Text style={{ color: Colors.textMuted, fontSize: 13, marginTop: 5, textAlign: 'center', paddingHorizontal: 40 }}>
-                {t('detail.no_permission')}
-            </Text>
+            <Ionicons name="alert-circle-outline" size={44} color={Colors.textMuted} style={{ marginBottom: 12 }} />
+            <Text style={s.notFoundText}>{t('detail.not_found')}</Text>
+            <Text style={s.notFoundSub}>{t('detail.no_permission')}</Text>
         </View>
     );
 
-    const openViewer = (index: number) => {
-        setInitialIndex(index);
-        setActiveViewerIndex(index);
-        setViewerVisible(true);
-    };
-
+    // ── Render ────────────────────────────────────────────────────────────────
     return (
-        <View style={styles.container}>
+        <View style={s.root}>
             <AudioController uri={playingAudio} onFinish={() => setPlayingAudio(null)} />
-            <StatusBar barStyle="light-content" />
-            <Animated.View style={[styles.flashOverlay, { opacity: flashAnim, pointerEvents: 'none' }]} />
+            <StatusBar barStyle="dark-content" />
+            <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: '#fff', zIndex: 999, opacity: flashAnim }]} pointerEvents="none" />
 
-            <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
-                <BlurView intensity={Platform.OS === 'ios' ? 90 : 100} tint="default" style={StyleSheet.absoluteFill} />
-                <TouchableOpacity activeOpacity={0.7} onPress={() => navigation.goBack()} style={styles.backBtn}>
-                    <Ionicons name="close" size={26} color={Colors.textPrimary} />
+            {/* ── Header ────────────────────────────────────────────────── */}
+            <View style={[s.headerWrap, { paddingTop: insets.top + 8 }]} pointerEvents="box-none">
+                <BlurView intensity={72} tint="light" style={StyleSheet.absoluteFill} />
+                <View style={s.headerBorderBottom} />
+
+                {/* Botón volver */}
+                <TouchableOpacity style={s.headerBackBtn} activeOpacity={0.6} onPress={() => navigation.goBack()}>
+                    <Ionicons name="chevron-back" size={20} color={Colors.textPrimary} />
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.headerTitleContainer} activeOpacity={0.8} onPress={() => navigation.navigate('UserProfile', { targetUserId: capsule.owner_id })}>
-                    <View style={styles.headerCreatorRow}>
-                        <Image source={{ uri: capsule.profiles?.avatar_url || 'https://via.placeholder.com/150' }} style={styles.headerAvatarMini} />
-                        <View>
-                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                <Text style={styles.headerCreatorName}>{capsule.profiles?.display_name || capsule.profiles?.username}</Text>
-                                {capsule.profiles?.is_verified && <VerifiedBadge size={10} style={{ marginLeft: 2 }} />}
-                            </View>
-                            {userId !== capsule.owner_id && (
-                                <Pressable 
-                                    onPress={() => handleFollowToggle(capsule.owner_id, isFollowedOwner, setIsFollowedOwner)}
-                                    style={({ pressed }) => [
-                                        styles.headerFollowBtn,
-                                        pressed && { opacity: 0.7 }
-                                    ]}
-                                >
-                                    <Text style={[styles.headerFollowText, isFollowedOwner && styles.headerFollowingText]}>
-                                        {isFollowedOwner ? t('common.following') : `+ ${t('common.follow')}`}
-                                    </Text>
-                                </Pressable>
-                            )}
+
+                {/* Centro — avatar + nombre + subtítulo + follow pill */}
+                <TouchableOpacity
+                    style={s.headerCenter}
+                    activeOpacity={0.75}
+                    onPress={() => navigation.navigate('UserProfile', { targetUserId: capsule.owner_id })}
+                >
+                    <Image
+                        source={{ uri: capsule.profiles?.avatar_url || 'https://via.placeholder.com/150' }}
+                        style={s.headerAvatar}
+                    />
+                    <View style={{ flexShrink: 1 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                            <Text style={s.headerName} numberOfLines={1}>
+                                {capsule.profiles?.display_name || capsule.profiles?.username}
+                            </Text>
+                            {capsule.profiles?.is_verified && <VerifiedBadge size={10} />}
                         </View>
+                        <Text style={s.headerSub} numberOfLines={1}>{capsule.title}</Text>
                     </View>
+                    {userId !== capsule.owner_id && (
+                        <Pressable
+                            onPress={(e) => {
+                                e.stopPropagation?.();
+                                handleFollowToggle(capsule.owner_id, isFollowedOwner, setIsFollowedOwner);
+                            }}
+                            style={[s.headerFollowPill, isFollowedOwner && s.headerFollowPillActive]}
+                        >
+                            <Text style={[s.headerFollowPillText, isFollowedOwner && s.headerFollowPillTextActive]}>
+                                {isFollowedOwner ? t('common.following') : t('common.follow')}
+                            </Text>
+                        </Pressable>
+                    )}
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.backBtn} activeOpacity={0.7} onPress={() => setShowOptions(true)}>
-                    <Ionicons name="ellipsis-horizontal" size={24} color={Colors.textPrimary} />
+
+                {/* Opciones */}
+                <TouchableOpacity style={s.headerOptionsBtn} activeOpacity={0.6} onPress={() => setShowOptions(true)}>
+                    <Ionicons name="ellipsis-horizontal" size={18} color={Colors.textSecondary} />
                 </TouchableOpacity>
             </View>
 
-            {/* Options Modal */}
-            <Modal visible={showOptions} transparent animationType="fade">
-                <Pressable style={styles.modalOverlay} android_ripple={{ color: 'transparent' }} onPress={() => setShowOptions(false)}>
-                    <View style={styles.optionsContent}>
-                        <View style={styles.modalBar} />
-                        <Text style={styles.optionsTitle}>{t('detail.options')}</Text>
-
-                        <TouchableOpacity style={styles.deleteOption} activeOpacity={0.7} onPress={() => { setShowOptions(false); setShowQRModal(true); }}>
-                            <Ionicons name="qr-code-outline" size={22} color={Colors.textPrimary} />
-                            <Text style={[styles.deleteOptionText, { color: Colors.textPrimary }]}>{t('detail.view_qr')}</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity style={styles.deleteOption} activeOpacity={0.7} onPress={handleShareInstagram}>
-                            <Ionicons name="logo-instagram" size={22} color="#E1306C" />
-                            <Text style={[styles.deleteOptionText, { color: '#E1306C' }]}>{t('detail.share_instagram')}</Text>
-                        </TouchableOpacity>
-
-                        {!isOwner && (
-                            <TouchableOpacity style={styles.deleteOption} activeOpacity={0.7} onPress={handleReportCapsule}>
-                                <Ionicons name="alert-circle-outline" size={22} color={Colors.textPrimary} />
-                                <Text style={[styles.deleteOptionText, { color: Colors.textPrimary }]}>{t('detail.report_capsule')}</Text>
-                            </TouchableOpacity>
-                        )}
-
-                        {isOwner && (
-                            <TouchableOpacity style={styles.deleteOption} activeOpacity={0.7} onPress={handleDeleteCapsule}>
-                                <Ionicons name="trash-outline" size={22} color={Colors.eventCap} />
-                                <Text style={styles.deleteOptionText}>{t('detail.delete_perm')}</Text>
-                            </TouchableOpacity>
-                        )}
-
-                        <TouchableOpacity style={styles.cancelOption} activeOpacity={0.7} onPress={() => setShowOptions(false)}>
-                            <Text style={styles.cancelOptionText}>{t('common.cancel')}</Text>
-                        </TouchableOpacity>
-                    </View>
-                </Pressable>
-            </Modal>
-
-            <Modal visible={showQRModal} transparent animationType="fade">
-                <Pressable style={styles.qrRootOverlay} android_ripple={{ color: 'transparent' }} onPress={() => setShowQRModal(false)}>
-                    <View style={styles.qrContentBox}>
-                        <Text style={styles.qrTitle}>{t('detail.capsule_qr')}</Text>
-                        <Image
-                            source={{ uri: `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=kapsely://capsule/${capsuleId}` }}
-                            style={styles.qrImage}
-                        />
-                        <Text style={styles.qrSubtitle}>{t('detail.scan_qr_hint')}</Text>
-                        <TouchableOpacity style={styles.qrCloseBtn} activeOpacity={0.8} onPress={() => setShowQRModal(false)}>
-                            <Text style={styles.qrCloseBtnText}>{t('common.done')}</Text>
-                        </TouchableOpacity>
-                    </View>
-                </Pressable>
-            </Modal>
-
-            <KeyboardAvoidingView
-                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-                style={{ flex: 1 }}
-                keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
-            >
+            {/* ── Main scroll ───────────────────────────────────────────── */}
+            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }} keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}>
                 <SectionList
+                    ref={sectionListRef}
                     sections={[
-                        { title: 'Hero', data: ['hero'] },
-                        { title: 'Content', data: ['content'] },
-                        { title: 'Chat', data: showChat ? ['chat'] : [] },
-                        { title: 'Social', data: ['social'] },
+                        { title: 'hero', data: ['hero'] },
+                        { title: 'content', data: ['content'] },
+                        { title: 'chat', data: showChat ? ['chat'] : [] },
+                        { title: 'social', data: ['social'] },
                     ]}
-                    keyExtractor={(item, index) => item + index}
-                    renderItem={({ section, item }) => {
+                    keyExtractor={(item, i) => item + i}
+                    showsVerticalScrollIndicator={false}
+                    contentContainerStyle={[s.scrollContent, { paddingTop: 80 + insets.top }]}
+                    keyboardShouldPersistTaps="handled"
+                    stickySectionHeadersEnabled={false}
+                    renderSectionHeader={() => null}
+                    renderItem={({ item }) => {
+
+                        // ── HERO SECTION ─────────────────────────────────
                         if (item === 'hero') return (
-                            <View style={styles.heroSection}>
-                                <View style={styles.heroVisualWrap}>
-                                    <LinearGradient
-                                        colors={[tint + '33', 'transparent']}
-                                        style={styles.heroGlow}
-                                    />
+                            <View style={s.heroSection}>
+
+                                {/* ── Fondo blanco limpio — igual que el resto de la página ── */}
+                                <View style={StyleSheet.absoluteFill} pointerEvents="none">
+                                    <View style={{ ...StyleSheet.absoluteFillObject, backgroundColor: Colors.background }} />
+                                </View>
+
+                                {/* ── Cápsula flotante sobre fondo etéreo ── */}
+                                <View style={{ alignItems: 'center', width: '100%' }}>
+                                    {/* Cápsula */}
                                     <TouchableOpacity
                                         activeOpacity={0.9}
-                                        onPress={() => {
-                                            if (isMember && isSealed && !isOpening) {
-                                                navigation.navigate('CreateSelection', { capsuleId: capsule.id });
-                                            }
-                                        }}
+                                        style={{ zIndex: 2 }}
+                                        onPress={() => { if (isMember && isSealed && !isOpening) navigation.navigate('CreateSelection', { capsuleId: capsule.id }); }}
                                         disabled={!isMember || !isSealed || isOpening}
-                                        style={styles.modelContainerDetail}
                                     >
                                         <CapsuleWithTimer
                                             modelKey={capsule.model}
@@ -793,463 +537,434 @@ export default function CapsuleDetailScreen() {
                                             date={capsule.opens_at}
                                             chainId={capsule.chain_id}
                                             capsuleType={capsule.type}
-                                            style={styles.heroModel}
+                                            style={s.heroModel}
                                             isOpened={!isSealed}
                                         />
                                         {isMember && isSealed && !isOpening && (
-                                            <View style={[styles.addContentHint, { backgroundColor: tint }]}>
-                                                <Ionicons name="add" size={20} color="#fff" />
+                                            <View style={[s.addHint, { backgroundColor: tint }]}>
+                                                <Ionicons name="add" size={18} color="#fff" />
                                             </View>
                                         )}
                                         {isOpening && (
-                                            <View style={styles.openingOverlayAesthetic}>
-                                                <LinearGradient
-                                                    colors={[tint, 'transparent', tint]}
-                                                    style={StyleSheet.absoluteFillObject}
-                                                    start={{ x: 0, y: 0 }}
-                                                    end={{ x: 1, y: 1 }}
-                                                />
-                                                <View style={styles.openingOverlayAestheticInner}>
-                                                    <View style={[styles.pulsingCircle, { backgroundColor: tint + '30' }]} />
-                                                    <Text style={styles.openingTextAesthetic}>UNSEALING</Text>
-                                                    <Text style={[styles.openingTimerAesthetic, { color: '#fff' }]}>{openingTimer}</Text>
-                                                </View>
+                                            <View style={s.openingOverlay}>
+                                                <LinearGradient colors={[tint + 'BB', tint + '55']} style={StyleSheet.absoluteFill} />
+                                                <Text style={s.openingLabel}>UNSEALING</Text>
+                                                <Text style={s.openingTimer}>{openingTimer}</Text>
                                             </View>
                                         )}
                                     </TouchableOpacity>
+
+                                    {/* Sombra suave debajo — proyección etérea */}
+                                    <View style={{
+                                        width: 120, height: 10, borderRadius: 60,
+                                        backgroundColor: tint + '20',
+                                        marginTop: -6,
+                                        ...Platform.select({
+                                            ios: { shadowColor: tint, shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },
+                                        }),
+                                    }} />
                                 </View>
 
-                                <Text style={styles.capsuleMetaTop}>
-                                    Opens {new Date(capsule.opens_at).toLocaleDateString()}
-                                </Text>
-                                <Text style={styles.sealedTitle}>{capsule.title}</Text>
-                                {capsule.description ? (
-                                    <Text style={styles.description}>{capsule.description}</Text>
-                                ) : null}
+                                {/* Title & meta */}
+                                <View style={s.heroMeta}>
+                                    {/* Type badge — minimalista, dot + texto uppercase */}
+                                    <View style={s.typeBadgeRow}>
+                                        <View style={[s.typeDot, { backgroundColor: tint }]} />
+                                        <Text style={[s.typeBadgeLabel, { color: Colors.textMuted }]}>
+                                            {capsule.type === 'instacap' ? 'INSTACAP' : capsule.type === 'eventcap' ? 'EVENTCAP' : 'LEGACYCAP'}
+                                        </Text>
+                                        <View style={[s.typeDot, { backgroundColor: Colors.border }]} />
+                                        <Text style={s.typeBadgeLabel}>
+                                            {isSealed ? 'SEALED' : 'OPEN'}
+                                        </Text>
+                                    </View>
 
-                                <View style={styles.statsCard}>
-                                    <View style={styles.statItem}>
-                                        <Text style={styles.statValue}>{items.length}</Text>
-                                        <Text style={styles.statLabel}>Items</Text>
-                                    </View>
-                                    <View style={styles.statSeparator} />
-                                    <View style={styles.statItem}>
-                                        <Text style={styles.statValue}>{totalMembers}</Text>
-                                        <Text style={styles.statLabel}>Members</Text>
-                                    </View>
-                                    <View style={styles.statSeparator} />
-                                    <View style={styles.statItem}>
-                                        <Text style={styles.statValue}>{isSealed ? 'Sealed' : 'Opened'}</Text>
-                                        <Text style={styles.statLabel}>Status</Text>
+                                    <Text style={s.heroTitle}>{capsule.title}</Text>
+                                    {capsule.description ? <Text style={s.heroDesc}>{capsule.description}</Text> : null}
+
+                                    {/* Stat chips */}
+                                    <View style={s.statRow}>
+                                        <View style={s.statChip}>
+                                            <Ionicons name="images-outline" size={14} color={Colors.textMuted} />
+                                            <Text style={s.statChipText}>{items.length} items</Text>
+                                        </View>
+                                        <View style={s.statChip}>
+                                            <Ionicons name="people-outline" size={14} color={Colors.textMuted} />
+                                            <Text style={s.statChipText}>{totalMembers} {totalMembers === 1 ? 'member' : 'members'}</Text>
+                                        </View>
+                                        <View style={[s.statChip, { backgroundColor: isSealed ? Colors.cardAlt : tint + '15' }]}>
+                                            <Ionicons name={isSealed ? 'lock-closed-outline' : 'lock-open-outline'} size={14} color={isSealed ? Colors.textMuted : tint} />
+                                            <Text style={[s.statChipText, !isSealed && { color: tint }]}>{isSealed ? 'Sealed' : 'Opened'}</Text>
+                                        </View>
                                     </View>
                                 </View>
 
+                                {/* Members strip (shared capsules) */}
                                 {capsule.is_shared && (
-                                    <View style={[styles.participantSection, { backgroundColor: tint + '10', borderColor: tint + '22' }]}>
-                                        <View style={styles.participantAvatars}>
-                                            <TouchableOpacity activeOpacity={0.8} onPress={() => navigation.navigate('UserProfile', { targetUserId: capsule.owner_id })}>
-                                                <Image source={{ uri: capsule.profiles?.avatar_url }} style={styles.memberAvatarCircle} />
+                                    <View style={[s.membersStrip, { borderColor: tint + '22', backgroundColor: tint + '08' }]}>
+                                        <View style={s.membersAvatars}>
+                                            <TouchableOpacity onPress={() => navigation.navigate('UserProfile', { targetUserId: capsule.owner_id })}>
+                                                <Image source={{ uri: capsule.profiles?.avatar_url }} style={s.memberAvatar} />
                                             </TouchableOpacity>
                                             {acceptedMembers.map((m: any, i: number) => (
-                                                <TouchableOpacity 
-                                                    key={i} 
-                                                    activeOpacity={0.8}
-                                                    onPress={() => handleFollowToggle(m.id, m.isFollowed, (val) => {
-                                                        setAcceptedMembers(prev => prev.map(member => member.id === m.id ? { ...member, isFollowed: val } : member));
-                                                    })}
+                                                <TouchableOpacity key={i} style={{ marginLeft: -8 }}
+                                                    onPress={() => handleFollowToggle(m.id, m.isFollowed, v => setAcceptedMembers(p => p.map(x => x.id === m.id ? { ...x, isFollowed: v } : x)))}
                                                     onLongPress={() => navigation.navigate('UserProfile', { targetUserId: m.id })}
                                                 >
-                                                    <Image source={{ uri: m.avatar_url }} style={[styles.memberAvatarCircle, { marginLeft: -8 }, m.isFollowed && { borderColor: Colors.primary }]} />
+                                                    <Image source={{ uri: m.avatar_url }} style={[s.memberAvatar, m.isFollowed && { borderColor: Colors.primary }]} />
                                                 </TouchableOpacity>
                                             ))}
                                             {hasWaiting && (
-                                                <View style={[styles.waitingCircle, { marginLeft: -8 }]}>
+                                                <View style={[s.memberAvatar, { marginLeft: -8, backgroundColor: Colors.cardAlt, alignItems: 'center', justifyContent: 'center' }]}>
                                                     <Ionicons name="ellipsis-horizontal" size={10} color={Colors.textMuted} />
                                                 </View>
                                             )}
                                         </View>
-                                        <Text style={styles.participantText}>{t('common.members_count', { count: totalMembers })}</Text>
+                                        <Text style={s.membersText}>{t('common.members_count', { count: totalMembers })}</Text>
                                     </View>
                                 )}
-                                <View style={[styles.detailTypeBadge, { backgroundColor: tint + '15' }]}>
-                                    <Ionicons name={(capsule.type === 'instacap' ? 'camera' : capsule.type === 'eventcap' ? 'calendar' : 'time') as any} size={14} color={tint} />
-                                    <Text style={[styles.detailTypeLabel, { color: tint }]}>
-                                        {capsule.type === 'instacap' ? 'Insta' : capsule.type === 'eventcap' ? 'Event' : 'Legacy'}
-                                    </Text>
-                                </View>
 
-                                {!isOpening && isSealed ? (
-                                    <View style={styles.sealedInfo}>
+                                {/* EventCap info */}
+                                {capsule?.type === 'eventcap' && (
+                                    <View style={[s.eventBox, { borderColor: tint + '44', backgroundColor: tint + '0C' }]}>
+                                        <Ionicons name="earth" size={20} color={tint} />
+                                        <View style={{ flex: 1 }}>
+                                            <Text style={[s.eventTitle, { color: tint }]}>Pioneers Event</Text>
+                                            <Text style={s.eventDesc}>All capsules open simultaneously worldwide when the event ends.</Text>
+                                        </View>
+                                    </View>
+                                )}
+
+                                {/* CTA: open / countdown */}
+                                {!isOpening && isSealed && (
+                                    <View style={s.ctaSection}>
                                         {canBeOpened ? (
-                                            <View style={{ alignItems: 'center' }}>
+                                            <View style={{ alignItems: 'center', width: '100%' }}>
                                                 <TouchableOpacity
-                                                    style={[styles.openNowBtn, hasRequestedOpen && { opacity: 0.8 }, { shadowColor: tint }]}
+                                                    style={[s.openBtn, { shadowColor: tint }]}
                                                     activeOpacity={0.85}
                                                     onPress={handleRequestOpen}
                                                     disabled={hasRequestedOpen}
                                                 >
-                                                     <LinearGradient colors={[tint, tint + 'cc']} style={styles.openNowGrad}>
-                                                         <Ionicons name="sparkles" size={16} color="#fff" style={{ marginRight: 8 }} />
-                                                         <Text style={styles.openNowText}>
-                                                             {hasRequestedOpen
-                                                                 ? t('detail.awaiting_others', { current: reqCount, total: totalMembers })
-                                                                 : t('detail.unseal_capsule')}
-                                                         </Text>
-                                                     </LinearGradient>
-                                                 </TouchableOpacity>
-                                                 {reqCount < totalMembers && (
-                                                     <Text style={styles.requestStatusHint}>
-                                                         {t('detail.approval_needed', { current: reqCount, total: totalMembers })}
-                                                     </Text>
-                                                 )}
-                                                {isMember && (
-                                                    <TouchableOpacity
-                                                        style={[styles.addBtnSmall, { backgroundColor: tint + '15', marginTop: 15 }]}
-                                                        activeOpacity={0.7}
-                                                        onPress={() => navigation.navigate('CreateSelection', { capsuleId: capsule.id })}
-                                                    >
-                                                        <Ionicons name="add-circle" size={18} color={tint} />
-                                                        <Text style={[styles.addBtnTextSmall, { color: tint }]}>Add Content</Text>
-                                                    </TouchableOpacity>
-                                                )}
+                                                    <LinearGradient colors={[tint, tint + 'CC']} style={s.openBtnGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+                                                        <Ionicons name="sparkles" size={15} color="#fff" />
+                                                        <Text style={s.openBtnText}>
+                                                            {hasRequestedOpen ? t('detail.awaiting_others', { current: reqCount, total: totalMembers }) : t('detail.unseal_capsule')}
+                                                        </Text>
+                                                    </LinearGradient>
+                                                </TouchableOpacity>
+                                                {reqCount < totalMembers && <Text style={s.approvalHint}>{t('detail.approval_needed', { current: reqCount, total: totalMembers })}</Text>}
                                             </View>
                                         ) : (
-                                            <View style={styles.badgeRow}>
-                                                <View style={styles.lockedBadge}>
-                                                    <Ionicons name="lock-closed" size={14} color={Colors.textMuted} />
-                                                    <LiveTimer date={capsule.opens_at} style={styles.lockedText} />
-                                                </View>
-                                                {isMember && (
-                                                     <TouchableOpacity style={[styles.addBtnSmall, { backgroundColor: tint + '15' }]} activeOpacity={0.7} onPress={() => navigation.navigate('CreateSelection', { capsuleId: capsule.id })}>
-                                                         <Ionicons name="add-circle" size={18} color={tint} />
-                                                         <Text style={[styles.addBtnTextSmall, { color: tint }]}>{t('create.add_content')}</Text>
-                                                     </TouchableOpacity>
-                                                )}
+                                            /* ── Countdown — minimalista, sin borde, solo texto + icono ── */
+                                            <View style={s.countdownRow}>
+                                                <Ionicons name="time-outline" size={13} color={Colors.textMuted} />
+                                                <LiveTimer date={capsule.opens_at} style={s.countdownText} />
                                             </View>
                                         )}
-                                    </View>
-                                ) : null}
-
-                                {capsule?.type === 'eventcap' && (
-                                    <View style={[styles.eventInfoBox, { borderColor: tint + '44', backgroundColor: tint + '11' }]}>
-                                        <Ionicons name="earth" size={24} color={tint} style={{ marginBottom: 4 }} />
-                                        <Text style={[styles.eventInfoTitle, { color: tint }]}>Pioneers Event</Text>
-                                        <Text style={styles.eventInfoText}>
-                                            This capsule is part of a global synchronized event. All participant capsules will unlock simultaneously worldwide.
-                                        </Text>
+                                        {/* Add content */}
+                                        {isMember && (
+                                            <TouchableOpacity
+                                                style={s.addContentBtn}
+                                                activeOpacity={0.75}
+                                                onPress={() => navigation.navigate('CreateSelection', { capsuleId: capsule.id })}
+                                            >
+                                                <LinearGradient
+                                                    colors={[tint + 'FF', tint + 'DD']}
+                                                    style={s.addContentGrad}
+                                                    start={{ x: 0, y: 0 }}
+                                                    end={{ x: 1, y: 1 }}
+                                                >
+                                                    <Ionicons name="add" size={15} color="#fff" />
+                                                    <Text style={s.addContentText}>{t('create.add_content')}</Text>
+                                                </LinearGradient>
+                                            </TouchableOpacity>
+                                        )}
                                     </View>
                                 )}
                             </View>
                         );
 
+                        // ── CONTENT SECTION ───────────────────────────────
                         if (item === 'content') return (
-                            <View style={[styles.contentSection, !isSealed && { marginTop: 0 }]}>
-                                {isSealed ? (
-                                    <>
-                                        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll} contentContainerStyle={styles.filterContent}>
-                                            {['all', 'image', 'video', 'note', 'audio'].map((type) => (
-                                                <TouchableOpacity 
-                                                    key={type} 
-                                                    style={[styles.filterChip, filterType === type && styles.filterChipActive, filterType === type && { backgroundColor: tint, borderColor: tint }]}
-                                                    onPress={() => { setFilterType(type); setPage(1); }}
-                                                >
-                                                    <Ionicons
-                                                        name={
-                                                            type === 'image' ? 'image-outline' :
-                                                            type === 'video' ? 'videocam-outline' :
-                                                            type === 'note' ? 'document-text-outline' :
-                                                            type === 'audio' ? 'mic-outline' : 'apps-outline'
-                                                        }
-                                                        size={14}
-                                                        color={filterType === type ? '#fff' : Colors.textPrimary}
-                                                    />
-                                                    <Text style={[styles.filterChipText, filterType === type && { color: '#fff' }]}>
-                                                        {type.charAt(0).toUpperCase() + type.slice(1)}
-                                                    </Text>
-                                                </TouchableOpacity>
-                                            ))}
-                                            <TouchableOpacity 
-                                                style={styles.filterChip}
-                                                onPress={() => { setFilterSort(filterSort === 'newest' ? 'oldest' : 'newest'); setPage(1); }}
-                                            >
-                                                <Ionicons name={filterSort === 'newest' ? "arrow-down" : "arrow-up"} size={14} color={Colors.textPrimary} />
-                                                <Text style={styles.filterChipText}>{filterSort === 'newest' ? 'Newest' : 'Oldest'}</Text>
-                                            </TouchableOpacity>
-                                        </ScrollView>
+                            <View style={s.contentSection}>
+                                <FilterBar />
 
+                                {/* Sealed vault preview */}
+                                {isSealed && filteredData.total > 0 && (
+                                    <>
                                         <FlatList
-                                            horizontal
-                                            pagingEnabled
-                                            showsHorizontalScrollIndicator={false}
-                                            data={filteredAndPaginatedData.pagedItems}
-                                            keyExtractor={(_, index) => index.toString()}
+                                            horizontal pagingEnabled showsHorizontalScrollIndicator={false}
+                                            data={filteredData.pagedAll}
+                                            keyExtractor={(_, i) => i.toString()}
                                             renderItem={({ item: pageItems }) => (
                                                 <View style={{ width: width - SECTION_PAD }}>
-                                                    <View style={[styles.grid, { paddingHorizontal: 0 }]}>
-                                                        {pageItems.map(item => (
-                                                            <View key={item.id} style={styles.gridItemContainer}>
-                                                                <View style={styles.gridItemPlaceholder}>
-                                                                    {item.media_type === 'note' ? (
-                                                                        <View style={[StyleSheet.absoluteFill, { backgroundColor: '#fffdf2', padding: 14, justifyContent: 'center', alignItems: 'center' }]}>
-                                                                            <View style={{ position: 'absolute', left: 4, top: 0, bottom: 0, width: 2, borderLeftWidth: 1, borderColor: 'rgba(255,0,0,0.15)', borderStyle: 'dotted' }} />
-                                                                            <Text style={{ fontSize: 22, color: '#000', opacity: 0.38, fontFamily: Fonts.bold, fontStyle: 'italic', letterSpacing: 0.5, lineHeight: 28, textAlign: 'center' }} numberOfLines={7}>
-                                                                                Nota Secreta{"\n"}Guardada{"\n"}Para Siempre{"\n"}Memorias{"\n"}Del Pasado
-                                                                            </Text>
-                                                                        </View>
-                                                                    ) : item.media_type === 'audio' ? (
-                                                                        <View style={[StyleSheet.absoluteFill, { backgroundColor: '#f9f5ff', justifyContent: 'center', alignItems: 'center' }]}>
-                                                                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, opacity: 0.95 }}>
-                                                                                {[22, 52, 36, 78, 45, 92, 32, 60, 26, 40].map((h, i) => (
-                                                                                    <View key={i} style={{ width: 7, height: h, backgroundColor: '#a66eff', borderRadius: 3.5 }} />
-                                                                                ))}
-                                                                            </View>
-                                                                        </View>
-                                                                    ) : (item.media_url || item.thumbnail_url) ? (
-                                                                        <Image source={{ uri: item.thumbnail_url || item.media_url }} style={StyleSheet.absoluteFill} blurRadius={25} />
-                                                                    ) : null}
-
-                                                                    <BlurView intensity={['note', 'audio'].includes(item.media_type) ? 28 : 40} tint="light" style={StyleSheet.absoluteFill} />
-                                                                    
-                                                                    {item.media_type === 'note' && (
-                                                                        <View style={{ position: 'absolute', top: 8, right: 8, zIndex: 10, backgroundColor: '#fff', padding: 5, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(0,0,0,0.06)', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 }}>
-                                                                            <Ionicons name="document-text" size={13} color={tint} />
-                                                                        </View>
+                                                    <View style={s.grid}>
+                                                        {pageItems.map((pi: any) => (
+                                                            <View key={pi.id} style={s.gridCell}>
+                                                                <View style={s.gridCellInner}>
+                                                                    {/* Blurred preview */}
+                                                                    {(pi.media_url || pi.thumbnail_url) && (
+                                                                        <Image source={{ uri: pi.thumbnail_url || pi.media_url }} style={StyleSheet.absoluteFill} blurRadius={28} />
                                                                     )}
-
-                                                                    {item.media_type === 'audio' && (
-                                                                        <View style={{ position: 'absolute', top: 8, right: 8, zIndex: 10, backgroundColor: '#fff', padding: 5, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(0,0,0,0.06)', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 }}>
-                                                                            <Ionicons name="mic" size={13} color={tint} />
-                                                                        </View>
-                                                                    )}
-                                                                    
-                                                                    {item.media_type === 'video' && (
-                                                                        <View style={[styles.gridPlayIcon, { backgroundColor: 'rgba(255,255,255,0.3)' }]}>
-                                                                            <Ionicons name="play" size={16} color="rgba(255,255,255,0.9)" />
-                                                                        </View>
-                                                                    )}
-
-                                                                    <View style={{ position: 'absolute', width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}>
-                                                                        <Ionicons name="lock-closed-outline" size={20} color="rgba(0,0,0,0.5)" />
+                                                                    <BlurView intensity={40} tint="light" style={StyleSheet.absoluteFill} />
+                                                                    {/* Type icon */}
+                                                                    <View style={s.cellTypeIcon}>
+                                                                        <Ionicons name={pi.media_type === 'video' ? 'videocam' : pi.media_type === 'note' ? 'document-text' : pi.media_type === 'audio' ? 'mic' : 'image'} size={13} color={tint} />
                                                                     </View>
+                                                                    <Ionicons name="lock-closed-outline" size={20} color="rgba(0,0,0,0.4)" />
                                                                 </View>
-                                                                {item.caption && item.caption.replace(/!!b:\w+/, '').trim().length > 0 && (
-                                                                    <View style={{ height: 32, marginTop: 6, justifyContent: 'center' }}>
-                                                                            <Text style={[styles.gridItemCaption, { marginTop: 0 }]} numberOfLines={2}>
-                                                                                {item.caption.replace(/!!b:\w+/, '').trim()}
-                                                                            </Text>
-                                                                    </View>
-                                                                )}
+                                                                {pi.caption && pi.caption.replace(/!!b:\w+/, '').trim() ? (
+                                                                    <Text style={s.cellCaption} numberOfLines={2}>{pi.caption.replace(/!!b:\w+/, '').trim()}</Text>
+                                                                ) : null}
                                                             </View>
                                                         ))}
                                                     </View>
                                                 </View>
                                             )}
                                         />
-                                        
                                     </>
-                                ) : filteredAndPaginatedData.totalItems === 0 ? (
-                                    <View style={styles.emptyGridContainer}>
-                                        <View style={styles.sectionHeader}>
-                                            <Text style={styles.sectionTitle}>Your memories will live here</Text>
-                                            <Text style={styles.itemCount}>0 items</Text>
-                                        </View>
-                                        <View style={styles.grid}>
+                                )}
+
+                                {/* Empty sealed state */}
+                                {isSealed && filteredData.total === 0 && (
+                                    <View style={s.emptyState}>
+                                        <View style={s.grid}>
                                             {[...Array(6)].map((_, i) => (
-                                                <View key={i} style={[styles.gridItemPlaceholder, { backgroundColor: tint + '09', borderWidth: 1, borderColor: tint + '20', borderStyle: 'dashed' }]}>
-                                                    <Ionicons name="add" size={22} color={tint + '55'} />
+                                                <View key={i} style={[s.gridCellInner, { borderWidth: 1.5, borderColor: tint + '28', borderStyle: 'dashed', backgroundColor: tint + '06' }]}>
+                                                    <Ionicons name="add" size={20} color={tint + '50'} />
                                                 </View>
                                             ))}
                                         </View>
-                                        <Text style={{ textAlign: 'center', color: Colors.textMuted, fontSize: 12, fontFamily: Fonts.medium, marginTop: 12, marginBottom: 8 }}>
-                                            Add your first memory to this capsule
-                                        </Text>
+                                        <Text style={s.emptyText}>Your memories will live here</Text>
                                     </View>
-                                ) : (
-                                    <View>
-                                        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll} contentContainerStyle={styles.filterContent}>
-                                            {['all', 'image', 'video', 'note', 'audio'].map((type) => (
-                                                <TouchableOpacity 
-                                                    key={type} 
-                                                    style={[styles.filterChip, filterType === type && styles.filterChipActive, filterType === type && { backgroundColor: tint }]}
-                                                    onPress={() => { setFilterType(type); setPage(1); }}
-                                                >
-                                                    <Ionicons
-                                                        name={
-                                                            type === 'image' ? 'image-outline' :
-                                                            type === 'video' ? 'videocam-outline' :
-                                                            type === 'note' ? 'document-text-outline' :
-                                                            type === 'audio' ? 'mic-outline' : 'apps-outline'
-                                                        }
-                                                        size={14}
-                                                        color={filterType === type ? '#fff' : Colors.textPrimary}
-                                                    />
-                                                    <Text style={[styles.filterChipText, filterType === type && { color: '#fff' }]}>
-                                                        {type.charAt(0).toUpperCase() + type.slice(1)}
-                                                    </Text>
-                                                </TouchableOpacity>
-                                            ))}
-                                            <TouchableOpacity 
-                                                style={styles.filterChip}
-                                                onPress={() => { setFilterSort(filterSort === 'newest' ? 'oldest' : 'newest'); setPage(1); }}
-                                            >
-                                                <Ionicons name={filterSort === 'newest' ? "arrow-down" : "arrow-up"} size={14} color={Colors.textPrimary} />
-                                                <Text style={styles.filterChipText}>{filterSort === 'newest' ? 'Newest' : 'Oldest'}</Text>
-                                            </TouchableOpacity>
-                                        </ScrollView>
+                                )}
 
-                                        {Object.keys(displayGroups).map(month => (
-                                            <View key={month} style={styles.monthSection}>
-                                                <Text style={styles.monthTitle}>{month}</Text>
-                                                <View style={styles.grid}>
-                                                    {displayGroups[month].map((entry: any) => {
-                                                        const isBatch = Array.isArray(entry);
-                                                        const item = isBatch ? entry[0] : entry;
-                                                        return (
-                                                            <View key={item.id} style={styles.gridItemContainer}>
-                                                                <TouchableOpacity
-                                                                    style={styles.gridItem}
-                                                                    activeOpacity={0.8}
-                                                                    onPress={() => item.media_type === 'audio' ? toggleAudio(item.media_url) : openViewer(items.indexOf(item))}
-                                                                    onLongPress={() => handleReportItem(item.id)}
-                                                                >
-                                                                    {item.media_type === 'audio' ? (
-                                                                        <View style={[styles.gridAudioCell, { backgroundColor: '#f0e8ff' }]}>
-                                                                            <View style={styles.audioGridIcon}>
-                                                                                <Ionicons name="mic" size={14} color="#a66eff" />
-                                                                            </View>
-                                                                            <View style={styles.audioWaveRow}>
-                                                                                {[14, 22, 18, 28, 20, 26, 15, 10, 24, 16].map((h, i) => (
-                                                                                    <View key={i} style={{ width: 3.5, height: playingAudio === item.media_url ? h : h * 0.6, backgroundColor: 'rgba(255,255,255,0.85)', borderRadius: 2 }} />
-                                                                                ))}
-                                                                            </View>
-                                                                            <View style={styles.audioDurationLabel}>
-                                                                                <Text style={styles.audioDurationText}>{item.content || '--:--'}</Text>
-                                                                            </View>
-                                                                        </View>
-                                                                    ) : item.media_type === 'note' ? (
-                                                                        <View style={styles.gridNoteCell}>
-                                                                            <View style={styles.noteIndicator}>
-                                                                                <Ionicons name="document-text" size={14} color="rgba(0,0,0,0.4)" />
-                                                                            </View>
-                                                                            <Text style={styles.noteSnippet} numberOfLines={ITEM_HEIGHT > 120 ? 8 : 5}>
-                                                                                {item.content}
-                                                                            </Text>
-                                                                            <BlurView intensity={Platform.OS === 'ios' ? 18 : 8} tint="light" style={[StyleSheet.absoluteFill, { borderRadius: 8 }]} />
-                                                                            <View style={StyleSheet.absoluteFill} pointerEvents="none">
-                                                                                <View style={styles.noteIndicator}>
-                                                                                    <Ionicons name="document-text" size={14} color="rgba(0,0,0,0.35)" />
-                                                                                </View>
-                                                                            </View>
-                                                                        </View>
-                                                                    ) : (
-                                                                        <>
-                                                                            <Image source={{ uri: (item.media_type === 'video' ? (item.thumbnail_url || item.media_url) : item.media_url) || 'https://via.placeholder.com/150' }} style={styles.gridImage} />
-                                                                            
-                                                                            {isBatch && (
-                                                                                <View style={styles.batchBadge}>
-                                                                                    <Ionicons name="copy" size={12} color="#fff" />
-                                                                                    <Text style={styles.batchCount}>{entry.length}</Text>
-                                                                                </View>
-                                                                            )}
+                                {/* Opened: grouped by month */}
+                                {!isSealed && filteredData.total === 0 && (
+                                    <View style={s.emptyState}>
+                                        <Ionicons name="images-outline" size={36} color={Colors.textMuted} style={{ marginBottom: 8 }} />
+                                        <Text style={s.emptyText}>No items yet</Text>
+                                    </View>
+                                )}
 
-                                                                            {item.media_type === 'video' && (
-                                                                                <>
-                                                                                    <View style={styles.gridPlayIcon}>
-                                                                                        <Ionicons name="play" size={16} color="#fff" />
-                                                                                    </View>
-                                                                                    {item.content && (
-                                                                                        <View style={styles.gridDurationBadge}>
-                                                                                            <Text style={styles.gridDurationText}>{item.content}</Text>
-                                                                                        </View>
-                                                                                    )}
-                                                                                </>
-                                                                            )}
-                                                                        </>
-                                                                    )}
-                                                                    {item.profiles?.avatar_url && (
-                                                                        <Image source={{ uri: item.profiles.avatar_url }} style={styles.itemAvatar} />
-                                                                    )}
-                                                                </TouchableOpacity>
-                                                                {item.caption && item.caption.replace(/!!b:\w+/, '').trim().length > 0 && (
-                                                                    <View style={{ height: 32, marginTop: 6, justifyContent: 'center' }}>
-                                                                        <Text style={[styles.gridItemCaption, { marginTop: 0 }]} numberOfLines={2}>
-                                                                            {item.caption.replace(/!!b:\w+/, '').trim()}
-                                                                        </Text>
+                                {!isSealed && filteredData.total > 0 && Object.keys(displayGroups).map(month => (
+                                    <View key={month} style={s.monthGroup}>
+                                        <Text style={s.monthLabel}>{month}</Text>
+                                        <View style={s.grid}>
+                                            {displayGroups[month].map((entry: any) => {
+                                                const isBatch = Array.isArray(entry);
+                                                const pi = isBatch ? entry[0] : entry;
+                                                return (
+                                                    <View key={pi.id} style={s.gridCell}>
+                                                        <TouchableOpacity
+                                                            style={s.gridCellInner}
+                                                            activeOpacity={0.8}
+                                                            onPress={() => pi.media_type === 'audio' ? toggleAudio(pi.media_url) : openViewer(items.indexOf(pi))}
+                                                            onLongPress={() => handleReportItem(pi.id)}
+                                                        >
+                                                            {/* ── AUDIO GRID CELL (mejorado) ── */}
+                                                            {pi.media_type === 'audio' ? (
+                                                                <View style={[StyleSheet.absoluteFill, { overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }]}>
+                                                                    {/* Fondo con gradiente del tint */}
+                                                                    <LinearGradient
+                                                                        colors={[tint + 'FF', tint + 'BB']}
+                                                                        style={StyleSheet.absoluteFill}
+                                                                        start={{ x: 0, y: 0 }}
+                                                                        end={{ x: 1, y: 1 }}
+                                                                    />
+                                                                    {/* Círculo decorativo de fondo */}
+                                                                    <View style={{
+                                                                        position: 'absolute',
+                                                                        width: ITEM_SIZE * 1.5,
+                                                                        height: ITEM_SIZE * 1.5,
+                                                                        borderRadius: ITEM_SIZE * 0.75,
+                                                                        backgroundColor: 'rgba(255,255,255,0.07)',
+                                                                        top: -ITEM_SIZE * 0.3,
+                                                                        left: -ITEM_SIZE * 0.25,
+                                                                    }} />
+                                                                    {/* Onda de audio estilo sinusoide moderno */}
+                                                                    <View style={{
+                                                                        flexDirection: 'row',
+                                                                        alignItems: 'center',
+                                                                        gap: 2.5,
+                                                                        paddingHorizontal: 10,
+                                                                        zIndex: 2,
+                                                                    }}>
+                                                                        {WAVEFORM_BARS.map((h, i) => (
+                                                                            <View key={i} style={{
+                                                                                width: 2.5,
+                                                                                height: playingAudio === pi.media_url ? h : Math.max(h * 0.28, 3),
+                                                                                borderRadius: 2,
+                                                                                backgroundColor: 'rgba(255,255,255,0.92)',
+                                                                            }} />
+                                                                        ))}
                                                                     </View>
-                                                                )}
-                                                            </View>
-                                                        );
-                                                    })}
-                                                </View>
-                                            </View>
-                                        ))}
+                                                                    {/* Blur oscuro encima (fallback en Android para rendimiento) */}
+                                                                    {Platform.OS === 'ios' ? (
+                                                                        <BlurView intensity={18} tint="dark" style={StyleSheet.absoluteFill} />
+                                                                    ) : (
+                                                                        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.45)' }]} />
+                                                                    )}
+                                                                    {/* Icono de micrófono centrado, encima del blur */}
+                                                                    <View style={{
+                                                                        position: 'absolute',
+                                                                        width: 30, height: 30, borderRadius: 15,
+                                                                        backgroundColor: 'rgba(255,255,255,0.18)',
+                                                                        alignItems: 'center', justifyContent: 'center',
+                                                                        borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)',
+                                                                        zIndex: 3,
+                                                                    }}>
+                                                                        <Ionicons
+                                                                            name={playingAudio === pi.media_url ? 'pause' : 'mic'}
+                                                                            size={13}
+                                                                            color="#fff"
+                                                                        />
+                                                                    </View>
+                                                                </View>
 
-                                        {filteredAndPaginatedData.totalPages > 1 && (
-                                            <View style={styles.paginationRow}>
-                                                <TouchableOpacity 
-                                                    disabled={page === 1}
-                                                    onPress={() => setPage(page - 1)}
-                                                    style={[styles.pageBtn, page === 1 && { opacity: 0.3 }]}
-                                                >
-                                                    <Ionicons name="chevron-back" size={20} color={tint} />
-                                                </TouchableOpacity>
-                                                <Text style={styles.pageText}>{page} / {filteredAndPaginatedData.totalPages}</Text>
-                                                <TouchableOpacity 
-                                                    disabled={page === filteredAndPaginatedData.totalPages}
-                                                    onPress={() => setPage(page + 1)}
-                                                    style={[styles.pageBtn, page === filteredAndPaginatedData.totalPages && { opacity: 0.3 }]}
-                                                >
-                                                    <Ionicons name="chevron-forward" size={20} color={tint} />
-                                                </TouchableOpacity>
-                                            </View>
-                                        )}
+                                                                /* ── NOTE GRID CELL (mejorado) ── */
+                                                            ) : pi.media_type === 'note' ? (
+                                                                <View style={[StyleSheet.absoluteFill, {
+                                                                    backgroundColor: '#f8f7f4',
+                                                                    alignItems: 'center',
+                                                                    justifyContent: 'center',
+                                                                    overflow: 'hidden',
+                                                                }]}>
+                                                                    {/* Hoja blanca con sombra — capa base */}
+                                                                    <View style={{
+                                                                        position: 'absolute',
+                                                                        top: 7, left: 7, right: 7, bottom: 7,
+                                                                        backgroundColor: '#ffffff',
+                                                                        borderRadius: 7,
+                                                                    }} />
+                                                                    {/* Líneas de cuaderno — debajo del blur */}
+                                                                    {[0.3, 0.46, 0.62, 0.78].map((pos, idx) => (
+                                                                        <View key={idx} style={{
+                                                                            position: 'absolute',
+                                                                            left: 16, right: 16,
+                                                                            top: `${pos * 100}%` as any,
+                                                                            height: 0.8,
+                                                                            backgroundColor: '#ddd8cf',
+                                                                        }} />
+                                                                    ))}
+                                                                    {/* TEXTO FANTASMA — debajo del blur para que se vea difuminado */}
+                                                                    <Text
+                                                                        style={{
+                                                                            position: 'absolute',
+                                                                            fontSize: 22,
+                                                                            fontFamily: Fonts.bold,
+                                                                            color: '#111111',
+                                                                            textAlign: 'center',
+                                                                            paddingHorizontal: 12,
+                                                                            lineHeight: 28,
+                                                                            letterSpacing: -0.3,
+                                                                        }}
+                                                                        numberOfLines={4}
+                                                                    >
+                                                                        {pi.content}
+                                                                    </Text>
+                                                                    {/* BlurView ENCIMA del texto — lo desenfoca */}
+                                                                    {Platform.OS === 'ios' ? (
+                                                                        <BlurView intensity={16} tint="light" style={StyleSheet.absoluteFill} />
+                                                                    ) : (
+                                                                        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255,255,255,0.7)' }]} />
+                                                                    )}
+                                                                    {/* Icono encima del blur */}
+                                                                    <View style={{
+                                                                        position: 'absolute',
+                                                                        bottom: 8, right: 9,
+                                                                        zIndex: 2,
+                                                                    }}>
+                                                                        <Ionicons name="document-text-outline" size={12} color={tint} style={{ opacity: 0.7 }} />
+                                                                    </View>
+                                                                </View>
+
+                                                            ) : (
+                                                                <Image source={{ uri: pi.thumbnail_url || pi.media_url || 'https://via.placeholder.com/150' }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                                                            )}
+
+                                                            {/* Overlays comunes */}
+                                                            {pi.media_type === 'video' && <View style={s.playOverlay}><Ionicons name="play" size={15} color="#fff" /></View>}
+                                                            {isBatch && <View style={s.batchBadge}><Ionicons name="copy" size={10} color="#fff" /><Text style={s.batchCount}>{entry.length}</Text></View>}
+                                                            {pi.profiles?.avatar_url && <Image source={{ uri: pi.profiles.avatar_url }} style={s.itemAvatar} />}
+                                                        </TouchableOpacity>
+                                                        {pi.caption && pi.caption.replace(/!!b:\w+/, '').trim() ? (
+                                                            <Text style={s.cellCaption} numberOfLines={2}>{pi.caption.replace(/!!b:\w+/, '').trim()}</Text>
+                                                        ) : null}
+                                                    </View>
+                                                );
+                                            })}
+                                        </View>
+                                    </View>
+                                ))}
+
+                                {/* Pagination */}
+                                {filteredData.totalPages > 1 && (
+                                    <View style={s.pagination}>
+                                        <TouchableOpacity style={[s.pageBtn, page === 1 && { opacity: 0.3 }]} onPress={() => setPage(p => p - 1)} disabled={page === 1}>
+                                            <Ionicons name="chevron-back" size={18} color={tint} />
+                                        </TouchableOpacity>
+                                        <Text style={s.pageLabel}>{page} / {filteredData.totalPages}</Text>
+                                        <TouchableOpacity style={[s.pageBtn, page === filteredData.totalPages && { opacity: 0.3 }]} onPress={() => setPage(p => p + 1)} disabled={page === filteredData.totalPages}>
+                                            <Ionicons name="chevron-forward" size={18} color={tint} />
+                                        </TouchableOpacity>
                                     </View>
                                 )}
                             </View>
                         );
 
+                        // ── LIVE CHAT ─────────────────────────────────────
                         if (item === 'chat' && showChat) return <LiveChat capsuleId={capsuleId} tint={tint} />;
 
+                        // ── SOCIAL SECTION ────────────────────────────────
                         if (item === 'social') return (
-                            <View style={styles.socialSection}>
-                                <View style={styles.interactionRow}>
-                                    <TouchableOpacity style={styles.actionBtn} activeOpacity={0.7} onPress={handleLike}>
-                                        <Ionicons name={isLiked ? "heart" : "heart-outline"} size={26} color={isLiked ? "#ff4757" : Colors.textPrimary} />
-                                        <Text style={styles.actionCount}>{likeCount}</Text>
+                            <View style={s.socialSection}>
+                                {/* Like + comment counts */}
+                                <View style={s.actionRow}>
+                                    <TouchableOpacity style={s.actionBtn} activeOpacity={0.7} onPress={handleLike}>
+                                        <Animated.View>
+                                            <Ionicons name={isLiked ? 'heart' : 'heart-outline'} size={24} color={isLiked ? '#F43F5E' : Colors.textPrimary} />
+                                        </Animated.View>
+                                        <Text style={[s.actionCount, isLiked && { color: '#F43F5E' }]}>{likeCount}</Text>
                                     </TouchableOpacity>
-                                    <View style={styles.actionBtn}>
-                                        <Ionicons name="chatbubble-outline" size={24} color={Colors.textPrimary} />
-                                        <Text style={styles.actionCount}>{comments.length}</Text>
+                                    <View style={s.actionBtn}>
+                                        <Ionicons name="chatbubble-outline" size={22} color={Colors.textPrimary} />
+                                        <Text style={s.actionCount}>{comments.length}</Text>
                                     </View>
                                 </View>
-                                <View style={styles.commentsList}>
+
+                                {/* Comments */}
+                                <View style={s.commentList}>
                                     {comments.map(c => (
-                                        <View key={c.id} style={[styles.commentCard, highlightedCommentId === c.id && { borderColor: tint, borderLeftWidth: 3 }]}>
-                                            <TouchableOpacity activeOpacity={0.7} onPress={() => navigation.navigate('UserProfile', { targetUserId: c.user_id })}>
-                                                <Image source={{ uri: c.profiles?.avatar_url || 'https://via.placeholder.com/150' }} style={styles.commentAvatar} />
+                                        <View
+                                            key={c.id}
+                                            style={[
+                                                s.commentCard,
+                                                highlightedCommentId === c.id && { borderLeftWidth: 3, borderLeftColor: tint },
+                                            ]}
+                                        >
+                                            <TouchableOpacity onPress={() => navigation.navigate('UserProfile', { targetUserId: c.user_id })}>
+                                                <Image source={{ uri: c.profiles?.avatar_url || 'https://via.placeholder.com/150' }} style={s.commentAvatar} />
                                             </TouchableOpacity>
-                                            <View style={styles.commentBody}>
-                                                <View style={styles.commentHeaderRow}>
-                                                    <TouchableOpacity 
-                                                        style={{ flexDirection: 'row', alignItems: 'center' }}
-                                                        activeOpacity={0.7}
-                                                        onPress={() => navigation.navigate('UserProfile', { targetUserId: c.user_id })}
-                                                    >
-                                                        <Text style={styles.commentUser}>{c.profiles?.display_name || c.profiles?.username}</Text>
-                                                        {c.profiles?.is_verified && <VerifiedBadge size={10} style={{ marginLeft: 2 }} />}
+                                            <View style={s.commentBody}>
+                                                <View style={s.commentHeader}>
+                                                    <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }} onPress={() => navigation.navigate('UserProfile', { targetUserId: c.user_id })}>
+                                                        <Text style={s.commentName}>{c.profiles?.display_name || c.profiles?.username}</Text>
+                                                        {c.profiles?.is_verified && <VerifiedBadge size={10} />}
                                                     </TouchableOpacity>
-                                                    <Text style={styles.commentTime}>{formatTime(c.created_at)}</Text>
+                                                    <Text style={s.commentTime}>{formatTime(c.created_at)}</Text>
                                                 </View>
-                                                <Text style={styles.commentText}>{c.content}</Text>
+                                                <Text style={s.commentText}>{c.content}</Text>
                                             </View>
-                                            <View style={styles.commentActions}>
-                                                <TouchableOpacity activeOpacity={0.7} onPress={() => handleLikeComment(c.id)} style={styles.commentActionBtn}>
-                                                    <Ionicons name={c.myLike ? "heart" : "heart-outline"} size={16} color={c.myLike ? "#ff4757" : Colors.textMuted} />
-                                                    <Text style={[styles.commentActionCount, c.myLike && { color: "#ff4757" }]}>{c.likeCount || 0}</Text>
+                                            <View style={s.commentRight}>
+                                                <TouchableOpacity onPress={() => handleLikeComment(c.id)} style={s.commentLikeBtn}>
+                                                    <Ionicons name={c.myLike ? 'heart' : 'heart-outline'} size={14} color={c.myLike ? '#F43F5E' : Colors.textMuted} />
+                                                    {c.likeCount > 0 && <Text style={[s.commentLikeCount, c.myLike && { color: '#F43F5E' }]}>{c.likeCount}</Text>}
                                                 </TouchableOpacity>
                                                 {(c.user_id === userId || isOwner) && (
-                                                    <TouchableOpacity activeOpacity={0.7} onPress={() => handleDeleteComment(c.id)} style={styles.deleteCommentBtn}>
-                                                        <Ionicons name="trash-outline" size={16} color={Colors.textMuted} />
+                                                    <TouchableOpacity onPress={() => handleDeleteComment(c.id)} style={{ padding: 4 }}>
+                                                        <Ionicons name="trash-outline" size={13} color={Colors.textMuted} />
                                                     </TouchableOpacity>
                                                 )}
                                             </View>
@@ -1261,84 +976,114 @@ export default function CapsuleDetailScreen() {
 
                         return null;
                     }}
-                    showsVerticalScrollIndicator={false}
-                    contentContainerStyle={styles.scrollContent}
-                    keyboardShouldPersistTaps="handled"
                 />
 
-                {/* Comment Bar */}
-                {showChat ? (
-                    <View style={[styles.commentBar, { paddingBottom: insets.bottom + 10 }]}>
-                        <Text style={styles.chatInfo}>Live chat is active above ↑</Text>
-                    </View>
-                ) : (
-                    <View style={[styles.commentBar, { paddingBottom: insets.bottom + 10 }]}>
+                {/* ── Comment input bar ──────────────────────────────────── */}
+                <View style={[s.commentBar, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+                    {showChat ? (
+                        <Text style={s.chatBanner}>Live chat active above ↑</Text>
+                    ) : (<>
                         <TextInput
-                            style={styles.commentInput}
-                            placeholder="Add a comment..."
+                            style={s.commentInput}
+                            placeholder={t('detail.add_comment_placeholder') || 'Add a comment...'}
+                            placeholderTextColor={Colors.textMuted}
                             value={comment}
                             onChangeText={setComment}
                             multiline
+                            selectionColor={tint}
                         />
-                        <TouchableOpacity activeOpacity={0.7} onPress={handleSendComment} disabled={!comment.trim()} style={{ marginBottom: 10 }}>
-                            <Text style={[styles.postBtn, !comment.trim() && { opacity: 0.5 }]}>Post</Text>
+                        <TouchableOpacity onPress={handleSendComment} disabled={!comment.trim()} style={{ marginBottom: 2 }}>
+                            <Text style={[s.postBtn, { color: tint }, !comment.trim() && { opacity: 0.4 }]}>Post</Text>
                         </TouchableOpacity>
-                    </View>
-                )}
+                    </>)}
+                </View>
             </KeyboardAvoidingView>
 
+            {/* ── Options modal ──────────────────────────────────────────── */}
+            <Modal visible={showOptions} transparent animationType="fade">
+                <Pressable style={s.overlay} onPress={() => setShowOptions(false)}>
+                    <View style={s.sheet}>
+                        <View style={s.sheetHandle} />
+                        <Text style={s.sheetTitle}>{t('detail.options')}</Text>
+
+                        {[
+                            { icon: 'qr-code-outline', color: Colors.textPrimary, label: t('detail.view_qr'), onPress: () => { setShowOptions(false); setShowQRModal(true); } },
+                            { icon: 'logo-instagram', color: '#E1306C', label: t('detail.share_instagram'), onPress: () => { setShowOptions(false); navigation.navigate('InstagramShare', { capsule }); } },
+                            ...(!isOwner ? [{ icon: 'alert-circle-outline', color: Colors.textPrimary, label: t('detail.report_capsule'), onPress: handleReportCapsule }] : []),
+                            ...(isOwner ? [{ icon: 'trash-outline', color: Colors.error, label: t('detail.delete_perm'), onPress: handleDeleteCapsule }] : []),
+                        ].map((opt, i) => (
+                            <TouchableOpacity key={i} style={s.sheetItem} onPress={opt.onPress} activeOpacity={0.7}>
+                                <View style={[s.sheetItemIcon, { backgroundColor: (opt.color as string) + '12' }]}>
+                                    <Ionicons name={opt.icon as any} size={18} color={opt.color as string} />
+                                </View>
+                                <Text style={[s.sheetItemText, { color: opt.color as string }]}>{opt.label}</Text>
+                                <Ionicons name="chevron-forward" size={15} color={Colors.textMuted} />
+                            </TouchableOpacity>
+                        ))}
+
+                        <TouchableOpacity style={s.cancelBtn} onPress={() => setShowOptions(false)}>
+                            <Text style={s.cancelBtnText}>{t('common.cancel')}</Text>
+                        </TouchableOpacity>
+                    </View>
+                </Pressable>
+            </Modal>
+
+            {/* ── QR modal ───────────────────────────────────────────────── */}
+            <Modal visible={showQRModal} transparent animationType="fade">
+                <Pressable style={s.overlay} onPress={() => setShowQRModal(false)}>
+                    <View style={s.qrBox}>
+                        <Text style={s.qrTitle}>{t('detail.capsule_qr')}</Text>
+                        <Image source={{ uri: `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=kapsely://capsule/${capsuleId}` }} style={s.qrImg} />
+                        <Text style={s.qrSub}>{t('detail.scan_qr_hint')}</Text>
+                        <TouchableOpacity style={[s.qrBtn, { backgroundColor: tint }]} onPress={() => setShowQRModal(false)}>
+                            <Text style={s.qrBtnText}>{t('common.done')}</Text>
+                        </TouchableOpacity>
+                    </View>
+                </Pressable>
+            </Modal>
+
+            {/* ── Media viewer ───────────────────────────────────────────── */}
             <Modal visible={viewerVisible} transparent animationType="fade">
-                <View style={styles.viewerContainer}>
-                    <TouchableOpacity style={styles.closeViewer} activeOpacity={0.7} onPress={() => setViewerVisible(false)}>
-                        <Ionicons name="close" size={30} color="#fff" />
+                <View style={s.viewer}>
+                    <TouchableOpacity style={s.viewerClose} onPress={() => setViewerVisible(false)}>
+                        <Ionicons name="close" size={28} color="#fff" />
                     </TouchableOpacity>
                     <FlatList
                         data={items}
-                        horizontal
-                        pagingEnabled
+                        horizontal pagingEnabled
                         initialScrollIndex={initialIndex}
-                        getItemLayout={(_, index) => ({ length: width, offset: width * index, index })}
-                        onMomentumScrollEnd={(e) => {
-                            const index = Math.round(e.nativeEvent.contentOffset.x / width);
-                            setActiveViewerIndex(index);
-                        }}
-                        renderItem={({ item, index }) => (
-                             <View style={styles.viewerSlide}>
-                                 {item.media_type === 'note' ? (
-                                     <View style={styles.viewerNoteContainer}>
-                                         <View style={styles.viewerNotePaper}>
-                                             <Ionicons name="document-text-outline" size={40} color="#8d6e63" style={{ marginBottom: 15, opacity: 0.5 }} />
-                                             <Text style={styles.viewerNoteText}>{item.content}</Text>
-                                         </View>
-                                     </View>
-                                 ) : item.media_type === 'audio' ? (
-                                     <View style={[styles.viewerNoteContainer, { backgroundColor: modelTint || Colors.primary }]}>
-                                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, height: 60, marginBottom: 30 }}>
-                                             {[10, 20, 30, 45, 60, 40, 25, 15, 30, 50, 25, 12, 5].map((h, i) => (
-                                                 <View key={i} style={{ width: 6, height: playingAudio === item.media_url ? h : h * 0.4, backgroundColor: 'rgba(255,255,255,0.8)', borderRadius: 3 }} />
-                                             ))}
-                                         </View>
-                                          <TouchableOpacity activeOpacity={0.8} onPress={() => toggleAudio(item.media_url)} style={[styles.recordBtn, { backgroundColor: 'rgba(255,255,255,0.2)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.5)' }]}>
-                                             <Ionicons name={playingAudio === item.media_url ? "pause" : "play"} size={40} color="#fff" style={{ marginLeft: playingAudio === item.media_url ? 0 : 4 }} />
-                                         </TouchableOpacity>
-                                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 24, backgroundColor: 'rgba(0,0,0,0.2)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 }}>
-                                             <Ionicons name="mic" size={14} color="#fff" />
-                                             <Text style={{ color: '#fff', fontSize: 14, fontFamily: Fonts.bold }}>{item.content || 'Voice Note'}</Text>
-                                         </View>
-                                     </View>
-                                  ) : item.media_type === 'video' ? (
-                                      <VideoWithTrim item={item} isActive={activeViewerIndex === index && viewerVisible} style={styles.viewerImage} />
-                                  ) : (
-                                     <Image source={{ uri: item.media_url }} style={styles.viewerImage} resizeMode="contain" />
-                                 )}
-                                 {item.caption && (
-                                     <Text style={styles.viewerCaption}>
-                                         {item.caption.replace(/\s!!b:\w+/, '').trim() || ''}
-                                     </Text>
-                                 )}
-                             </View>
+                        getItemLayout={(_, i) => ({ length: width, offset: width * i, index: i })}
+                        onMomentumScrollEnd={e => setActiveViewerIndex(Math.round(e.nativeEvent.contentOffset.x / width))}
+                        keyExtractor={i => i.id}
+                        renderItem={({ item: vi, index }) => (
+                            <View style={s.viewerSlide}>
+                                {vi.media_type === 'note' ? (
+                                    <View style={s.viewerNote}>
+                                        <Text style={s.viewerNoteText}>{vi.content}</Text>
+                                    </View>
+                                ) : vi.media_type === 'audio' ? (
+                                    <View style={[s.viewerNote, { backgroundColor: tint }]}>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, marginBottom: 24 }}>
+                                            {[10, 20, 30, 45, 60, 40, 25, 15, 30, 50].map((h, i) => (
+                                                <View key={i} style={{ width: 5, height: playingAudio === vi.media_url ? h : h * 0.4, backgroundColor: 'rgba(255,255,255,0.8)', borderRadius: 3 }} />
+                                            ))}
+                                        </View>
+                                        <TouchableOpacity style={s.audioPlayBtn} onPress={() => toggleAudio(vi.media_url)}>
+                                            <Ionicons name={playingAudio === vi.media_url ? 'pause' : 'play'} size={36} color="#fff" style={{ marginLeft: playingAudio === vi.media_url ? 0 : 3 }} />
+                                        </TouchableOpacity>
+                                    </View>
+                                ) : vi.media_type === 'video' ? (
+                                    <VideoWithTrim item={vi} isActive={activeViewerIndex === index && viewerVisible} style={s.viewerMedia} />
+                                ) : (
+                                    <Image source={{ uri: vi.media_url }} style={s.viewerMedia} resizeMode="contain" />
+                                )}
+                                {vi.caption && (
+                                    <View style={s.viewerCaption}>
+                                        <Text style={s.viewerCaptionText}>{vi.caption.replace(/\s!!b:\w+/, '').trim()}</Text>
+                                    </View>
+                                )}
+                            </View>
                         )}
-                        keyExtractor={item => item.id}
                     />
                 </View>
             </Modal>
@@ -1346,154 +1091,259 @@ export default function CapsuleDetailScreen() {
     );
 }
 
-const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: Colors.background },
+// ─── Styles ───────────────────────────────────────────────────────────────────
+const s = StyleSheet.create({
+    root: { flex: 1, backgroundColor: Colors.background },
     centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-    header: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.md, height: 110, paddingBottom: 10, backgroundColor: '#ffffff' },
-    backBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', zIndex: 5 },
-    headerTitleContainer: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-    headerCapsuleTitle: { fontSize: 16, fontFamily: Fonts.bold, color: Colors.textPrimary },
-    headerCreatorRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-    headerAvatarMini: { width: 32, height: 32, borderRadius: 16, marginRight: 2 },
-    headerCreatorName: { fontSize: 13, fontFamily: Fonts.bold, color: Colors.textPrimary },
-    headerFollowBtn: { marginTop: 1 },
-    headerFollowText: { fontSize: 11, fontFamily: Fonts.bold, color: Colors.primary },
-    headerFollowingText: { color: Colors.textMuted },
+    notFoundText: { fontSize: 16, fontFamily: Fonts.semiBold, color: Colors.textMuted, marginBottom: 4 },
+    notFoundSub: { fontSize: 13, color: Colors.textMuted, textAlign: 'center', paddingHorizontal: 40 },
 
-    scrollContent: { paddingBottom: 60 },
-    flashOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: '#fff', zIndex: 999 },
-    heroSection: { alignItems: 'center', paddingTop: 120, paddingBottom: Spacing.xl },
-    heroVisualWrap: { width: 280, height: 280, alignItems: 'center', justifyContent: 'center', marginBottom: 10 },
-    heroGlow: { position: 'absolute', width: 240, height: 240, borderRadius: 120 },
-    modelContainerDetail: { position: 'relative', width: 220, height: 220, alignItems: 'center', justifyContent: 'center' },
-    heroModel: { width: 220, height: 220 },
-    cornerTypeIconDetail: { position: 'absolute', top: 20, right: 20, width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', ...Shadow.subtle },
-    detailTypeBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, marginTop: 10 },
-    detailTypeLabel: { fontSize: 13, fontFamily: Fonts.bold },
+    // Header — flotante, blur, minimalista
+    headerWrap: {
+        position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100,
+        flexDirection: 'row', alignItems: 'center',
+        paddingHorizontal: 12, paddingBottom: 12,
+        overflow: 'hidden',
+    },
+    headerBorderBottom: {
+        position: 'absolute', bottom: 0, left: 16, right: 16,
+        height: 0, // eliminado — sin línea
+        backgroundColor: 'transparent',
+    },
+    headerBackBtn: {
+        width: 36, height: 36, borderRadius: 18,
+        alignItems: 'center', justifyContent: 'center',
+        backgroundColor: 'rgba(0,0,0,0.05)',
+        marginRight: 8,
+    },
+    headerCenter: {
+        flex: 1, flexDirection: 'row', alignItems: 'center', gap: 9,
+    },
+    headerAvatar: {
+        width: 32, height: 32, borderRadius: 16,
+        borderWidth: 1.5, borderColor: 'rgba(0,0,0,0.08)',
+    },
+    headerName: {
+        fontSize: 13, fontFamily: Fonts.bold,
+        color: Colors.textPrimary, letterSpacing: -0.2,
+    },
+    headerSub: {
+        fontSize: 11, fontFamily: Fonts.regular,
+        color: Colors.textMuted, marginTop: 1,
+        letterSpacing: 0,
+    },
+    headerFollowPill: {
+        marginLeft: 4,
+        paddingHorizontal: 11, paddingVertical: 4,
+        borderRadius: 20,
+        backgroundColor: Colors.textPrimary,
+    },
+    headerFollowPillActive: {
+        backgroundColor: 'transparent',
+        borderWidth: 1, borderColor: Colors.border,
+    },
+    headerFollowPillText: {
+        fontSize: 11, fontFamily: Fonts.bold,
+        color: Colors.surface, letterSpacing: 0.1,
+    },
+    headerFollowPillTextActive: {
+        color: Colors.textMuted,
+    },
+    headerOptionsBtn: {
+        width: 36, height: 36, borderRadius: 18,
+        alignItems: 'center', justifyContent: 'center',
+        backgroundColor: 'rgba(0,0,0,0.05)',
+        marginLeft: 6,
+    },
+    iconBtn: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center', borderRadius: 21 },
+    headerFollowBtn: { fontSize: 11, fontFamily: Fonts.bold, color: Colors.primary, marginTop: 2 },
 
-    capsuleMetaTop: { fontSize: 12, color: Colors.textMuted, fontFamily: Fonts.semiBold, textTransform: 'uppercase', letterSpacing: 1.2, marginBottom: 8, marginTop: 15 },
-    sealedTitle: { fontSize: 30, fontFamily: Fonts.bold, color: Colors.textPrimary, textAlign: 'center', maxWidth: '82%' },
-    description: { fontSize: 15, fontFamily: Fonts.regular, color: Colors.textSecondary, textAlign: 'center', marginTop: 10, lineHeight: 22, maxWidth: '84%' },
+    scrollContent: { paddingBottom: 80 },
 
-    statsCard: { flexDirection: 'row', justifyContent: 'space-between', width: '90%', marginTop: 24, paddingHorizontal: 20, paddingVertical: 18, borderRadius: 24, backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border, ...Shadow.subtle },
-    statItem: { alignItems: 'center', flex: 1 },
-    statValue: { fontSize: 16, fontFamily: Fonts.bold, color: Colors.textPrimary },
-    statLabel: { fontSize: 12, fontFamily: Fonts.medium, color: Colors.textMuted, marginTop: 4 },
-    statSeparator: { width: 1, height: '60%', backgroundColor: Colors.border, alignSelf: 'center' },
+    // Hero
+    heroSection: { alignItems: 'center', paddingTop: 36, paddingBottom: 32, paddingHorizontal: 20, overflow: 'hidden' },
+    heroVisual: { width: 280, height: 280, alignItems: 'center', justifyContent: 'center', marginBottom: 6, position: 'relative' },
+    heroGlow: { position: 'absolute', width: 220, height: 220, borderRadius: 110 },
+    heroModel: { width: 210, height: 210 },
+    addHint: {
+        position: 'absolute', bottom: 20, left: -28,
+        width: 34, height: 34, borderRadius: 17,
+        alignItems: 'center', justifyContent: 'center',
+        borderWidth: 2, borderColor: '#fff',
+        ...Platform.select({ ios: { shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 6, shadowOffset: { width: 0, height: 3 } }, android: { elevation: 4 } }),
+    },
+    openingOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        borderRadius: 26, overflow: 'hidden',
+        alignItems: 'center', justifyContent: 'center',
+        backgroundColor: 'rgba(0,0,0,0.45)',
+    },
+    openingLabel: { fontSize: 11, fontFamily: Fonts.bold, color: '#fff', letterSpacing: 2.5, marginBottom: 6 },
+    openingTimer: { fontSize: 52, fontFamily: Fonts.bold, color: '#fff', lineHeight: 56 },
 
-    participantSection: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 18, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, alignSelf: 'center', borderWidth: 1 },
-    participantAvatars: { flexDirection: 'row', alignItems: 'center' },
-    memberAvatarCircle: { width: 26, height: 26, borderRadius: 13, borderWidth: 1.5, borderColor: '#fff' },
-    participantText: { fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textPrimary },
+    heroMeta: { alignItems: 'center', width: '100%', gap: 8 },
+    typeBadgeRow: {
+        flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2,
+    },
+    typeDot: {
+        width: 5, height: 5, borderRadius: 2.5,
+    },
+    typeBadgeLabel: {
+        fontSize: 10, fontFamily: Fonts.bold,
+        color: Colors.textMuted, letterSpacing: 1.4,
+    },
+    typeBadge: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20 },
+    typeBadgeText: { fontSize: 12, fontFamily: Fonts.bold },
+    heroTitle: { fontSize: 26, fontFamily: Fonts.bold, color: Colors.textPrimary, textAlign: 'center', letterSpacing: -0.4, marginTop: 2 },
+    heroDesc: { fontSize: 14, fontFamily: Fonts.regular, color: Colors.textSecondary, textAlign: 'center', lineHeight: 21, maxWidth: '88%' },
 
-    openNowBtn: { marginTop: 24, width: '82%', ...Platform.select({ ios: { shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.3, shadowRadius: 15 }, android: { elevation: 10 } }) },
-    openNowGrad: { paddingVertical: 15, borderRadius: 18, alignItems: 'center', flexDirection: 'row', justifyContent: 'center' },
-    openNowText: { color: '#fff', fontSize: 16, fontFamily: Fonts.bold },
+    statRow: { flexDirection: 'row', gap: 8, marginTop: 6 },
+    statChip: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, backgroundColor: Colors.cardAlt, borderWidth: 1, borderColor: Colors.border },
+    statChipText: { fontSize: 11, fontFamily: Fonts.semiBold, color: Colors.textSecondary },
 
-    sealedVaultHeader: { marginBottom: 20, padding: 20, borderRadius: 22, backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border },
-    sealedVaultTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
-    sealedVaultTitle: { fontSize: 16, fontFamily: Fonts.bold },
-    sealedVaultSubtitle: { fontSize: 13, color: Colors.textMuted, lineHeight: 18 },
+    membersStrip: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 16, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 30, borderWidth: 1, alignSelf: 'center' },
+    membersAvatars: { flexDirection: 'row', alignItems: 'center' },
+    memberAvatar: { width: 26, height: 26, borderRadius: 13, borderWidth: 1.5, borderColor: Colors.surface },
+    membersText: { fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textPrimary },
 
-    filterScroll: { marginBottom: 20 },
-    filterChip: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.surface, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 999, gap: 8, borderWidth: 1, borderColor: Colors.border },
-    filterChipActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
-    filterChipText: { fontSize: 13, fontFamily: Fonts.bold, color: Colors.textPrimary },
+    eventBox: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 16, padding: 14, borderRadius: 18, borderWidth: 1, width: '100%' },
+    eventTitle: { fontSize: 13, fontFamily: Fonts.bold, marginBottom: 2 },
+    eventDesc: { fontSize: 12, fontFamily: Fonts.regular, color: Colors.textSecondary, lineHeight: 17 },
 
-    contentSection: { paddingHorizontal: Spacing.md, marginTop: 40 },
+    ctaSection: { width: '100%', alignItems: 'center', marginTop: 20, gap: 12 },
+    openBtn: {
+        width: '85%',
+        ...Platform.select({ ios: { shadowOpacity: 0.3, shadowRadius: 14, shadowOffset: { width: 0, height: 8 } }, android: { elevation: 8 } }),
+    },
+    openBtnGrad: { paddingVertical: 15, borderRadius: 20, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 },
+    openBtnText: { color: '#fff', fontSize: 16, fontFamily: Fonts.bold },
+    approvalHint: { fontSize: 12, fontFamily: Fonts.medium, color: Colors.textMuted },
+    countdownRow: {
+        flexDirection: 'row', alignItems: 'center', gap: 6,
+    },
+    countdownText: {
+        fontSize: 13, fontFamily: Fonts.semiBold, color: Colors.textMuted, letterSpacing: 0.2,
+    },
+    addContentBtn: {
+        borderRadius: 22, overflow: 'hidden',
+        ...Platform.select({ ios: { shadowColor: '#000', shadowOpacity: 0.10, shadowRadius: 8, shadowOffset: { width: 0, height: 3 } }, android: { elevation: 3 } }),
+    },
+    addContentGrad: {
+        flexDirection: 'row', alignItems: 'center', gap: 7,
+        paddingHorizontal: 20, paddingVertical: 11,
+        borderRadius: 22,
+    },
+    addContentText: { fontSize: 13, fontFamily: Fonts.bold, color: '#fff' },
+
+    // Content section
+    contentSection: { paddingHorizontal: Spacing.md, paddingTop: 8, paddingBottom: 20 },
+    filterScroll: { marginBottom: 14 },
+    filterContent: { paddingRight: 20, gap: 8 },
+    filterChip: {
+        flexDirection: 'row', alignItems: 'center', gap: 5,
+        backgroundColor: Colors.surface, paddingHorizontal: 12, paddingVertical: 8,
+        borderRadius: 20, borderWidth: 1, borderColor: Colors.border,
+    },
+    filterChipText: { fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textSecondary },
+
     grid: { flexDirection: 'row', flexWrap: 'wrap', gap: GRID_GAP },
-    gridItem: { width: ITEM_SIZE, height: ITEM_HEIGHT, borderRadius: 10, overflow: 'hidden', backgroundColor: Colors.cardAlt },
-    gridItemContainer: { marginBottom: 18, width: ITEM_SIZE },
-    monthSection: { marginBottom: 30 },
-    monthTitle: { fontSize: 15, fontFamily: Fonts.bold, color: Colors.textMuted, marginBottom: 12 },
+    gridCell: { width: ITEM_SIZE, marginBottom: 10 },
+    gridCellInner: {
+        width: ITEM_SIZE, height: ITEM_HEIGHT, borderRadius: 10,
+        overflow: 'hidden', backgroundColor: Colors.cardAlt,
+        alignItems: 'center', justifyContent: 'center',
+    },
+    cellTypeIcon: {
+        position: 'absolute', top: 6, right: 6,
+        width: 24, height: 24, borderRadius: 12,
+        backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center',
+        ...Platform.select({ ios: { shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 4, shadowOffset: { width: 0, height: 1 } }, android: { elevation: 1 } }),
+    },
+    cellCaption: { fontSize: 11, color: Colors.textSecondary, marginTop: 5, paddingHorizontal: 2, lineHeight: 15 },
+    playOverlay: {
+        position: 'absolute', top: 5, right: 5,
+        width: 24, height: 24, borderRadius: 12,
+        backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center',
+    },
+    batchBadge: { position: 'absolute', top: 6, left: 6, flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(0,0,0,0.55)', paddingHorizontal: 5, paddingVertical: 2, borderRadius: 8 },
+    batchCount: { color: '#fff', fontSize: 10, fontFamily: Fonts.bold },
+    itemAvatar: { position: 'absolute', bottom: 4, right: 4, width: 18, height: 18, borderRadius: 9, borderWidth: 1, borderColor: '#fff' },
 
-    socialSection: { paddingHorizontal: Spacing.md, marginTop: 40, paddingBottom: 60 },
-    interactionRow: { flexDirection: 'row', alignItems: 'center', gap: 24, marginBottom: Spacing.xl },
-    actionBtn: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    actionCount: { fontSize: 16, fontFamily: Fonts.semiBold, color: Colors.textPrimary },
-    
-    commentsList: { gap: 16 },
-    commentCard: { backgroundColor: Colors.surface, padding: 14, borderRadius: 18, flexDirection: 'row', gap: 12, borderWidth: 1, borderColor: Colors.border },
-    commentAvatar: { width: 34, height: 34, borderRadius: 17 },
+    emptyState: { alignItems: 'center', paddingVertical: 20, gap: 12 },
+    emptyText: { fontSize: 13, fontFamily: Fonts.medium, color: Colors.textMuted, textAlign: 'center' },
+
+    monthGroup: { marginBottom: 24 },
+    monthLabel: { fontSize: 13, fontFamily: Fonts.bold, color: Colors.textMuted, marginBottom: 10, letterSpacing: 0.3 },
+
+    pagination: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 16, marginTop: 20 },
+    pageBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: Colors.surface, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: Colors.border },
+    pageLabel: { fontSize: 13, fontFamily: Fonts.bold, color: Colors.textPrimary },
+
+    // Social
+    socialSection: { paddingHorizontal: Spacing.md, paddingTop: 12, paddingBottom: 40 },
+    actionRow: { flexDirection: 'row', alignItems: 'center', gap: 20, marginBottom: 20 },
+    actionBtn: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+    actionCount: { fontSize: 15, fontFamily: Fonts.semiBold, color: Colors.textPrimary },
+
+    commentList: { gap: 12 },
+    commentCard: {
+        flexDirection: 'row', gap: 10, alignItems: 'flex-start',
+        backgroundColor: Colors.surface, borderRadius: 18,
+        padding: 12, borderWidth: 1, borderColor: Colors.border,
+    },
+    commentAvatar: { width: 32, height: 32, borderRadius: 16, borderWidth: 1.5, borderColor: Colors.border },
     commentBody: { flex: 1 },
-    commentHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-    commentUser: { fontSize: 13, fontFamily: Fonts.bold, color: Colors.textPrimary },
-    commentTime: { fontSize: 11, color: Colors.textMuted },
-    commentText: { fontSize: 14, color: Colors.textSecondary, lineHeight: 19 },
-    commentActions: { alignItems: 'center', gap: 12 },
-    commentActionBtn: { alignItems: 'center', gap: 2 },
-    commentActionCount: { fontSize: 10, fontFamily: Fonts.bold, color: Colors.textMuted },
-    deleteCommentBtn: { padding: 5 },
+    commentHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 },
+    commentName: { fontSize: 13, fontFamily: Fonts.bold, color: Colors.textPrimary },
+    commentTime: { fontSize: 10, color: Colors.textMuted },
+    commentText: { fontSize: 13, color: Colors.textSecondary, lineHeight: 18 },
+    commentRight: { alignItems: 'center', gap: 8 },
+    commentLikeBtn: { alignItems: 'center', gap: 2 },
+    commentLikeCount: { fontSize: 10, fontFamily: Fonts.bold, color: Colors.textMuted },
 
-    commentBar: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: Spacing.md, paddingTop: 12, backgroundColor: Colors.surface, borderTopWidth: 1, borderTopColor: Colors.border, gap: 12 },
-    commentInput: { flex: 1, minHeight: 44, maxHeight: 120, paddingTop: 14, paddingBottom: 14, backgroundColor: Colors.background, borderRadius: 22, paddingHorizontal: 16, fontSize: 14, borderWidth: 1, borderColor: Colors.border },
-    postBtn: { color: Colors.primary, fontFamily: Fonts.bold, fontSize: 15 },
-    
-    chatInfo: { flex: 1, textAlign: 'center', color: Colors.textMuted, fontSize: 13 },
-    viewerContainer: { flex: 1, backgroundColor: '#000' },
-    viewerSlide: { width, height, justifyContent: 'center', alignItems: 'center' },
-    viewerImage: { width: '100%', height: '100%' },
-    viewerCaption: { position: 'absolute', bottom: 100, color: '#fff', textAlign: 'center', width: '80%', backgroundColor: 'rgba(0,0,0,0.5)', padding: 10, borderRadius: 10 },
-    closeViewer: { position: 'absolute', top: 50, right: 20, zIndex: 10 },
-    modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
-    optionsContent: { backgroundColor: Colors.surface, borderTopLeftRadius: 30, borderTopRightRadius: 30, padding: 25, paddingBottom: 60 },
-    modalBar: { width: 40, height: 5, backgroundColor: '#eee', borderRadius: 3, alignSelf: 'center', marginBottom: 20 },
-    optionsTitle: { fontSize: 18, fontFamily: Fonts.bold, textAlign: 'center', marginBottom: 25 },
-    deleteOption: { flexDirection: 'row', alignItems: 'center', gap: 15, paddingVertical: 18, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
-    deleteOptionText: { color: Colors.eventCap, fontSize: 16, fontFamily: Fonts.semiBold },
-    cancelOption: { alignItems: 'center', paddingVertical: 20 },
-    cancelOptionText: { color: Colors.textMuted, fontSize: 15, fontFamily: Fonts.medium },
-    openingOverlayAesthetic: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 30, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', zIndex: 10 },
-    openingOverlayAestheticInner: { width: 160, height: 160, borderRadius: 80, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.6)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
-    pulsingCircle: { position: 'absolute', width: '100%', height: '100%', borderRadius: 80 },
-    openingTextAesthetic: { fontSize: 11, fontFamily: Fonts.bold, color: '#fff', letterSpacing: 2, marginBottom: 5 },
-    openingTimerAesthetic: { fontSize: 50, fontWeight: 'bold' },
-    qrRootOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', alignItems: 'center', justifyContent: 'center' },
-    qrContentBox: { width: '80%', backgroundColor: Colors.surface, borderRadius: 24, padding: 30, alignItems: 'center' },
-    qrTitle: { fontSize: 22, fontFamily: Fonts.bold, color: Colors.textPrimary, marginBottom: 20 },
-    qrImage: { width: 220, height: 220, marginBottom: 20 },
-    qrSubtitle: { fontSize: 14, color: Colors.textSecondary, fontFamily: Fonts.medium, textAlign: 'center', marginBottom: 25 },
-    qrCloseBtn: { width: '100%', paddingVertical: 14, backgroundColor: Colors.primary, borderRadius: 16, alignItems: 'center' },
-    qrCloseBtnText: { color: '#fff', fontSize: 16, fontFamily: Fonts.bold },
-    itemAvatar: { position: 'absolute', bottom: 4, right: 4, width: 20, height: 20, borderRadius: 10, borderWidth: 1, borderColor: '#fff' },
-    requestStatusHint: { marginTop: 12, fontSize: 12, fontFamily: Fonts.medium, color: Colors.textMuted },
-    addContentHint: { position: 'absolute', bottom: 25, left: -40, width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center', ...Shadow.subtle, zIndex: 5, borderWidth: 2, borderColor: '#fff' },
-    gridNoteCell: { width: ITEM_SIZE, height: ITEM_HEIGHT, borderRadius: 8, alignItems: 'center', justifyContent: 'center', padding: 12, backgroundColor: '#f5f0ff', overflow: 'hidden' },
-    noteIndicator: { position: 'absolute', top: 6, right: 6, width: 24, height: 24, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.75)', alignItems: 'center', justifyContent: 'center', zIndex: 10 },
-    noteSnippet: { fontSize: 15, fontFamily: Fonts.bold, color: '#1a1a1a', textAlign: 'center', lineHeight: 20, letterSpacing: 0.3 },
-    audioGridIcon: { position: 'absolute', top: 6, right: 6, width: 24, height: 24, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.8)', alignItems: 'center', justifyContent: 'center', zIndex: 5 },
-    audioWaveRow: { flexDirection: 'row', alignItems: 'center', gap: 2.5, marginBottom: 8 },
-    audioDurationLabel: { backgroundColor: 'rgba(162,105,255,0.3)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
-    audioDurationText: { fontSize: 10, fontFamily: Fonts.bold, color: '#6b3fa0' },
-    viewerNoteContainer: { width: '90%', alignItems: 'center', justifyContent: 'center' },
-    viewerNotePaper: { width: '100%', minHeight: 300, backgroundColor: '#fffde7', padding: 30, borderRadius: 2, shadowColor: '#000', shadowOffset: { width: 2, height: 8 }, shadowOpacity: 0.2, shadowRadius: 15, elevation: 10, alignItems: 'center', justifyContent: 'center', borderLeftWidth: 15, borderLeftColor: '#fbc02d' },
-    viewerNoteText: { color: '#5d4037', fontSize: 22, fontFamily: Fonts.medium, textAlign: 'center', lineHeight: 32, fontStyle: 'italic' },
-    recordBtn: { width: 100, height: 100, borderRadius: 50, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
-    gridPlayIcon: { position: 'absolute', top: 5, right: 5, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 12, width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
-    gridDurationBadge: { position: 'absolute', bottom: 5, left: 5, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 2 },
-    gridDurationText: { color: '#fff', fontSize: 9, fontFamily: Fonts.bold },
-    batchBadge: { position: 'absolute', top: 6, left: 6, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 6, paddingVertical: 3, borderRadius: 8, flexDirection: 'row', alignItems: 'center', gap: 4 },
-    batchCount: { color: '#fff', fontSize: 11, fontFamily: Fonts.bold },
-    waitingCircle: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#f0f0f0', borderWidth: 1, borderColor: '#fff', alignItems: 'center', justifyContent: 'center' },
-    paginationRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 20, marginTop: 24, marginBottom: 10 },
-    pageText: { fontSize: 14, fontFamily: Fonts.bold, color: Colors.textPrimary },
-    pageBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: Colors.surface, alignItems: 'center', justifyContent: 'center', ...Shadow.subtle, borderWidth: 1, borderColor: Colors.border },
-    sealedInfo: { width: '100%', alignItems: 'center' },
-    filterContent: { paddingRight: 40 },
-    gridItemPlaceholder: { width: ITEM_SIZE, height: ITEM_HEIGHT, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.cardAlt, overflow: 'hidden' },
-    gridItemCaption: { fontSize: 11, color: Colors.textSecondary, marginTop: 6, paddingHorizontal: 4, lineHeight: 14 },
-    emptyGridContainer: { alignItems: 'center', paddingVertical: 40 },
-    sectionHeader: { width: '100%', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-    sectionTitle: { fontSize: 18, fontFamily: Fonts.bold, color: Colors.textPrimary },
-    itemCount: { fontSize: 13, color: Colors.textMuted, fontFamily: Fonts.medium },
-    gridAudioCell: { width: ITEM_SIZE, height: ITEM_HEIGHT, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f0e8ff', overflow: 'hidden' },
-    badgeRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 20 },
-    lockedBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: Colors.surface, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, borderWidth: 1, borderColor: Colors.border },
-    lockedText: { fontSize: 13, fontFamily: Fonts.bold, color: Colors.textMuted },
-    addBtnSmall: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 12 },
-    addBtnTextSmall: { fontSize: 13, fontFamily: Fonts.bold },
-    eventInfoBox: { width: '90%', marginTop: 24, padding: 20, borderRadius: 24, borderWidth: 1, alignItems: 'center' },
-    eventInfoTitle: { fontSize: 16, fontFamily: Fonts.bold, marginBottom: 8 },
-    eventInfoText: { fontSize: 13, color: Colors.textSecondary, textAlign: 'center', lineHeight: 20 },
-    gridImage: { width: '100%', height: '100%' },
+    commentBar: {
+        flexDirection: 'row', alignItems: 'flex-end', gap: 10,
+        paddingHorizontal: Spacing.md, paddingTop: 10,
+        backgroundColor: Colors.surface,
+        borderTopWidth: 1, borderTopColor: Colors.border,
+    },
+    chatBanner: { flex: 1, textAlign: 'center', fontSize: 13, fontFamily: Fonts.medium, color: Colors.textMuted, paddingVertical: 10 },
+    commentInput: {
+        flex: 1, minHeight: 42, maxHeight: 120,
+        backgroundColor: Colors.cardAlt, borderRadius: 21,
+        paddingHorizontal: 16, paddingVertical: 11,
+        fontSize: 14, fontFamily: Fonts.regular, color: Colors.textPrimary,
+        borderWidth: 1, borderColor: Colors.border,
+    },
+    postBtn: { fontSize: 14, fontFamily: Fonts.bold, paddingBottom: 2 },
+
+    // Options sheet
+    overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+    sheet: { backgroundColor: Colors.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 20, paddingTop: 12, paddingBottom: 40 },
+    sheetHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.divider, alignSelf: 'center', marginBottom: 16 },
+    sheetTitle: { fontSize: 18, fontFamily: Fonts.bold, color: Colors.textPrimary, marginBottom: 14 },
+    sheetItem: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: Colors.divider },
+    sheetItemIcon: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+    sheetItemText: { flex: 1, fontSize: 15, fontFamily: Fonts.medium },
+    cancelBtn: { paddingVertical: 14, alignItems: 'center', marginTop: 8 },
+    cancelBtnText: { fontSize: 15, fontFamily: Fonts.semiBold, color: Colors.textMuted },
+
+    // QR
+    qrBox: { width: '82%', backgroundColor: Colors.surface, borderRadius: 24, padding: 28, alignItems: 'center', alignSelf: 'center', marginTop: 'auto', marginBottom: 'auto' },
+    qrTitle: { fontSize: 20, fontFamily: Fonts.bold, color: Colors.textPrimary, marginBottom: 20 },
+    qrImg: { width: 220, height: 220, marginBottom: 16 },
+    qrSub: { fontSize: 13, color: Colors.textSecondary, textAlign: 'center', marginBottom: 22 },
+    qrBtn: { width: '100%', paddingVertical: 14, borderRadius: 16, alignItems: 'center' },
+    qrBtnText: { color: '#fff', fontSize: 15, fontFamily: Fonts.bold },
+
+    // Viewer
+    viewer: { flex: 1, backgroundColor: '#000' },
+    viewerClose: { position: 'absolute', top: 52, right: 18, zIndex: 10, width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
+    viewerSlide: { width, height, alignItems: 'center', justifyContent: 'center' },
+    viewerMedia: { width, height },
+    viewerNote: { width: '85%', minHeight: 260, backgroundColor: '#fffde7', borderRadius: 4, borderLeftWidth: 12, borderLeftColor: '#fbc02d', padding: 24, alignItems: 'center', justifyContent: 'center' },
+    viewerNoteText: { fontSize: 20, fontFamily: Fonts.medium, color: '#5d4037', textAlign: 'center', lineHeight: 30, fontStyle: 'italic' },
+    audioPlayBtn: { width: 88, height: 88, borderRadius: 44, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.4)' },
+    viewerCaption: { position: 'absolute', bottom: 80, left: 20, right: 20, backgroundColor: 'rgba(0,0,0,0.5)', padding: 10, borderRadius: 12 },
+    viewerCaptionText: { color: '#fff', fontSize: 14, fontFamily: Fonts.regular, textAlign: 'center' },
 });

@@ -5,7 +5,7 @@ import LiveTimer from './LiveTimer';
 import { timerConfigManager, ModelTimerConfig } from '../utils/timerConfig';
 import { MODEL_TINTS } from '../constants/models';
 import Particles from './Particles';
-import CuteFace from './CuteFace';
+
 
 interface CapsuleWithTimerProps {
     modelKey: string;
@@ -121,24 +121,7 @@ const CapsuleWithTimer = React.memo(({
     // Scale font based on timer height
     const baseFontSize = Math.max(10, (height * config.h) * 0.55);
 
-    // Style for the face container
-    const faceX = config.faceX ?? config.x;
-    const faceY = config.faceY ?? (config.y + config.h + 0.046); // fallback center roughly 14px below timer
-    const faceScale = config.faceScale ?? 1;
-    const faceWidth = width * (config.w || 0.3);
 
-    const proportionalScale = width / 300;
-
-    const faceOverlayStyle = (width > 0 && config.showFace !== false) ? {
-        position: 'absolute' as const,
-        left: width * faceX,
-        top: height * faceY,
-        width: 0,
-        height: 0,
-        zIndex: 10,
-        alignItems: 'center' as const,
-        justifyContent: 'center' as const,
-    } : { display: 'none' as const };
 
     const rotateInterp = swingAnim.interpolate({
         inputRange: [-1, 1],
@@ -167,12 +150,7 @@ const CapsuleWithTimer = React.memo(({
                 }]} />
             )}
 
-            {/* Cute Face layer (Temporarily Disabled) */}
-            {false && width > 0 && config.showFace !== false && (
-                <View style={[faceOverlayStyle, { zIndex: 10 }]}>
-                    <CuteFace scale={faceScale * proportionalScale} />
-                </View>
-            )}
+
 
             <Image
                 source={source}

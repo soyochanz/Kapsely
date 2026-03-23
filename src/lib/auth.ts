@@ -5,7 +5,7 @@ export interface RegisterData {
     password: string;
     username: string;
     displayName: string;
-    birthdate: string; // ISO date string YYYY-MM-DD
+    birthdate?: string; // ISO date string YYYY-MM-DD (optional)
 }
 
 export async function signUp({ email, password, username, displayName, birthdate }: RegisterData) {

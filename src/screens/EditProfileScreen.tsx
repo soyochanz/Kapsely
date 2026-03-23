@@ -48,8 +48,6 @@ export default function EditProfileScreen({ onClose }: Props) {
     const favoriteSongInit = '';
     const [favoriteSong, setFavoriteSong] = useState(favoriteSongInit);
     const [avatarUri, setAvatarUri] = useState<string | null>(null);
-    const [birthdate, setBirthdate] = useState<string | null>(null);
-    const [showDatePicker, setShowDatePicker] = useState(false);
     const [uploading, setUploading] = useState(false);
 
     const [showColorPicker, setShowColorPicker] = useState(false);
@@ -73,7 +71,6 @@ export default function EditProfileScreen({ onClose }: Props) {
                 setFavoriteColor(data.favorite_color ?? '#a269ff');
                 setFavoriteMovie(data.favorite_movie ?? '');
                 setFavoriteSong(data.favorite_song ?? '');
-                setBirthdate(data.birthdate ?? null);
                 setAvatarUri(data.avatar_url ?? null);
                 setInitialAvatarUrl(data.avatar_url ?? null);
                 setInitialDisplayName(data.display_name ?? '');
@@ -204,7 +201,6 @@ export default function EditProfileScreen({ onClose }: Props) {
                 favorite_color: favoriteColor,
                 favorite_movie: favoriteMovie.trim() || null,
                 favorite_song: favoriteSong.trim() || null,
-                birthdate: birthdate,
                 avatar_url: finalAvatarUrl,
                 display_name_history: newHistory,
                 updated_at: new Date().toISOString(),
@@ -257,15 +253,26 @@ export default function EditProfileScreen({ onClose }: Props) {
                                     onPress: async () => {
                                         setSaving(true);
                                         try {
-                                            // 1. Delete user profile (cascading deletes should handle the rest)
-                                            const { error } = await supabase.from('profiles').delete().eq('id', userId);
-                                            if (error) throw error;
+                                            if (!userId) throw new Error('User info not loaded');
 
-                                            // 2. Sign out
+                                            // 1. Delete user data incrementally to avoid FK violations (precautionary)
+                                            await supabase.from('notifications').delete().eq('user_id', userId);
+                                            await supabase.from('capsule_invites').delete().eq('user_id', userId);
+                                            await supabase.from('capsules').delete().eq('owner_id', userId);
+
+                                            // 2. Delete user profile (This is the primary user identifier)
+                                            const { error: profileError } = await supabase.from('profiles').delete().eq('id', userId);
+                                            if (profileError) {
+                                                console.warn('Profile deletion had a warning:', profileError);
+                                                // We don't throw because we want to at least log out the user even if profile delete is stuck
+                                            }
+
+                                            // 3. Clear all locally stored authentication and session data
                                             await supabase.auth.signOut();
-                                            Alert.alert(t('common.ready'), t('profile.accountDeleted'));
+                                            Alert.alert('✅ Done', 'Account and personal data were deleted.');
                                         } catch (e: any) {
-                                            Alert.alert('Error', e.message || 'Could not delete account');
+                                            console.error('Delete flow failure:', e);
+                                            Alert.alert('Error', e.message || 'Deletion failed. Please contact support.');
                                         } finally {
                                             setSaving(false);
                                         }
@@ -363,43 +370,7 @@ export default function EditProfileScreen({ onClose }: Props) {
                     <Text style={styles.charLimit}>{favoriteSong.length}/30</Text>
                 </View>
 
-                {/* Birthdate */}
-                <View style={styles.section}>
-                    <Text style={styles.sectionLabel}>{t('profile.birthdate')}</Text>
-                    <TouchableOpacity 
-                        style={styles.input} 
-                        onPress={() => setShowDatePicker(true)}
-                        activeOpacity={0.7}
-                    >
-                        <Text style={{ color: birthdate ? Colors.textPrimary : Colors.textMuted }}>
-                            {birthdate ? new Date(birthdate).toLocaleDateString() : t('profile.setYourBirthday')}
-                        </Text>
-                    </TouchableOpacity>
-                    {showDatePicker && (
-                        <View>
-                            <DateTimePicker
-                                value={birthdate ? new Date(birthdate) : new Date(2000, 0, 1)}
-                                mode="date"
-                                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                                maximumDate={new Date()}
-                                onChange={(event, selectedDate) => {
-                                    setShowDatePicker(Platform.OS === 'ios');
-                                    if (selectedDate) {
-                                        setBirthdate(selectedDate.toISOString().split('T')[0]);
-                                    }
-                                }}
-                            />
-                            {Platform.OS === 'ios' && (
-                                <TouchableOpacity 
-                                    style={styles.dateDoneBtn} 
-                                    onPress={() => setShowDatePicker(false)}
-                                >
-                                    <Text style={styles.dateDoneText}>{t('common.done')}</Text>
-                                </TouchableOpacity>
-                            )}
-                        </View>
-                    )}
-                </View>
+
 
 
 

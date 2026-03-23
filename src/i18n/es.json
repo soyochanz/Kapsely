@@ -308,8 +308,8 @@
   "feed": {
     "explore": "Explorar",
     "following": "Siguiendo",
-    "lucky_msg": "¡Un recuerdo ha salido a la luz!",
-    "shuffling_msg": "Explorando tus cápsulas de recuerdos selladas...",
+    "reveal_msg": "¡Un recuerdo se ha revelado!",
+    "opening_msg": "Preparando tus recuerdos sellados...",
     "add_to_story": "Añadir a Historia",
     "no_activity": "Sin actividad reciente",
     "opens_today": "Abre Hoy",

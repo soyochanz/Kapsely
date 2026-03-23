@@ -309,8 +309,8 @@
   "feed": {
     "explore": "Explore",
     "following": "Following",
-    "lucky_msg": "A memory has surfaced!",
-    "shuffling_msg": "Exploring your sealed memory capsules...",
+    "reveal_msg": "A memory has surfaced!",
+    "opening_msg": "Preparing your sealed memory capsules...",
     "add_to_story": "Add to Story",
     "no_activity": "No recent activity",
     "opens_today": "Opens Today",

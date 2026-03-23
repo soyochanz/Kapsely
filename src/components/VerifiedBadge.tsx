@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, StyleSheet, Platform } from 'react-native';
-import Svg, { Path, Defs, LinearGradient, Stop, Rect } from 'react-native-svg';
+import Svg, { Path, Defs, LinearGradient, Stop, Circle, Polygon } from 'react-native-svg';
 
 interface VerifiedBadgeProps {
     size?: number;
@@ -8,98 +8,98 @@ interface VerifiedBadgeProps {
 }
 
 /**
- * VerifiedBadge — diamond (rotated rounded square) with indigo→violet gradient.
- *
- * Fix: the SVG canvas is oversized (1.5× the visible size) so the rotated
- * diamond never clips. The outer <View> is clipped to `size × size`.
+ * VerifiedBadge — hexagonal shield with purple gradient and a clean checkmark.
+ * Modern, distinctive, purple. No diamond — that reads too generic.
  */
 export default function VerifiedBadge({ size = 18, style }: VerifiedBadgeProps) {
-    // Canvas is larger than the badge so rotation never clips
-    const canvas = size * 1.5;
-    const cx = canvas / 2;
-    const cy = canvas / 2;
+    const s = size;
+    const cx = s / 2;
+    const cy = s / 2;
 
-    // Diamond side = size * 0.82 so there's breathing room inside the canvas
-    const side = size * 0.82;
-    const r = side * 0.22;
+    // Hexagon points (flat-top orientation, slightly taller than wide)
+    // Centered at (cx, cy), radius = size * 0.48
+    const R = s * 0.48;
+    const hexPoints = Array.from({ length: 6 }, (_, i) => {
+        const angle = (Math.PI / 180) * (60 * i - 30);
+        return `${cx + R * Math.cos(angle)},${cy + R * Math.sin(angle)}`;
+    }).join(' ');
 
-    // Checkmark: coordinates inside the canvas, scaled proportionally
-    // Using a 10×10 grid scaled to `size`, centred in the canvas
-    const offset = (canvas - size) / 2; // shift to centre the 10-unit grid
-    const s = size / 10;
+    // Inner hex for subtle border ring (slightly smaller)
+    const Ri = R * 0.88;
+    const innerHexPoints = Array.from({ length: 6 }, (_, i) => {
+        const angle = (Math.PI / 180) * (60 * i - 30);
+        return `${cx + Ri * Math.cos(angle)},${cy + Ri * Math.sin(angle)}`;
+    }).join(' ');
+
+    // Checkmark path — bold, centred, slightly lower-left to upper-right
     const ck = {
-        x1: offset + 2.0 * s, y1: offset + 5.1 * s,
-        x2: offset + 4.1 * s, y2: offset + 7.3 * s,
-        x3: offset + 8.1 * s, y3: offset + 2.8 * s,
+        x1: cx - s * 0.17, y1: cy + s * 0.01,
+        x2: cx - s * 0.02, y2: cy + s * 0.16,
+        x3: cx + s * 0.20, y3: cy - s * 0.13,
     };
-    const strokeW = Math.max(1.5, size * 0.135);
+    const strokeW = Math.max(1.4, s * 0.13);
 
     return (
         <View
             style={[
-                styles.outer,
+                {
+                    width: size,
+                    height: size,
+                    ...Platform.select({
+                        ios: {
+                            shadowColor: '#7c3aed',
+                            shadowOffset: { width: 0, height: 1 },
+                            shadowOpacity: 0.55,
+                            shadowRadius: size * 0.28,
+                        },
+                        android: { elevation: 4 },
+                        web: {
+                            filter: `drop-shadow(0px 1px ${size * 0.22}px rgba(124, 58, 237, 0.6))`,
+                        },
+                    }),
+                },
                 style,
-                { width: size, height: size },
             ]}
         >
-            {/* overflow hidden clips the oversized canvas to size×size */}
-            <View style={{ width: canvas, height: canvas, marginLeft: -(canvas - size) / 2, marginTop: -(canvas - size) / 2 }}>
-                <Svg width={canvas} height={canvas} viewBox={`0 0 ${canvas} ${canvas}`}>
-                    <Defs>
-                        <LinearGradient id="vbg" x1="0" y1="0" x2="1" y2="1">
-                            <Stop offset="0%" stopColor="#6366F1" stopOpacity="1" />
-                            <Stop offset="100%" stopColor="#8B5CF6" stopOpacity="1" />
-                        </LinearGradient>
-                    </Defs>
+            <Svg width={size} height={size} viewBox={`0 0 ${s} ${s}`}>
+                <Defs>
+                    {/* Main fill: deep purple → violet */}
+                    <LinearGradient id="vgrad" x1="0" y1="0" x2="1" y2="1">
+                        <Stop offset="0%" stopColor="#6d28d9" stopOpacity="1" />
+                        <Stop offset="55%" stopColor="#7c3aed" stopOpacity="1" />
+                        <Stop offset="100%" stopColor="#a855f7" stopOpacity="1" />
+                    </LinearGradient>
+                    {/* Shine overlay: subtle top-left highlight */}
+                    <LinearGradient id="shine" x1="0" y1="0" x2="0.6" y2="1">
+                        <Stop offset="0%" stopColor="#ffffff" stopOpacity="0.22" />
+                        <Stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
+                    </LinearGradient>
+                </Defs>
 
-                    {/* Rotated diamond */}
-                    <Rect
-                        x={cx - side / 2}
-                        y={cy - side / 2}
-                        width={side}
-                        height={side}
-                        rx={r}
-                        ry={r}
-                        fill="url(#vbg)"
-                        rotation={45}
-                        origin={`${cx}, ${cy}`}
-                    />
+                {/* Hexagon fill */}
+                <Polygon points={hexPoints} fill="url(#vgrad)" />
 
-                    {/* Checkmark — not rotated, stays upright */}
-                    <Path
-                        d={`M${ck.x1} ${ck.y1} L${ck.x2} ${ck.y2} L${ck.x3} ${ck.y3}`}
-                        fill="none"
-                        stroke="#FFFFFF"
-                        strokeWidth={strokeW}
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                    />
-                </Svg>
-            </View>
+                {/* Shine layer */}
+                <Polygon points={hexPoints} fill="url(#shine)" />
+
+                {/* Inner ring — 1px border to add depth */}
+                <Polygon
+                    points={innerHexPoints}
+                    fill="none"
+                    stroke="rgba(255,255,255,0.18)"
+                    strokeWidth={0.7}
+                />
+
+                {/* Checkmark */}
+                <Path
+                    d={`M${ck.x1} ${ck.y1} L${ck.x2} ${ck.y2} L${ck.x3} ${ck.y3}`}
+                    fill="none"
+                    stroke="#ffffff"
+                    strokeWidth={strokeW}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                />
+            </Svg>
         </View>
     );
 }
-
-const styles = StyleSheet.create({
-    outer: {
-        overflow: 'hidden',
-        alignItems: 'center',
-        justifyContent: 'center',
-        ...Platform.select({
-            web: {
-                filter: 'drop-shadow(0px 1px 4px rgba(99, 102, 241, 0.5))',
-                overflow: 'visible',
-            },
-            ios: {
-                overflow: 'visible',
-                shadowColor: '#6366F1',
-                shadowOffset: { width: 0, height: 1 },
-                shadowOpacity: 0.45,
-                shadowRadius: 3,
-            },
-            android: {
-                elevation: 3,
-            },
-        }),
-    },
-});

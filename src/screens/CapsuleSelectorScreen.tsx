@@ -109,7 +109,7 @@ export default function CapsuleSelectorScreen() {
                     <TouchableOpacity
                         style={styles.createBtn}
                         activeOpacity={0.85}
-                        onPress={() => navigation.navigate('Main', { screen: 'Create' })}
+                        onPress={() => navigation.navigate('CapsuleCreation')}
                     >
                         <Ionicons name="add" size={18} color="#fff" />
                         <Text style={styles.createBtnText}>Create a Capsule</Text>

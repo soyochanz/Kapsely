@@ -72,8 +72,8 @@ function TabNavigator() {
             screenOptions={{}}
         >
             <Tab.Screen name="Feed" component={FeedStackNavigator} />
-            <Tab.Screen name="Notifications" component={NotifStackNavigator} />
             <Tab.Screen name="Search" component={SearchStackNavigator} />
+            <Tab.Screen name="Notifications" component={NotifStackNavigator} />
             <Tab.Screen name="Profile" component={ProfileStackNavigator} />
         </Tab.Navigator>
     );
@@ -95,7 +95,7 @@ export default function AppNavigator() {
                 <Stack.Screen name="UserList" component={UserListScreen} />
                 <Stack.Screen name="TimerConfig" component={TimerConfigScreen} />
                 <Stack.Screen name="PersonalizeProfile" component={PersonalizeProfileScreen} />
-                <Stack.Screen name="KapsBox" component={require('../screens/KapsBoxScreen').default} />
+                <Stack.Screen name="Inbox" component={require('../screens/InboxScreen').default} />
                 <Stack.Screen name="InstagramShare" component={require('../screens/InstagramShareScreen').default} />
             </Stack.Navigator>
         </View>

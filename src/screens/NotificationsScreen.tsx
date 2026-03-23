@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     Platform, View, Text, StyleSheet, ScrollView, TouchableOpacity,
     StatusBar, ActivityIndicator, Animated, PanResponder, Easing,
-    Dimensions,
+    Dimensions, RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -156,6 +156,7 @@ export default function NotificationsScreen() {
     const [loading, setLoading] = useState(true);
     const [scrollEnabled, setScrollEnabled] = useState(true);
     const [showRipple, setShowRipple] = useState(false);
+    const [refreshing, setRefreshing] = useState(false);
 
     // Pull-up gesture state
     const pullY = useRef(new Animated.Value(0)).current;
@@ -284,11 +285,32 @@ export default function NotificationsScreen() {
 
     const handleMarkAllRead = async () => {
         const prev = [...notifications];
+        // Optimistic UI update
         setNotifications(p => p.map(n => ({ ...n, isRead: true })));
+        
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) { setNotifications(prev); return; }
-        const { error } = await supabase.from('notifications').update({ is_read: true }).eq('user_id', user.id).eq('is_read', false);
-        if (error) setNotifications(prev);
+        
+        try {
+            const { error } = await supabase
+                .from('notifications')
+                .update({ is_read: true })
+                .eq('user_id', user.id)
+                .eq('is_read', false);
+            if (error) throw error;
+        } catch (error) {
+            console.warn('Error marking all as read:', error);
+            setNotifications(prev);
+        }
+    };
+
+    const onRefresh = async () => {
+        setRefreshing(true);
+        // Mark all as read and reload to ensure everything is synced
+        await handleMarkAllRead();
+        await loadNotifications();
+        setRefreshing(false);
+        setShowRipple(true);
     };
 
     // ─── Pull-up to mark all read ─────────────────────────────────────────
@@ -383,8 +405,8 @@ export default function NotificationsScreen() {
                 {/* Pull-up hint — only when there are unread */}
                 {unreadCount > 0 && (
                     <View style={s.swipeHint}>
-                        <Ionicons name="arrow-up-outline" size={11} color={Colors.textMuted} />
-                        <Text style={s.swipeHintText}>Swipe up from bottom to mark all as read</Text>
+                        <Ionicons name="arrow-down-outline" size={11} color={Colors.textMuted} />
+                        <Text style={s.swipeHintText}>Swipe down to mark all as read</Text>
                     </View>
                 )}
 
@@ -403,6 +425,14 @@ export default function NotificationsScreen() {
                     isAtBottom.current = layoutMeasurement.height + contentOffset.y >= contentSize.height - 30;
                 }}
                 scrollEventThrottle={16}
+                refreshControl={
+                    <RefreshControl
+                        refreshing={refreshing}
+                        onRefresh={onRefresh}
+                        tintColor={Colors.primary}
+                        colors={[Colors.primary]}
+                    />
+                }
             >
                 {notifications.length === 0 ? (
                     <View style={s.emptyState}>

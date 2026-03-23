@@ -3,7 +3,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
     View, Text, StyleSheet, TextInput, TouchableOpacity,
     KeyboardAvoidingView, Platform, ScrollView, StatusBar, ActivityIndicator, Image,
-    Animated,
+    Animated, Linking,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
@@ -38,9 +38,6 @@ export default function RegisterScreen({ onNavigateToLogin, onNavigateBack }: Pr
     const [email, setEmail] = useState('');
     const [username, setUsername] = useState('');
     const [displayName, setDisplayName] = useState('');
-    const [birthdateYear, setBirthdateYear] = useState('');
-    const [birthdateMonth, setBirthdateMonth] = useState('');
-    const [birthdateDay, setBirthdateDay] = useState('');
     const [password, setPassword] = useState('');
     const [showPass, setShowPass] = useState(false);
     const [loading, setLoading] = useState(false);
@@ -63,9 +60,6 @@ export default function RegisterScreen({ onNavigateToLogin, onNavigateBack }: Pr
         if (username.includes(' ')) return 'Usernames cannot contain spaces.';
         if (username.length < 3) return 'Username must be at least 3 characters.';
         if (!displayName.trim()) return 'Public name is required.';
-        const y = parseInt(birthdateYear), m = parseInt(birthdateMonth), d = parseInt(birthdateDay);
-        if (!birthdateYear || !birthdateMonth || !birthdateDay || isNaN(y) || isNaN(m) || isNaN(d)) return 'Date of birth is required.';
-        if (y < 1900 || y > 2013 || m < 1 || m > 12 || d < 1 || d > 31) return 'Please enter a valid date of birth.';
         if (password.length < 6) return 'Password must be at least 6 characters.';
         return null;
     };
@@ -75,14 +69,12 @@ export default function RegisterScreen({ onNavigateToLogin, onNavigateBack }: Pr
         if (err) { setError(err); return; }
         setError('');
         setLoading(true);
-        const isoDate = `${birthdateYear.padStart(4, '0')}-${birthdateMonth.padStart(2, '0')}-${birthdateDay.padStart(2, '0')}`;
         try {
             await signUp({
                 email: email.trim().toLowerCase(),
                 password,
                 username: username.trim().toLowerCase(),
                 displayName: displayName.trim(),
-                birthdate: isoDate,
             });
         } catch (e: any) {
             setError(e.message ?? 'Registration failed. Please try again.');
@@ -171,35 +163,6 @@ export default function RegisterScreen({ onNavigateToLogin, onNavigateBack }: Pr
                                 />
                             </InputWrapper>
 
-                            <View style={styles.inputGroup}>
-                                <Text style={styles.inputLabel}>DATE OF BIRTH</Text>
-                                <View style={styles.dateRow}>
-                                    <View style={[styles.dateInput, focusedInput === 'day' && styles.dateInputFocused]}>
-                                        <TextInput style={styles.input} placeholder="DD"
-                                            placeholderTextColor={Colors.textMuted} value={birthdateDay}
-                                            onChangeText={(v) => setBirthdateDay(v.replace(/\D/g, '').slice(0, 2))}
-                                            keyboardType="numeric" maxLength={2} textAlign="center"
-                                            selectionColor={Colors.primary} onFocus={() => setFocusedInput('day')} onBlur={() => setFocusedInput(null)}
-                                        />
-                                    </View>
-                                    <View style={[styles.dateInput, focusedInput === 'month' && styles.dateInputFocused]}>
-                                        <TextInput style={styles.input} placeholder="MM"
-                                            placeholderTextColor={Colors.textMuted} value={birthdateMonth}
-                                            onChangeText={(v) => setBirthdateMonth(v.replace(/\D/g, '').slice(0, 2))}
-                                            keyboardType="numeric" maxLength={2} textAlign="center"
-                                            selectionColor={Colors.primary} onFocus={() => setFocusedInput('month')} onBlur={() => setFocusedInput(null)}
-                                        />
-                                    </View>
-                                    <View style={[styles.dateInput, { flex: 1.5 }, focusedInput === 'year' && styles.dateInputFocused]}>
-                                        <TextInput style={styles.input} placeholder="YYYY"
-                                            placeholderTextColor={Colors.textMuted} value={birthdateYear}
-                                            onChangeText={(v) => setBirthdateYear(v.replace(/\D/g, '').slice(0, 4))}
-                                            keyboardType="numeric" maxLength={4} textAlign="center"
-                                            selectionColor={Colors.primary} onFocus={() => setFocusedInput('year')} onBlur={() => setFocusedInput(null)}
-                                        />
-                                    </View>
-                                </View>
-                            </View>
 
                             <View style={styles.inputGroup}>
                                 <Text style={styles.inputLabel}>PASSWORD</Text>
@@ -250,7 +213,22 @@ export default function RegisterScreen({ onNavigateToLogin, onNavigateBack }: Pr
                             </TouchableOpacity>
                         </View>
                         
-                        <Text style={styles.legal}>By signing up, you agree to our Terms and Privacy Policy.</Text>
+                        <Text style={styles.legal}>
+                            By signing up, you agree to our{' '}
+                            <Text 
+                                style={{ color: Colors.primary, fontFamily: Fonts.bold, textDecorationLine: 'underline' }}
+                                onPress={() => Linking.openURL('https://kapsely.com/terms.html')}
+                            >
+                                Terms
+                            </Text>
+                            {' '}and{' '}
+                            <Text 
+                                style={{ color: Colors.primary, fontFamily: Fonts.bold, textDecorationLine: 'underline' }}
+                                onPress={() => Linking.openURL('https://kapsely.com/privacy.html')}
+                            >
+                                Privacy Policy
+                            </Text>.
+                        </Text>
                     </Animated.View>
                 </ScrollView>
             </KeyboardAvoidingView>
