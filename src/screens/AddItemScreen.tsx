@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, TextInput, ActivityIndicator, SafeAreaView, ScrollView, Alert, Platform, Modal, StatusBar } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, TextInput, ActivityIndicator, SafeAreaView, ScrollView, Alert, Platform, Modal, StatusBar } from 'react-native';
+
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -14,6 +15,8 @@ import { BlurView } from 'expo-blur';
 import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from '../lib/supabase';
 import { decode } from 'base64-arraybuffer';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Image } from 'expo-image';
+
 import Slider from '@react-native-community/slider';
 
 export default function AddItemScreen() {
@@ -88,9 +91,9 @@ export default function AddItemScreen() {
         const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: contentType === 'image' ? ImagePicker.MediaTypeOptions.Images : ImagePicker.MediaTypeOptions.Videos,
             allowsMultipleSelection: true,
-            selectionLimit: 10,
+            selectionLimit: 20,
             quality: 0.8,
-            videoMaxDuration: 120,
+            videoMaxDuration: 600,
             base64: false,
         });
 
@@ -112,7 +115,7 @@ export default function AddItemScreen() {
             const result = await ImagePicker.launchCameraAsync({
                 mediaTypes: contentType === 'image' ? ImagePicker.MediaTypeOptions.Images : ImagePicker.MediaTypeOptions.Videos,
                 quality: 0.8,
-                videoMaxDuration: 120,
+                videoMaxDuration: 600,
             });
 
             if (!result.canceled && result.assets && result.assets.length > 0) {
@@ -270,7 +273,7 @@ export default function AddItemScreen() {
                 return {
                     capsule_id: capsuleId,
                     owner_id: user.id,
-                    media_url: res.mediaUrl || (contentType === 'note' ? 'text://note' : ''),
+                    media_url: res.mediaUrl || '',
                     thumbnail_url: res.thumbUrl || '',
                     media_type: contentType,
                     content: contentStr,
@@ -421,17 +424,29 @@ export default function AddItemScreen() {
                                         const progress = uploadProgress[item.uri] || 0;
                                         return (
                                             <View key={index} style={styles.mediaPreviewWrapper}>
-                                                <Image source={{ uri: item.thumbnailUri || item.uri }} style={styles.mediaPreview} />
+                                                <Image source={{ uri: item.thumbnailUri || item.uri }} style={styles.mediaPreview} contentFit="cover" transition={200} />
+
                                                 
                                                 {loading && progress < 100 && (
-                                                    <BlurView intensity={20} tint="dark" style={styles.progressOverlay}>
-                                                        <View style={{ alignItems: 'center', width: '100%' }}>
-                                                            <Text style={styles.progressText}>{progress}%</Text>
-                                                            <View style={styles.progressTrack}>
-                                                                <View style={[styles.progressBar, { width: `${progress}%` }]} />
+                                                    Platform.OS === 'ios' ? (
+                                                        <BlurView intensity={20} tint="dark" style={styles.progressOverlay}>
+                                                            <View style={{ alignItems: 'center', width: '100%' }}>
+                                                                <Text style={styles.progressText}>{progress}%</Text>
+                                                                <View style={styles.progressTrack}>
+                                                                    <View style={[styles.progressBar, { width: `${progress}%` }]} />
+                                                                </View>
+                                                            </View>
+                                                        </BlurView>
+                                                    ) : (
+                                                        <View style={[styles.progressOverlay, { backgroundColor: 'rgba(0,0,0,0.7)' }]}>
+                                                            <View style={{ alignItems: 'center', width: '100%' }}>
+                                                                <Text style={styles.progressText}>{progress}%</Text>
+                                                                <View style={styles.progressTrack}>
+                                                                    <View style={[styles.progressBar, { width: `${progress}%` }]} />
+                                                                </View>
                                                             </View>
                                                         </View>
-                                                    </BlurView>
+                                                    )
                                                 )}
 
                                                 {contentType === 'video' && (
@@ -474,7 +489,7 @@ export default function AddItemScreen() {
                             <View style={styles.videoModal}>
                                 {previewVideo && (
                                     <Video
-                                        source={{ uri: previewVideo }}
+                                        source={{ uri: (previewVideo && !previewVideo.startsWith('text://')) ? previewVideo : '' }}
                                         rate={1.0}
                                         volume={1.0}
                                         isMuted={false}
@@ -492,7 +507,11 @@ export default function AddItemScreen() {
 
                         <Modal visible={trimModalVisible} transparent animationType="slide">
                             <View style={styles.trimModalContainer}>
-                                <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFill} />
+                                {Platform.OS === 'ios' ? (
+                                    <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFill} />
+                                ) : (
+                                    <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.85)' }]} />
+                                )}
                                 <View style={styles.trimContent}>
                                     <Text style={styles.trimTitle}>Trim Video</Text>
                                     

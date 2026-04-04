@@ -1,4 +1,4 @@
-export type CapsuleType = 'eventcap' | 'instacap' | 'legacycap';
+export type CapsuleType = 'eventcap' | 'instacap' | 'legacycap' | 'opencap';
 export type CapsuleState = 'sealed' | 'opened';
 
 export interface Capsule {

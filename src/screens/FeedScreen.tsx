@@ -12,7 +12,19 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
-import { requestTrackingPermissionsAsync, getTrackingPermissionsAsync } from 'expo-tracking-transparency';
+// Import tracking transparency conditionally to avoid crashes on non-iOS platforms (Web/Android)
+let requestTrackingPermissionsAsync: any = async () => ({ status: 'granted' });
+let getTrackingPermissionsAsync: any = async () => ({ status: 'granted' });
+
+if (Platform.OS === 'ios') {
+    try {
+        const Tracking = require('expo-tracking-transparency');
+        requestTrackingPermissionsAsync = Tracking.requestTrackingPermissionsAsync;
+        getTrackingPermissionsAsync = Tracking.getTrackingPermissionsAsync;
+    } catch (e) {
+        console.warn('Tracking transparency not available');
+    }
+}
 import CapsuleCard from '../components/CapsuleCard';
 import CapsuleWithTimer from '../components/CapsuleWithTimer';
 import LiveTimer from '../components/LiveTimer';
@@ -27,9 +39,9 @@ import { safetyService } from '../utils/safety';
 import { useWebDragScroll } from '../utils/useWebDragScroll';
 import TimelineActivity from '../components/TimelineActivity';
 
-type CapsuleType = 'instacap' | 'eventcap' | 'legacycap';
+type CapsuleType = 'instacap' | 'eventcap' | 'legacycap' | 'opencap';
 type FeedTab = 'following' | 'explore';
-type FilterType = CapsuleType | 'all' | 'today';
+type FilterType = 'all' | 'closed' | 'open';
 
 const { width, height } = Dimensions.get('window');
 
@@ -37,16 +49,17 @@ const { width, height } = Dimensions.get('window');
 const FEED_CACHE_TTL = 5 * 60 * 1000;
 // Impression batch: report seen capsules to DB every N seconds
 const IMPRESSION_FLUSH_MS = 8000;
+// Age threshold: don't show content older than this in DAYS
+const MAX_CONTENT_AGE_DAYS = 45;
+const MAX_CONTENT_AGE_HOURS = MAX_CONTENT_AGE_DAYS * 24;
 
 // ─── Filter config ────────────────────────────────────────────────────────────
-const FILTER_KEYS: FilterType[] = ['all', 'today', 'instacap', 'eventcap', 'legacycap'];
+const FILTER_KEYS: FilterType[] = ['all', 'closed', 'open'];
 
 const FILTER_META: Record<FilterType, { icon: string; label: (t: any) => string; color?: string }> = {
     all: { icon: 'apps-outline', label: t => t('feed.all') },
-    today: { icon: 'time-outline', label: t => t('feed.opens_today'), color: '#FF416C' },
-    instacap: { icon: 'camera-outline', label: () => 'InstaCap' },
-    eventcap: { icon: 'calendar-outline', label: () => 'EventCap' },
-    legacycap: { icon: 'hourglass-outline', label: () => 'LegacyCap' },
+    closed: { icon: 'lock-closed-outline', label: () => 'Closed' },
+    open: { icon: 'book-outline', label: () => 'Open' },
 };
 
 // ─── Story bubble ─────────────────────────────────────────────────────────────
@@ -114,7 +127,14 @@ const st = StyleSheet.create({
     avatarWrap: { width: 60, height: 60, borderRadius: 30, backgroundColor: Colors.background, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
     avatar: { width: 58, height: 58, borderRadius: 29 },
     addWrap: { width: 66, height: 66, alignItems: 'center', justifyContent: 'center' },
-    addRing: { width: 62, height: 62, borderRadius: 31, alignItems: 'center', justifyContent: 'center', shadowColor: Colors.primary, shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 3 }, elevation: 4 },
+    addRing: {
+        width: 62, height: 62, borderRadius: 31, alignItems: 'center', justifyContent: 'center',
+        ...Platform.select({
+            ios: { shadowColor: Colors.primary, shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 3 } },
+            android: { elevation: 4 },
+            web: { boxShadow: `0px 3px 10px ${Colors.primary}4D` }
+        }),
+    },
     label: { fontSize: 11, fontFamily: Fonts.medium, color: Colors.textSecondary, textAlign: 'center', maxWidth: 66 },
 });
 
@@ -177,7 +197,13 @@ const fc = StyleSheet.create({
     labelActive: { color: '#fff', fontFamily: Fonts.bold },
     timerBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, backgroundColor: 'rgba(255,65,108,0.12)' },
     timerText: { fontSize: 10, fontFamily: Fonts.bold, color: '#FF416C' },
-    liveDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: '#fff', shadowColor: '#fff', shadowOpacity: 0.8, shadowRadius: 4 },
+    liveDot: {
+        width: 5, height: 5, borderRadius: 3, backgroundColor: '#fff',
+        ...Platform.select({
+            ios: { shadowColor: '#fff', shadowOpacity: 0.8, shadowRadius: 4, shadowOffset: { width: 0, height: 0 } },
+            web: { boxShadow: '0px 0px 4px #fff' }
+        }),
+    },
 });
 
 // ─── Skeleton placeholder mientras carga ─────────────────────────────────────
@@ -307,48 +333,76 @@ export default function FeedScreen() {
     }, []);
 
     // ─── Data loading ──────────────────────────────────────────────────────────
+    const feedRequestId = useRef(0);
+
     const loadFeed = useCallback(async (forceRefresh = false, tabOverride?: FeedTab) => {
+        const currentReqId = ++feedRequestId.current;
         const tab = tabOverride ?? activeTab;
         const cacheKey = `${tab}_${activeFilter}`;
         const cached = feedCache[cacheKey];
 
-        // Stale-While-Revalidate (SWR): instantly show cache if we have it
+        // Stale-While-Revalidate (SWR) logic:
+        // If we have VERY fresh cache (< 10s), show it and stop.
+        // If cache is older, show it as a preview BUT keep loading state active if it's the first pull
+        // to avoid the jarring "pop" of new data replacing stale data immediately.
         const hasStaleData = cached && cached.data.length > 0;
-        if (hasStaleData) {
+        const isFresh = hasStaleData && (Date.now() - cached.ts) < 10000;
+
+        if (isFresh && !forceRefresh) {
             setCapsules(cached.data);
             setLoading(false);
-            // If cache is fresh (less than 1 min old) and we didn't swipe to refresh, don't fetch again
-            if (!forceRefresh && (Date.now() - cached.ts) < 60000) {
-                return;
-            }
+            return;
         }
 
-        // Only show skeleton if we have literally nothing to show
-        if (!hasStaleData && !refreshing) setLoading(true);
+        if (hasStaleData) {
+            // Explicit user request: "like it is loading and then loads the correct post".
+            // To achieve this, if the cache is stale, we preferred showing the skeleton 
+            // over showing potentially incorrect (stale) data that will jump.
+            setLoading(true);
+            setCapsules([]); // Clear to force skeleton via ListEmptyComponent
+        } else if (!forceRefresh) {
+            const diskCached = await AsyncStorage.getItem(`feed_cache_${cacheKey}`);
+            if (diskCached && feedRequestId.current === currentReqId) {
+                const parsed = JSON.parse(diskCached);
+                const isDiskFresh = (Date.now() - parsed.ts) < 10000;
+                if (isDiskFresh) {
+                    setCapsules(parsed.data);
+                    setLoading(false);
+                    return;
+                }
+                // Stale disk cache: show skeleton
+                setLoading(true);
+                setCapsules([]);
+            }
+        }
+        if (!refreshing) setLoading(true);
 
         const { data: { session } } = await supabase.auth.getSession();
+
         const user = session?.user;
         if (!user) { setLoading(false); setRefreshing(false); return; }
         setCurrentUserId(user.id);
 
-        // Bloqueos y follows en paralelo
         const [blocked, followsResult] = await Promise.all([
             safetyService.getAllSafetyUserIds(user.id),
             supabase.from('follows').select('following_id').eq('follower_id', user.id),
         ]);
+        
+        // Final check before state update after slow network calls
+        if (feedRequestId.current !== currentReqId) return;
+
         setBlockedUserIds(blocked);
         loadStories(user.id, blocked);
 
         const followingIds = (followsResult.data || []).map((f: any) => f.following_id);
 
-        // Si es following y no sigues a nadie → vacío inmediato
         if (tab === 'following' && followingIds.length === 0) {
             setCapsules([]);
             setLoading(false);
             setRefreshing(false);
             return;
         }
-        // ── Construir query de items ──────────────────────────────────────────
+
         let itemsQuery = supabase
             .from('capsule_items')
             .select(`
@@ -361,42 +415,85 @@ export default function FeedScreen() {
                 )
             `)
             .in('media_type', ['image', 'video', 'audio', 'note'])
-            .eq('is_story', false); // Nunca mezclar flashes con el feed principal
+            .eq('is_story', false)
+            .gt('created_at', new Date(Date.now() - MAX_CONTENT_AGE_DAYS * 24 * 60 * 60 * 1000).toISOString());
 
         if (tab === 'following') {
             itemsQuery = itemsQuery.in('owner_id', followingIds);
         } else {
             itemsQuery = itemsQuery
                 .eq('capsules.is_public', true)
-                .neq('owner_id', user.id);
+                .neq('owner_id', user.id)
+                .neq('capsules.type', 'eventcap');
             if (followingIds.length > 0) {
                 itemsQuery = itemsQuery.not('owner_id', 'in', `(${followingIds.join(',')})`);
             }
         }
 
-        if (activeFilter !== 'all' && activeFilter !== 'today') {
-            itemsQuery = itemsQuery.eq('capsules.type', activeFilter);
-        }
-        if (activeFilter === 'today') {
-            const start = new Date(); start.setHours(0, 0, 0, 0);
-            const end = new Date(); end.setHours(23, 59, 59, 999);
-            itemsQuery = itemsQuery
-                .gte('capsules.opens_at', start.toISOString())
-                .lte('capsules.opens_at', end.toISOString());
-        }
+        if (activeFilter === 'closed') itemsQuery = itemsQuery.eq('capsules.status', 'sealed');
+        else if (activeFilter === 'open') itemsQuery = itemsQuery.eq('capsules.status', 'opened');
 
-        // ── RPC + items en paralelo ───────────────────────────────────────────
         const rpcName = tab === 'explore' ? 'get_explore_feed' : 'get_following_feed';
-        // Fetch more than needed so client-side diversification has room
         const rpcLimit = tab === 'following' ? 60 : 80;
+
         const [rpcResult, itemsResult] = await Promise.all([
-            supabase.rpc(rpcName, { req_user_id: user.id, req_filter: activeFilter, req_limit: rpcLimit }),
+            supabase.rpc(rpcName, { req_user_id: user.id, req_filter: 'all', req_limit: rpcLimit }),
             itemsQuery.order('created_at', { ascending: false }).limit(80),
         ]);
 
-        const capsData = ((rpcResult.data || []) as any[])
-            .filter((c: any) => !blocked.includes(c.owner_id))
-            .map((c: any) => ({ ...c, feedType: 'capsule' }));
+        if (feedRequestId.current !== currentReqId) return;
+
+        let capsData = (rpcResult.data || []) as any[];
+
+        // Identify capsules missing critical UI info (model, type, or valid model string)
+        const idsMissingInfo = capsData
+            .filter(c => !c.model || typeof c.model !== 'string' || c.model.length < 3)
+            .map(c => c.id);
+
+        if (idsMissingInfo.length > 0) {
+            const { data: fullInfo } = await supabase
+                .from('capsules')
+                .select('id, model, chain_id, description')
+                .in('id', idsMissingInfo);
+            
+            if (fullInfo) {
+                capsData = capsData.map(c => {
+                    const extra = fullInfo.find(f => f.id === c.id);
+                    return extra ? { ...c, ...extra } : c;
+                });
+            }
+        }
+
+        capsData = capsData
+            .filter((c: any) => {
+                if (blocked.includes(c.owner_id) || c.type === 'eventcap') return false;
+                if (activeFilter === 'closed' && c.status !== 'sealed') return false;
+                if (activeFilter === 'open' && c.status !== 'opened') return false;
+                
+                // Strict age filter for capsules
+                const ageHours = (Date.now() - new Date(c.created_at).getTime()) / 3600000;
+                if (ageHours > MAX_CONTENT_AGE_HOURS) return false;
+
+                return true;
+            })
+            .map((c: any) => {
+                const now = Date.now();
+                const createdTs = new Date(c.created_at).getTime();
+                const hoursOld = Math.max(0, (now - createdTs) / 3600000);
+                
+                // Base score from RPC or 0
+                const baseScore = c.score || c.total_score || 0;
+                
+                // Recency: Faster decay for old content, strong boost for new content
+                // exp(-0.06 * hoursOld) gives ~0.5 at 12h, ~0.24 at 24h
+                const recencyScore = Math.exp(-0.06 * hoursOld) * 100;
+                
+                // Freshness Boost: Extra points for the first hours
+                const freshBoost = hoursOld < 2 ? 60 : hoursOld < 12 ? 30 : 0;
+                
+                const score = baseScore + recencyScore + freshBoost + 20; // +20 base for capsule cards
+                return { ...c, feedType: 'capsule', total_score: score };
+            });
 
         const activityData = (itemsResult.data || []) as any[];
 
@@ -428,15 +525,24 @@ export default function FeedScreen() {
                 }
             }
 
-            const hoursOld = Math.max(0, (Date.now() - new Date(item.created_at).getTime()) / 3600000);
-            // Client-side score: recency + group bonus + media richness
-            const mediaBonus = item.media_type === 'video' ? 15
-                             : item.media_type === 'audio' ? 10
-                             : item.media_type === 'note'  ? 3
-                             : 5; // image
-            const groupBonus  = group.length >= 3 ? 12 : group.length === 2 ? 6 : 0;
-            const recencyRaw  = Math.exp(-0.039 * hoursOld) * 100; // same decay as following
-            const score = recencyRaw * (tab === 'following' ? 0.8 : 0.5) + mediaBonus + groupBonus;
+            const now = Date.now();
+            const itemTs = new Date(item.created_at).getTime();
+            const hoursOld = Math.max(0, (now - itemTs) / 3600000);
+            
+            // Client-side score: recency + freshness + media richness + group bonus
+            const mediaBonus = item.media_type === 'video' ? 20
+                             : item.media_type === 'audio' ? 15
+                             : item.media_type === 'note'  ? 5
+                             : 8; // image
+            
+            const groupBonus  = group.length >= 3 ? 15 : group.length === 2 ? 8 : 0;
+            
+            // Use same decay as capsules but WITHOUT the 0.5/0.8 penalty
+            const recencyRaw  = Math.exp(-0.06 * hoursOld) * 100;
+            const freshBoost  = hoursOld < 2 ? 70 : hoursOld < 12 ? 35 : 0;
+            
+            // Activity gets a higher base boost (+40 vs +20) to favor content over status
+            const score = recencyRaw + freshBoost + mediaBonus + groupBonus + 40;
 
             groupedActivity.push(
                 group.length > 1
@@ -445,8 +551,23 @@ export default function FeedScreen() {
             );
         });
 
-        // ── Merge capsule cards + activity items (ambos se muestran siempre) ─
-        let merged = [...capsData, ...groupedActivity].sort((a, b) => {
+        // ── Deduplicate by capsule_id, keeping the highest score ─────────────
+        const combined = [...capsData, ...groupedActivity];
+        const bestForCapsule: Record<string, any> = {};
+        const standaloneItems: any[] = [];
+
+        combined.forEach(item => {
+            const cid = item.feedType === 'capsule' ? item.id : item.capsule_id;
+            if (!cid) {
+                standaloneItems.push(item);
+                return;
+            }
+            if (!bestForCapsule[cid] || item.total_score > bestForCapsule[cid].total_score) {
+                bestForCapsule[cid] = item;
+            }
+        });
+
+        let merged = [...Object.values(bestForCapsule), ...standaloneItems].sort((a, b) => {
             const sa = a.total_score ?? 0;
             const sb = b.total_score ?? 0;
             return sb - sa;
@@ -493,8 +614,11 @@ export default function FeedScreen() {
             capsuleIds.forEach(id => impressionBufferRef.current.add(id));
         }
 
+        if (feedRequestId.current !== currentReqId) return;
+
         setCapsules(diversified);
         setFeedCache(prev => ({ ...prev, [cacheKey]: { data: diversified, ts: Date.now() } }));
+        AsyncStorage.setItem(`feed_cache_${cacheKey}`, JSON.stringify({ data: diversified, ts: Date.now() }));
         setLoading(false);
         setRefreshing(false);
     }, [activeTab, activeFilter, refreshing, feedCache]);
@@ -805,7 +929,7 @@ export default function FeedScreen() {
             ? item
             : (Array.isArray(item.capsules) ? item.capsules[0] : item.capsules);
         if (!capsule) return null;
-        return <CapsuleCard capsule={capsule} />;
+        return <CapsuleCard capsule={capsule} userId={currentUserId} />;
     }, []);
 
     // ─── List Header ───────────────────────────────────────────────────────────
@@ -872,7 +996,11 @@ export default function FeedScreen() {
                     { opacity: headerOpacity, transform: [{ translateY: headerSlide }] },
                 ]}
             >
-                <BlurView intensity={Platform.OS === 'ios' ? 85 : 100} tint="light" style={StyleSheet.absoluteFill} />
+                {Platform.OS === 'ios' ? (
+                    <BlurView intensity={85} tint="light" style={StyleSheet.absoluteFill} />
+                ) : (
+                    <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255, 255, 255, 0.92)' }]} />
+                )}
 
                 <View style={s.headerRow}>
                     <View style={s.logoRow}>
@@ -1065,8 +1193,11 @@ export default function FeedScreen() {
                                         <View style={s.previewImgWrap}>
                                             <Image source={{ uri: randomPreviewItem?.media_url }} style={s.previewImg} />
                                             <Animated.View style={[StyleSheet.absoluteFill, { opacity: unblurAnim }]}>
-                                                <BlurView intensity={50} tint="dark" style={StyleSheet.absoluteFill} />
-                                                <BlurView intensity={40} tint="light" style={StyleSheet.absoluteFill} />
+                                                {Platform.OS === 'ios' ? (
+                                                    <BlurView intensity={50} tint="dark" style={StyleSheet.absoluteFill} />
+                                                ) : (
+                                                    <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]} />
+                                                )}
                                             </Animated.View>
                                         </View>
                                         <Text style={s.animTitle}>A memory has surfaced!</Text>

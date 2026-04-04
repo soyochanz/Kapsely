@@ -13,13 +13,15 @@ import TabBar from '../components/TabBar';
 import { createStackNavigator } from '@react-navigation/stack';
 import CapsuleDetailScreen from '../screens/CapsuleDetailScreen';
 import EditProfileScreen from '../screens/EditProfileScreen';
-import TimerConfigScreen from '../screens/TimerConfigScreen';
 import CreateSelectionScreen from '../screens/CreateSelectionScreen';
 import CapsuleSelectorScreen from '../screens/CapsuleSelectorScreen';
 import AddItemScreen from '../screens/AddItemScreen';
+import OnboardingScreen from '../screens/OnboardingScreen';
 import UserListScreen from '../screens/UsersListScreen';
 import PersonalizeProfileScreen from '../screens/PersonalizeProfileScreen';
-import { View, StyleSheet } from 'react-native';
+import AdminCalibrationScreen from '../screens/AdminCalibrationScreen';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { View, StyleSheet, ActivityIndicator } from 'react-native';
 import { Colors } from '../theme';
 import { navigationRef } from '../../App';
 
@@ -80,9 +82,31 @@ function TabNavigator() {
 }
 
 export default function AppNavigator() {
+    const [hasSeenOnboarding, setHasSeenOnboarding] = React.useState<boolean | null>(null);
+
+    React.useEffect(() => {
+        const checkOnboarding = async () => {
+            const seen = await AsyncStorage.getItem('@has_seen_onboarding');
+            setHasSeenOnboarding(seen === 'true');
+        };
+        checkOnboarding();
+    }, []);
+
+    if (hasSeenOnboarding === null) {
+        return (
+            <View style={{ flex: 1, backgroundColor: Colors.background, justifyContent: 'center', alignItems: 'center' }}>
+                <ActivityIndicator size="large" color={Colors.primary} />
+            </View>
+        );
+    }
+
     return (
         <View style={{ flex: 1 }}>
-            <Stack.Navigator screenOptions={{ headerShown: false }}>
+            <Stack.Navigator 
+                screenOptions={{ headerShown: false }}
+                initialRouteName={hasSeenOnboarding ? "Main" : "Onboarding"}
+            >
+                <Stack.Screen name="Onboarding" component={OnboardingScreen} />
                 <Stack.Screen name="Main" component={TabNavigator} />
                 <Stack.Screen name="CapsuleDetail" component={CapsuleDetailScreen} />
                 <Stack.Screen name="UserProfile" component={ProfileScreen} />
@@ -93,9 +117,8 @@ export default function AppNavigator() {
                 <Stack.Screen name="CapsuleSelector" component={CapsuleSelectorScreen} />
                 <Stack.Screen name="AddItem" component={AddItemScreen} />
                 <Stack.Screen name="UserList" component={UserListScreen} />
-                <Stack.Screen name="TimerConfig" component={TimerConfigScreen} />
                 <Stack.Screen name="PersonalizeProfile" component={PersonalizeProfileScreen} />
-                <Stack.Screen name="Inbox" component={require('../screens/InboxScreen').default} />
+                <Stack.Screen name="AdminCalibration" component={AdminCalibrationScreen} />
                 <Stack.Screen name="InstagramShare" component={require('../screens/InstagramShareScreen').default} />
             </Stack.Navigator>
         </View>

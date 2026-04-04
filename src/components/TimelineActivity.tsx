@@ -58,7 +58,13 @@ const CollageView = ({ items, count, isSealed }: { items: any[], count: number, 
                     ))}
                 </View>
             )}
-            {isSealed && <BlurView intensity={45} tint="light" style={StyleSheet.absoluteFill} />}
+            {isSealed && (
+                Platform.OS === 'ios' ? (
+                    <BlurView intensity={45} tint="light" style={StyleSheet.absoluteFill} />
+                ) : (
+                    <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255,255,255,0.45)' }]} />
+                )
+            )}
             {/* Group count badge — bottom right, smaller & premium */}
             <View style={styles.groupCountBadge}>
                 <Ionicons name="images" size={14} color="#fff" />
@@ -171,7 +177,11 @@ export default React.memo(function TimelineActivity({ item }: TimelineActivityPr
                             blurRadius={capsule?.status === 'sealed' ? (Platform.OS === 'ios' ? 12 : 30) : 0}
                         />
                         {capsule?.status === 'sealed' && (
-                            <BlurView intensity={Platform.OS === 'ios' ? 45 : 70} tint="light" style={StyleSheet.absoluteFill} />
+                            Platform.OS === 'ios' ? (
+                                <BlurView intensity={45} tint="light" style={StyleSheet.absoluteFill} />
+                            ) : (
+                                <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255,255,255,0.7)' }]} />
+                            )
                         )}
                     </>
                 ) : isAudio ? (
@@ -251,7 +261,8 @@ export default React.memo(function TimelineActivity({ item }: TimelineActivityPr
                         />
                     </TouchableOpacity>
                 )}
-            </View>            {/* Middle Content — simplified, consistent across types */}
+            </View>
+            {/* Middle Content — simplified, consistent across types */}
             {(isAudio || isNote || item.media_type === 'video') && (
                 <View style={styles.middleContent}>
                     {isAudio && (
@@ -306,32 +317,61 @@ export default React.memo(function TimelineActivity({ item }: TimelineActivityPr
                             <Ionicons name="lock-closed" size={11} color="#fff" />
                         </View>
                     )}
-                    <BlurView intensity={30} tint="dark" style={styles.glassInfo}>
-                        <View style={styles.capsuleInfo}>
-                            <View style={[styles.typeIndicator, { backgroundColor: typeColors[0] as any }]} />
-                            <Text style={styles.capsuleTitle} numberOfLines={1}>{capsule.title}</Text>
-                            {!hasAccess && (
-                                <Ionicons name="lock-closed" size={13} color="rgba(255,100,100,0.9)" style={{ marginLeft: 6 }} />
-                            )}
-                        </View>
-                        <View style={styles.itemPreview}>
-                            <View style={styles.iconContainer}>
-                                <Ionicons name={mediaIcon as any} size={14} color="#fff" />
+                    {Platform.OS === 'ios' ? (
+                        <BlurView intensity={30} tint="dark" style={styles.glassInfo}>
+                            <View style={styles.capsuleInfo}>
+                                <View style={[styles.typeIndicator, { backgroundColor: typeColors[0] as any }]} />
+                                <Text style={styles.capsuleTitle} numberOfLines={1}>{capsule.title}</Text>
+                                {!hasAccess && (
+                                    <Ionicons name="lock-closed" size={13} color="rgba(255,100,100,0.9)" style={{ marginLeft: 6 }} />
+                                )}
                             </View>
-                            <Text style={styles.previewText} numberOfLines={1}>
-                                {item.feedType === 'activity_group'
-                                    ? `New collection · ${item.count} items`
-                                    : isAudio ? `Voice Note · ${item.content || '--:--'}` : isNote ? 'Written Note' : ((item.caption?.replace(/!!b:\w+/, '').trim()) || (item.media_type === 'video' ? `Video · ${item.content || '--:--'}` : ''))
-                                }
-                            </Text>
-                            {isAudio && (
-                                <View style={styles.durationBadge}>
-                                    <Ionicons name="mic" size={9} color="#fff" style={{ marginRight: 3 }} />
-                                    <Text style={styles.durationText}>{item.content || '--:--'}</Text>
+                            <View style={styles.itemPreview}>
+                                <View style={styles.iconContainer}>
+                                    <Ionicons name={mediaIcon as any} size={14} color="#fff" />
                                 </View>
-                            )}
+                                <Text style={styles.previewText} numberOfLines={1}>
+                                    {item.feedType === 'activity_group'
+                                        ? `New collection · ${item.count} items`
+                                        : isAudio ? `Voice Note · ${item.content || '--:--'}` : isNote ? 'Written Note' : ((item.caption?.replace(/!!b:\w+/, '').trim()) || (item.media_type === 'video' ? `Video · ${item.content || '--:--'}` : ''))
+                                    }
+                                </Text>
+                                {isAudio && (
+                                    <View style={styles.durationBadge}>
+                                        <Ionicons name="mic" size={9} color="#fff" style={{ marginRight: 3 }} />
+                                        <Text style={styles.durationText}>{item.content || '--:--'}</Text>
+                                    </View>
+                                )}
+                            </View>
+                        </BlurView>
+                    ) : (
+                        <View style={[styles.glassInfo, { backgroundColor: 'rgba(0,0,0,0.45)' }]}>
+                            <View style={styles.capsuleInfo}>
+                                <View style={[styles.typeIndicator, { backgroundColor: typeColors[0] as any }]} />
+                                <Text style={styles.capsuleTitle} numberOfLines={1}>{capsule.title}</Text>
+                                {!hasAccess && (
+                                    <Ionicons name="lock-closed" size={13} color="rgba(255,100,100,0.9)" style={{ marginLeft: 6 }} />
+                                )}
+                            </View>
+                            <View style={styles.itemPreview}>
+                                <View style={styles.iconContainer}>
+                                    <Ionicons name={mediaIcon as any} size={14} color="#fff" />
+                                </View>
+                                <Text style={styles.previewText} numberOfLines={1}>
+                                    {item.feedType === 'activity_group'
+                                        ? `New collection · ${item.count} items`
+                                        : isAudio ? `Voice Note · ${item.content || '--:--'}` : isNote ? 'Written Note' : ((item.caption?.replace(/!!b:\w+/, '').trim()) || (item.media_type === 'video' ? `Video · ${item.content || '--:--'}` : ''))
+                                    }
+                                </Text>
+                                {isAudio && (
+                                    <View style={styles.durationBadge}>
+                                        <Ionicons name="mic" size={9} color="#fff" style={{ marginRight: 3 }} />
+                                        <Text style={styles.durationText}>{item.content || '--:--'}</Text>
+                                    </View>
+                                )}
+                            </View>
                         </View>
-                    </BlurView>
+                    )}
                 </View>
             )}
         </TouchableOpacity>

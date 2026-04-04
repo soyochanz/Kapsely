@@ -2,9 +2,10 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     View, Text, StyleSheet, TouchableOpacity,
     Image, ActivityIndicator, Alert, Modal, Pressable,
-    ScrollView, Dimensions, SafeAreaView, PanResponder,
+    ScrollView, Dimensions, PanResponder,
     Animated, Platform
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors, Fonts, Spacing, Shadow } from '../theme';
@@ -255,6 +256,7 @@ const rc = StyleSheet.create({
 
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 export default function PersonalizeProfileScreen() {
+    const insets = useSafeAreaInsets();
     const navigation = useNavigation();
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -440,7 +442,7 @@ export default function PersonalizeProfileScreen() {
 
     return (
         <View style={s.root}>
-            <SafeAreaView style={s.headerWrap}>
+            <View style={[s.headerWrap, { paddingTop: Math.max(insets.top, Platform.OS === 'android' ? 14 : 0) }]}>
                 <View style={s.header}>
                     <TouchableOpacity onPress={() => navigation.goBack()} style={s.headerBtn} activeOpacity={0.7}>
                         <Ionicons name="chevron-back" size={22} color={Colors.textPrimary} />
@@ -458,7 +460,7 @@ export default function PersonalizeProfileScreen() {
                         }
                     </TouchableOpacity>
                 </View>
-            </SafeAreaView>
+            </View>
 
             <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled" scrollEnabled={!isDragging}>
 

@@ -163,7 +163,9 @@ const lb = StyleSheet.create({
     },
     count: {
         color: '#fff', fontSize: 12, fontFamily: Fonts.bold,
-        textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3,
+        textShadowColor: 'rgba(0,0,0,0.5)',
+        textShadowOffset: { width: 0, height: 1 },
+        textShadowRadius: 3,
     },
 });
 
@@ -257,6 +259,8 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
 
     const [likesData, setLikesData] = useState<Record<string, { count: number; hasLiked: boolean }>>({});
     const [showLikersId, setShowLikersId] = useState<string | null>(null);
+    const pressStartTime = useRef<number>(0);
+    const isActuallyHolding = useRef(false);
 
     const [storyComments, setStoryComments] = useState<any[]>([]);
     const [activeComment, setActiveComment] = useState<any>(null);
@@ -397,8 +401,7 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                 <LinearGradient
                     colors={['rgba(0,0,0,0.55)', 'rgba(0,0,0,0)', 'rgba(0,0,0,0)', 'rgba(0,0,0,0.5)']}
                     locations={[0, 0.2, 0.7, 1]}
-                    style={StyleSheet.absoluteFill}
-                    pointerEvents="none"
+                    style={[StyleSheet.absoluteFill, { pointerEvents: 'none' } as any]}
                 />
 
                 {/* Filter overlay */}
@@ -407,20 +410,21 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                         backgroundColor: story.metadata.filter === 'vintage' ? 'rgba(230,190,120,0.25)' :
                             story.metadata.filter === 'warm' ? 'rgba(255,150,50,0.18)' :
                                 story.metadata.filter === 'cool' ? 'rgba(0,150,255,0.18)' :
-                                    story.metadata.filter === 'dark' ? 'rgba(0,0,0,0.4)' : 'transparent'
-                    }]} pointerEvents="none" />
+                                    story.metadata.filter === 'dark' ? 'rgba(0,0,0,0.4)' : 'transparent',
+                        pointerEvents: 'none'
+                    } as any]} />
                 )}
 
                 {/* Text overlays */}
                 {story.metadata?.texts?.map((t: any) => (
-                    <View key={t.id} style={{ position: 'absolute', top: t.y * height, left: t.x * width - 50 }} pointerEvents="none">
+                    <View key={t.id} style={[{ position: 'absolute', top: t.y * height, left: t.x * width - 50 }, { pointerEvents: 'none' } as any]}>
                         <View style={{ backgroundColor: t.bg || 'rgba(0,0,0,0.5)', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }}>
                             <Text style={{ color: t.color || '#fff', fontSize: 18, fontFamily: Fonts.bold }}>{t.text}</Text>
                         </View>
                     </View>
                 ))}
                 {story.metadata?.emojis?.map((e: any) => (
-                    <Text key={e.id} style={{ position: 'absolute', top: e.y * height, left: e.x * width, fontSize: 32 }} pointerEvents="none">{e.emoji}</Text>
+                    <Text key={e.id} style={[{ position: 'absolute', top: e.y * height, left: e.x * width, fontSize: 32 }, { pointerEvents: 'none' } as any]}>{e.emoji}</Text>
                 ))}
 
                 {/* ── HEADER ── */}
@@ -470,12 +474,20 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                 </View>
 
                 {/* ── TAP GESTURE ZONES ── */}
-                <View style={s.gestureLayer} pointerEvents="box-none">
+                <View style={[s.gestureLayer, { pointerEvents: 'box-none' } as any]}>
                     <Pressable
                         style={s.gestureSide}
-                        onPress={prevStory}
-                        onPressIn={() => setIsPaused(true)}
-                        onPressOut={() => setIsPaused(false)}
+                        onPressIn={() => {
+                            pressStartTime.current = Date.now();
+                            setIsPaused(true);
+                            isActuallyHolding.current = true;
+                        }}
+                        onPressOut={() => {
+                            const duration = Date.now() - pressStartTime.current;
+                            isActuallyHolding.current = false;
+                            setIsPaused(false);
+                            if (duration < 300) prevStory();
+                        }}
                     />
                     <Pressable
                         style={s.gestureMiddle}
@@ -484,9 +496,17 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                     />
                     <Pressable
                         style={s.gestureSide}
-                        onPress={nextStory}
-                        onPressIn={() => setIsPaused(true)}
-                        onPressOut={() => setIsPaused(false)}
+                        onPressIn={() => {
+                            pressStartTime.current = Date.now();
+                            setIsPaused(true);
+                            isActuallyHolding.current = true;
+                        }}
+                        onPressOut={() => {
+                            const duration = Date.now() - pressStartTime.current;
+                            isActuallyHolding.current = false;
+                            setIsPaused(false);
+                            if (duration < 300) nextStory();
+                        }}
                     />
                 </View>
 
@@ -500,17 +520,31 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                             activeOpacity={0.9}
                             onPress={() => { progress.stopAnimation(); onClose(); navigation.navigate('CapsuleDetail', { capsuleId }); }}
                         >
-                            <BlurView intensity={40} tint="dark" style={s.capsuleChipBlur}>
-                                <Image
-                                    source={{ uri: timerConfigManager.getModelImage(story.capsules?.model) || MODEL_IMAGES[story.capsules?.model] }}
-                                    style={s.capsuleModel}
-                                    resizeMode="contain"
-                                />
-                                <View style={s.capsuleChipText}>
-                                    <Text style={s.capsuleChipLabel} numberOfLines={1}>{story.capsules?.title || 'View Capsule'}</Text>
-                                    <Text style={s.capsuleChipSub}>Tap to open ↗</Text>
+                            {Platform.OS === 'ios' ? (
+                                <BlurView intensity={40} tint="dark" style={s.capsuleChipBlur}>
+                                    <Image
+                                        source={{ uri: timerConfigManager.getModelImage(story.capsules?.model) || MODEL_IMAGES[story.capsules?.model] }}
+                                        style={s.capsuleModel}
+                                        resizeMode="contain"
+                                    />
+                                    <View style={s.capsuleChipText}>
+                                        <Text style={s.capsuleChipLabel} numberOfLines={1}>{story.capsules?.title || 'View Capsule'}</Text>
+                                        <Text style={s.capsuleChipSub}>Tap to open ↗</Text>
+                                    </View>
+                                </BlurView>
+                            ) : (
+                                <View style={[s.capsuleChipBlur, { backgroundColor: 'rgba(0,0,0,0.6)' }]}>
+                                    <Image
+                                        source={{ uri: timerConfigManager.getModelImage(story.capsules?.model) || MODEL_IMAGES[story.capsules?.model] }}
+                                        style={s.capsuleModel}
+                                        resizeMode="contain"
+                                    />
+                                    <View style={s.capsuleChipText}>
+                                        <Text style={s.capsuleChipLabel} numberOfLines={1}>{story.capsules?.title || 'View Capsule'}</Text>
+                                        <Text style={s.capsuleChipSub}>Tap to open ↗</Text>
+                                    </View>
                                 </View>
-                            </BlurView>
+                            )}
                         </TouchableOpacity>
                     )}
 

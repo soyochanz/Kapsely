@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Image, StyleSheet, LayoutChangeEvent, Animated } from 'react-native';
+import { View, StyleSheet, LayoutChangeEvent, Animated } from 'react-native';
+import { Image } from 'expo-image';
+
 import { LinearGradient } from 'expo-linear-gradient';
 import LiveTimer from './LiveTimer';
-import { timerConfigManager, ModelTimerConfig } from '../utils/timerConfig';
+import { timerConfigManager, ModelTimerConfig, ModelChainConfig } from '../utils/timerConfig';
 import { MODEL_TINTS } from '../constants/models';
 import Particles from './Particles';
 
@@ -14,6 +16,7 @@ interface CapsuleWithTimerProps {
     style?: any; // External dimensions (e.g. { width: 140, height: 140 })
     chainId?: string | null; // Selected chain ID
     configOverride?: ModelTimerConfig; // Used by the calibration tool
+    chainConfigOverride?: ModelChainConfig; // Used by the calibration tool
     hideTimer?: boolean; // Hide the timer overlay entirely
     capsuleType?: string; // Optional type for specific particles
     isOpened?: boolean; // New prop for status
@@ -33,10 +36,11 @@ const CapsuleWithTimer = React.memo(({
     isOpened,
     hideParticles,
     darkerShadow,
+    chainConfigOverride,
 }: CapsuleWithTimerProps) => {
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
     const [config, setConfig] = useState(configOverride || timerConfigManager.getConfig(modelKey));
-    const [chainConfig, setChainConfig] = useState(chainId ? timerConfigManager.getChainConfig(modelKey, chainId) : null);
+    const [chainConfig, setChainConfig] = useState(chainConfigOverride || (chainId ? timerConfigManager.getChainConfig(modelKey, chainId) : null));
     const swingAnim = useRef(new Animated.Value(0)).current;
     const glintAnim = useRef(new Animated.Value(-1.5)).current;
 
@@ -70,12 +74,20 @@ const CapsuleWithTimer = React.memo(({
             setConfig(timerConfigManager.getConfig(modelKey));
             setChainConfig(chainId ? timerConfigManager.getChainConfig(modelKey, chainId) : null);
         };
+        
+        if (chainConfigOverride) {
+            setChainConfig(chainConfigOverride);
+        } else if (chainId) {
+            setChainConfig(timerConfigManager.getChainConfig(modelKey, chainId) || null);
+        } else {
+            setChainConfig(null);
+        }
 
         const unsubscribe = timerConfigManager.subscribe(updateAll);
         updateAll();
 
         return unsubscribe;
-    }, [modelKey, configOverride, chainId]);
+    }, [modelKey, configOverride, chainId, chainConfigOverride]);
 
     const onLayout = (e: LayoutChangeEvent) => {
         const { width, height } = e.nativeEvent.layout;
@@ -119,7 +131,7 @@ const CapsuleWithTimer = React.memo(({
     } : { opacity: 0 };
 
     // Scale font based on timer height
-    const baseFontSize = Math.max(10, (height * config.h) * 0.55);
+    const baseFontSize = Math.max(8, (height * config.h) * 0.55);
 
 
 
@@ -159,8 +171,9 @@ const CapsuleWithTimer = React.memo(({
                     width > 0 ? { width, height } : {}, 
                     { zIndex: 1 }
                 ]}
-                resizeMode="contain"
+                contentFit="contain"
             />
+
             {width > 0 && !hideTimer && (
                 <View style={[timerStyle, { zIndex: 2 }]}>
                     <LiveTimer
@@ -201,8 +214,9 @@ const CapsuleWithTimer = React.memo(({
                         <Image
                             source={{ uri: chainItem.image_url }}
                             style={{ width: '100%', height: '100%' }}
-                            resizeMode="contain"
+                            contentFit="contain"
                         />
+
                     </Animated.View>
                 </View>
             )}

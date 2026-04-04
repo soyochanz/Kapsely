@@ -254,7 +254,11 @@ export default function InstagramShareScreen() {
                                     <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255,255,255,0.04)' }]} />
                                 )}
                                 {/* Blur overlay */}
-                                <BlurView intensity={22} tint="dark" style={StyleSheet.absoluteFill as any} />
+                                {Platform.OS === 'ios' ? (
+                                    <BlurView intensity={22} tint="dark" style={StyleSheet.absoluteFill as any} />
+                                ) : (
+                                    <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]} />
+                                )}
                                 {/* Lock icon */}
                                 <View style={s.photoLock}>
                                     <Ionicons name="lock-closed" size={10} color="rgba(255,255,255,0.7)" />

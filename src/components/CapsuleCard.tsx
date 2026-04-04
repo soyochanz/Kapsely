@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import {
-    View, Text, Image, TouchableOpacity, StyleSheet,
+    View, Text, TouchableOpacity, StyleSheet,
     Dimensions, Platform, Alert, Animated
+
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
@@ -9,11 +10,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, BorderRadius, Spacing, Shadow } from '../theme';
 import { supabase } from '../lib/supabase';
-import { MODEL_IMAGES, MODEL_IMAGES_OPEN } from '../constants/models';
+import { MODEL_IMAGES } from '../constants/models';
 import CapsuleWithTimer from './CapsuleWithTimer';
 import VerifiedBadge from './VerifiedBadge';
 import { timerConfigManager } from '../utils/timerConfig';
+import { Image } from 'expo-image';
 import { cardMediaCache } from '../utils/mediaCache';
+
 
 const { width } = Dimensions.get('window');
 
@@ -38,12 +41,12 @@ function formatOpenDate(dateStr: string): string {
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp }: { capsule: any; isLocked?: boolean }) => {
+const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp, userId: passedUserId }: { capsule: any; isLocked?: boolean; userId?: string | null }) => {
     const navigation = useNavigation<any>();
     const { t } = useTranslation();
 
     const [isFollowed, setIsFollowed] = useState(false);
-    const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+    const [currentUserId, setCurrentUserId] = useState<string | null>(passedUserId || null);
     const [likeCount, setLikeCount] = useState(0);
     const [isLiked, setIsLiked] = useState(false);
     const [commentCount, setCommentCount] = useState(0);
@@ -59,8 +62,8 @@ const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp }: { capsule: 
         timerConfigManager.getConfig(capsule.model)?.themeColor || '#a269ff'
     );
     const [modelImages, setModelImages] = useState({
-        closed: timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model] || (MODEL_IMAGES as any).basicred_kap,
-        open: timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model] || MODEL_IMAGES[capsule.model] || (MODEL_IMAGES as any).basicred_kap,
+        closed: timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || (MODEL_IMAGES as any).basicred_kap,
+        open: timerConfigManager.getModelImageOpen(capsule.model) || (MODEL_IMAGES as any).basicred_kap,
     });
 
     const heartScale = React.useRef(new Animated.Value(1)).current;
@@ -72,12 +75,20 @@ const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp }: { capsule: 
     };
 
     useEffect(() => {
+        // Initial sync of images/theme when model changes (important for FlashList recycling)
+        const config = timerConfigManager.getConfig(capsule.model);
+        setThemeColor(config?.themeColor || '#a269ff');
+        setModelImages({
+            closed: timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || (MODEL_IMAGES as any).basicred_kap,
+            open: timerConfigManager.getModelImageOpen(capsule.model) || (MODEL_IMAGES as any).basicred_kap,
+        });
+
         return timerConfigManager.subscribe(() => {
-            const config = timerConfigManager.getConfig(capsule.model);
-            setThemeColor(config?.themeColor || '#a269ff');
+            const upConfig = timerConfigManager.getConfig(capsule.model);
+            setThemeColor(upConfig?.themeColor || '#a269ff');
             setModelImages({
-                closed: timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model] || (MODEL_IMAGES as any).basicred_kap,
-                open: timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model] || MODEL_IMAGES[capsule.model] || (MODEL_IMAGES as any).basicred_kap,
+                closed: timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || (MODEL_IMAGES as any).basicred_kap,
+                open: timerConfigManager.getModelImageOpen(capsule.model) || (MODEL_IMAGES as any).basicred_kap,
             });
         });
     }, [capsule.model]);
@@ -85,14 +96,20 @@ const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp }: { capsule: 
     useEffect(() => {
         let isMounted = true;
         const init = async () => {
-            const { data: { session } } = await supabase.auth.getSession();
-            const user = session?.user;
-            if (user) {
-                if (isMounted) setCurrentUserId(user.id);
-                const hasAccess = capsule.is_public || capsule.owner_id === user.id || capsule.is_participant;
+            if (passedUserId) {
+                setCurrentUserId(passedUserId);
+                const hasAccess = capsule.is_public || capsule.owner_id === passedUserId || capsule.is_participant;
                 if (isLockedProp === undefined && isMounted) setIsLocked(!hasAccess);
-            } else if (isLockedProp === undefined && isMounted) {
-                setIsLocked(!capsule.is_public);
+            } else {
+                const { data: { session } } = await supabase.auth.getSession();
+                const user = session?.user;
+                if (user) {
+                    if (isMounted) setCurrentUserId(user.id);
+                    const hasAccess = capsule.is_public || capsule.owner_id === user.id || capsule.is_participant;
+                    if (isLockedProp === undefined && isMounted) setIsLocked(!hasAccess);
+                } else if (isLockedProp === undefined && isMounted) {
+                    setIsLocked(!capsule.is_public);
+                }
             }
 
             if (capsule.likes_count !== undefined && isMounted) {
@@ -195,10 +212,11 @@ const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp }: { capsule: 
                 {/* Blurred bg for video */}
                 {isVideoPost && latestItem?.thumbnail_url && (
                     <View style={StyleSheet.absoluteFill}>
-                        <Image source={{ uri: latestItem.thumbnail_url }} style={s.blurBg} blurRadius={Platform.OS === 'ios' ? 28 : 12} />
+                        <Image source={{ uri: latestItem.thumbnail_url }} style={s.blurBg} blurRadius={Platform.OS === 'ios' ? 28 : 12} contentFit="cover" transition={300} />
                         <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.3)' }]} />
                     </View>
                 )}
+
 
                 {/* ── Opened: collage + model ── */}
                 {isOpened && mediaCollage.length > 0 ? (
@@ -208,22 +226,23 @@ const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp }: { capsule: 
                                 {mediaCollage.map((item, i) => (
                                     <Image
                                         key={i}
-                                        source={{ uri: item.media_url }}
+                                        source={{ uri: (item.media_url && !item.media_url.startsWith('text://')) ? item.media_url : '' }}
                                         style={[
                                             s.collageItem,
                                             mediaCollage.length === 1 && s.collageSingle,
                                             mediaCollage.length === 2 && s.collageDual,
                                             mediaCollage.length === 3 && i === 0 && s.collageTripleLarge,
                                         ]}
-                                        resizeMode="cover"
+                                        contentFit="cover"
+                                        transition={200}
                                     />
+
                                 ))}
                             </View>
                             <LinearGradient
                                 colors={['rgba(255,255,255,0)', 'rgba(255,255,255,0.9)']}
                                 start={{ x: 0.5, y: 0 }} end={{ x: 1, y: 0 }}
-                                style={StyleSheet.absoluteFill}
-                                pointerEvents="none"
+                                style={[StyleSheet.absoluteFill, { pointerEvents: 'none' } as any]}
                             />
                         </View>
                         <View style={s.modelOverlap}>
@@ -247,8 +266,9 @@ const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp }: { capsule: 
                             <Ionicons name="play" size={24} color="#fff" style={{ marginLeft: 2 }} />
                         </View>
                         <View style={s.modelCorner}>
-                            <Image source={{ uri: modelImages.closed }} style={s.capsuleCornerImg} resizeMode="contain" />
+                            <Image source={{ uri: modelImages.closed }} style={s.capsuleCornerImg} contentFit="contain" transition={200} />
                         </View>
+
                     </View>
 
                 ) : (
@@ -317,11 +337,12 @@ const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp }: { capsule: 
                         onPress={() => navigation.navigate('UserProfile', { targetUserId: capsule.owner_id })}
                     >
                         {profile.avatar_url
-                            ? <Image source={{ uri: profile.avatar_url }} style={s.avatar} />
+                            ? <Image source={{ uri: profile.avatar_url }} style={s.avatar} contentFit="cover" transition={200} />
                             : <View style={[s.avatar, s.avatarFallback]}>
                                 <Ionicons name="person" size={14} color={Colors.textMuted} />
                             </View>
                         }
+
                         <View style={{ flex: 1, minWidth: 0 }}>
                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
                                 <Text style={s.authorName} numberOfLines={1}>{profile.display_name || profile.username}</Text>
@@ -448,6 +469,7 @@ const s = StyleSheet.create({
         ...Platform.select({
             ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.22, shadowRadius: 6 },
             android: { elevation: 4 },
+            web: { boxShadow: '0px 2px 6px rgba(0,0,0,0.22)' }
         }),
     },
     capsuleCornerImg: { width: 50, height: 50 },
@@ -466,6 +488,7 @@ const s = StyleSheet.create({
         ...Platform.select({
             ios: { shadowColor: 'rgba(0,0,0,0.28)', shadowOffset: { width: -3, height: 6 }, shadowOpacity: 1, shadowRadius: 12 },
             android: { elevation: 5 },
+            web: { boxShadow: '-3px 6px 12px rgba(0,0,0,0.28)' }
         }),
     },
     capsuleSmall: { width: 128, height: 128 },

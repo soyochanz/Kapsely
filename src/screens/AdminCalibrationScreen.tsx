@@ -2,18 +2,18 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
     View, Text, StyleSheet, Image, PanResponder, Animated,
     TouchableOpacity, ScrollView, StatusBar,
-    Dimensions, Platform, TextInput, Modal, Alert, Switch, ActivityIndicator, Pressable
+    Dimensions, Platform, TextInput, Modal, Alert, Switch, ActivityIndicator
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as FileSystem from 'expo-file-system/legacy';
 import { decode } from 'base64-arraybuffer';
-import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
-import { timerConfigManager, ModelTimerConfig, DEFAULT_CONFIGS, ChainItem, ModelChainConfig } from '../utils/timerConfig';
+import { Colors, Fonts, Shadow } from '../theme';
+import { timerConfigManager, ModelTimerConfig, DEFAULT_CONFIGS } from '../utils/timerConfig';
 import { supabase } from '../lib/supabase';
 import LiveTimer from '../components/LiveTimer';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -32,8 +32,8 @@ const FONTS = [
     { id: 'serif', label: 'Classic', font: Platform.OS === 'ios' ? 'Times New Roman' : 'serif' },
 ];
 
-export default function TimerConfigScreen() {
-    const navigation = useNavigation();
+export default function AdminCalibrationScreen() {
+    const navigation = useNavigation<any>();
     const insets = useSafeAreaInsets();
     const [selectedModel, setSelectedModel] = useState<any>(MODELS[0]);
     const [allModels, setAllModels] = useState<any[]>(timerConfigManager.models.length > 0 ? timerConfigManager.models : MODELS);
@@ -90,7 +90,6 @@ export default function TimerConfigScreen() {
                         is24Hour: true,
                     });
                 } else {
-                    // Fallback to state-based picker if Android API is unavailable
                     setDatePickerMode(mode);
                 }
             } catch (error) {
@@ -128,8 +127,6 @@ export default function TimerConfigScreen() {
         currentModelIdRef.current = selectedModel.id;
     }, [selectedModel.id]);
 
-    const [refreshTrigger, setRefreshTrigger] = useState(0);
-
     const syncConfigs = () => {
         const dbModels = timerConfigManager.models;
         if (dbModels.length > 0) {
@@ -143,7 +140,6 @@ export default function TimerConfigScreen() {
             });
             return newConfigs;
         });
-        setRefreshTrigger(prev => prev + 1);
     };
 
     useEffect(() => {
@@ -169,7 +165,6 @@ export default function TimerConfigScreen() {
         updateActiveConfigById(selectedModel.id, updates);
     };
 
-    const FRAME_SIZE = 300;
     const pan = useRef(new Animated.ValueXY({ x: activeConfig.x * FRAME_SIZE, y: activeConfig.y * FRAME_SIZE })).current;
 
     useEffect(() => {
@@ -211,14 +206,9 @@ export default function TimerConfigScreen() {
         })
     ).current;
 
-    const saveChainScale = (s: number) => {
-        setChainScale(s);
-    };
-
     const [uploading, setUploading] = useState(false);
 
     const pickAndUploadImage = async (onDone: (url: string) => void) => {
-        console.log('--- pickAndUploadImage Started ---');
         try {
             const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
             if (!perm.granted) {
@@ -235,50 +225,32 @@ export default function TimerConfigScreen() {
             if (!result.canceled && result.assets[0]) {
                 setUploading(true);
                 const asset = result.assets[0];
-                const fileName = `model_${Date.now()}.jpg`; // Consistent suffix
+                const fileName = `model_${Date.now()}.jpg`;
                 
                 let body: any;
-                if (Platform.OS === 'web') {
-                    // Web handling: use Blob, it's safer for Supabase JS on Web
-                    const response = await fetch(asset.uri);
-                    body = await response.blob();
-                    console.log('Web blob created:', body.size, body.type);
-                } else {
-                    // Native handling: manipulate then base64 to body
-                    const manipulated = await ImageManipulator.manipulateAsync(
-                        asset.uri,
-                        [{ resize: { width: 800 } }], // Resize for better performance
-                        { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
-                    );
-                    const base64 = await FileSystem.readAsStringAsync(manipulated.uri, { encoding: 'base64' as any });
-                    body = decode(base64);
-                    console.log('Native body created for:', fileName);
-                }
+                const manipulated = await ImageManipulator.manipulateAsync(
+                    asset.uri,
+                    [{ resize: { width: 800 } }],
+                    { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
+                );
+                const base64 = await FileSystem.readAsStringAsync(manipulated.uri, { encoding: 'base64' });
+                body = decode(base64);
 
-                console.log('Uploading image to Supabase storage...');
-                // We'll use the 'models' bucket which is already set up and used for existing models
                 const { error: uploadError } = await supabase.storage.from('models').upload(fileName, body, {
                     contentType: 'image/jpeg',
                     upsert: true,
                 });
 
-                if (uploadError) {
-                    console.error('Supabase Storage Error:', uploadError);
-                    throw uploadError;
-                }
+                if (uploadError) throw uploadError;
 
                 const { data: { publicUrl } } = supabase.storage.from('models').getPublicUrl(fileName);
-                console.log('Upload complete! Public URL:', publicUrl);
-                
                 onDone(publicUrl);
                 Alert.alert('Success', 'Image uploaded successfully!');
             }
         } catch (e: any) {
-            console.error('Upload process failed:', e);
-            Alert.alert('Upload Error', e.message || 'Could not upload image. Please check your connection or session.');
+            Alert.alert('Upload Error', e.message || 'Could not upload image.');
         } finally {
             setUploading(false);
-            console.log('--- pickAndUploadImage Finished ---');
         }
     };
 
@@ -315,48 +287,38 @@ export default function TimerConfigScreen() {
             setSelectedChainId(newChain.id);
             setShowAddChain(false);
             setNewChain({ id: '', name: '', image_url: '', thumbnail_url: '', is_active: true });
-        } else {
         }
     };
 
     const handleAddSticker = async () => {
-        console.log('--- START handleAddSticker ---');
         if (!newSticker.name || !newSticker.image_url) {
-            console.log('Validation failed:', newSticker);
             Alert.alert('Error', 'Please provide Name and Image URL');
             return;
         }
 
         try {
             setAddingSticker(true);
-            console.log('Inserting sticker:', newSticker);
             const { data, error } = await supabase.from('stickers').insert([newSticker]).select();
             
             if (error) {
-                console.error('Insert error:', error);
                 Alert.alert('Error', error.message);
                 return;
             }
 
-            console.log('Insert success, data:', data);
             if (data && data.length > 0) {
                 setStickers(prev => [data[0], ...prev]);
                 setShowAddSticker(false);
                 setNewSticker({ name: '', image_url: '', is_active: true });
                 Alert.alert('Success', 'Sticker added!');
             } else {
-                console.warn('No data returned from insert');
-                // Even if no data, refresh the list
                 loadStickers();
                 setShowAddSticker(false);
                 setNewSticker({ name: '', image_url: '', is_active: true });
             }
         } catch (e: any) {
-            console.error('handleAddSticker catch:', e);
             Alert.alert('Error', 'An unexpected error occurred: ' + e.message);
         } finally {
             setAddingSticker(false);
-            console.log('--- END handleAddSticker ---');
         }
     };
 
@@ -519,7 +481,7 @@ export default function TimerConfigScreen() {
                             <Text style={styles.sectionSub}>Choose or create a base capsule model</Text>
                         </View>
                         <TouchableOpacity style={styles.addModelBtn} activeOpacity={0.7} onPress={() => setShowAddModel(true)}>
-                            <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.addModelIcon}>
+                            <LinearGradient colors={[Colors.primary, Colors.primaryDark || Colors.primary]} style={styles.addModelIcon}>
                                 <Ionicons name="add" size={18} color="#fff" />
                             </LinearGradient>
                             <Text style={styles.addModelBtnText}>New</Text>
@@ -664,11 +626,11 @@ export default function TimerConfigScreen() {
                                 <View style={styles.chainCalibration}>
                                     <Text style={styles.label}>Calibrate Scale</Text>
                                     <View style={styles.sliderTrackAlt}>
-                                        <TouchableOpacity style={styles.sliderBtnSmall} activeOpacity={0.7} onPress={() => saveChainScale(Math.max(0.05, chainScale - 0.05))}>
+                                        <TouchableOpacity style={styles.sliderBtnSmall} activeOpacity={0.7} onPress={() => setChainScale(Math.max(0.05, chainScale - 0.05))}>
                                             <Ionicons name="remove" size={16} />
                                         </TouchableOpacity>
                                         <Text style={{ fontSize: 12, fontFamily: Fonts.bold, width: 50, textAlign: 'center' }}>{(chainScale * 100).toFixed(0)}%</Text>
-                                        <TouchableOpacity style={styles.sliderBtnSmall} activeOpacity={0.7} onPress={() => saveChainScale(Math.min(1.0, chainScale + 0.05))}>
+                                        <TouchableOpacity style={styles.sliderBtnSmall} activeOpacity={0.7} onPress={() => setChainScale(Math.min(1.0, chainScale + 0.05))}>
                                             <Ionicons name="add" size={16} />
                                         </TouchableOpacity>
                                     </View>
@@ -810,7 +772,7 @@ export default function TimerConfigScreen() {
                 <View style={styles.modalOverlay}>
                     <ScrollView contentContainerStyle={styles.modalScrollContent} style={{ flex: 1 }}>
                         <View style={styles.modalContent}>
-                            <Text style={styles.modalTitle}>Add New Model</Text>
+                            <Text style={styles.modalTitle}>Configure Model</Text>
                             
                             <View style={styles.inputSection}>
                                 <Text style={styles.innerLabel}>Basic Info</Text>
@@ -884,24 +846,24 @@ export default function TimerConfigScreen() {
                                         <Text style={styles.switchLabel}>Event Capsule</Text>
                                         <Text style={styles.switchSub}>Automatically active for events</Text>
                                     </View>
-                                    <Switch value={(newModel as any).is_event} onValueChange={v => setNewModel(p => ({ ...p, is_event: v }))} trackColor={{ true: '#f5a623' }} />
+                                    <Switch value={newModel.is_event} onValueChange={v => setNewModel(p => ({ ...p, is_event: v }))} trackColor={{ true: '#f5a623' }} />
                                 </View>
                             </View>
 
-                            {(newModel as any).is_event && (
+                            {newModel.is_event && (
                                 <View style={[styles.inputSection, { backgroundColor: '#fff9ef', borderColor: '#ffe0b2' }]}>
                                     <Text style={[styles.innerLabel, { color: '#f5a623' }]}>Event Details</Text>
                                     <TextInput
                                         placeholder="Event Title"
                                         placeholderTextColor="#999"
-                                        value={(newModel as any).event_title}
+                                        value={newModel.event_title}
                                         onChangeText={t => setNewModel(p => ({ ...p, event_title: t }))}
                                         style={styles.input}
                                     />
                                     <TextInput
                                         placeholder="Event Description"
                                         placeholderTextColor="#999"
-                                        value={(newModel as any).event_description}
+                                        value={newModel.event_description}
                                         onChangeText={t => setNewModel(p => ({ ...p, event_description: t }))}
                                         style={[styles.input, { height: 60 }]}
                                         multiline
@@ -915,7 +877,7 @@ export default function TimerConfigScreen() {
                                             >
                                                 <Ionicons name="calendar-outline" size={16} color={Colors.textMuted} />
                                                 <Text style={styles.dateText}>
-                                                    {(newModel as any).event_start ? new Date((newModel as any).event_start).toLocaleString() : 'Set Date'}
+                                                    {newModel.event_start ? new Date(newModel.event_start).toLocaleString() : 'Set Date'}
                                                 </Text>
                                             </TouchableOpacity>
                                         </View>
@@ -927,7 +889,7 @@ export default function TimerConfigScreen() {
                                             >
                                                 <Ionicons name="calendar-outline" size={16} color={Colors.textMuted} />
                                                 <Text style={styles.dateText}>
-                                                    {(newModel as any).event_end ? new Date((newModel as any).event_end).toLocaleString() : 'Set Date'}
+                                                    {newModel.event_end ? new Date(newModel.event_end).toLocaleString() : 'Set Date'}
                                                 </Text>
                                             </TouchableOpacity>
                                         </View>
@@ -961,7 +923,7 @@ export default function TimerConfigScreen() {
                                     <Text style={styles.cancelBtnText}>Cancel</Text>
                                 </TouchableOpacity>
                                 <TouchableOpacity style={styles.confirmBtn} onPress={handleAddModel}>
-                                    <Text style={styles.confirmBtnText}>Add Model</Text>
+                                    <Text style={styles.confirmBtnText}>Confirm</Text>
                                 </TouchableOpacity>
                             </View>
                         </View>
@@ -1079,13 +1041,13 @@ const styles = StyleSheet.create({
     topTabs: { flexDirection: 'row', backgroundColor: '#fff', paddingBottom: 10 },
     topTab: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12, borderBottomWidth: 2, borderBottomColor: 'transparent' },
     activeTopTab: { borderBottomColor: Colors.primary },
-    topTabText: { fontSize: 13, fontFamily: Fonts.semiBold, color: Colors.textMuted },
+    topTabText: { fontSize: 13, fontFamily: Fonts.bold, color: Colors.textMuted },
     activeTopTabText: { color: Colors.textPrimary },
     previewContainer: { alignItems: 'center', justifyContent: 'center', padding: 20, backgroundColor: '#f0f0f5' },
-    modelFrame: { width: 300, height: 300, backgroundColor: '#fff', borderRadius: 24, ...Shadow.card, alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden' },
+    modelFrame: { width: 300, height: 300, backgroundColor: '#fff', borderRadius: 24, elevation: 4, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10, alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden' },
     modelImg: { width: '100%', height: '100%' },
     hint: { marginTop: 15, color: Colors.textMuted, fontSize: 11, fontFamily: Fonts.medium },
-    controls: { backgroundColor: '#fff', padding: 20, borderTopLeftRadius: 30, borderTopRightRadius: 30, ...Shadow.primary },
+    controls: { backgroundColor: '#fff', padding: 20, borderTopLeftRadius: 30, borderTopRightRadius: 30, elevation: 10, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 20 },
     sectionHeaderInner: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
     label: { fontSize: 12, fontFamily: Fonts.bold, color: Colors.textPrimary, marginBottom: 8, textTransform: 'uppercase' },
     addModelBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
@@ -1100,7 +1062,7 @@ const styles = StyleSheet.create({
     col: { flex: 1 },
     toggleRow: { flexDirection: 'row', backgroundColor: '#f0f0f0', borderRadius: 10, padding: 3 },
     toggleBtn: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 8 },
-    activeToggle: { backgroundColor: '#fff', ...Shadow.subtle },
+    activeToggle: { backgroundColor: '#fff', elevation: 2, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 4 },
     toggleText: { fontSize: 11, color: Colors.textMuted, fontFamily: Fonts.bold },
     activeToggleText: { color: Colors.primary },
     fontRow: { flexDirection: 'row', gap: 8 },
@@ -1109,18 +1071,17 @@ const styles = StyleSheet.create({
     fontBtnText: { fontSize: 14, color: Colors.textPrimary },
     activeFontBtnText: { color: '#fff' },
     assetInputRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-    uploadSmallBtn: { width: 44, height: 44, borderRadius: 12, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center', ...Shadow.primary },
+    uploadSmallBtn: { width: 44, height: 44, borderRadius: 12, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center', elevation: 3, shadowColor: Colors.primary, shadowOpacity: 0.3, shadowRadius: 6 },
     modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 },
     modalScrollContent: { flexGrow: 1, justifyContent: 'center' },
-    modalContent: { backgroundColor: '#fff', borderRadius: 24, padding: 24, paddingBottom: 30, ...Shadow.lg },
+    modalContent: { backgroundColor: '#fff', borderRadius: 24, padding: 24, paddingBottom: 30, elevation: 20, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 30 },
     modalTitle: { fontSize: 20, fontFamily: Fonts.bold, color: Colors.textPrimary, marginBottom: 20, textAlign: 'center' },
     inputSection: { marginBottom: 20, backgroundColor: '#f9f9f9', padding: 15, borderRadius: 16, borderWidth: 1, borderColor: '#eee' },
     innerLabel: { fontSize: 13, fontFamily: Fonts.bold, color: Colors.textPrimary, marginBottom: 12, textTransform: 'uppercase', letterSpacing: 0.5 },
     input: { backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#eee', borderRadius: 12, padding: 14, color: Colors.textPrimary, fontSize: 14, fontFamily: Fonts.regular, marginBottom: 10 },
-    inputSmall: { backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#eee', borderRadius: 12, padding: 10, color: Colors.textPrimary, fontSize: 12, fontFamily: Fonts.regular },
     miniLabel: { fontSize: 10, fontFamily: Fonts.bold, color: Colors.textMuted, marginBottom: 4, textTransform: 'uppercase' },
     switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-    switchLabel: { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.textPrimary },
+    switchLabel: { fontSize: 14, fontFamily: Fonts.bold, color: Colors.textPrimary },
     switchSub: { fontSize: 11, color: Colors.textMuted, fontFamily: Fonts.regular },
     modalActions: { flexDirection: 'row', gap: 12, marginTop: 10 },
     cancelBtn: { flex: 1, paddingVertical: 14, borderRadius: 12, alignItems: 'center', backgroundColor: '#f0f0f0' },
@@ -1130,73 +1091,36 @@ const styles = StyleSheet.create({
     colorPalette: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 20 },
     colorBubble: { width: 30, height: 30, borderRadius: 15, borderWidth: 2, borderColor: '#eee' },
     activeColorBubble: { borderColor: Colors.primary, transform: [{ scale: 1.1 }] },
-    sliderTrack: { flexDirection: 'row', alignItems: 'center', gap: 12 },
     sliderBtnSmall: { width: 34, height: 34, borderRadius: 10, backgroundColor: '#f0f0f0', alignItems: 'center', justifyContent: 'center' },
     saveBtn: { backgroundColor: Colors.primary, paddingVertical: 14, borderRadius: 15, alignItems: 'center', marginTop: 10 },
     saveBtnText: { color: '#fff', fontFamily: Fonts.bold, fontSize: 15 },
     timerCalibration: { gap: 15 },
-    faceCalibration: { gap: 15 },
-    exportBtn: { backgroundColor: '#eee', paddingVertical: 12, borderRadius: 15, alignItems: 'center', marginTop: 10 },
-    exportBtnText: { color: Colors.textPrimary, fontFamily: Fonts.bold, fontSize: 13 },
-    chainSection: { gap: 15 },
-    chainList: { gap: 12, paddingBottom: 10 },
-    chainCard: { 
-        width: 100, 
-        height: 130, 
-        alignItems: 'center', 
-        justifyContent: 'center',
-        gap: 8, 
-        opacity: 0.6,
-        backgroundColor: Colors.surface,
-        borderRadius: 20,
-        borderWidth: 1,
-        borderColor: Colors.border,
-        ...Shadow.subtle,
-    },
-    activeChainCard: { 
-        opacity: 1, 
-        borderColor: Colors.primary,
-        backgroundColor: Colors.primary + '08',
-    },
-    chainImg: { width: 80, height: 80, borderRadius: 15 },
-    chainLabel: { fontSize: 11, fontFamily: Fonts.bold, color: Colors.textSecondary },
-    chainCalibration: { backgroundColor: '#f9f9ff', padding: 15, borderRadius: 15, marginTop: 10 },
-    scaleValue: { fontSize: 16, fontFamily: Fonts.bold, color: Colors.primary },
-    sectionLabelTitle: { fontSize: 16, fontFamily: Fonts.bold, color: Colors.textPrimary },
-    sectionSub: { fontSize: 12, color: Colors.textMuted, fontFamily: Fonts.regular, marginTop: 2 },
-    divider: { height: 1, backgroundColor: '#f0f0f0', marginVertical: 20 },
-    addModelIcon: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', ...Shadow.primary },
-    tabImgWrapper: { position: 'relative', width: 56, height: 56, alignItems: 'center', justifyContent: 'center' },
-    tabActiveIndicator: { position: 'absolute', bottom: -10, width: 4, height: 4, borderRadius: 2, backgroundColor: Colors.primary },
-    sliderTrackAlt: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#f5f5f5', padding: 4, borderRadius: 12 },
     stickerSection: { marginTop: 10 },
     stickerGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-    stickerCard: { width: (SCREEN_WIDTH - 64) / 3, backgroundColor: Colors.surface, borderRadius: 15, padding: 10, alignItems: 'center', position: 'relative', borderWidth: 1, borderColor: Colors.border },
+    stickerCard: { width: (SCREEN_WIDTH - 64) / 3, backgroundColor: '#fff', borderRadius: 15, padding: 10, alignItems: 'center', position: 'relative', borderWidth: 1, borderColor: '#eee' },
     stickerImg: { width: 60, height: 60 },
     stickerName: { fontSize: 11, fontFamily: Fonts.medium, marginTop: 4 },
     deleteStickerBtn: { position: 'absolute', top: 5, right: 5, width: 22, height: 22, borderRadius: 11, backgroundColor: Colors.error + '15', alignItems: 'center', justifyContent: 'center' },
-    modelLibraryCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.surface, padding: 12, borderRadius: 15, marginBottom: 10, borderWidth: 1, borderColor: Colors.border, gap: 12 },
+    modelLibraryCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', padding: 12, borderRadius: 15, marginBottom: 10, borderWidth: 1, borderColor: '#eee', gap: 12 },
     modelLibraryThumb: { width: 50, height: 50, borderRadius: 10, backgroundColor: '#f5f5f5' },
     modelLibraryLabel: { fontSize: 14, fontFamily: Fonts.bold, color: Colors.textPrimary },
     statusTag: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
     statusTagText: { fontSize: 10, fontFamily: Fonts.bold, textTransform: 'uppercase' },
     libActionBtn: { width: 34, height: 34, borderRadius: 8, backgroundColor: Colors.primary + '10', alignItems: 'center', justifyContent: 'center' },
-    datePickerBtn: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-        backgroundColor: '#fff',
-        borderWidth: 1,
-        borderColor: '#e2e2e2',
-        borderRadius: 8,
-        paddingHorizontal: 10,
-        height: 40,
-        marginTop: 5,
-    },
-    dateText: {
-        fontSize: 12,
-        fontFamily: Fonts.medium,
-        color: Colors.textPrimary,
-    },
+    addModelIcon: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', elevation: 3, shadowColor: Colors.primary, shadowOpacity: 0.3, shadowRadius: 6 },
+    tabImgWrapper: { position: 'relative', width: 56, height: 56, alignItems: 'center', justifyContent: 'center' },
+    tabActiveIndicator: { position: 'absolute', bottom: -10, width: 4, height: 4, borderRadius: 2, backgroundColor: Colors.primary },
+    sliderTrackAlt: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#f5f5f5', padding: 4, borderRadius: 12 },
+    datePickerBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e2e2', borderRadius: 8, paddingHorizontal: 10, height: 40, marginTop: 5 },
+    dateText: { fontSize: 12, fontFamily: Fonts.medium, color: Colors.textPrimary },
+    chainCard: { width: 100, height: 130, alignItems: 'center', justifyContent: 'center', gap: 8, opacity: 0.6, backgroundColor: '#fff', borderRadius: 20, borderWidth: 1, borderColor: '#eee' },
+    activeChainCard: { opacity: 1, borderColor: Colors.primary, backgroundColor: Colors.primary + '08' },
+    chainImg: { width: 80, height: 80, borderRadius: 15 },
+    chainLabel: { fontSize: 11, fontFamily: Fonts.bold, color: Colors.textSecondary },
+    chainCalibration: { backgroundColor: '#f9f9ff', padding: 15, borderRadius: 15, marginTop: 10 },
+    sectionLabelTitle: { fontSize: 16, fontFamily: Fonts.bold, color: Colors.textPrimary },
+    sectionSub: { fontSize: 12, color: Colors.textMuted, fontFamily: Fonts.regular, marginTop: 2 },
+    divider: { height: 1, backgroundColor: '#f0f0f0', marginVertical: 20 },
+    chainSection: { gap: 15 },
+    chainList: { gap: 12, paddingBottom: 10 },
 });
-

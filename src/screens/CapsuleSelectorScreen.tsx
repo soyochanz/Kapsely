@@ -8,7 +8,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
 import { supabase } from '../lib/supabase';
-import { MODEL_IMAGES } from '../constants/models';
+import { MODEL_IMAGES, MODEL_IMAGES_OPEN } from '../constants/models';
 import LiveTimer from '../components/LiveTimer';
 import CapsuleWithTimer from '../components/CapsuleWithTimer';
 import { timerConfigManager } from '../utils/timerConfig';
@@ -18,8 +18,8 @@ const { width } = Dimensions.get('window');
 
 const TYPE_CONFIG: Record<string, { icon: string; color: string; label: string }> = {
     instacap:  { icon: 'camera',   color: Colors.instaCap,  label: 'InstaCap'  },
-    eventcap:  { icon: 'calendar', color: Colors.eventCap,  label: 'EventCap'  },
     legacycap: { icon: 'time',     color: Colors.legacyCap, label: 'LegacyCap' },
+    opencap:   { icon: 'book',     color: Colors.primary,   label: 'Open Cap'  },
 };
 
 export default function CapsuleSelectorScreen() {
@@ -41,11 +41,12 @@ export default function CapsuleSelectorScreen() {
             .from('capsules')
             .select('*')
             .or(`owner_id.eq.${user.id},invited_user_id.eq.${user.id}`)
-            .eq('status', 'sealed')
+            .in('status', ['sealed', 'opened'])
             .order('created_at', { ascending: false });
 
         const filteredOwnAndLegacy = (ownCaps || []).filter(cap =>
-            cap.owner_id === user.id || cap.invite_status === 'accepted'
+            (cap.owner_id === user.id || cap.invite_status === 'accepted') &&
+            (cap.status === 'sealed' || (cap.status === 'opened' && cap.duration_days === 0))
         );
 
         const { data: inviteEntries } = await supabase
@@ -58,13 +59,21 @@ export default function CapsuleSelectorScreen() {
         if (inviteEntries) {
             inviteEntries.forEach((entry: any) => {
                 const invitedCap = entry.capsules;
-                if (invitedCap && invitedCap.status === 'sealed' && !allCaps.some(c => c.id === invitedCap.id)) {
+                const isAcceptable = invitedCap && (
+                    invitedCap.status === 'sealed' || 
+                    (invitedCap.status === 'opened' && invitedCap.duration_days === 0)
+                );
+                if (isAcceptable && !allCaps.some(c => c.id === invitedCap.id)) {
                     allCaps.push(invitedCap);
                 }
             });
         }
 
-        setCapsules(allCaps.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()));
+        setCapsules(
+            allCaps
+                .filter(c => c.type !== 'eventcap')
+                .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        );
         setLoading(false);
     };
 
@@ -104,8 +113,8 @@ export default function CapsuleSelectorScreen() {
                         />
                         <Ionicons name="lock-closed-outline" size={38} color={Colors.primary} />
                     </View>
-                    <Text style={styles.emptyTitle}>No sealed capsules yet</Text>
-                    <Text style={styles.emptyText}>Create one to start storing memories</Text>
+                    <Text style={styles.emptyTitle}>No capsules available</Text>
+                    <Text style={styles.emptyText}>Create a Sealed or Open capsule to start storing memories</Text>
                     <TouchableOpacity
                         style={styles.createBtn}
                         activeOpacity={0.85}
@@ -124,7 +133,7 @@ export default function CapsuleSelectorScreen() {
                     ListHeaderComponent={
                         <View style={styles.listHeader}>
                             <Text style={styles.listHeaderCount}>
-                                {capsules.length} sealed {capsules.length === 1 ? 'capsule' : 'capsules'}
+                                {capsules.length} {capsules.length === 1 ? 'capsule' : 'capsules'} available
                             </Text>
                         </View>
                     }
@@ -138,17 +147,28 @@ export default function CapsuleSelectorScreen() {
 
 /* ─── Card ─────────────────────────────────────────────────────────────────── */
 const CapsuleEntry = React.memo(({ item, onSelect }: { item: any; onSelect: (cap: any) => void }) => {
-    const cfg = TYPE_CONFIG[item.type as keyof typeof TYPE_CONFIG] || TYPE_CONFIG.legacycap;
-    const [modelImg, setModelImg] = useState(() =>
-        timerConfigManager.getModelImage(item.model) || MODEL_IMAGES[item.model] || (MODEL_IMAGES as any).basicred_kap
-    );
+    const isBornOpen = item.status === 'opened' && item.duration_days === 0;
+    const cfg = isBornOpen ? TYPE_CONFIG.opencap : (TYPE_CONFIG[item.type as keyof typeof TYPE_CONFIG] || TYPE_CONFIG.legacycap);
+    const [modelImg, setModelImg] = useState<string>(() => {
+        const modelId = item.model;
+        const img = item.status === 'opened' 
+            ? timerConfigManager.getModelImageOpen(modelId) 
+            : timerConfigManager.getModelImage(modelId);
+        return img || (item.status === 'opened' ? (MODEL_IMAGES_OPEN as any)[modelId] : (MODEL_IMAGES as any)[modelId]) || (MODEL_IMAGES as any).basicred_kap;
+    });
 
     useEffect(() => {
-        const update = () => setModelImg(timerConfigManager.getModelImage(item.model) || MODEL_IMAGES[item.model] || (MODEL_IMAGES as any).basicred_kap);
+        const update = () => {
+            const modelId = item.model;
+            const img = item.status === 'opened' 
+                ? timerConfigManager.getModelImageOpen(modelId) 
+                : timerConfigManager.getModelImage(modelId);
+            setModelImg(img || (item.status === 'opened' ? (MODEL_IMAGES_OPEN as any)[modelId] : (MODEL_IMAGES as any)[modelId]) || (MODEL_IMAGES as any).basicred_kap);
+        };
         const unsub = timerConfigManager.subscribe(update);
         update();
         return unsub;
-    }, [item.model]);
+    }, [item.model, item.status]);
 
     return (
         <TouchableOpacity style={styles.card} activeOpacity={0.82} onPress={() => onSelect(item)}>
@@ -163,10 +183,11 @@ const CapsuleEntry = React.memo(({ item, onSelect }: { item: any; onSelect: (cap
                     source={{ uri: modelImg }}
                     date={item.opens_at}
                     chainId={item.chain_id}
-                    capsuleType={item.type}
+                    capsuleType={isBornOpen ? 'opencap' : item.type}
                     style={styles.cardImage}
                     hideTimer={true}
                     hideParticles={true}
+                    isOpened={item.status === 'opened'}
                 />
             </View>
 
@@ -180,8 +201,12 @@ const CapsuleEntry = React.memo(({ item, onSelect }: { item: any; onSelect: (cap
                     </View>
                 </View>
                 <View style={styles.openRow}>
-                    <Ionicons name="time-outline" size={11} color={Colors.textMuted} />
-                    <LiveTimer date={item.opens_at} style={styles.cardDate} />
+                    <Ionicons name={item.status === 'opened' ? "eye-outline" : "time-outline"} size={11} color={Colors.textMuted} />
+                    {item.status === 'opened' ? (
+                        <Text style={styles.cardDate}>Always open</Text>
+                    ) : (
+                        <LiveTimer date={item.opens_at} style={styles.cardDate} />
+                    )}
                 </View>
             </View>
 

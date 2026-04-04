@@ -93,19 +93,21 @@ export function setupResponseListener(navigationRef: any) {
     });
 
     // Handle when app is opened from a closed state by a notification
-    Notifications.getLastNotificationResponseAsync().then(response => {
-        const data = response?.notification?.request?.content?.data;
-        if (data && data.screen) {
-            console.log('[NotificationResponse] Cold start data:', data);
-            const checkReady = setInterval(() => {
-                if (navigationRef.isReady()) {
-                    navigationRef.navigate(data.screen, data.params);
-                    clearInterval(checkReady);
-                }
-            }, 500);
-            setTimeout(() => clearInterval(checkReady), 5000); // safety timeout
-        }
-    });
+    if (Platform.OS !== 'web') {
+        Notifications.getLastNotificationResponseAsync().then(response => {
+            const data = response?.notification?.request?.content?.data;
+            if (data && data.screen) {
+                console.log('[NotificationResponse] Cold start data:', data);
+                const checkReady = setInterval(() => {
+                    if (navigationRef.isReady()) {
+                        navigationRef.navigate(data.screen, data.params);
+                        clearInterval(checkReady);
+                    }
+                }, 500);
+                setTimeout(() => clearInterval(checkReady), 5000); // safety timeout
+            }
+        });
+    }
 
     return subscription;
 }

@@ -33,16 +33,21 @@ export const safetyService = {
     },
 
     async getAllSafetyUserIds(userId: string) {
-        const [blockedByMe, blockingMe] = await Promise.all([
-            supabase.from('blocks').select('blocked_id').eq('blocker_id', userId),
-            supabase.from('blocks').select('blocker_id').eq('blocked_id', userId)
-        ]);
+        try {
+            const [blockedByMe, blockingMe] = await Promise.all([
+                supabase.from('blocks').select('blocked_id').eq('blocker_id', userId),
+                supabase.from('blocks').select('blocker_id').eq('blocked_id', userId)
+            ]);
 
-        const ids = new Set([
-            ...(blockedByMe.data || []).map(b => b.blocked_id),
-            ...(blockingMe.data || []).map(b => b.blocker_id)
-        ]);
-        return Array.from(ids);
+            const ids = new Set([
+                ...(blockedByMe.data || []).map(b => b.blocked_id),
+                ...(blockingMe.data || []).map(b => b.blocker_id)
+            ]);
+            return Array.from(ids);
+        } catch (e) {
+            console.warn('[Safety] Blocks table unavailable or error fetching', e);
+            return [];
+        }
     },
 
     async report({

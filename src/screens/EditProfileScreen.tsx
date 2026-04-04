@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import {
     View, Text, StyleSheet, ScrollView, TouchableOpacity,
-    TextInput, StatusBar, SafeAreaView, Image, ActivityIndicator,
+    TextInput, StatusBar, SafeAreaView, ActivityIndicator,
     Alert, Modal, Pressable, Platform, Dimensions,
+
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 
@@ -15,7 +16,9 @@ import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
+import { Image } from 'expo-image';
 import { supabase, Profile } from '../lib/supabase';
+
 
 // ── Color palette ─────────────────────────────────────────────────────────────
 const COLOR_PALETTE = [
@@ -267,27 +270,25 @@ export default function EditProfileScreen({ onClose }: Props) {
                                         try {
                                             if (!userId) throw new Error('User info not loaded');
 
-                                            // 1. Delete user data incrementally to avoid FK violations
-                                            await supabase.from('notifications').delete().eq('user_id', userId);
+                                            // 1. Full data wipe (Activity, Content, Capsules)
+                                            await supabase.from('likes').delete().eq('user_id', userId);
+                                            await supabase.from('comments').delete().eq('user_id', userId);
+                                            await supabase.from('story_reads').delete().eq('user_id', userId);
+                                            await supabase.from('notifications').delete().or(`user_id.eq.${userId},sender_id.eq.${userId}`);
                                             await supabase.from('capsule_invites').delete().eq('user_id', userId);
+                                            await supabase.from('capsule_items').delete().eq('owner_id', userId);
                                             await supabase.from('capsules').delete().eq('owner_id', userId);
                                             await supabase.from('follows').delete().or(`follower_id.eq.${userId},following_id.eq.${userId}`);
-
-                                            // 2. Clear profile
                                             await supabase.from('profiles').delete().eq('id', userId);
 
-                                            // 3. PERMANENT DELETION: Attempt to delete the auth account via RPC
-                                            // This is the only way to prevent the user from logging in again with the same credentials
+                                            // 2. Auth deletion (Requires SQL function)
                                             const { error: rpcError } = await supabase.rpc('delete_user_permanently');
-                                            
-                                            // 4. Ensure sign out and local data cleanup
                                             await supabase.auth.signOut();
                                             
                                             if (rpcError) {
-                                                console.warn('RPC deletion might have failed (did you add the SQL function?):', rpcError);
-                                                Alert.alert('✅ Logout Successful', 'Your profile was deleted. Note: To permanently disable the login, make sure the backend function is active.');
+                                                Alert.alert('✅ Wiped', 'Your data was deleted. Note: Login remains active unless backend function is installed.');
                                             } else {
-                                                Alert.alert('✅ Account Deleted', 'Your account has been permanently deleted.');
+                                                Alert.alert('✅ Terminated', 'Account and data permanently destroyed.');
                                             }
                                         } catch (e: any) {
                                             console.error('Delete flow failure:', e);
@@ -334,12 +335,13 @@ export default function EditProfileScreen({ onClose }: Props) {
                 <View style={styles.avatarSection}>
                     <TouchableOpacity onPress={pickAvatar} activeOpacity={0.8} style={styles.avatarWrapper}>
                         <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.avatarRing}>
-                            {avatarUri
-                                ? <Image source={{ uri: avatarUri }} style={styles.avatar} />
+                        {avatarUri
+                                ? <Image source={{ uri: avatarUri }} style={styles.avatar} contentFit="cover" transition={200} />
                                 : <View style={[styles.avatar, styles.avatarPlaceholder]}>
                                     <Ionicons name="person" size={36} color={Colors.primary} />
                                 </View>
-                            }
+                        }
+
                         </LinearGradient>
                         <View style={styles.avatarEditBadge}>
                             <Ionicons name="camera" size={14} color="#fff" />

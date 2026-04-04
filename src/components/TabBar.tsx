@@ -1,11 +1,12 @@
 import React from 'react';
-import { View, TouchableOpacity, StyleSheet, Platform, Animated } from 'react-native';
+import { View, TouchableOpacity, StyleSheet, Platform, Animated, Alert } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors } from '../theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
-import { BlurView } from 'expo-blur';
+
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const TAB_CONFIG = [
@@ -27,6 +28,7 @@ function TabItem({ route, index, state, navigation, cfg, hasBadge }: {
     route: any; index: number; state: any; navigation: any;
     cfg: typeof TAB_CONFIG[0]; hasBadge?: boolean;
 }) {
+    const { t } = useTranslation();
     const isFocused = state.index === index;
     const scale = React.useRef(new Animated.Value(1)).current;
 
@@ -44,8 +46,29 @@ function TabItem({ route, index, state, navigation, cfg, hasBadge }: {
         if (!isFocused && !event.defaultPrevented) navigation.navigate(route.name);
     };
 
+    const onLongPress = () => {
+        if (cfg.name === 'Profile') {
+            Alert.alert(
+                t('common.logout'),
+                t('common.logoutConfirm'),
+                [
+                    { text: t('common.cancel'), style: 'cancel' },
+                    { text: t('common.logout'), style: 'destructive', onPress: async () => {
+                        await supabase.auth.signOut();
+                    }}
+                ]
+            );
+        }
+    };
+
     return (
-        <TouchableOpacity onPress={onPress} style={s.tab} activeOpacity={0.6}>
+        <TouchableOpacity 
+            onPress={onPress} 
+            onLongPress={onLongPress}
+            style={s.tab} 
+            activeOpacity={0.6}
+            delayLongPress={500}
+        >
             <Animated.View style={[s.tabInner, { transform: [{ scale }] }]}>
                 <Ionicons
                     name={isFocused ? cfg.iconActive : cfg.icon}
@@ -64,36 +87,29 @@ function TabItem({ route, index, state, navigation, cfg, hasBadge }: {
 }
 
 // ─── Center create button ─────────────────────────────────────────────────────
-function CenterTab({ navigation }: { navigation: any }) {
+function CenterTab({ navigation, sealedCount, fetchSealedCount }: { navigation: any, sealedCount: number | null, fetchSealedCount: () => void }) {
     const scale = React.useRef(new Animated.Value(1)).current;
 
-    const onPress = async () => {
+
+    const onPress = () => {
+        // Instant visual feedback
         Animated.sequence([
             Animated.timing(scale, { toValue: 0.86, duration: 80, useNativeDriver: true }),
             Animated.spring(scale, { toValue: 1, friction: 5, tension: 120, useNativeDriver: true }),
         ]).start();
 
-        try {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (session?.user) {
-                const { count } = await supabase
-                    .from('capsules')
-                    .select('*', { count: 'exact', head: true })
-                    .eq('owner_id', session.user.id)
-                    .eq('status', 'sealed');
-                
-                if (count === 0) {
-                    navigation.navigate('CapsuleCreation');
-                    return;
-                }
-            }
-        } catch (e) {
-            console.error('Error checking capsules in TabBar:', e);
+        // Use cached count if available for instant navigation
+        if (sealedCount === 0) {
+            navigation.navigate('CapsuleCreation');
+        } else {
+            // Default to selection screen if we don't know or if > 0
+            navigation.navigate('CreateSelection');
         }
 
-        // Bubble up to common root in AppNavigator (sibling stack screen)
-        navigation.navigate('CreateSelection');
+        // Background check to stay in sync (not blocking)
+        fetchSealedCount();
     };
+
 
     return (
         <TouchableOpacity onPress={onPress} style={s.tab} activeOpacity={0.8}>
@@ -116,6 +132,19 @@ export default function TabBar(props: any) {
     const { state, navigation } = props;
     const insets = useSafeAreaInsets();
     const [unreadCount, setUnreadCount] = React.useState(0);
+    const [sealedCount, setSealedCount] = React.useState<number | null>(null);
+
+    const fetchSealedCount = React.useCallback(async () => {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.user) return;
+        const { count } = await supabase
+            .from('capsules')
+            .select('*', { count: 'exact', head: true })
+            .eq('owner_id', session.user.id)
+            .eq('status', 'sealed');
+        setSealedCount(count || 0);
+    }, []);
+
 
     const fetchUnread = React.useCallback(async () => {
         const { data: { session } } = await supabase.auth.getSession();
@@ -131,12 +160,15 @@ export default function TabBar(props: any) {
 
     React.useEffect(() => {
         fetchUnread();
-        const channel = supabase.channel('tabbar_notifs')
+        fetchSealedCount();
+        const channel = supabase.channel('tabbar_realtime')
             .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, fetchUnread)
             .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'notifications' }, fetchUnread)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'capsules' }, fetchSealedCount)
             .subscribe();
         return () => { supabase.removeChannel(channel); };
-    }, [fetchUnread]);
+    }, [fetchUnread, fetchSealedCount]);
+
 
     React.useEffect(() => { fetchUnread(); }, [state.index]);
 
@@ -161,8 +193,16 @@ export default function TabBar(props: any) {
             <View style={s.bar}>
                 {TAB_CONFIG.map((cfg, idx) => {
                     if (cfg.isCenter) {
-                        return <CenterTab key="center" navigation={navigation} />;
+                        return (
+                            <CenterTab 
+                                key="center" 
+                                navigation={navigation} 
+                                sealedCount={sealedCount}
+                                fetchSealedCount={fetchSealedCount}
+                            />
+                        );
                     }
+
                     const routeIndex = idx < 2 ? idx : idx - 1;
                     const route = state.routes[routeIndex];
                     if (!route) return null;

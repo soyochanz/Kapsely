@@ -186,7 +186,10 @@ export default function ChatDetailScreen() {
             .limit(PAGE_SIZE);
 
         if (msgs) {
-            setMessages(msgs);
+            const stored = await AsyncStorage.getItem(`deletedMsgs_${conversationId}`);
+            const deletedIds = stored ? JSON.parse(stored) : [];
+            const filtered = msgs.filter((m: any) => !deletedIds.includes(m.id));
+            setMessages(filtered);
             if (msgs.length < PAGE_SIZE) setHasMore(false);
         }
         setLoading(false);
@@ -226,8 +229,10 @@ export default function ChatDetailScreen() {
                 .range(nextPage * PAGE_SIZE, (nextPage + 1) * PAGE_SIZE - 1);
 
             if (msgs && msgs.length > 0) {
+                const stored = await AsyncStorage.getItem(`deletedMsgs_${conversationId}`);
+                const deletedIds = stored ? JSON.parse(stored) : [];
                 setMessages(prev => {
-                    const newMsgs = msgs.filter(m => !prev.some(p => p.id === m.id));
+                    const newMsgs = msgs.filter(m => !prev.some(p => p.id === m.id) && !deletedIds.includes(m.id));
                     return [...prev, ...newMsgs];
                 });
                 setPage(nextPage);
@@ -241,63 +246,67 @@ export default function ChatDetailScreen() {
     };
 
     useEffect(() => {
-        loadData(); 
+        loadData();
+        if (!conversationId || conversationId === 'new') return;
 
-        if (conversationId === 'new') return;
+        const setupRealtime = async () => {
+            const storedDeletions = await AsyncStorage.getItem(`deletedMsgs_${conversationId}`);
+            const deletedIds = storedDeletions ? JSON.parse(storedDeletions) : [];
 
-        const sub = supabase
-            .channel(`chat_detail_${conversationId}`) // Use a unique channel for this screen/conversation
-            .on(
-                'postgres_changes',
-                { event: '*', schema: 'public', table: 'messages' }, // Remove server-side filter
-                (payload) => {
-                    const newMsg = payload.new as any;
-                    const oldMsg = payload.old as any;
-                    const myId = currentUserIdRef.current;
-                    
-                    // Filter for THIS conversation manually
-                    if (newMsg?.conversation_id !== conversationId && oldMsg?.conversation_id !== conversationId) return;
+            const sub = supabase
+                .channel(`chat_detail_${conversationId}`)
+                .on(
+                    'postgres_changes',
+                    { event: '*', schema: 'public', table: 'messages', filter: `conversation_id=eq.${conversationId}` },
+                    (payload) => {
+                        const newMsg = payload.new as any;
+                        const oldMsg = payload.old as any;
+                        const myId = currentUserIdRef.current;
 
-                    if (payload.eventType === 'INSERT') {
-                        // Don't duplicate messages I sent (handled by optimistic UI)
-                        if (newMsg.sender_id === myId) return;
+                        if (payload.eventType === 'INSERT') {
+                            if (newMsg.sender_id === myId) return;
+                            if (deletedIds.includes(newMsg.id)) return;
 
-                        setMessages(prev => {
-                            if (prev.some(m => m.id === newMsg.id)) return prev;
-                            return [newMsg, ...prev];
-                        });
-                        
-                        // Mark as read in DB
-                        supabase.rpc('mark_messages_read', { p_conversation_id: conversationId }).then();
-                    } else if (payload.eventType === 'UPDATE') {
-                        setMessages(prev => prev.map(m => m.id === newMsg.id ? { ...m, ...newMsg } : m));
-                    } else if (payload.eventType === 'DELETE') {
-                        setMessages(prev => prev.filter(m => m.id !== oldMsg.id));
+                            setMessages(prev => {
+                                if (prev.some(m => m.id === newMsg.id)) return prev;
+                                return [newMsg, ...prev];
+                            });
+                            supabase.rpc('mark_messages_read', { p_conversation_id: conversationId }).then();
+                        } else if (payload.eventType === 'UPDATE') {
+                            setMessages(prev => prev.map(m => m.id === newMsg.id ? { ...m, ...newMsg } : m));
+                        } else if (payload.eventType === 'DELETE') {
+                            setMessages(prev => prev.filter(m => m.id !== oldMsg.id));
+                        }
                     }
-                }
-            )
-            .on(
-                'postgres_changes',
-                { event: 'UPDATE', schema: 'public', table: 'conversations', filter: `id=eq.${conversationId}` },
-                (payload) => {
-                    const updatedConv = payload.new as any;
-                    setConversation((prev: any) => prev ? { ...prev, name: updatedConv.name } : updatedConv);
-                }
-            )
-            .subscribe();
+                )
+                .on(
+                    'postgres_changes',
+                    { event: 'UPDATE', schema: 'public', table: 'conversations', filter: `id=eq.${conversationId}` },
+                    (payload) => {
+                        const updatedConv = payload.new as any;
+                        setConversation((prev: any) => prev ? { ...prev, name: updatedConv.name } : updatedConv);
+                    }
+                )
+                .subscribe();
+
+            return sub;
+        };
+
+        let activeSub: any = null;
+        setupRealtime().then(s => activeSub = s);
 
         return () => {
-             const now = new Date();
-             now.setSeconds(now.getSeconds() + 5);
-             AsyncStorage.setItem(`chat_visited_${conversationId}`, now.toISOString());
-             supabase.removeChannel(sub);
+            const now = new Date();
+            now.setSeconds(now.getSeconds() + 5);
+            AsyncStorage.setItem(`chat_visited_${conversationId}`, now.toISOString());
+            if (activeSub) supabase.removeChannel(activeSub);
         };
     }, [conversationId]);
 
     const handleCamera = async () => {
         const { status } = await ImagePicker.requestCameraPermissionsAsync();
         if (status !== 'granted') return;
-        const result = await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, quality: 0.85 });
+        const result = await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, quality: 0.85, videoMaxDuration: 600 });
         if (!result.canceled && result.assets[0]) {
             setPendingMedia(result.assets[0].uri);
             await sendMessage(
@@ -312,7 +321,7 @@ export default function ChatDetailScreen() {
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (status !== 'granted') return;
         try {
-            const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, quality: 0.85 });
+            const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, quality: 0.85, videoMaxDuration: 600 });
             if (!result.canceled && result.assets[0]) {
                 setPendingMedia(result.assets[0].uri);
                 await sendMessage(
@@ -538,13 +547,34 @@ export default function ChatDetailScreen() {
 
     const deleteMessageForMe = async (msgId: string) => {
         setMessages(prev => prev.filter(m => m.id !== msgId));
+        try {
+            const stored = await AsyncStorage.getItem(`deletedMsgs_${conversationId}`);
+            const list = stored ? JSON.parse(stored) : [];
+            if (!list.includes(msgId)) {
+                list.push(msgId);
+                await AsyncStorage.setItem(`deletedMsgs_${conversationId}`, JSON.stringify(list));
+            }
+            setMessages(prev => prev.filter(m => m.id !== msgId));
+        } catch (e) {
+            console.error('Delete for me error:', e);
+        }
     };
 
     const deleteMessageEveryone = async (msgId: string) => {
         try {
-            await supabase.from('messages').update({ is_deleted: true, content: 'Mensaje eliminado' }).eq('id', msgId);
-            setMessages(prev => prev.map(m => m.id === msgId ? { ...m, is_deleted: true, content: 'Mensaje eliminado' } : m));
-        } catch (e) {}
+            const { error } = await supabase.from('messages').update({ 
+                is_deleted: true, 
+                content: 'Este mensaje fue eliminado',
+                media_url: null,
+                media_type: 'text'
+            }).eq('id', msgId);
+            
+            if (error) throw error;
+            setMessages(prev => prev.map(m => m.id === msgId ? { ...m, is_deleted: true, content: 'Este mensaje fue eliminado', media_url: null, media_type: 'text' } : m));
+        } catch (e) {
+            console.error('Delete everyone error:', e);
+            Alert.alert('Error', 'No se pudo eliminar el mensaje para todos.');
+        }
     };
 
     const handleLongPressMessage = (item: any) => {

@@ -44,6 +44,9 @@ export const DEFAULT_CONFIGS: Record<string, ModelTimerConfig> = {
     matcha_kap: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#a269ff', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
     puppy_kap: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#a269ff', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
     cottoncandy_kap: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#a269ff', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    cartoonkap: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#3B82F6', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    goldenkap: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#EAB308', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
+    model_1772952082826: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#8B5CF6', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
     pioneers_cap: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#a269ff', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
 };
 
@@ -54,6 +57,16 @@ class TimerConfigManager {
     private listeners: (() => void)[] = [];
     private initialized = false;
     public models: any[] = [];
+
+    constructor() {
+        this.init = this.init.bind(this);
+        this.getModel = this.getModel.bind(this);
+        this.getModelImage = this.getModelImage.bind(this);
+        this.getModelImageOpen = this.getModelImageOpen.bind(this);
+        this.getConfig = this.getConfig.bind(this);
+        this.getChainConfigs = this.getChainConfigs.bind(this);
+        this.getChainConfig = this.getChainConfig.bind(this);
+    }
 
     async init() {
         if (this.initialized) return;
@@ -109,38 +122,6 @@ class TimerConfigManager {
         await this.init();
     }
 
-    async saveModel(model: any) {
-        try {
-            const modelData: any = {
-                id: model.id,
-                label: model.label,
-                image: model.image,
-                image_open: model.image_open,
-                category: model.category,
-                tint: model.tint,
-                is_active: model.is_active,
-                is_event: model.is_event || false,
-                event_start: model.event_start || null,
-                event_end: model.event_end || null,
-                event_title: model.event_title || null,
-                event_description: model.event_description || null
-            };
-
-            // Only add image_cover if it exists in the model object
-            if (model.image_cover) {
-                modelData.image_cover = model.image_cover;
-            }
-
-            const { error } = await supabase.from('models').upsert(modelData);
-            if (error) throw error;
-            await this.refresh();
-            return true;
-        } catch (e) {
-            console.error('Failed to save model metadata', e);
-            return false;
-        }
-    }
-
     getModel(modelId: string) {
         return this.models.find(m => m.id === modelId) || null;
     }
@@ -152,29 +133,12 @@ class TimerConfigManager {
 
     getModelImageOpen(modelId: string): string {
         const model = this.getModel(modelId);
-        return model?.image_open || '';
+        // Fallback to closed image if open image is missing
+        return model?.image_open || model?.image || '';
     }
 
     getConfig(modelId: string): ModelTimerConfig {
         return this.configs[modelId] || this.configs['basicred_kap'] || Object.values(this.configs)[0];
-    }
-
-    async saveConfig(modelId: string, config: ModelTimerConfig) {
-        try {
-            const { error } = await supabase.from('model_configs').upsert({
-                model_id: modelId,
-                config: config as any,
-                theme_color: config.themeColor
-            });
-            if (error) throw error;
-
-            this.configs[modelId] = config;
-            this.notify();
-            return true;
-        } catch (e) {
-            console.error('Failed to save global timer config', e);
-            return false;
-        }
     }
 
     getChainConfigs(modelId: string): ModelChainConfig[] {
@@ -189,17 +153,45 @@ class TimerConfigManager {
         return this.chainLibrary;
     }
 
+    subscribe(callback: () => void) {
+        this.listeners.push(callback);
+        return () => {
+            this.listeners = this.listeners.filter(l => l !== callback);
+        };
+    }
+
+    async saveConfig(modelId: string, config: ModelTimerConfig) {
+        try {
+            const { error } = await supabase.from('model_configs').upsert({
+                model_id: modelId,
+                config: config
+            }, { onConflict: 'model_id' });
+            if (error) throw error;
+            await this.refresh();
+            return true;
+        } catch (e) {
+            console.error('Failed to save config', e);
+            return false;
+        }
+    }
+
+    async saveModel(model: any) {
+        try {
+            const { error } = await supabase.from('models').upsert(model, { onConflict: 'id' });
+            if (error) throw error;
+            await this.refresh();
+            return true;
+        } catch (e) {
+            console.error('Failed to save model', e);
+            return false;
+        }
+    }
+
     async saveChainConfig(config: ModelChainConfig) {
         try {
-            const { error } = await supabase.from('model_chain_configs').upsert(config);
+            const { error } = await supabase.from('model_chain_configs').upsert(config, { onConflict: 'model_id,chain_id' });
             if (error) throw error;
-
-            // Local update
-            if (!this.chainConfigs[config.model_id]) this.chainConfigs[config.model_id] = [];
-            const idx = this.chainConfigs[config.model_id].findIndex(c => c.chain_id === config.chain_id);
-            if (idx >= 0) this.chainConfigs[config.model_id][idx] = config;
-            else this.chainConfigs[config.model_id].push(config);
-            this.notify();
+            await this.refresh();
             return true;
         } catch (e) {
             console.error('Failed to save chain config', e);
@@ -207,27 +199,16 @@ class TimerConfigManager {
         }
     }
 
-    async addChainToLibrary(chain: ChainItem) {
+    async addChainToLibrary(chain: any) {
         try {
-            const { error } = await supabase.from('chains').upsert(chain);
-            if (!error) {
-                const idx = this.chainLibrary.findIndex(c => c.id === chain.id);
-                if (idx >= 0) this.chainLibrary[idx] = chain;
-                else this.chainLibrary.push(chain);
-                this.notify();
-                return true;
-            }
+            const { error } = await supabase.from('chains').upsert(chain, { onConflict: 'id' });
+            if (error) throw error;
+            await this.refresh();
+            return true;
         } catch (e) {
-            console.error('Failed to add chain to library', e);
+            console.error('Failed to add chain', e);
+            return false;
         }
-        return false;
-    }
-
-    subscribe(callback: () => void) {
-        this.listeners.push(callback);
-        return () => {
-            this.listeners = this.listeners.filter(l => l !== callback);
-        };
     }
 
     private notify() {

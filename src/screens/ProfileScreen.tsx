@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
     View, Text, StyleSheet, ScrollView, TouchableOpacity,
-    Image, StatusBar, Dimensions, ActivityIndicator, Modal, RefreshControl,
+    StatusBar, Dimensions, ActivityIndicator, Modal, RefreshControl,
     Linking, Alert, Pressable, Animated, Easing, Platform, FlatList, Switch
+
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -13,7 +14,9 @@ import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
 import { supabase } from '../lib/supabase';
 import EditProfileScreen from './EditProfileScreen';
+import { Image } from 'expo-image';
 import { MODEL_IMAGES, MODEL_TINTS, MODEL_IMAGES_OPEN } from '../constants/models';
+
 import LiveTimer from '../components/LiveTimer';
 import CapsuleWithTimer from '../components/CapsuleWithTimer';
 import VerifiedBadge from '../components/VerifiedBadge';
@@ -29,7 +32,6 @@ type ProfileTab = 'all' | 'opened' | 'sealed';
 
 const TYPE_CONFIG = (t: any): Record<string, { icon: string; color: string; label: string }> => ({
     instacap: { icon: 'camera', color: Colors.instaCap, label: t('create.instacap_label') },
-    eventcap: { icon: 'calendar', color: Colors.eventCap, label: t('create.eventcap_label') },
     legacycap: { icon: 'time', color: Colors.legacyCap, label: t('create.legacycap_label') },
 });
 
@@ -87,16 +89,18 @@ const ProfileCapsuleCell = React.memo(({
                         style={s.capsuleModelImg}
                         hideParticles
                     />
+
                 ) : coverUrl ? (
-                    <Image source={{ uri: coverUrl }} style={s.capsuleCoverImg} resizeMode="cover" />
+                    <Image source={{ uri: coverUrl }} style={s.capsuleCoverImg} contentFit="cover" transition={200} />
                 ) : (
+
                     <CapsuleWithTimer
                         modelKey={cap.model}
                         source={{ uri: modelImg }}
                         date={cap.opens_at}
                         chainId={cap.chain_id}
                         capsuleType={cap.type}
-                        style={s.capsuleModelImgOpen}
+                        style={s.capsuleModelImg}
                         hideTimer hideParticles
                     />
                 )}
@@ -159,8 +163,8 @@ export default function ProfileScreen() {
     const [showSupportModal, setShowSupportModal] = useState(false);
 
     const [pushEnabled, setPushEnabled] = useState(true);
-    const [pushQuestions, setPushQuestions] = useState(true);
     const [pushComments, setPushComments] = useState(true);
+
     const [pushInvites, setPushInvites] = useState(true);
 
     const [followersCount, setFollowersCount] = useState(0);
@@ -194,8 +198,8 @@ export default function ProfileScreen() {
     useEffect(() => {
         if (profile) {
             setPushEnabled(profile.push_notifications_enabled ?? true);
-            setPushQuestions(profile.push_notif_questions ?? true);
             setPushComments(profile.push_notif_comments ?? true);
+
             setPushInvites(profile.push_notif_invites ?? true);
         }
     }, [profile]);
@@ -203,8 +207,8 @@ export default function ProfileScreen() {
     const handleTogglePushSetting = async (key: string, currentValue: boolean) => {
         const v = !currentValue;
         if (key === 'push_notifications_enabled') setPushEnabled(v);
-        else if (key === 'push_notif_questions') setPushQuestions(v);
         else if (key === 'push_notif_comments') setPushComments(v);
+
         else if (key === 'push_notif_invites') setPushInvites(v);
         if (!currentUserId) return;
         const { error } = await supabase.from('profiles').update({ [key]: v }).eq('id', currentUserId);
@@ -260,13 +264,15 @@ export default function ProfileScreen() {
                 ...c,
                 isAccessible: own || c.is_public || c.owner_id === user.id || myAcceptedCaps.has(c.id) || (c.invited_user_id === myId && c.invite_status === 'accepted')
             }));
-            let opened = viewable.filter((c: any) => c.status === 'opened');
-            const sealed = viewable.filter((c: any) => c.status === 'sealed');
+            const filtered = viewable.filter((c: any) => c.type !== 'eventcap');
+            let opened = filtered.filter((c: any) => c.status === 'opened');
+            const sealed = filtered.filter((c: any) => c.status === 'sealed');
             if (own) {
                 const nowMs = Date.now();
                 const toDelete = opened.filter((c: any) => {
                     const itemCount = c.capsule_items_count_val !== undefined ? c.capsule_items_count_val : (c.capsule_items_count || 0);
-                    return itemCount === 0 && (nowMs - new Date(c.opens_at).getTime()) > 86400000;
+                    const isActuallyOpenCap = c.type === 'opencap' || (c.status === 'opened' && c.duration_days === 0);
+                    return itemCount === 0 && !isActuallyOpenCap && (nowMs - new Date(c.opens_at).getTime()) > 86400000;
                 });
                 if (toDelete.length > 0) {
                     opened = opened.filter((c: any) => !toDelete.includes(c));
@@ -485,8 +491,10 @@ export default function ProfileScreen() {
                             return ps.stickers?.image_url && (
                                 <Image key={ps.id} source={{ uri: ps.stickers.image_url }}
                                     style={style}
-                                    resizeMode="contain"
+                                    contentFit="contain"
+                                    transition={300}
                                 />
+
                             );
                         })}
                     </View>
@@ -538,9 +546,10 @@ export default function ProfileScreen() {
                             ) : (
                                 <View style={[s.storyRing, { borderColor: Colors.border }]}>
                                     {profile?.avatar_url
-                                        ? <Image source={{ uri: profile.avatar_url }} style={s.avatar} />
+                                        ? <Image source={{ uri: profile.avatar_url }} style={s.avatar} contentFit="cover" transition={200} />
                                         : <View style={s.avatarFallback}><Ionicons name="person" size={28} color={Colors.primary} /></View>
                                     }
+
                                 </View>
                             )}
                         </TouchableOpacity>
@@ -621,11 +630,6 @@ export default function ProfileScreen() {
                                     <Ionicons name="pencil" size={15} color="#fff" />
                                     <Text style={s.primaryBtnText}>{t('profile.editProfile')}</Text>
                                 </TouchableOpacity>
-                                {profile?.is_admin && (
-                                    <TouchableOpacity style={s.iconBtn} activeOpacity={0.7} onPress={() => navigation.navigate('TimerConfig')}>
-                                        <Ionicons name="cog-outline" size={19} color={Colors.textSecondary} />
-                                    </TouchableOpacity>
-                                )}
                             </>
                         ) : (
                             <>
@@ -646,28 +650,7 @@ export default function ProfileScreen() {
                     </View>
                 </View>
 
-                {/* ── KAPS BOX BANNER ──────────────────────────────────── */}
-                <TouchableOpacity
-                    style={s.kapsBoxCard}
-                    activeOpacity={0.85}
-                    onPress={() => navigation.navigate('Inbox', { profileId: profileId || currentUserId })}
-                >
-                    <View style={[s.kapsBoxIconWrap, { backgroundColor: accentColor + '18' }]}>
-                        <Ionicons name="mail-unread" size={18} color={accentColor} />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                        <Text style={s.kapsBoxTitle}>📮  Inbox</Text>
-                        <Text style={s.kapsBoxSub}>
-                            {new Date().getDay() === 1 ? 'Reveals day! View current answers.' : 'Send anonymous questions here!'}
-                        </Text>
-                    </View>
-                    {new Date().getDay() !== 1 && (
-                        <View style={[s.hoursBadge, { backgroundColor: accentColor + '15' }]}>
-                            <Text style={[s.hoursText, { color: accentColor }]}>{getHoursUntilMonday()}h</Text>
-                        </View>
-                    )}
-                    <Ionicons name="chevron-forward" size={16} color={Colors.textMuted} />
-                </TouchableOpacity>
+
 
                 {/* ── TAB BAR ──────────────────────────────────────────── */}
                 <View style={s.tabBarWrap}>
@@ -694,7 +677,7 @@ export default function ProfileScreen() {
                     <FlatList
                         data={sortedTabData}
                         keyExtractor={item => item.id}
-                        numColumns={2}
+                        numColumns={3}
                         scrollEnabled={false}
                         columnWrapperStyle={s.gridRow}
                         contentContainerStyle={s.gridContent}
@@ -778,7 +761,8 @@ export default function ProfileScreen() {
                                         activeOpacity={0.7}
                                         onPress={() => { setCoverMap(p => ({ ...p, [pickerCapsuleId!]: item.media_url })); setPickerCapsuleId(null); }}
                                     >
-                                        <Image source={{ uri: item.media_url }} style={s.pickerThumbImg} resizeMode="cover" />
+                                        <Image source={{ uri: item.media_url }} style={s.pickerThumbImg} contentFit="cover" transition={200} />
+
                                         {isSel && <View style={s.pickerCheck}><Ionicons name="checkmark-circle" size={26} color="#fff" /></View>}
                                     </TouchableOpacity>
                                 );
@@ -819,6 +803,7 @@ export default function ProfileScreen() {
                             },
                             { icon: 'shield-checkmark-outline', color: Colors.textSecondary, label: t('profile.privacyPolicy'), onPress: () => { setShowSettings(false); setShowPrivacy(true); } },
                             { icon: 'document-text-outline', color: Colors.textSecondary, label: t('profile.termsOfUse'), onPress: () => { setShowSettings(false); setShowTerms(true); } },
+                            ...(profile?.is_admin ? [{ icon: 'construct-outline', color: Colors.eventCap, label: 'Admin: Calibration Tool', onPress: () => { setShowSettings(false); navigation.navigate('AdminCalibration'); } }] : []),
                         ].map((item, i) => (
                             <TouchableOpacity
                                 key={i}
@@ -905,8 +890,8 @@ export default function ProfileScreen() {
                             {pushEnabled && (<>
                                 <Text style={s.pushSectionLabel}>{t('profile.personalize', 'Personalizar')}</Text>
                                 {[
-                                    { label: t('profile.notif_questions', 'Preguntas Anónimas'), value: pushQuestions, key: 'push_notif_questions' },
                                     { label: t('profile.notif_comments', 'Comentarios'), value: pushComments, key: 'push_notif_comments' },
+
                                     { label: t('profile.notif_invites', 'Invitaciones'), value: pushInvites, key: 'push_notif_invites' },
                                 ].map(item => (
                                     <View key={item.key} style={s.pushRow}>
@@ -1074,21 +1059,7 @@ const s = StyleSheet.create({
         alignItems: 'center', justifyContent: 'center',
     },
 
-    // Kaps Box
-    kapsBoxCard: {
-        marginHorizontal: 16, marginBottom: 12,
-        flexDirection: 'row', alignItems: 'center', gap: 12,
-        backgroundColor: Colors.surface,
-        borderRadius: 18, padding: 14,
-        borderWidth: 1, borderColor: Colors.divider,
-        shadowColor: 'rgba(0,0,0,0.05)', shadowOpacity: 1, shadowRadius: 8,
-        shadowOffset: { width: 0, height: 2 }, elevation: 1,
-    },
-    kapsBoxIconWrap: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-    kapsBoxTitle: { fontSize: 13, fontFamily: Fonts.bold, color: Colors.textPrimary },
-    kapsBoxSub: { fontSize: 11, fontFamily: Fonts.regular, color: Colors.textMuted, marginTop: 2 },
-    hoursBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
-    hoursText: { fontSize: 11, fontFamily: Fonts.bold },
+
 
     // Tab bar — minimal underline style
     tabBarWrap: {
@@ -1106,7 +1077,7 @@ const s = StyleSheet.create({
     gridWrap: { paddingHorizontal: 12, paddingTop: 12 },
     gridContent: { gap: 12 },
     gridRow: { gap: 12 },
-    gridCell: { width: (width - 36) / 2 },
+    gridCell: { width: (width - 48) / 3 },
 
     // Capsule cell — clean card
     capsuleCell: {
@@ -1121,8 +1092,8 @@ const s = StyleSheet.create({
         alignItems: 'center', justifyContent: 'center',
         position: 'relative',
     },
-    capsuleModelImg: { width: '82%', height: '82%' },
-    capsuleModelImgOpen: { width: '70%', height: '70%' },
+    capsuleModelImg: { width: '95%', height: '95%' },
+
     capsuleCoverImg: { width: '100%', height: '100%', resizeMode: 'cover' },
 
     capsuleTypeDot: {
@@ -1142,10 +1113,11 @@ const s = StyleSheet.create({
         backgroundColor: 'rgba(0,0,0,0.38)',
         alignItems: 'center', justifyContent: 'center',
     },
-    capsuleMeta: { padding: 10, paddingTop: 8 },
-    capsuleTitle: { fontSize: 12, fontFamily: Fonts.bold, color: Colors.textPrimary, marginBottom: 3 },
-    capsuleTimer: { fontSize: 10, fontFamily: Fonts.semiBold, color: Colors.primary },
-    capsuleOpenedTag: { fontSize: 9, fontFamily: Fonts.bold, color: Colors.textMuted, letterSpacing: 0.5 },
+    capsuleMeta: { padding: 9, paddingTop: 7 },
+    capsuleTitle: { fontSize: 11, fontFamily: Fonts.bold, color: Colors.textPrimary, marginBottom: 2 },
+    capsuleTimer: { fontSize: 8.5, fontFamily: Fonts.semiBold, color: Colors.primary },
+    capsuleOpenedTag: { fontSize: 8.5, fontFamily: Fonts.bold, color: Colors.textMuted, letterSpacing: 0.5 },
+
 
     // Empty state
     emptyState: { paddingVertical: 60, alignItems: 'center', width: '100%' },

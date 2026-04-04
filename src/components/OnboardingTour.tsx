@@ -8,32 +8,49 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { useTranslation } from 'react-i18next';
+import { timerConfigManager } from '../utils/timerConfig';
+import { Image } from 'react-native';
+
 const { width, height } = Dimensions.get('window');
 
-const TOUR_STEPS = [
+const MODEL_EXAMPLES = [
+    'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/models/cartoonkap.png',
+    'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/models/goldenkap.png',
+    'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/models/model_1772952082826.jpg'
+];
+
+const TOUR_STEPS = (t: any) => [
     {
-        title: 'Welcome to Kapsely',
-        description: 'The premier digital sanctuary for your future memories. Let’s show you around.',
+        title: t('onboarding.step1_title'),
+        description: t('onboarding.step1_desc'),
         icon: 'sparkles',
         color: Colors.primary,
     },
     {
-        title: 'Create Your First Capsule',
-        description: 'Tap the "+" icon to start a new capsule. Choose between InstaCap, EventCap, or LegacyCap.',
+        title: t('onboarding.step2_title'),
+        description: t('onboarding.step2_desc'),
         icon: 'add-circle',
         color: Colors.instaCap,
+        showModels: true,
     },
     {
-        title: 'Discover YourCap',
-        description: 'View and share timed stories. Memories that appear exactly when they are meant to be seen.',
-        icon: 'play-circle',
-        color: Colors.eventCap,
-    },
-    {
-        title: 'Preserve Memories',
-        description: 'Add photos, videos, and notes to your capsules. Seal them and wait for the perfect moment.',
+        title: t('onboarding.step3_title'),
+        description: t('onboarding.step3_desc'),
         icon: 'archive',
         color: Colors.legacyCap,
+    },
+    {
+        title: t('onboarding.step4_title'),
+        description: t('onboarding.step4_desc'),
+        icon: 'flash',
+        color: Colors.accent,
+    },
+    {
+        title: t('onboarding.step5_title'),
+        description: t('onboarding.step5_desc'),
+        icon: 'chatbubbles',
+        color: Colors.primary,
     }
 ];
 
@@ -42,6 +59,7 @@ interface OnboardingTourProps {
 }
 
 export default function OnboardingTour({ onComplete }: OnboardingTourProps) {
+    const { t } = useTranslation();
     const [currentStep, setCurrentStep] = useState(0);
     const [visible, setVisible] = useState(false);
     
@@ -49,10 +67,24 @@ export default function OnboardingTour({ onComplete }: OnboardingTourProps) {
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const slideAnim = useRef(new Animated.Value(20)).current;
     const scaleAnim = useRef(new Animated.Value(0.9)).current;
+    const floatAnim = useRef(new Animated.Value(0)).current;
 
     useEffect(() => {
         checkFirstTime();
+        
+        // Synchronized floating animation for all cards
+        Animated.loop(
+            Animated.sequence([
+                Animated.timing(floatAnim, { toValue: 1, duration: 2500, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+                Animated.timing(floatAnim, { toValue: 0, duration: 2500, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+            ])
+        ).start();
     }, []);
+
+    const floatY = floatAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0, -12]
+    });
 
     const checkFirstTime = async () => {
         try {
@@ -81,7 +113,8 @@ export default function OnboardingTour({ onComplete }: OnboardingTourProps) {
     };
 
     const handleNext = () => {
-        if (currentStep < TOUR_STEPS.length - 1) {
+        const steps = TOUR_STEPS(t);
+        if (currentStep < steps.length - 1) {
             setCurrentStep(currentStep + 1);
             startAnims();
         } else {
@@ -97,19 +130,20 @@ export default function OnboardingTour({ onComplete }: OnboardingTourProps) {
 
     if (!visible) return null;
 
-    const step = TOUR_STEPS[currentStep];
+    const steps = TOUR_STEPS(t);
+    const step = steps[currentStep];
 
     return (
         <Modal transparent visible={visible} animationType="fade">
             <View style={styles.overlay}>
                 <LinearGradient
-                    colors={['rgba(0,0,0,0.7)', 'rgba(0,0,0,0.85)', 'rgba(0,0,0,0.95)']}
+                    colors={['rgba(0,0,0,0.85)', 'rgba(0,0,0,0.92)', 'rgba(0,0,0,0.98)']}
                     style={styles.gradient}
                 />
                 
                 <SafeAreaView style={styles.container}>
                     <TouchableOpacity style={styles.skipBtn} onPress={completeTour}>
-                        <Text style={styles.skipText}>Skip</Text>
+                        <Text style={styles.skipText}>{t('common.skip')}</Text>
                     </TouchableOpacity>
 
                     <Animated.View 
@@ -119,25 +153,36 @@ export default function OnboardingTour({ onComplete }: OnboardingTourProps) {
                                 opacity: fadeAnim,
                                 transform: [
                                     { translateY: slideAnim },
-                                    { scale: scaleAnim }
+                                    { scale: scaleAnim },
+                                    { translateY: floatY }
                                 ]
                             }
                         ]}
                     >
-                        <View style={[styles.iconContainer, { backgroundColor: step.color + '20' }]}>
-                            <Ionicons name={step.icon as any} size={48} color={step.color} />
-                        </View>
+                        {step.showModels ? (
+                            <View style={styles.modelsGrid}>
+                                {MODEL_EXAMPLES.map((url, i) => (
+                                    <View key={i} style={[styles.modelCircle, { transform: [{ rotate: `${(i - 1) * 15}deg` }] }]}>
+                                        <Image source={{ uri: url }} style={styles.modelImage} resizeMode="contain" />
+                                    </View>
+                                ))}
+                            </View>
+                        ) : (
+                            <View style={[styles.iconContainer, { backgroundColor: step.color + '20' }]}>
+                                <Ionicons name={step.icon as any} size={48} color={step.color} />
+                            </View>
+                        )}
                         
                         <Text style={styles.title}>{step.title}</Text>
                         <Text style={styles.description}>{step.description}</Text>
 
                         <View style={styles.indicatorContainer}>
-                            {TOUR_STEPS.map((_, i) => (
+                            {steps.map((_, i) => (
                                 <View 
                                     key={i} 
                                     style={[
                                         styles.indicator, 
-                                        currentStep === i ? { backgroundColor: step.color, width: 24 } : { backgroundColor: 'rgba(255,255,255,0.2)' }
+                                        currentStep === i ? { backgroundColor: step.color, width: 24 } : { backgroundColor: 'rgba(255,255,255,0.1)' }
                                     ]} 
                                 />
                             ))}
@@ -149,10 +194,10 @@ export default function OnboardingTour({ onComplete }: OnboardingTourProps) {
                                 style={styles.nextBtnGradient}
                             >
                                 <Text style={styles.nextBtnText}>
-                                    {currentStep === TOUR_STEPS.length - 1 ? 'Get Started' : 'Next'}
+                                    {currentStep === steps.length - 1 ? t('common.let_go') : t('common.next')}
                                 </Text>
                                 <Ionicons 
-                                    name={currentStep === TOUR_STEPS.length - 1 ? 'rocket' : 'arrow-forward'} 
+                                    name={currentStep === steps.length - 1 ? 'rocket' : 'arrow-forward'} 
                                     size={18} 
                                     color="#fff" 
                                 />
@@ -186,6 +231,30 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         marginBottom: 24,
+    },
+    modelsGrid: {
+        flexDirection: 'row',
+        height: 120,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 24,
+        gap: -30,
+    },
+    modelCircle: {
+        width: 90,
+        height: 90,
+        borderRadius: 45,
+        backgroundColor: '#fff',
+        borderWidth: 3,
+        borderColor: Colors.border,
+        justifyContent: 'center',
+        alignItems: 'center',
+        overflow: 'hidden',
+        ...Shadow.medium,
+    },
+    modelImage: {
+        width: '100%',
+        height: '100%',
     },
     title: {
         fontSize: 24,
