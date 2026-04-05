@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     View, Text, StyleSheet, TouchableOpacity,
-    Image, ActivityIndicator, Alert, Modal, Pressable,
+    ActivityIndicator, Alert, Modal, Pressable,
     ScrollView, Dimensions, PanResponder,
     Animated, Platform
 } from 'react-native';
+
+import { Image } from 'expo-image';
+
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -153,7 +156,13 @@ function DraggableSticker({
                 },
             ]}
         >
-            <Image source={{ uri: sticker.imageUrl }} style={StyleSheet.absoluteFill} resizeMode="contain" />
+            <Image 
+                source={{ uri: sticker.imageUrl }} 
+                style={StyleSheet.absoluteFill} 
+                contentFit="contain"
+                cachePolicy="memory-disk"
+            />
+
 
             {/* Selection ring */}
             {isSelected && (
@@ -296,8 +305,9 @@ export default function PersonalizeProfileScreen() {
         // Load saved stickers
         const { data: current } = await supabase
             .from('profile_stickers')
-            .select('*, stickers(*)')
+            .select('id, sticker_id, x, y, size, rotation, stickers(image_url, name)')
             .eq('user_id', uid);
+
 
         if (current) {
             const loaded: StickerInstance[] = current.map((ps: any, i: number) => ({
@@ -321,6 +331,7 @@ export default function PersonalizeProfileScreen() {
 
         // User stats
         const { data: profile } = await supabase.from('profiles').select('created_at').eq('id', uid).single();
+
         const regDate = profile?.created_at ? new Date(profile.created_at) : new Date();
         const { data: capsules } = await supabase.from('capsules').select('id, status').eq('owner_id', uid);
         const openedCount = capsules?.filter(c => c.status === 'opened').length || 0;
@@ -332,7 +343,11 @@ export default function PersonalizeProfileScreen() {
         setUserStats({ maxLikes, totalComments: comments?.length || 0, openedCount, registrationDate: regDate });
 
         // All stickers
-        const { data: stks } = await supabase.from('stickers').select('*').eq('is_active', true);
+        const { data: stks } = await supabase
+            .from('stickers')
+            .select('id, image_url, name, is_active, unlock_type, unlock_threshold')
+            .eq('is_active', true);
+
         if (stks) setAllStickers(stks);
     };
 
@@ -569,8 +584,10 @@ export default function PersonalizeProfileScreen() {
                                         <Image
                                             source={{ uri: st.image_url }}
                                             style={[s.railImg, !unlocked && { opacity: 0.4 }]}
-                                            resizeMode="contain"
+                                            contentFit="contain"
+                                            cachePolicy="memory-disk"
                                         />
+
                                         {!unlocked && (
                                             <View style={s.railLock}>
                                                 <Ionicons name="lock-closed" size={11} color="#fff" />
@@ -618,8 +635,10 @@ export default function PersonalizeProfileScreen() {
                                             <Image
                                                 source={{ uri: st.image_url }}
                                                 style={[s.pickerImg, !unlocked && { opacity: 0.35 }]}
-                                                resizeMode="contain"
+                                                contentFit="contain"
+                                                cachePolicy="memory-disk"
                                             />
+
                                             {!unlocked && (
                                                 <View style={s.pickerLockOverlay}>
                                                     <Ionicons name="lock-closed" size={18} color="#fff" />

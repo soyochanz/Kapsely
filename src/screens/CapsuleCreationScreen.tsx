@@ -75,7 +75,7 @@ const TYPE_CFG = {
             'Duration: 1 year → 5 years',
             'Cannot change settings after sealing',
         ],
-        groupOk: false,
+        groupOk: true,
     },
     instacap: {
         accent: '#7C5CBF',
@@ -113,7 +113,7 @@ const TYPE_CFG = {
             'All EventCaps open simultaneously worldwide',
             'Uses exclusive event-only capsule models',
         ],
-        groupOk: false,
+        groupOk: true,
     },
     opencap: {
         accent: '#4A6BE0',
@@ -132,7 +132,7 @@ const TYPE_CFG = {
             'No blurring or lock mechanism',
             'Skip the timer — open to all',
         ],
-        groupOk: false,
+        groupOk: true,
     },
 } as const;
 
@@ -851,6 +851,13 @@ export default function CapsuleCreationScreen() {
     const [customDays, setCustomDays] = useState(60);
     const [scrollEnabled, setScrollEnabled] = useState(true);
 
+    const [isJoiningEvent, setIsJoiningEvent] = useState(false);
+    const [useCapAngel, setUseCapAngel] = useState(false);
+    const [selectedCapAngel, setSelectedCapAngel] = useState<any>(null);
+    const [capAngelSearchQuery, setCapAngelSearchQuery] = useState('');
+    const [capAngelSearchResults, setCapAngelSearchResults] = useState<any[]>([]);
+    const [searchingCapAngel, setSearchingCapAngel] = useState(false);
+
     const [availableModels, setAvailableModels] = useState<any[]>(timerConfigManager.models);
     const [sealing, setSealing] = useState(false);
     const [showSealAnim, setShowSealAnim] = useState(false);
@@ -909,12 +916,14 @@ export default function CapsuleCreationScreen() {
     useEffect(() => {
         if (selectedMode === 'open') {
             if (selectedType !== 'opencap') setSelectedType('opencap' as any);
+        } else if (isJoiningEvent && activeEvent) {
+            if (selectedType !== 'eventcap') setSelectedType('eventcap');
         } else if (finalDays && finalDays > 365) {
             if (selectedType !== 'legacycap') setSelectedType('legacycap');
         } else {
-            if (selectedType !== 'instacap' && selectedType !== 'eventcap') setSelectedType('instacap');
+            if (selectedType !== 'instacap') setSelectedType('instacap');
         }
-    }, [finalDays, selectedMode]);
+    }, [finalDays, selectedMode, isJoiningEvent, activeEvent]);
 
     const openingDate = useMemo(() => {
         if (selectedType === 'eventcap' && activeEvent) return activeEvent.event_end;
@@ -946,9 +955,13 @@ export default function CapsuleCreationScreen() {
     const isNextEnabled = useMemo(() => {
         if (currentStep === 'mode') return !!selectedMode;
         if (currentStep === 'identity') return title.trim().length > 0 && description.trim().length > 0;
-        if (currentStep === 'timing') return !!selectedPreset || showCustomSlider;
+        if (currentStep === 'timing') {
+            if (isJoiningEvent) return true; // Event handles timing
+            if (useCapAngel && !selectedCapAngel) return false;
+            return !!selectedPreset || showCustomSlider;
+        }
         return true;
-    }, [currentStep, title, description, selectedPreset, showCustomSlider, selectedMode]);
+    }, [currentStep, title, description, selectedPreset, showCustomSlider, selectedMode, useCapAngel, selectedCapAngel, isJoiningEvent]);
 
     // ─── User search ──────────────────────────────────────────────────────────
     useEffect(() => {
@@ -973,6 +986,30 @@ export default function CapsuleCreationScreen() {
             setSearchingUsers(false);
         }
     }, [userSearchQuery]);
+
+    // ─── CapAngel search ──────────────────────────────────────────────────────
+    useEffect(() => {
+        let isCurrent = true;
+        const query = capAngelSearchQuery.trim();
+        if (query.length > 0) {
+            const timeout = setTimeout(async () => {
+                if (!isCurrent) return;
+                setSearchingCapAngel(true);
+                try {
+                    const { data: { user } } = await supabase.auth.getUser();
+                    let dbQuery = supabase.from('profiles').select('*')
+                        .or(`username.ilike.%${query}%,display_name.ilike.%${query}%`).limit(5);
+                    if (user) dbQuery = dbQuery.neq('id', user.id);
+                    const { data } = await dbQuery;
+                    if (isCurrent && data) setCapAngelSearchResults(data);
+                } catch (e) { } finally { if (isCurrent) setSearchingCapAngel(false); }
+            }, 300);
+            return () => { isCurrent = false; clearTimeout(timeout); };
+        } else {
+            setCapAngelSearchResults([]);
+            setSearchingCapAngel(false);
+        }
+    }, [capAngelSearchQuery]);
 
     const toggleInviteUser = (u: any) => {
         if (invitedUsers.some(iu => iu.id === u.id)) {
@@ -1024,8 +1061,13 @@ export default function CapsuleCreationScreen() {
     }, []);
 
     useEffect(() => {
-        if (selectedType === 'eventcap' && activeEvent?.capsule_model) setSelectedModel(activeEvent.capsule_model);
-    }, [selectedType, activeEvent]);
+        if (selectedType === 'eventcap' && activeEvent) {
+            setSelectedModel(activeEvent.id);
+        } else if (selectedType !== 'eventcap' && activeModel?.is_event) {
+            // Revert back to basic model if event is deselected
+            setSelectedModel('basicred_kap');
+        }
+    }, [selectedType, activeEvent, activeModel?.is_event]);
 
     // ─── Navigation ───────────────────────────────────────────────────────────
     const goToStep = (next: Step, dir: number) => {
@@ -1098,6 +1140,7 @@ export default function CapsuleCreationScreen() {
                 is_public: selectedType === 'opencap' ? true : isPublic,
                 status: selectedType === 'opencap' ? 'opened' : 'sealed',
                 chain_id: selectedChainId || null,
+                guardian_id: (selectedMode === 'closed' && useCapAngel && selectedCapAngel) ? selectedCapAngel.id : null,
             }).select().single();
 
             if (error) throw error;
@@ -1269,10 +1312,43 @@ export default function CapsuleCreationScreen() {
                 {/* ═══ STEP 2: DESIGN ══════════════════════════════════════ */}
                 {currentStep === 'design' && (
                     <View style={s.pageWrapper}>
-                        <View style={{ alignItems: 'center', marginBottom: 10, marginTop: 8 }}>
+                        <View style={{ alignItems: 'center', marginBottom: 20, marginTop: 8 }}>
                             <Text style={s.pageTitle}>{t('create.customize') || 'Design'}</Text>
                             <Text style={s.pageSub}>Pick a capsule shell & style</Text>
                         </View>
+
+                        {/* Event Selection - NOW IN STEP 2 */}
+                        {selectedMode === 'closed' && activeEvent && (
+                            <BlurView intensity={65} tint="light" style={[s.eventJoinCard, isJoiningEvent && { borderColor: TYPE_CFG.eventcap.accent, backgroundColor: TYPE_CFG.eventcap.light }]}>
+                                <LinearGradient colors={[TYPE_CFG.eventcap.accent + '15', 'transparent']} style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 60, borderRadius: 24 }} />
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+                                    <View style={[s.eventIconWrap, { backgroundColor: TYPE_CFG.eventcap.accent + '18' }]}>
+                                        <Text style={{ fontSize: 28 }}>🎉</Text>
+                                    </View>
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={[s.eventJoinTitle, { color: TYPE_CFG.eventcap.accent }]}>Join Live Event</Text>
+                                        <Text style={s.eventJoinSub}>{activeEvent.label} is currently ongoing!</Text>
+                                    </View>
+                                    <Switch
+                                        value={isJoiningEvent}
+                                        onValueChange={(val) => {
+                                            setIsJoiningEvent(val);
+                                            if (val && activeEvent) {
+                                                setSelectedModel(activeEvent.id);
+                                            }
+                                        }}
+                                        trackColor={{ false: L.border, true: TYPE_CFG.eventcap.accent + '60' }}
+                                        thumbColor={isJoiningEvent ? TYPE_CFG.eventcap.accent : '#fff'}
+                                    />
+                                </View>
+                                {isJoiningEvent && (
+                                    <View style={s.eventInfoRow}>
+                                        <Ionicons name="sparkles" size={12} color={TYPE_CFG.eventcap.accent} />
+                                        <Text style={[s.eventInfoText, { color: TYPE_CFG.eventcap.accent }]}>This capsule will use the exclusive {activeEvent.label} model and open globally when the event ends.</Text>
+                                    </View>
+                                )}
+                            </BlurView>
+                        )}
 
                         {/* Hero capsule preview */}
                         <BlurView intensity={60} tint="light" style={s.designHeroCard}>
@@ -1298,15 +1374,24 @@ export default function CapsuleCreationScreen() {
                             <View style={s.designModelInfo}>
                                 <Text style={[s.designModelName, { color: accent }]}>{activeModel?.label}</Text>
                                 <TouchableOpacity
-                                    onPress={() => setShowModelPicker(true)}
+                                    onPress={() => !isJoiningEvent && setShowModelPicker(true)}
                                     activeOpacity={0.8}
-                                    style={[s.changeModelBtn, { borderColor: accent + '45', backgroundColor: accent + '0E' }]}
+                                    style={[
+                                        s.changeModelBtn, 
+                                        { borderColor: accent + '45', backgroundColor: accent + '0E' },
+                                        isJoiningEvent && { opacity: 0.5, borderColor: L.border }
+                                    ]}
+                                    disabled={isJoiningEvent}
                                 >
-                                    <Ionicons name="color-palette-outline" size={14} color={accent} />
-                                    <Text style={[s.changeModelText, { color: accent }]}>{t('create.change_model')}</Text>
-                                    <View style={[s.changeModelChevron, { backgroundColor: accent + '18' }]}>
-                                        <Ionicons name="chevron-forward" size={11} color={accent} />
-                                    </View>
+                                    <Ionicons name={isJoiningEvent ? "lock-closed" : "color-palette-outline"} size={14} color={isJoiningEvent ? L.textMuted : accent} />
+                                    <Text style={[s.changeModelText, { color: isJoiningEvent ? L.textMuted : accent }]}>
+                                        {isJoiningEvent ? "Model Locked by Event" : t('create.change_model')}
+                                    </Text>
+                                    {!isJoiningEvent && (
+                                        <View style={[s.changeModelChevron, { backgroundColor: accent + '18' }]}>
+                                            <Ionicons name="chevron-forward" size={11} color={accent} />
+                                        </View>
+                                    )}
                                 </TouchableOpacity>
                             </View>
                         </BlurView>
@@ -1410,8 +1495,8 @@ export default function CapsuleCreationScreen() {
                             </View>
                         </View>
 
-                        {/* Group capsule toggle (instacap only) */}
-                        {selectedType === 'instacap' && (
+                        {/* Group capsule toggle (instacap & opencap) */}
+                        {(selectedType === 'instacap' || selectedType === 'opencap') && (
                             <View style={{ marginTop: 4 }}>
                                 <SectionLabel accent={accent}>Collaboration</SectionLabel>
                                 <BlurView intensity={50} tint="light" style={[s.toggleRow, { borderColor: accent + '35' }]}>
@@ -1489,52 +1574,74 @@ export default function CapsuleCreationScreen() {
                             </BlurView>
                         )}
 
-                        <View style={s.presetGrid}>
-                            {PRESETS.map(p => {
-                                const isCustom = p.days === -1;
-                                const isActive = isCustom ? showCustomSlider : (!showCustomSlider && selectedPreset === p.days);
-                                return (
-                                    <TouchableOpacity
-                                        key={p.label}
-                                        activeOpacity={0.82}
-                                        onPress={() => {
-                                            if (isCustom) { setShowCustomSlider(true); setSelectedPreset(null); }
-                                            else { setShowCustomSlider(false); setSelectedPreset(p.days); }
-                                        }}
-                                        style={[s.presetCard, isActive && { borderColor: accent, backgroundColor: accent + '0C' }]}
-                                    >
-                                        {isActive && (
-                                            <LinearGradient
-                                                colors={[accent + '14', accent + '04']}
-                                                style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 20 }}
-                                            />
-                                        )}
-                                        <Text style={{ fontSize: 26, marginBottom: 5 }}>{p.emoji}</Text>
-                                        <Text style={[s.presetLabel, isActive && { color: accent }]}>{t(p.label)}</Text>
-                                        <Text style={[s.presetSub, isActive && { color: accent + '90' }]}>{p.days === -1 ? t('common.any_range') : daysToLabel(p.days)}</Text>
-                                        {isActive && (
-                                            <LinearGradient colors={[accent, accent + 'CC']} style={s.presetCheck}>
-                                                <Ionicons name="checkmark" size={8} color="#fff" />
-                                            </LinearGradient>
-                                        )}
-                                    </TouchableOpacity>
-                                );
-                            })}
-                        </View>
-
-                        {showCustomSlider && (
-                            <BlurView intensity={60} tint="light" style={[s.sliderCard, { borderColor: accent + '40' }]}>
-                                <LinearGradient colors={[accent + '10', 'transparent']} style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 70, borderRadius: 20 }} />
-                                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
-                                    <View style={[s.sliderIconWrap, { backgroundColor: accent + '18' }]}>
-                                        <Ionicons name="timer-outline" size={17} color={accent} />
-                                    </View>
-                                    <Text style={[s.sliderTitle, { marginLeft: 10, flex: 1 }]}>{t('create.custom_duration')}</Text>
-                                    <View style={[s.sliderValueChip, { backgroundColor: accent + '14', borderColor: accent + '40' }]}>
-                                        <Text style={[s.sliderValueText, { color: accent }]}>{daysToLabel(customDays)}</Text>
-                                    </View>
+                        {!isJoiningEvent ? (
+                            <>
+                                <View style={s.presetGrid}>
+                                    {PRESETS.map(p => {
+                                        const isCustom = p.days === -1;
+                                        const isActive = isCustom ? showCustomSlider : (!showCustomSlider && selectedPreset === p.days);
+                                        return (
+                                            <TouchableOpacity
+                                                key={p.label}
+                                                activeOpacity={0.82}
+                                                onPress={() => {
+                                                    if (isCustom) { setShowCustomSlider(true); setSelectedPreset(null); }
+                                                    else { setShowCustomSlider(false); setSelectedPreset(p.days); }
+                                                }}
+                                                style={[s.presetCard, isActive && { borderColor: accent, backgroundColor: accent + '0C' }]}
+                                            >
+                                                {isActive && (
+                                                    <LinearGradient
+                                                        colors={[accent + '14', accent + '04']}
+                                                        style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 20 }}
+                                                    />
+                                                )}
+                                                <Text style={{ fontSize: 26, marginBottom: 5 }}>{p.emoji}</Text>
+                                                <Text style={[s.presetLabel, isActive && { color: accent }]}>{t(p.label)}</Text>
+                                                <Text style={[s.presetSub, isActive && { color: accent + '90' }]}>{p.days === -1 ? t('common.any_range') : daysToLabel(p.days)}</Text>
+                                                {isActive && (
+                                                    <LinearGradient colors={[accent, accent + 'CC']} style={s.presetCheck}>
+                                                        <Ionicons name="checkmark" size={8} color="#fff" />
+                                                    </LinearGradient>
+                                                )}
+                                            </TouchableOpacity>
+                                        );
+                                    })}
                                 </View>
-                                <DurationSlider days={customDays} onChange={setCustomDays} accent={accent} daysToLabel={daysToLabel} setScrollEnabled={setScrollEnabled} />
+
+                                {showCustomSlider && (
+                                    <BlurView intensity={60} tint="light" style={[s.sliderCard, { borderColor: accent + '40' }]}>
+                                        <LinearGradient colors={[accent + '10', 'transparent']} style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 70, borderRadius: 20 }} />
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
+                                            <View style={[s.sliderIconWrap, { backgroundColor: accent + '18' }]}>
+                                                <Ionicons name="timer-outline" size={17} color={accent} />
+                                            </View>
+                                            <Text style={[s.sliderTitle, { marginLeft: 10, flex: 1 }]}>{t('create.custom_duration')}</Text>
+                                            <View style={[s.sliderValueChip, { backgroundColor: accent + '14', borderColor: accent + '40' }]}>
+                                                <Text style={[s.sliderValueText, { color: accent }]}>{daysToLabel(customDays)}</Text>
+                                            </View>
+                                        </View>
+                                        <DurationSlider
+                                            days={customDays}
+                                            onChange={setCustomDays}
+                                            accent={accent}
+                                            daysToLabel={daysToLabel}
+                                            setScrollEnabled={setScrollEnabled}
+                                        />
+                                    </BlurView>
+                                )}
+                            </>
+                        ) : (
+                            <BlurView intensity={70} tint="light" style={[s.infoBox, { borderColor: TYPE_CFG.eventcap.accent, padding: 20 }]}>
+                                <View style={[s.infoBoxIcon, { backgroundColor: TYPE_CFG.eventcap.accent + '18' }]}>
+                                    <Ionicons name="calendar" size={24} color={TYPE_CFG.eventcap.accent} />
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={[s.infoText, { fontSize: 16, color: TYPE_CFG.eventcap.accent, fontFamily: Fonts.bold }]}>Event Schedule Locked</Text>
+                                    <Text style={[s.infoText, { color: L.textSec, marginTop: 4 }]}>
+                                        This capsule will open automatically on {displayDate} when the event concludes.
+                                    </Text>
+                                </View>
                             </BlurView>
                         )}
 
@@ -1567,6 +1674,78 @@ export default function CapsuleCreationScreen() {
                                 maximumDate={new Date(Date.now() + MAX_DAYS * 86400000)}
                                 onChange={onDateChange}
                             />
+                        )}
+
+                        {/* CapAngel selection logic */}
+                        {selectedMode === 'closed' && (
+                            <View style={{ marginTop: 24 }}>
+                                <SectionLabel accent={accent}>{t('create.capangel_selection') || 'CapAngel'}</SectionLabel>
+                                <BlurView intensity={50} tint="light" style={[s.toggleRow, { borderColor: accent + '35' }, useCapAngel && { backgroundColor: accent + '04' }]}>
+                                    <View style={[s.toggleIcon, { backgroundColor: accent + '18' }]}>
+                                        <Ionicons name="shield-checkmark-outline" size={18} color={accent} />
+                                    </View>
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={[s.toggleTitle, { color: accent }]}>{t('create.enable_capangel') || 'Enable CapAngel'}</Text>
+                                        <Text style={s.toggleSub}>{t('create.capangel_desc') || 'Assign someone to watch over your capsule'}</Text>
+                                    </View>
+                                    <Switch
+                                        value={useCapAngel}
+                                        onValueChange={setUseCapAngel}
+                                        trackColor={{ false: L.border, true: accent + '60' }}
+                                        thumbColor={useCapAngel ? accent : '#fff'}
+                                    />
+                                </BlurView>
+
+                                {useCapAngel && (
+                                    <View style={{ gap: 12, marginTop: 14 }}>
+                                        {!selectedCapAngel ? (
+                                            <>
+                                                <View style={[s.searchRow, { borderColor: L.border }]}>
+                                                    <Ionicons name="search" size={15} color={L.textMuted} />
+                                                    <TextInput 
+                                                        style={s.searchInput} 
+                                                        placeholder={t('create.search_capangel') || 'Search for a CapAngel...'} 
+                                                        placeholderTextColor={L.textMuted} 
+                                                        value={capAngelSearchQuery} 
+                                                        onChangeText={setCapAngelSearchQuery} 
+                                                        autoCapitalize="none" 
+                                                    />
+                                                    {searchingCapAngel && <ActivityIndicator size="small" color={accent} />}
+                                                </View>
+                                                {capAngelSearchResults.length > 0 && (
+                                                    <View style={[s.searchResults, { borderColor: L.border }]}>
+                                                        {capAngelSearchResults.map(g => (
+                                                            <TouchableOpacity key={g.id} onPress={() => { setSelectedCapAngel(g); setCapAngelSearchQuery(''); setCapAngelSearchResults([]); }} style={s.searchResultItem}>
+                                                                <View style={s.capAngelAvatar}><Ionicons name="person" size={14} color={L.textMuted} /></View>
+                                                                <View style={{ flex: 1 }}>
+                                                                    <Text style={{ fontSize: 13, fontFamily: Fonts.bold, color: L.text }}>{g.display_name || g.username}</Text>
+                                                                    <Text style={{ fontSize: 11, color: L.textMuted, fontFamily: Fonts.medium }}>@{g.username}</Text>
+                                                                </View>
+                                                                <Ionicons name="add-circle-outline" size={18} color={accent} />
+                                                            </TouchableOpacity>
+                                                        ))}
+                                                    </View>
+                                                )}
+                                            </>
+                                        ) : (
+                                            <BlurView intensity={40} tint="light" style={s.selectedCapAngelCard}>
+                                                <View style={s.capAngelAvatar}><Ionicons name="person" size={18} color={accent} /></View>
+                                                <View style={{ flex: 1, marginLeft: 10 }}>
+                                                    <Text style={s.capAngelName}>{selectedCapAngel.display_name || selectedCapAngel.username}</Text>
+                                                    <Text style={s.capAngelUsername}>@{selectedCapAngel.username}</Text>
+                                                </View>
+                                                <TouchableOpacity onPress={() => setSelectedCapAngel(null)} style={s.capAngelRemoveBtn}>
+                                                    <Ionicons name="close-circle" size={20} color={L.textMuted} />
+                                                </TouchableOpacity>
+                                            </BlurView>
+                                        )}
+                                        <View style={[s.infoBox, { backgroundColor: accent + '08', borderColor: accent + '20' }]}>
+                                            <Ionicons name="sparkles" size={12} color={accent} />
+                                            <Text style={s.infoText}>{t('create.capangel_helper')}</Text>
+                                        </View>
+                                    </View>
+                                )}
+                            </View>
                         )}
                     </View>
                 )}
@@ -1618,7 +1797,8 @@ export default function CapsuleCreationScreen() {
                                 { icon: 'time-outline', label: t('create.summary_duration'), value: selectedType === 'opencap' ? t('create.na_open') : (finalDays ? daysToLabel(finalDays) : '—'), ok: true },
                                 { icon: 'color-palette-outline', label: t('create.summary_model'), value: activeModel?.label ?? '—', ok: true },
                                 { icon: (isPublic || selectedType === 'opencap') ? 'globe-outline' : 'lock-closed-outline', label: t('create.summary_privacy'), value: (isPublic || selectedType === 'opencap') ? t('create.public') : t('create.private'), ok: true },
-                                { icon: 'people-outline', label: t('create.summary_group'), value: selectedType === 'instacap' ? t('create.supported_v') : t('create.solo_only'), ok: selectedType === 'instacap' },
+                                { icon: 'people-outline', label: t('create.summary_group'), value: cfg?.groupOk ? (isShared ? t('create.shared_capsule') : t('common.none')) : t('create.solo_only'), ok: !!cfg?.groupOk },
+                                { icon: 'shield-checkmark-outline', label: 'CapAngel', value: useCapAngel ? (selectedCapAngel ? `@${selectedCapAngel.username}` : 'Selected') : 'Kapsely', ok: true },
                             ].map((item, i) => (
                                 <BlurView key={i} intensity={40} tint="light" style={[s.summaryCard, { borderColor: item.ok ? accent + '30' : L.border }]}>
                                     <View style={[s.summaryIcon, { backgroundColor: item.ok ? accent + '14' : L.surfaceAlt }]}>
@@ -1737,43 +1917,24 @@ const s = StyleSheet.create({
 
     // ── Mode step ──
     modeBigCard: {
-        borderRadius: 26,
-        overflow: 'hidden',
-        borderWidth: 2,
-        borderColor: 'transparent',
-        shadowColor: '#000',
-        shadowOpacity: 0.13,
-        shadowRadius: 18,
-        shadowOffset: { width: 0, height: 6 },
-        elevation: 5,
+        borderRadius: 26, overflow: 'hidden', borderWidth: 2, borderColor: 'transparent',
+        shadowColor: '#000', shadowOpacity: 0.13, shadowRadius: 18, shadowOffset: { width: 0, height: 6 }, elevation: 5,
     },
-    modeBigCardActive: {
-        shadowOpacity: 0.22,
-        shadowRadius: 24,
-    },
+    modeBigCardActive: { shadowOpacity: 0.22, shadowRadius: 24 },
     modeCardGradient: { borderRadius: 24 },
-    modeCardInner: {
-        flexDirection: 'row', alignItems: 'center',
-        padding: 22, gap: 16,
-    },
+    modeCardInner: { flexDirection: 'row', alignItems: 'center', padding: 22, gap: 16 },
     modeCardIconWrap: { flexShrink: 0 },
     modeIconCircle: {
-        width: 68, height: 68, borderRadius: 34,
-        backgroundColor: 'rgba(255,255,255,0.18)',
-        borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.3)',
-        alignItems: 'center', justifyContent: 'center',
+        width: 68, height: 68, borderRadius: 34, backgroundColor: 'rgba(255,255,255,0.18)',
+        borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.3)', alignItems: 'center', justifyContent: 'center',
     },
     modeCardTexts: { flex: 1, gap: 4 },
     modeCardTitle: { fontSize: 22, fontFamily: Fonts.bold, color: '#fff', letterSpacing: -0.4 },
     modeCardDesc: { fontSize: 13, color: 'rgba(255,255,255,0.82)', fontFamily: Fonts.regular, lineHeight: 18 },
-    modeCardTag: {
-        flexDirection: 'row', alignItems: 'center', gap: 5,
-        marginTop: 4,
-    },
+    modeCardTag: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 },
     modeCardTagText: { fontSize: 11, fontFamily: Fonts.semiBold, color: 'rgba(255,255,255,0.72)' },
     modeCardArrow: {
-        width: 36, height: 36, borderRadius: 18,
-        backgroundColor: 'rgba(255,255,255,0.18)',
+        width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.18)',
         alignItems: 'center', justifyContent: 'center',
     },
 
@@ -1783,30 +1944,14 @@ const s = StyleSheet.create({
         overflow: 'hidden', paddingBottom: 22, paddingHorizontal: 20,
         shadowColor: L.shadowMd, shadowOpacity: 0.6, shadowRadius: 20, shadowOffset: { width: 0, height: 8 }, elevation: 4,
     },
-    designHeroCapsule: {
-        alignItems: 'center', justifyContent: 'center',
-        paddingVertical: 24, position: 'relative',
-    },
-    designGlowOrb: {
-        position: 'absolute', width: 200, height: 200, borderRadius: 100,
-        top: '5%', alignSelf: 'center',
-    },
-    designGlowOrbSmall: {
-        position: 'absolute', width: 100, height: 100, borderRadius: 50,
-        bottom: '5%', right: '10%',
-    },
+    designHeroCapsule: { alignItems: 'center', justifyContent: 'center', paddingVertical: 24, position: 'relative' },
+    designGlowOrb: { position: 'absolute', width: 200, height: 200, borderRadius: 100, top: '5%', alignSelf: 'center' },
+    designGlowOrbSmall: { position: 'absolute', width: 100, height: 100, borderRadius: 50, bottom: '5%', right: '10%' },
     designModelInfo: { alignItems: 'center', gap: 12 },
     designModelName: { fontSize: 16, fontFamily: Fonts.bold, letterSpacing: 0.2 },
-    changeModelBtn: {
-        flexDirection: 'row', alignItems: 'center', gap: 7,
-        paddingHorizontal: 16, paddingVertical: 10,
-        borderRadius: 22, borderWidth: 1.5,
-    },
+    changeModelBtn: { flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 22, borderWidth: 1.5 },
     changeModelText: { fontSize: 13, fontFamily: Fonts.semiBold, flex: 1 },
-    changeModelChevron: {
-        width: 20, height: 20, borderRadius: 10,
-        alignItems: 'center', justifyContent: 'center',
-    },
+    changeModelChevron: { width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
 
     chainCard: { width: 70, alignItems: 'center', padding: 9, gap: 6, borderRadius: 18, borderWidth: 1.5, borderColor: L.border, backgroundColor: L.surface },
     chainIcon: { width: 38, height: 38, borderRadius: 11, backgroundColor: L.surfaceAlt, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
@@ -1814,10 +1959,8 @@ const s = StyleSheet.create({
 
     // ── Identity step ──
     previewCard: {
-        flexDirection: 'row', alignItems: 'center', gap: 12,
-        borderRadius: 20, borderWidth: 1.5, padding: 14,
-        marginBottom: 22, overflow: 'hidden',
-        shadowColor: L.shadow, shadowOpacity: 1, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 2,
+        flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 20, borderWidth: 1.5, padding: 14,
+        marginBottom: 22, overflow: 'hidden', shadowColor: L.shadow, shadowOpacity: 1, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 2,
     },
     previewTitle: { fontSize: 16, fontFamily: Fonts.bold, marginBottom: 4 },
     previewTypeDot: { width: 6, height: 6, borderRadius: 3 },
@@ -1825,181 +1968,127 @@ const s = StyleSheet.create({
 
     fieldGroup: { marginBottom: 16 },
     fieldWrap: {
-        flexDirection: 'row', alignItems: 'center', gap: 10,
-        backgroundColor: L.surface, borderWidth: 1.5, borderRadius: 18,
-        paddingHorizontal: 14, paddingVertical: 12,
-        shadowColor: L.shadow, shadowOpacity: 1, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 1,
+        flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: L.surface, borderWidth: 1.5, borderRadius: 18,
+        paddingHorizontal: 14, paddingVertical: 12, shadowColor: L.shadow, shadowOpacity: 1, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 1,
     },
     fieldWrapArea: { alignItems: 'flex-start', paddingVertical: 14 },
-    fieldIconLeft: {
-        width: 32, height: 32, borderRadius: 10,
-        alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-    },
-    fieldInput: {
-        flex: 1, fontSize: 16, fontFamily: Fonts.semiBold,
-        color: L.text, paddingVertical: 0,
-    },
+    fieldIconLeft: { width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+    fieldInput: { flex: 1, fontSize: 16, fontFamily: Fonts.semiBold, color: L.text, paddingVertical: 0 },
     fieldTextArea: { minHeight: 120, fontSize: 15, fontFamily: Fonts.regular, paddingTop: 2, lineHeight: 22 },
     charCountInline: { fontSize: 11, fontFamily: Fonts.medium, flexShrink: 0 },
 
-    toggleRow: {
-        flexDirection: 'row', alignItems: 'center', gap: 12,
-        borderRadius: 20, borderWidth: 1.5, padding: 14,
-        overflow: 'hidden',
-    },
+    toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 20, borderWidth: 1.5, padding: 14, overflow: 'hidden' },
     toggleIcon: { width: 40, height: 40, borderRadius: 13, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
     toggleTitle: { fontSize: 14, fontFamily: Fonts.semiBold },
     toggleSub: { fontSize: 12, color: L.textSec, fontFamily: Fonts.regular, marginTop: 2 },
 
-    searchRow: {
-        flexDirection: 'row', alignItems: 'center', gap: 10,
-        backgroundColor: L.surface, borderRadius: 16, borderWidth: 1.5,
-        paddingHorizontal: 16, height: 50,
-    },
+    searchRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: L.surface, borderRadius: 16, borderWidth: 1.5, paddingHorizontal: 16, height: 50 },
     searchInput: { flex: 1, fontSize: 14, fontFamily: Fonts.semiBold, color: L.text },
-    searchResults: {
-        backgroundColor: L.surface, borderRadius: 16, borderWidth: 1.5,
-        maxHeight: 180, overflow: 'hidden', elevation: 2,
-    },
-    searchResultItem: {
-        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-        padding: 14, borderBottomWidth: 1, borderBottomColor: L.border,
-    },
+    searchResults: { backgroundColor: L.surface, borderRadius: 16, borderWidth: 1.5, maxHeight: 180, overflow: 'hidden', elevation: 2 },
+    searchResultItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 14, borderBottomWidth: 1, borderBottomColor: L.border },
 
     // ── Timing step ──
-    infoBox: {
-        flexDirection: 'row', alignItems: 'center', gap: 12,
-        borderRadius: 18, borderWidth: 1.5, padding: 14,
-        marginBottom: 16, overflow: 'hidden',
-    },
+    infoBox: { flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 18, borderWidth: 1.5, padding: 14, marginBottom: 16, overflow: 'hidden' },
     infoBoxIcon: { width: 36, height: 36, borderRadius: 11, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
     infoText: { fontSize: 12, fontFamily: Fonts.medium, flex: 1, lineHeight: 18 },
 
     presetGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 14 },
     presetCard: {
-        width: (width - 36 - 20) / 3,
-        backgroundColor: L.surface, borderRadius: 20, borderWidth: 1.5, borderColor: L.border,
+        width: (width - 36 - 20) / 3, backgroundColor: L.surface, borderRadius: 20, borderWidth: 1.5, borderColor: L.border,
         paddingVertical: 18, paddingHorizontal: 8, alignItems: 'center', position: 'relative',
-        shadowColor: L.shadow, shadowOpacity: 1, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1,
-        overflow: 'hidden',
+        shadowColor: L.shadow, shadowOpacity: 1, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1, overflow: 'hidden',
     },
     presetLabel: { fontSize: 13, fontFamily: Fonts.bold, color: L.text, textAlign: 'center', marginBottom: 2 },
     presetSub: { fontSize: 10, fontFamily: Fonts.regular, color: L.textMuted },
     presetCheck: { position: 'absolute', top: 8, right: 8, width: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
 
-    sliderCard: {
-        borderRadius: 20, borderWidth: 1.5,
-        padding: 18, backgroundColor: 'rgba(255,255,255,0.7)',
-        marginBottom: 14, overflow: 'hidden',
-    },
+    sliderCard: { borderRadius: 20, borderWidth: 1.5, padding: 18, backgroundColor: 'rgba(255,255,255,0.7)', marginBottom: 14, overflow: 'hidden' },
     sliderIconWrap: { width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
     sliderTitle: { fontSize: 14, fontFamily: Fonts.semiBold, color: L.text },
-    sliderValueChip: {
-        paddingHorizontal: 12, paddingVertical: 5,
-        borderRadius: 12, borderWidth: 1,
-    },
+    sliderValueChip: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 12, borderWidth: 1 },
     sliderValueText: { fontSize: 13, fontFamily: Fonts.bold },
 
     openDateRow: {
-        flexDirection: 'row', alignItems: 'center', gap: 14,
-        borderRadius: 18, borderWidth: 1.5, padding: 14,
-        backgroundColor: 'rgba(255,255,255,0.6)', overflow: 'hidden',
+        flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 20, borderWidth: 1.5, padding: 14, marginBottom: 14, overflow: 'hidden', backgroundColor: 'rgba(255,255,255,0.4)',
     },
-    openDateIconWrap: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-    openDateLbl: { fontSize: 11, color: L.textSec, fontFamily: Fonts.regular, marginBottom: 2 },
-    openDateVal: { fontSize: 17, fontFamily: Fonts.bold },
-    openDateEditBtn: {
-        width: 32, height: 32, borderRadius: 10,
-        borderWidth: 1, alignItems: 'center', justifyContent: 'center',
-    },
+    openDateIconWrap: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+    openDateLbl: { fontSize: 11, fontFamily: Fonts.medium, color: L.textMuted, marginBottom: 1 },
+    openDateVal: { fontSize: 15, fontFamily: Fonts.bold },
+    openDateEditBtn: { width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
 
     // ── Review step ──
     reviewHeroCard: {
-        borderRadius: 28, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.85)',
-        overflow: 'hidden', padding: 24,
-        alignItems: 'center', marginBottom: 18,
-        shadowColor: L.shadowMd, shadowOpacity: 0.6, shadowRadius: 20, shadowOffset: { width: 0, height: 8 }, elevation: 4,
+        borderRadius: 28, borderWidth: 1.5, borderColor: L.border, overflow: 'hidden', padding: 24, paddingBottom: 28, alignItems: 'center', marginBottom: 20, backgroundColor: 'rgba(255,255,255,0.5)',
     },
-    reviewGlowOrb1: { position: 'absolute', top: -30, left: -30, opacity: 1 },
-    reviewGlowOrb2: { position: 'absolute', bottom: -10, right: -10, opacity: 1 },
-    reviewBadge: {
-        flexDirection: 'row', alignItems: 'center', gap: 5,
-        paddingHorizontal: 14, paddingVertical: 6,
-        borderRadius: 20, borderWidth: 1, marginTop: 14,
-    },
-    reviewBadgeText: { fontSize: 11, fontFamily: Fonts.bold },
-    reviewTitle: { fontSize: 24, fontFamily: Fonts.bold, color: L.text, marginTop: 8, textAlign: 'center', letterSpacing: -0.4 },
-    reviewDate: { fontSize: 13, color: L.textSec, fontFamily: Fonts.regular, marginTop: 4 },
+    reviewGlowOrb1: { position: 'absolute', top: -40, left: -40, opacity: 0.6 },
+    reviewGlowOrb2: { position: 'absolute', bottom: -20, right: -20, opacity: 0.4 },
+    reviewBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, borderWidth: 1, marginTop: 14, marginBottom: 12 },
+    reviewBadgeText: { fontSize: 11, fontFamily: Fonts.bold, letterSpacing: 0.4 },
+    reviewTitle: { fontSize: 22, fontFamily: Fonts.bold, color: L.text, textAlign: 'center', letterSpacing: -0.4 },
+    reviewDate: { fontSize: 14, fontFamily: Fonts.medium, color: L.textSec, textAlign: 'center', marginTop: 4 },
 
-    summaryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 14 },
+    summaryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 20 },
     summaryCard: {
-        width: (width - 36 - 10) / 2,
-        borderRadius: 18, borderWidth: 1.5,
-        padding: 14, gap: 6,
-        backgroundColor: 'rgba(255,255,255,0.65)', overflow: 'hidden',
-        shadowColor: L.shadow, shadowOpacity: 1, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1,
+        width: (width - 36 - 10) / 2, flexDirection: 'row', alignItems: 'center', gap: 10,
+        backgroundColor: L.surface, borderRadius: 18, borderWidth: 1.5, borderColor: L.border,
+        padding: 12, overflow: 'hidden',
     },
-    summaryIcon: { width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-    summaryLabel: { fontSize: 10, fontFamily: Fonts.bold, color: L.textMuted, letterSpacing: 1, textTransform: 'uppercase' },
-    summaryValue: { fontSize: 13, fontFamily: Fonts.semiBold },
+    summaryIcon: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+    summaryLabel: { fontSize: 11, color: L.textMuted, fontFamily: Fonts.medium },
+    summaryValue: { fontSize: 13, fontFamily: Fonts.bold, color: L.text },
 
-    warningBox: {
-        flexDirection: 'row', alignItems: 'flex-start', gap: 10,
-        borderRadius: 16, borderWidth: 1, borderColor: L.blueBorder,
-        padding: 14, marginBottom: 20, overflow: 'hidden',
-    },
-    warningIcon: { width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-    warningText: { fontSize: 12, color: L.blue, fontFamily: Fonts.regular, flex: 1, lineHeight: 18 },
+    warningBox: { flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 18, borderWidth: 1.5, padding: 14, marginBottom: 24, overflow: 'hidden' },
+    warningIcon: { width: 36, height: 36, borderRadius: 11, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+    warningText: { fontSize: 12, fontFamily: Fonts.medium, flex: 1, lineHeight: 18, color: L.textSec },
 
+    // ── Review / Seal step ──
     sealBtnWrap: {
-        borderRadius: 22,
-        shadowColor: L.shadowMd,
-        shadowOpacity: 0.55,
-        shadowRadius: 16,
-        shadowOffset: { width: 0, height: 6 },
-        elevation: 7,
-        marginBottom: 10,
+        borderRadius: 22, shadowColor: L.shadowMd, shadowOpacity: 0.55, shadowRadius: 16, shadowOffset: { width: 0, height: 6 }, elevation: 7, marginBottom: 10,
     },
-    sealBtn: {
-        flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-        gap: 10, borderRadius: 22, paddingVertical: 18,
-    },
-    sealBtnIconWrap: {
-        width: 32, height: 32, borderRadius: 16,
-        backgroundColor: 'rgba(255,255,255,0.2)',
-        alignItems: 'center', justifyContent: 'center',
-    },
+    sealBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, borderRadius: 22, paddingVertical: 18 },
+    sealBtnIconWrap: { width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' },
     sealBtnText: { color: '#fff', fontSize: 17, fontFamily: Fonts.bold, letterSpacing: 0.2 },
 
     editLink: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 8 },
     editLinkText: { fontSize: 13, color: L.textMuted, fontFamily: Fonts.medium },
 
     // ── Bottom nav ──
-    bottomNav: {
-        flexDirection: 'row', gap: 10,
-        paddingHorizontal: 20, paddingTop: 14,
-        overflow: 'hidden', position: 'relative',
-    },
-    bottomNavBorder: {
-        position: 'absolute', top: 0, left: 0, right: 0, height: 1,
-        backgroundColor: 'rgba(255,255,255,0.9)',
-    },
+    bottomNav: { flexDirection: 'row', gap: 10, paddingHorizontal: 20, paddingTop: 14, overflow: 'hidden', position: 'relative' },
+    bottomNavBorder: { position: 'absolute', top: 0, left: 0, right: 0, height: 1, backgroundColor: 'rgba(255,255,255,0.9)' },
     backBtn: {
-        width: 52, height: 52, borderRadius: 16,
-        backgroundColor: 'rgba(255,255,255,0.8)',
-        borderWidth: 1, borderColor: L.border,
-        alignItems: 'center', justifyContent: 'center',
-        shadowColor: L.shadow, shadowOpacity: 1, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 1,
+        width: 52, height: 52, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.8)', borderWidth: 1, borderColor: L.border,
+        alignItems: 'center', justifyContent: 'center', shadowColor: L.shadow, shadowOpacity: 1, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 1,
     },
     nextBtnWrap: {
-        flex: 1,
-        borderRadius: 16,
-        shadowColor: L.shadowMd,
-        shadowOpacity: 0.35,
-        shadowRadius: 10,
-        shadowOffset: { width: 0, height: 4 },
-        elevation: 4,
+        flex: 1, borderRadius: 16, shadowColor: L.shadowMd, shadowOpacity: 0.35, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 4,
     },
     nextBtn: { flex: 1, height: 52, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
     nextBtnText: { fontSize: 15, fontFamily: Fonts.bold, letterSpacing: 0.3 },
+
+    // ── Event join logic ──
+    eventJoinCard: { borderRadius: 24, borderWidth: 1.5, borderColor: L.border, padding: 16, marginBottom: 20, overflow: 'hidden' },
+    eventIconWrap: { width: 62, height: 62, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+    eventJoinTitle: { fontSize: 17, fontFamily: Fonts.bold },
+    eventJoinSub: { fontSize: 13, color: L.textSec, fontFamily: Fonts.regular, marginTop: 2 },
+    eventInfoRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12, paddingHorizontal: 4 },
+    eventInfoText: { fontSize: 11, fontFamily: Fonts.medium, flex: 1, lineHeight: 16 },
+
+    // ── CapAngel UI ──
+    capAngelCard: { borderRadius: 22, borderWidth: 1.5, borderColor: L.border, padding: 16, overflow: 'hidden' },
+    capAngelIconCircle: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+    capAngelLabel: { fontSize: 15, fontFamily: Fonts.bold },
+    capAngelSub: { fontSize: 12, fontFamily: Fonts.regular, color: L.textSec, marginTop: 1 },
+    selectedCapAngelCard: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: L.surfaceAlt, padding: 12, borderRadius: 16, borderWidth: 1, borderColor: L.border },
+    capAngelAvatar: { width: 42, height: 42, borderRadius: 21 },
+    capAngelName: { fontSize: 14, fontFamily: Fonts.bold, color: L.text },
+    capAngelUsername: { fontSize: 12, fontFamily: Fonts.medium, color: L.textMuted },
+    capAngelRemoveBtn: { padding: 6 },
+    searchRowSmall: { flexDirection: 'row', alignItems: 'center', gap: 8, height: 44, backgroundColor: L.surfaceAlt, borderRadius: 14, paddingHorizontal: 12 },
+    searchInpSmall: { flex: 1, fontSize: 13, fontFamily: Fonts.medium, color: L.text },
+    capAngelResults: { marginTop: 4, backgroundColor: L.surface, borderRadius: 14, borderWidth: 1, borderColor: L.border, overflow: 'hidden' },
+    capAngelResultItem: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 10, borderBottomWidth: 1, borderBottomColor: L.surfaceAlt },
+    capAngelResultAvatar: { width: 28, height: 28, borderRadius: 14 },
+    capAngelResultText: { fontSize: 13, fontFamily: Fonts.bold, color: L.text },
+    capAngelInfoBox: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 14, paddingHorizontal: 6 },
+    capAngelInfoText: { fontSize: 11, fontFamily: Fonts.medium, color: L.textMuted, flex: 1 },
 });

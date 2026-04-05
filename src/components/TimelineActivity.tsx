@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, Dimensions, Alert, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Dimensions, Alert, Platform } from 'react-native';
+import { Image } from 'expo-image';
+
 import { supabase } from '../lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts, BorderRadius, Spacing, Shadow } from '../theme';
@@ -39,8 +41,11 @@ const CollageView = ({ items, count, isSealed }: { items: any[], count: number, 
                     source={{ uri: displayItems[0].thumbnail_url || displayItems[0].media_url }}
                     style={StyleSheet.absoluteFill}
                     blurRadius={Platform.OS === 'ios' ? 12 : 30}
-                    resizeMode="cover"
+                    contentFit="cover"
+                    cachePolicy="memory-disk"
+                    transition={200}
                 />
+
             ) : (
                 <View style={styles.collageGrid}>
                     {displayItems.map((item, idx) => (
@@ -53,8 +58,11 @@ const CollageView = ({ items, count, isSealed }: { items: any[], count: number, 
                                 displayItems.length === 2 && styles.collageDual,
                                 displayItems.length === 3 && idx === 0 && styles.collageTripleLarge,
                             ]}
-                            resizeMode="cover"
+                            contentFit="cover"
+                            cachePolicy="memory-disk"
+                            transition={200}
                         />
+
                     ))}
                 </View>
             )}
@@ -175,7 +183,11 @@ export default React.memo(function TimelineActivity({ item }: TimelineActivityPr
                             source={{ uri: item.thumbnail_url || item.media_url }}
                             style={styles.backgroundImage}
                             blurRadius={capsule?.status === 'sealed' ? (Platform.OS === 'ios' ? 12 : 30) : 0}
+                            contentFit="cover"
+                            cachePolicy="memory-disk"
+                            transition={200}
                         />
+
                         {capsule?.status === 'sealed' && (
                             Platform.OS === 'ios' ? (
                                 <BlurView intensity={45} tint="light" style={StyleSheet.absoluteFill} />
@@ -206,8 +218,15 @@ export default React.memo(function TimelineActivity({ item }: TimelineActivityPr
                     onPress={() => navigation.navigate('UserProfile', { targetUserId: item.owner_id })}
                 >
                     {profile.avatar_url ? (
-                        <Image source={{ uri: profile.avatar_url }} style={styles.avatar} />
+                        <Image 
+                            source={{ uri: profile.avatar_url }} 
+                            style={styles.avatar} 
+                            contentFit="cover" 
+                            cachePolicy="memory-disk"
+                            transition={200}
+                        />
                     ) : (
+
                         <View style={styles.avatarPlaceholder}>
                             <Ionicons name="person" size={12} color="#fff" />
                         </View>

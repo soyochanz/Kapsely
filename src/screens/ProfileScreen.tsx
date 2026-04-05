@@ -2,9 +2,11 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
     View, Text, StyleSheet, ScrollView, TouchableOpacity,
     StatusBar, Dimensions, ActivityIndicator, Modal, RefreshControl,
-    Linking, Alert, Pressable, Animated, Easing, Platform, FlatList, Switch
-
+    Linking, Alert, Pressable, Animated, Easing, Platform, Switch
 } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
+
+
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
@@ -238,12 +240,14 @@ export default function ProfileScreen() {
         setIsOwnProfileState(own);
 
         const [profileRes, capsRes, followersRes, followingRes, followCheck, storiesRes, readsRes, myInvitesRes] = await Promise.all([
-            supabase.from('profiles').select('*').eq('id', idToLoad).maybeSingle(),
+            supabase.from('profiles').select('id, username, display_name, avatar_url, bio, favorite_color, favorite_movie, favorite_song, is_verified, is_admin, created_at, push_notifications_enabled, push_notif_comments, push_notif_invites, verification_status').eq('id', idToLoad).maybeSingle(),
             supabase.rpc('get_user_capsules_v2', { target_user_id: idToLoad }),
+
             supabase.from('follows').select('*', { count: 'exact', head: true }).eq('following_id', idToLoad),
             supabase.from('follows').select('*', { count: 'exact', head: true }).eq('follower_id', idToLoad),
             targetUserId ? supabase.from('follows').select('*').eq('follower_id', user.id).eq('following_id', targetUserId).maybeSingle() : { data: null },
-            supabase.from('capsule_items').select('*, capsules:capsule_id(id, title, model)').eq('owner_id', idToLoad).eq('is_story', true).gt('expires_at', new Date().toISOString()).order('created_at', { ascending: false }),
+            supabase.from('capsule_items').select('id, media_url, media_type, content, expires_at, created_at, capsule_id, capsules:capsule_id(id, title, model)').eq('owner_id', idToLoad).eq('is_story', true).gt('expires_at', new Date().toISOString()).order('created_at', { ascending: false }),
+
             supabase.from('story_reads').select('story_id').eq('user_id', myId),
             supabase.from('capsule_invites').select('capsule_id').eq('user_id', myId).eq('status', 'accepted')
         ]);
@@ -546,9 +550,16 @@ export default function ProfileScreen() {
                             ) : (
                                 <View style={[s.storyRing, { borderColor: Colors.border }]}>
                                     {profile?.avatar_url
-                                        ? <Image source={{ uri: profile.avatar_url }} style={s.avatar} contentFit="cover" transition={200} />
+                                        ? <Image 
+                                            source={{ uri: profile.avatar_url }} 
+                                            style={s.avatar} 
+                                            contentFit="cover" 
+                                            cachePolicy="memory-disk"
+                                            transition={200} 
+                                        />
                                         : <View style={s.avatarFallback}><Ionicons name="person" size={28} color={Colors.primary} /></View>
                                     }
+
 
                                 </View>
                             )}
@@ -674,14 +685,17 @@ export default function ProfileScreen() {
 
                 {/* ── CAPSULE GRID ─────────────────────────────────────── */}
                 <View style={s.gridWrap}>
-                    <FlatList
+                    <FlashList
                         data={sortedTabData}
                         keyExtractor={item => item.id}
                         numColumns={3}
+                        // @ts-ignore
+                        estimatedItemSize={160}
                         scrollEnabled={false}
-                        columnWrapperStyle={s.gridRow}
+
                         contentContainerStyle={s.gridContent}
                         renderItem={({ item }) => (
+
                             <View style={s.gridCell}>
                                 <ProfileCapsuleCell
                                     cap={item}
@@ -713,6 +727,7 @@ export default function ProfileScreen() {
                         }
                     />
                 </View>
+
             </ScrollView>
 
             {/* ── MODALS ───────────────────────────────────────────────── */}

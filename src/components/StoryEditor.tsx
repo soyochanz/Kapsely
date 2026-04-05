@@ -1,9 +1,10 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
-    View, Text, StyleSheet, Image, TouchableOpacity, 
+    View, Text, StyleSheet, TouchableOpacity, 
     TextInput, Modal, ScrollView, Dimensions, Pressable,
     PanResponder, Animated, Platform
 } from 'react-native';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors, Fonts } from '../theme';
@@ -21,23 +22,41 @@ const FILTERS = [
 ];
 
 export default function StoryEditor({ item, onCancel, onConfirm }: { item: any, onCancel: () => void, onConfirm: (metadata: any) => void }) {
-    const [selectedFilter, setSelectedFilter] = useState('none');
+    const [filter, setFilter] = useState('none');
     const [texts, setTexts] = useState<any[]>([]);
     const [selectedTextId, setSelectedTextId] = useState<string | null>(null);
-    
-    const [textModalVisible, setTextModalVisible] = useState(false);
     const [currentText, setCurrentText] = useState('');
     const [textColor, setTextColor] = useState('#ffffff');
     const [textBg, setTextBg] = useState('rgba(0,0,0,0.5)');
     const [fontSize, setFontSize] = useState(24);
-    
-    const [imgContainerLayout, setImgContainerLayout] = useState({ width, height: height * 0.7 });
+
+    const [location, setLocation] = useState<any>(null);
+    const [locationModalVisible, setLocationModalVisible] = useState(false);
+    const [tempLocation, setTempLocation] = useState('');
+
+    const [imgContainerLayout, setImgContainerLayout] = useState({ width: 0, height: 0 });
 
     const handleAddText = () => {
-        if (!currentText.trim()) return;
-        
-        if (selectedTextId) {
-            // Update existing
+        const id = Date.now().toString();
+        const newText = {
+            id,
+            text: 'Tap to edit',
+            x: 0.5,
+            y: 0.4,
+            color: '#ffffff',
+            bg: 'rgba(0,0,0,0.5)',
+            fontSize: 24,
+            pan: new Animated.ValueXY({ x: 0, y: 0 })
+        };
+        setTexts([...texts, newText]);
+        setSelectedTextId(id);
+        setCurrentText('Tap to edit');
+    };
+
+    const handleConfirmText = () => {
+        if (!currentText.trim()) {
+            setTexts(texts.filter(t => t.id !== selectedTextId));
+        } else {
             setTexts(texts.map(t => t.id === selectedTextId ? {
                 ...t,
                 text: currentText.trim(),
@@ -45,87 +64,82 @@ export default function StoryEditor({ item, onCancel, onConfirm }: { item: any, 
                 bg: textBg,
                 fontSize
             } : t));
-        } else {
-            // Add new
-            const id = Date.now().toString();
-            setTexts([...texts, {
-                id,
-                text: currentText.trim(),
-                x: width * 0.5,
-                y: imgContainerLayout.height * 0.4,
-                color: textColor,
-                bg: textBg,
-                fontSize,
-                translateX: new Animated.Value(0),
-                translateY: new Animated.Value(0),
-            }]);
         }
-        
-        setCurrentText('');
         setSelectedTextId(null);
-        setTextModalVisible(false);
+        setCurrentText('');
     };
 
-    const deleteText = (id: string) => {
-        setTexts(texts.filter(t => t.id !== id));
-        setSelectedTextId(null);
+    const handleConfirmLocation = () => {
+        if (tempLocation.trim()) {
+            setLocation({
+                text: tempLocation.trim(),
+                x: 0.5,
+                y: 0.2,
+                pan: new Animated.ValueXY({ x: 0, y: 0 })
+            });
+        } else {
+            setLocation(null);
+        }
+        setLocationModalVisible(false);
     };
 
     const handleConfirm = () => {
-        // Flatten Animated values for metadata
         const metadata = {
-            filter: selectedFilter,
-            texts: texts.map(t => ({
-                id: t.id,
-                text: t.text,
-                color: t.color,
-                bg: t.bg,
-                fontSize: t.fontSize,
-                x: t.x + ((t.translateX as any)._value || 0),
-                y: t.y + ((t.translateY as any)._value || 0),
-            }))
+            filter,
+            texts: texts.map(t => {
+                const panX = (t.pan.x as any)._value || 0;
+                const panY = (t.pan.y as any)._value || 0;
+                return {
+                    id: t.id,
+                    text: t.text,
+                    color: t.color,
+                    bg: t.bg,
+                    fontSize: t.fontSize,
+                    x: t.x + (panX / imgContainerLayout.width),
+                    y: t.y + (panY / imgContainerLayout.height)
+                };
+            }),
+            location: location ? {
+                text: location.text,
+                x: location.x + ((location.pan.x as any)._value / imgContainerLayout.width),
+                y: location.y + ((location.pan.y as any)._value / imgContainerLayout.height)
+            } : null
         };
         onConfirm(metadata);
     };
 
-    const activeFilterConfig = FILTERS.find(f => f.id === selectedFilter);
-
-    // Draggable Component
+    // ─── Sub-components ────────────────────────────────────────────────────────
+    
     const DraggableText = ({ item }: { item: any }) => {
-        const pan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
         const lastOffset = useRef({ x: 0, y: 0 });
-
         const panResponder = useRef(
             PanResponder.create({
                 onStartShouldSetPanResponder: () => true,
+                onMoveShouldSetPanResponder: () => true,
                 onPanResponderGrant: () => {
-                    pan.setOffset({ x: lastOffset.current.x, y: lastOffset.current.y });
-                    pan.setValue({ x: 0, y: 0 });
+                    item.pan.setOffset({ x: lastOffset.current.x, y: lastOffset.current.y });
+                    item.pan.setValue({ x: 0, y: 0 });
                 },
-                onPanResponderMove: Animated.event([null, { dx: pan.x, dy: pan.y }], { useNativeDriver: false }),
-                onPanResponderRelease: (e, gesture) => {
-                    pan.flattenOffset();
-                    lastOffset.current = { x: (pan.x as any)._value, y: (pan.y as any)._value };
-                    // Sink internal values to the main state if needed, but for rendering Animated is fine
-                    item.translateX.setValue((pan.x as any)._value);
-                    item.translateY.setValue((pan.y as any)._value);
+                onPanResponderMove: Animated.event([null, { dx: item.pan.x, dy: item.pan.y }], { useNativeDriver: false }),
+                onPanResponderRelease: () => {
+                    item.pan.flattenOffset();
+                    lastOffset.current = { x: (item.pan.x as any)._value, y: (item.pan.y as any)._value };
                 },
             })
         ).current;
-
-        const isSelected = selectedTextId === item.id;
 
         return (
             <Animated.View
                 {...panResponder.panHandlers}
                 style={[
-                    styles.draggableTextRoot,
+                    st.draggable,
                     {
-                        top: item.y,
-                        left: item.x,
+                        top: item.y * imgContainerLayout.height,
+                        left: item.x * imgContainerLayout.width,
                         transform: [
-                            { translateX: pan.x },
-                            { translateY: pan.y }
+                            { translateX: item.pan.x },
+                            { translateY: item.pan.y },
+                            { translateX: -50 } 
                         ]
                     }
                 ]}
@@ -137,258 +151,279 @@ export default function StoryEditor({ item, onCancel, onConfirm }: { item: any, 
                         setCurrentText(item.text);
                         setTextColor(item.color);
                         setTextBg(item.bg);
-                        setFontSize(item.fontSize || 24);
-                        setTextModalVisible(true);
+                        setFontSize(item.fontSize);
                     }}
-                    onPress={() => setSelectedTextId(isSelected ? null : item.id)}
-                    style={[
-                        styles.overlayTextWrap, 
-                        { backgroundColor: item.bg, borderColor: isSelected ? Colors.primary : 'transparent', borderWidth: isSelected ? 2 : 0 }
-                    ]}
                 >
-                    <Text style={[styles.overlayText, { color: item.color, fontSize: item.fontSize || 24 }]}>{item.text}</Text>
-                    
-                    {isSelected && (
-                        <TouchableOpacity 
-                            style={styles.deleteBadge} 
-                            onPress={() => deleteText(item.id)}
-                        >
-                            <Ionicons name="close" size={14} color="#fff" />
-                        </TouchableOpacity>
-                    )}
+                    <View style={[st.textBubble, { backgroundColor: item.bg }]}>
+                        <Text style={[st.draggableText, { color: item.color, fontSize: item.fontSize }]}>
+                            {item.text}
+                        </Text>
+                    </View>
+                </TouchableOpacity>
+            </Animated.View>
+        );
+    };
+
+    const DraggableLocation = ({ item }: { item: any }) => {
+        const lastOffset = useRef({ x: 0, y: 0 });
+        const panResponder = useRef(
+            PanResponder.create({
+                onStartShouldSetPanResponder: () => true,
+                onMoveShouldSetPanResponder: () => true,
+                onPanResponderGrant: () => {
+                    item.pan.setOffset({ x: lastOffset.current.x, y: lastOffset.current.y });
+                    item.pan.setValue({ x: 0, y: 0 });
+                },
+                onPanResponderMove: Animated.event([null, { dx: item.pan.x, dy: item.pan.y }], { useNativeDriver: false }),
+                onPanResponderRelease: () => {
+                    item.pan.flattenOffset();
+                    lastOffset.current = { x: (item.pan.x as any)._value, y: (item.pan.y as any)._value };
+                },
+            })
+        ).current;
+
+        return (
+            <Animated.View
+                {...panResponder.panHandlers}
+                style={[
+                    st.draggable,
+                    {
+                        top: item.y * imgContainerLayout.height,
+                        left: item.x * imgContainerLayout.width,
+                        transform: [
+                            { translateX: item.pan.x },
+                            { translateY: item.pan.y },
+                            { translateX: -60 }
+                        ]
+                    }
+                ]}
+            >
+                <TouchableOpacity 
+                    activeOpacity={0.9} 
+                    onLongPress={() => {
+                        setTempLocation(item.text);
+                        setLocationModalVisible(true);
+                    }}
+                >
+                    <LinearGradient
+                        colors={[Colors.primary, Colors.primaryDark]}
+                        start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                        style={st.locationPill}
+                    >
+                        <Ionicons name="location" size={14} color="#fff" />
+                        <Text style={st.locationText}>{item.text}</Text>
+                    </LinearGradient>
                 </TouchableOpacity>
             </Animated.View>
         );
     };
 
     return (
-        <View style={styles.container}>
+        <View style={st.container}>
             <View 
-                style={styles.imageContainer}
-                onLayout={(e) => setImgContainerLayout({ width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height })}
+                style={st.canvas} 
+                onLayout={e => setImgContainerLayout({ width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height })}
             >
-                <Image source={{ uri: item.media_url }} style={styles.image} resizeMode="contain" />
-                
-                {/* Filter Overlay */}
-                {activeFilterConfig && activeFilterConfig.color !== 'transparent' && (
-                    <View style={[StyleSheet.absoluteFill, { backgroundColor: activeFilterConfig.color }]} pointerEvents="none" />
+                <Image
+                    source={{ uri: item.media_url }}
+                    style={st.preview}
+                    contentFit="contain"
+                    cachePolicy="memory-disk"
+                />
+
+                {/* Filter overlays */}
+                {filter !== 'none' && (
+                    <View style={[StyleSheet.absoluteFill, {
+                        backgroundColor: 
+                            filter === 'vintage' ? 'rgba(230,190,120,0.25)' :
+                            filter === 'warm' ? 'rgba(255,150,50,0.18)' :
+                            filter === 'cool' ? 'rgba(0,150,255,0.18)' :
+                            filter === 'dark' ? 'rgba(0,0,0,0.4)' : 'transparent',
+                        pointerEvents: 'none'
+                    } as any]} />
                 )}
 
-                {/* Overlays (Texts) */}
-                {texts.map((t) => (
-                    <DraggableText key={t.id} item={t} />
-                ))}
+                {/* Stickers / Overlays */}
+                {texts.map(t => <DraggableText key={t.id} item={t} />)}
+                {location && <DraggableLocation item={location} />}
             </View>
 
             {/* Toolbar */}
-            <View style={styles.toolbar}>
-                <TouchableOpacity 
-                    style={styles.toolBtn} 
-                    onPress={() => {
-                        setSelectedTextId(null);
-                        setCurrentText('');
-                        setFontSize(24);
-                        setTextModalVisible(true);
-                    }}
-                >
-                    <Ionicons name="text" size={24} color="#fff" />
-                    <Text style={styles.toolText}>Add Text</Text>
-                </TouchableOpacity>
+            <View style={st.toolbar}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={st.toolsContent}>
+                    <TouchableOpacity style={st.toolBtn} onPress={() => setFilter(prev => {
+                        const idx = FILTERS.findIndex(f => f.id === prev);
+                        return FILTERS[(idx + 1) % FILTERS.length].id;
+                    })}>
+                        <Ionicons name="color-filter-outline" size={20} color="#fff" />
+                        <Text style={st.toolLabel}>Filter</Text>
+                        <Text style={st.toolValue}>{filter}</Text>
+                    </TouchableOpacity>
 
-                <View style={styles.instrBox}>
-                    <Text style={styles.instrText}>Drag to move • Long press to edit</Text>
+                    <TouchableOpacity style={st.toolBtn} onPress={handleAddText}>
+                        <Ionicons name="text-outline" size={20} color="#fff" />
+                        <Text style={st.toolLabel}>Text</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity style={st.toolBtn} onPress={() => { setTempLocation(location?.text || ''); setLocationModalVisible(true); }}>
+                        <Ionicons name="location-outline" size={20} color="#fff" />
+                        <Text style={st.toolLabel}>Location</Text>
+                    </TouchableOpacity>
+                </ScrollView>
+
+                <View style={st.actions}>
+                    <TouchableOpacity style={st.cancelBtn} onPress={onCancel}>
+                        <Text style={st.cancelText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={st.confirmBtn} onPress={handleConfirm}>
+                        <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={st.confirmGrad}>
+                            <Text style={st.confirmText}>Share Now</Text>
+                        </LinearGradient>
+                    </TouchableOpacity>
                 </View>
             </View>
 
-            {/* Filters Slider */}
-            <View style={styles.filterBar}>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingHorizontal: 20 }}>
-                    {FILTERS.map((f) => (
-                        <TouchableOpacity 
-                            key={f.id} 
-                            style={[styles.filterChip, selectedFilter === f.id && styles.filterChipActive]}
-                            onPress={() => setSelectedFilter(f.id)}
-                        >
-                            <Text style={[styles.filterChipText, selectedFilter === f.id && { color: '#fff' }]}>{f.label}</Text>
-                        </TouchableOpacity>
-                    ))}
-                </ScrollView>
-            </View>
-
-            {/* Footer Actions */}
-            <View style={styles.footer}>
-                <TouchableOpacity style={styles.cancelBtn} onPress={onCancel}>
-                    <Text style={{ color: Colors.textSecondary, fontFamily: Fonts.bold }}>Cancel</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity style={styles.confirmBtn} onPress={handleConfirm}>
-                    <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.confirmGrad}>
-                        <Text style={{ color: '#fff', fontFamily: Fonts.bold }}>Next</Text>
-                    </LinearGradient>
-                </TouchableOpacity>
-            </View>
-
-            {/* Text Entry Modal */}
-            <Modal visible={textModalVisible} transparent animationType="slide">
-                <View style={styles.modalOverlay}>
-                    <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFill} />
-                    <View style={styles.modalHeader}>
-                        <TouchableOpacity onPress={() => setTextModalVisible(false)}>
-                            <Text style={styles.modalActionText}>Cancel</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity onPress={handleAddText}>
-                            <Text style={[styles.modalActionText, { color: Colors.primary }]}>Done</Text>
+            {/* Text Editor Modal */}
+            <Modal visible={!!selectedTextId} transparent animationType="fade">
+                <BlurView intensity={90} tint="dark" style={st.modalRoot}>
+                    <View style={st.modalHeader}>
+                        <View style={{ flex: 1 }} />
+                        <TouchableOpacity onPress={handleConfirmText}>
+                            <Text style={st.modalDone}>Done</Text>
                         </TouchableOpacity>
                     </View>
+                    
+                    <TextInput
+                        autoFocus
+                        multiline
+                        style={[st.mainInput, { color: textColor, fontSize }]}
+                        value={currentText}
+                        onChangeText={setCurrentText}
+                    />
 
-                    <View style={styles.modalBody}>
-                        <TextInput
-                            style={[styles.input, { color: textColor, backgroundColor: textBg, fontSize }]}
-                            placeholder="Add text..."
-                            placeholderTextColor="rgba(255,255,255,0.4)"
-                            value={currentText}
-                            onChangeText={(t) => setCurrentText(t.replace(/(\u00a9|\u00ae|[\u2000-\u3300]|\ud83c[\ud000-\udfff]|\ud83d[\ud000-\udfff]|\ud83e[\ud000-\udfff])/g, ''))}
-                            autoFocus
-                            multiline
-                            textAlign="center"
-                        />
-                        
-                        <View style={styles.editorControls}>
-                            {/* Color Selector */}
-                            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.colorRow}>
-                                {['#ffffff', '#000000', '#ff3b30', '#ffcc00','#4cd964','#5ac8fa','#007aff','#5856d6','#ff2d55','#af52de'].map((c) => (
-                                    <TouchableOpacity 
-                                        key={c} 
-                                        style={[styles.colorDot, { backgroundColor: c }, textColor === c && styles.colorDotActive]} 
-                                        onPress={() => setTextColor(c)}
-                                    />
-                                ))}
-                            </ScrollView>
-
-                            {/* Font Size Selector */}
-                            <View style={styles.sizeSection}>
-                                <Text style={styles.controlLabel}>Size: {fontSize}</Text>
-                                <View style={styles.sizeSliderRow}>
-                                    {[16, 20, 24, 32, 40, 48].map(s => (
-                                        <TouchableOpacity 
-                                            key={s} 
-                                            onPress={() => setFontSize(s)}
-                                            style={[styles.sizeOption, fontSize === s && styles.sizeOptionActive]}
-                                        >
-                                            <Text style={[styles.sizeOptionText, fontSize === s && { color: '#fff' }]}>{s}</Text>
-                                        </TouchableOpacity>
-                                    ))}
-                                </View>
-                            </View>
-
-                            {/* Background toggle */}
-                            <TouchableOpacity 
-                                style={styles.bgToggle} 
-                                onPress={() => setTextBg(textBg === 'transparent' ? 'rgba(0,0,0,0.6)' : 'transparent')}
-                            >
-                                <Ionicons name="square" size={20} color={textBg === 'transparent' ? '#666' : '#fff'} />
-                                <Text style={{ color: '#fff', fontSize: 12 }}>Transparent BG</Text>
-                            </TouchableOpacity>
+                    <View style={st.modalTools}>
+                        <View style={st.colorRow}>
+                            {['#ffffff', '#000000', '#FF3B30', '#4CD964', '#007AFF', '#FFCC00', '#5856D6'].map(c => (
+                                <TouchableOpacity
+                                    key={c}
+                                    style={[st.colorDot, { backgroundColor: c }, textColor === c && st.colorActive]}
+                                    onPress={() => setTextColor(c)}
+                                />
+                            ))}
+                        </View>
+                        <View style={st.bgRow}>
+                            {[
+                                'transparent',
+                                'rgba(0,0,0,0.5)',
+                                'rgba(255,255,255,0.8)',
+                                Colors.primary
+                            ].map(b => (
+                                <TouchableOpacity
+                                    key={b}
+                                    style={[st.bgOption, { backgroundColor: b === 'transparent' ? 'rgba(255,255,255,0.1)' : b }, textBg === b && st.bgActive]}
+                                    onPress={() => setTextBg(b)}
+                                >
+                                    {b === 'transparent' && <Ionicons name="close" size={14} color="#fff" />}
+                                </TouchableOpacity>
+                            ))}
                         </View>
                     </View>
-                </View>
+                </BlurView>
+            </Modal>
+
+            {/* Location Modal */}
+            <Modal visible={locationModalVisible} transparent animationType="fade">
+                <BlurView intensity={90} tint="dark" style={st.modalRoot}>
+                    <View style={st.modalHeader}>
+                        <TouchableOpacity onPress={() => setLocationModalVisible(false)} style={st.modalNav}>
+                            <Ionicons name="close" size={24} color="#fff" />
+                        </TouchableOpacity>
+                        <Text style={st.modalTitle}>Add Location</Text>
+                        <TouchableOpacity onPress={handleConfirmLocation}>
+                            <Text style={st.modalDone}>Done</Text>
+                        </TouchableOpacity>
+                    </View>
+
+                    <View style={st.locationInputWrap}>
+                        <View style={st.locationIconBox}>
+                            <Ionicons name="location" size={24} color={Colors.primary} />
+                        </View>
+                        <TextInput
+                            autoFocus
+                            placeholder="Where was this taken?"
+                            placeholderTextColor="rgba(255,255,255,0.4)"
+                            style={st.locationInput}
+                            value={tempLocation}
+                            onChangeText={setTempLocation}
+                            onSubmitEditing={handleConfirmLocation}
+                        />
+                    </View>
+
+                    <View style={st.locationHint}>
+                        <Ionicons name="information-circle-outline" size={14} color="rgba(255,255,255,0.5)" />
+                        <Text style={st.locationHintText}>Type a city, landmark or venue name</Text>
+                    </View>
+                </BlurView>
             </Modal>
         </View>
     );
 }
 
-
-
-const styles = StyleSheet.create({
+const st = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#000' },
-    imageContainer: { width: '100%', flex: 1, position: 'relative', overflow: 'hidden', backgroundColor: '#000' },
-    image: { width: '100%', height: '100%' },
+    canvas: { flex: 1, position: 'relative', overflow: 'hidden' },
+    preview: { width: '100%', height: '100%' },
     
-    // Draggable
-    draggableTextRoot: {
-        position: 'absolute',
-        zIndex: 10,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    overlayTextWrap: { 
-        paddingHorizontal: 15, 
-        paddingVertical: 8, 
-        borderRadius: 12,
-        maxWidth: width * 0.8,
-        position: 'relative'
-    },
-    overlayText: { fontFamily: Fonts.bold, textAlign: 'center' },
-    deleteBadge: {
-        position: 'absolute',
-        top: -10,
-        right: -10,
-        width: 20,
-        height: 20,
-        borderRadius: 10,
-        backgroundColor: '#ff3b30',
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderWidth: 1.5,
-        borderColor: '#fff'
-    },
+    draggable: { position: 'absolute', minWidth: 100, alignItems: 'center' },
+    textBubble: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12 },
+    draggableText: { fontFamily: Fonts.bold, textAlign: 'center' },
 
-    toolbar: { 
-        flexDirection: 'row', 
-        alignItems: 'center', 
-        justifyContent: 'space-between', 
-        padding: 15, 
-        backgroundColor: '#111', 
-        borderTopWidth: 1, 
-        borderTopColor: '#222' 
+    locationPill: {
+        flexDirection: 'row', alignItems: 'center', gap: 6,
+        paddingHorizontal: 14, paddingVertical: 10, borderRadius: 25,
+        shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 4 },
+        elevation: 6
     },
-    toolBtn: { alignItems: 'center', gap: 6 },
-    toolText: { color: '#fff', fontSize: 13, fontFamily: Fonts.bold },
-    instrBox: { flex: 1, alignItems: 'flex-end' },
-    instrText: { color: '#888', fontSize: 11, fontFamily: Fonts.medium },
+    locationText: { color: '#fff', fontFamily: Fonts.bold, fontSize: 15 },
 
-    filterBar: { paddingVertical: 12, backgroundColor: '#111' },
-    filterChip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, backgroundColor: '#222' },
-    filterChipActive: { backgroundColor: Colors.primary },
-    filterChipText: { color: '#777', fontSize: 12, fontFamily: Fonts.semiBold },
-
-    footer: { flexDirection: 'row', padding: 15, gap: 15, backgroundColor: '#000', paddingBottom: Platform.OS === 'ios' ? 30 : 15 },
-    cancelBtn: { flex: 1, height: 50, borderRadius: 25, borderWidth: 1, borderColor: '#333', alignItems: 'center', justifyContent: 'center' },
-    confirmBtn: { flex: 1, height: 50, borderRadius: 25, overflow: 'hidden' },
+    toolbar: { backgroundColor: 'rgba(0,0,0,0.85)', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: 10 },
+    toolsContent: { padding: 20, gap: 15 },
+    toolBtn: { alignItems: 'center', gap: 4, width: 70 },
+    toolLabel: { color: 'rgba(255,255,255,0.6)', fontSize: 11, fontFamily: Fonts.medium },
+    toolValue: { color: Colors.primary, fontSize: 10, fontFamily: Fonts.bold, textTransform: 'capitalize' },
+    
+    actions: { flexDirection: 'row', paddingHorizontal: 20, paddingBottom: 20, gap: 12 },
+    cancelBtn: { flex: 1, height: 50, borderRadius: 15, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' },
+    cancelText: { color: '#fff', fontFamily: Fonts.semiBold },
+    confirmBtn: { flex: 1.5, height: 50, borderRadius: 15, overflow: 'hidden' },
     confirmGrad: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    confirmText: { color: '#fff', fontFamily: Fonts.bold, fontSize: 15 },
 
-    // Modal
-    modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)' },
-    modalHeader: { 
-        flexDirection: 'row', 
-        justifyContent: 'space-between', 
-        alignItems: 'center', 
-        paddingHorizontal: 20, 
-        paddingTop: Platform.OS === 'ios' ? 50 : 20,
-        zIndex: 10
+    modalRoot: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
+    modalHeader: {
+        position: 'absolute', top: 60, width: '100%',
+        flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20
     },
-    modalActionText: { color: '#fff', fontSize: 16, fontFamily: Fonts.bold },
-    modalBody: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 20 },
-    input: { 
-        width: '100%', 
-        fontFamily: Fonts.bold, 
-        padding: 15, 
-        borderRadius: 16, 
-        minHeight: 100, 
-        textAlign: 'center', 
-        marginBottom: 30 
+    modalNav: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+    modalTitle: { color: '#fff', fontSize: 18, fontFamily: Fonts.bold },
+    modalDone: { color: Colors.primary, fontSize: 17, fontFamily: Fonts.bold },
+    
+    mainInput: { width: '100%', textAlign: 'center', fontFamily: Fonts.bold, minHeight: 100 },
+    modalTools: { position: 'absolute', bottom: 60, width: '100%', alignItems: 'center', gap: 20 },
+    colorRow: { flexDirection: 'row', gap: 12 },
+    colorDot: { width: 30, height: 30, borderRadius: 15, borderWidth: 2, borderColor: 'rgba(255,255,255,0.3)' },
+    colorActive: { borderColor: '#fff', transform: [{ scale: 1.2 }] },
+    bgRow: { flexDirection: 'row', gap: 15 },
+    bgOption: { width: 40, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
+    bgActive: { borderColor: '#fff', borderWidth: 2 },
+
+    locationInputWrap: {
+        width: '100%', flexDirection: 'row', alignItems: 'center',
+        backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 20,
+        paddingHorizontal: 18, height: 64, gap: 14
     },
-    editorControls: { width: '100%', alignItems: 'center' },
-    colorRow: { gap: 12, paddingHorizontal: 20, paddingBottom: 20 },
-    colorDot: { width: 32, height: 32, borderRadius: 16, borderWidth: 2, borderColor: 'transparent' },
-    colorDotActive: { borderColor: '#fff', transform: [{ scale: 1.2 }] },
-    
-    sizeSection: { width: '100%', marginBottom: 20 },
-    controlLabel: { color: '#888', fontSize: 11, fontFamily: Fonts.bold, marginBottom: 8, textAlign: 'center' },
-    sizeSliderRow: { flexDirection: 'row', justifyContent: 'center', gap: 10 },
-    sizeOption: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#222', alignItems: 'center', justifyContent: 'center' },
-    sizeOptionActive: { backgroundColor: Colors.primary },
-    sizeOptionText: { color: '#888', fontSize: 12, fontFamily: Fonts.bold },
-    
-    bgToggle: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 10, borderRadius: 20, backgroundColor: '#333' }
+    locationIconBox: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' },
+    locationInput: { flex: 1, color: '#fff', fontSize: 18, fontFamily: Fonts.semiBold },
+    locationHint: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 15 },
+    locationHintText: { color: 'rgba(255,255,255,0.5)', fontSize: 13, fontFamily: Fonts.regular },
 });

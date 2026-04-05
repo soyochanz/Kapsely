@@ -46,6 +46,14 @@ export default function AddItemScreen() {
     const [trimEnd, setTrimEnd] = useState(0);
     const [trimSeekingValue, setTrimSeekingValue] = useState<number | null>(null);
 
+    const [aestheticAlert, setAestheticAlert] = useState<{
+        visible: boolean;
+        title: string;
+        message: string;
+        errors?: string[];
+        onClose: () => void;
+    } | null>(null);
+
     useEffect(() => {
         return () => {
             if (recording) {
@@ -64,15 +72,22 @@ export default function AddItemScreen() {
                 try {
                     const manipResult = await ImageManipulator.manipulateAsync(
                         asset.uri,
-                        [{ resize: { width: 1080 } }],
-                        { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
+                        [{ resize: { width: 1200 } }],
+                        { compress: 0.6, format: ImageManipulator.SaveFormat.WEBP }
                     );
                     currentAsset = { ...currentAsset, uri: manipResult.uri, width: manipResult.width, height: manipResult.height };
+
                 } catch (e) {
                     console.log('Error optimizing image:', e);
                 }
             } else if (contentType === 'video') {
                 try {
+                    // Check duration limit (60s)
+                    if (asset.duration && asset.duration > 61000) { // small buffer for processing
+                        Alert.alert(t('common.error'), "Videos must be 1 minute or less. Please trim your video.");
+                        setLoading(false);
+                        return;
+                    }
                     const { uri: thumbUri } = await VideoThumbnails.getThumbnailAsync(asset.uri, { time: 1000 });
                     (currentAsset as any).thumbnailUri = thumbUri;
                     (currentAsset as any).duration = asset.duration;
@@ -93,7 +108,9 @@ export default function AddItemScreen() {
             allowsMultipleSelection: true,
             selectionLimit: 20,
             quality: 0.8,
-            videoMaxDuration: 600,
+            videoMaxDuration: 60,
+            videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720,
+            videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
             base64: false,
         });
 
@@ -115,7 +132,9 @@ export default function AddItemScreen() {
             const result = await ImagePicker.launchCameraAsync({
                 mediaTypes: contentType === 'image' ? ImagePicker.MediaTypeOptions.Images : ImagePicker.MediaTypeOptions.Videos,
                 quality: 0.8,
-                videoMaxDuration: 600,
+                videoMaxDuration: 60,
+                videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720,
+                videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
             });
 
             if (!result.canceled && result.assets && result.assets.length > 0) {
@@ -223,43 +242,67 @@ export default function AddItemScreen() {
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) throw new Error('Not authenticated');
 
-            const uploadTasks = [];
+            const uploadTasks: Promise<any>[] = [];
 
             // 1. Handle Audio
             if (contentType === 'audio' && recordedUri) {
                 const audioTask = async () => {
                     const url = await uploadFile(recordedUri, 'audio', user.id);
-                    return { mediaUrl: url, thumbUrl: null, duration: audioDuration };
+                    return { mediaUrl: url, thumbUrl: null, duration: audioDuration, type: 'audio' };
                 };
                 uploadTasks.push(audioTask());
             } 
             // 2. Handle Media List (Images/Videos)
             else if (mediaList.length > 0) {
-                for (const media of mediaList) {
+                mediaList.forEach((media) => {
                     const uploadPromise = async () => {
                         const mediaUrl = await uploadFile(media.uri, contentType, user.id);
                         let thumbUrl = null;
                         if (contentType === 'video' && media.thumbnailUri) {
-                            thumbUrl = await uploadFile(media.thumbnailUri, 'image', user.id, true);
+                            // Thumbnails are smaller, but we try to upload them too
+                            try {
+                                thumbUrl = await uploadFile(media.thumbnailUri, 'image', user.id, true);
+                            } catch (e) {
+                                console.log("Thumbnail upload failed, but proceeding with video.");
+                            }
                         }
-                        return { mediaUrl, thumbUrl, duration: media.duration };
+                        return { mediaUrl, thumbUrl, duration: media.duration, type: contentType, originalMedia: media };
                     };
                     uploadTasks.push(uploadPromise());
-                }
+                });
             }
             // 3. Handle Note (no file but data entry)
             else if (contentType === 'note') {
-                uploadTasks.push(Promise.resolve({ mediaUrl: '', thumbUrl: '', duration: null }));
+                uploadTasks.push(Promise.resolve({ mediaUrl: '', thumbUrl: '', duration: null, type: 'note' }));
             }
 
-            const uploadResults = await Promise.all(uploadTasks);
+            const results = await Promise.allSettled(uploadTasks);
+            
+            const successfulUploads: any[] = [];
+            const failedUploads: any[] = [];
 
-            // Create entries in DB
-            const entries = uploadResults.map((res: any, idx: number) => {
-                const mediaItem = mediaList[idx] || {};
+            results.forEach((res, idx) => {
+                if (res.status === 'fulfilled') {
+                    successfulUploads.push(res.value);
+                } else {
+                    failedUploads.push({ 
+                        index: idx, 
+                        reason: res.reason?.message || "Unknown error",
+                        item: mediaList[idx]
+                    });
+                }
+            });
+
+            if (successfulUploads.length === 0 && failedUploads.length > 0) {
+                throw new Error(failedUploads[0].reason);
+            }
+
+            // Create entries in DB for successes
+            const entries = successfulUploads.map((res: any) => {
+                const mediaItem = res.originalMedia || {};
                 let contentStr = text || null;
 
-                if (contentType === 'video' || contentType === 'audio') {
+                if (res.type === 'video' || res.type === 'audio') {
                     const dur = mediaItem.duration || res.duration;
                     const min = Math.floor(dur / 60000);
                     const sec = Math.floor((dur % 60000) / 1000).toString().padStart(2, '0');
@@ -275,21 +318,70 @@ export default function AddItemScreen() {
                     owner_id: user.id,
                     media_url: res.mediaUrl || '',
                     thumbnail_url: res.thumbUrl || '',
-                    media_type: contentType,
+                    media_type: res.type,
                     content: contentStr,
                     caption: caption ? `${caption} !!b:${batchId}` : `!!b:${batchId}`,
                 };
             });
 
-            const { error } = await supabase.from('capsule_items').insert(entries);
+            const { error: dbError } = await supabase.from('capsule_items').insert(entries);
+            if (dbError) throw dbError;
 
-            if (error) throw error;
+            // Notify followers & owner
+            try {
+                const { data: followers } = await supabase
+                    .from('capsule_followers')
+                    .select('user_id')
+                    .eq('capsule_id', capsuleId);
+                
+                const { data: capData } = await supabase.from('capsules').select('title, owner_id').eq('id', capsuleId).single();
+                
+                const recipients = new Set((followers || []).map(f => f.user_id));
+                if (capData) recipients.add(capData.owner_id);
+                recipients.delete(user.id); // Don't notify self
 
-            Alert.alert(t('common.success'), t('common.items_added', { count: entries.length }));
-            navigation.pop(2); // Go back to CapsuleDetail
+                const notifs = Array.from(recipients).map(rid => ({
+                    user_id: rid,
+                    sender_id: user.id,
+                    type: 'item_added',
+                    capsule_id: capsuleId,
+                    message: t('feed.new_content_added', { title: capData?.title || 'a capsule' }) || `New items were added to "${capData?.title || 'a capsule'}"`
+                }));
+
+                if (notifs.length > 0) {
+                    await supabase.from('notifications').insert(notifs);
+                }
+            } catch (e) {
+                console.warn('Notification failed:', e);
+            }
+
+            if (failedUploads.length > 0) {
+                setAestheticAlert({
+                    visible: true,
+                    title: t('common.upload_partially_complete') || "Ups, casi listo...",
+                    message: `${successfulUploads.length} archivos se subieron correctamente, pero tuvimos un inconveniente con ${failedUploads.length} de ellos:`,
+                    errors: failedUploads.map(f => {
+                        if (f.reason?.includes('allowed size')) return 'El archivo es demasiado grande (máximo permitido excedido).';
+                        return f.reason;
+                    }),
+                    onClose: () => {
+                        setAestheticAlert(null);
+                        navigation.pop(2);
+                    }
+                });
+            } else {
+                Alert.alert(t('common.success'), t('common.items_added', { count: entries.length }));
+                navigation.pop(2); 
+            }
+
         } catch (err: any) {
             console.error(err);
-            Alert.alert(t('common.error'), err.message || t('common.upload_failed'));
+            setAestheticAlert({
+                visible: true,
+                title: "Vaya...",
+                message: err.message?.includes('allowed size') ? 'El archivo es demasiado grande y no puede subirse.' : (err.message || t('common.upload_failed')),
+                onClose: () => setAestheticAlert(null)
+            });
         } finally {
             setLoading(false);
         }
@@ -301,7 +393,8 @@ export default function AddItemScreen() {
         if (lastDot !== -1 && lastDot > uri.lastIndexOf('/')) {
             ext = uri.substring(lastDot + 1).split('?')[0];
         } else {
-            ext = type === 'video' ? 'mp4' : type === 'audio' ? 'm4a' : 'jpg';
+        ext = type === 'video' ? 'mp4' : type === 'audio' ? 'm4a' : 'webp';
+
         }
 
         const fileName = `${userId}/${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
@@ -599,6 +692,39 @@ export default function AddItemScreen() {
                     </Text>
                 </View>
             )}
+
+            {/* Aesthetic Alert Modal */}
+            <Modal visible={!!aestheticAlert?.visible} transparent animationType="fade">
+                <View style={styles.aestheticAlertOverlay}>
+                    {Platform.OS === 'ios' ? (
+                        <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
+                    ) : (
+                        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]} />
+                    )}
+                    <View style={styles.aestheticAlertCard}>
+                        <View style={styles.aestheticAlertIconBox}>
+                            <Ionicons name="alert-circle" size={48} color="#FF6B6B" />
+                        </View>
+                        <Text style={styles.aestheticAlertTitle}>{aestheticAlert?.title}</Text>
+                        <Text style={styles.aestheticAlertMessage}>{aestheticAlert?.message}</Text>
+                        
+                        {aestheticAlert?.errors && aestheticAlert.errors.length > 0 && (
+                            <View style={styles.aestheticAlertErrorBox}>
+                                {aestheticAlert.errors.map((err, i) => (
+                                    <View key={i} style={styles.aestheticAlertErrorRow}>
+                                        <Ionicons name="close-circle" size={16} color="#FF6B6B" style={{marginRight: 8, marginTop: 2}} />
+                                        <Text style={styles.aestheticAlertErrorText}>{err}</Text>
+                                    </View>
+                                ))}
+                            </View>
+                        )}
+                        
+                        <TouchableOpacity style={styles.aestheticAlertBtn} activeOpacity={0.8} onPress={() => aestheticAlert?.onClose()}>
+                            <Text style={styles.aestheticAlertBtnText}>Entendido</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
         </View>
     );
 }
@@ -728,6 +854,77 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         padding: 28,
         gap: 24,
+    },
+    // Custom Alert Styles
+    aestheticAlertOverlay: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    aestheticAlertCard: {
+        width: '85%',
+        backgroundColor: Colors.surface,
+        borderRadius: 24,
+        padding: 24,
+        alignItems: 'center',
+        ...Shadow.card,
+        borderWidth: 1,
+        borderColor: Colors.border,
+    },
+    aestheticAlertIconBox: {
+        width: 80,
+        height: 80,
+        borderRadius: 40,
+        backgroundColor: '#FF6B6B15',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 16,
+    },
+    aestheticAlertTitle: {
+        fontSize: 20,
+        fontFamily: Fonts.bold,
+        color: Colors.textPrimary,
+        marginBottom: 8,
+        textAlign: 'center',
+    },
+    aestheticAlertMessage: {
+        fontSize: 16,
+        fontFamily: Fonts.medium,
+        color: Colors.textSecondary,
+        textAlign: 'center',
+        marginBottom: 20,
+        lineHeight: 24,
+    },
+    aestheticAlertErrorBox: {
+        width: '100%',
+        backgroundColor: Colors.cardAlt,
+        borderRadius: 16,
+        padding: 16,
+        marginBottom: 24,
+        gap: 8,
+    },
+    aestheticAlertErrorRow: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+    },
+    aestheticAlertErrorText: {
+        fontSize: 14,
+        fontFamily: Fonts.medium,
+        color: Colors.textPrimary,
+        lineHeight: 20,
+        flex: 1,
+    },
+    aestheticAlertBtn: {
+        width: '100%',
+        backgroundColor: Colors.primary,
+        paddingVertical: 16,
+        borderRadius: 100,
+        alignItems: 'center',
+    },
+    aestheticAlertBtnText: {
+        color: '#fff',
+        fontSize: 16,
+        fontFamily: Fonts.bold,
     },
     modernIconBox: { 
         width: 64, 

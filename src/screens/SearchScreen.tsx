@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import {
     View, Text, StyleSheet, TextInput, FlatList,
-    Image, TouchableOpacity, ActivityIndicator, StatusBar
+    TouchableOpacity, ActivityIndicator, StatusBar
 } from 'react-native';
+import { Image } from 'expo-image';
+
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -43,9 +45,10 @@ export default function SearchScreen() {
 
         const { data, error } = await supabase
             .from('profiles')
-            .select('*')
+            .select('id, username, display_name, avatar_url')
             .or(`username.ilike.%${query}%,display_name.ilike.%${query}%`)
             .limit(20);
+
 
         if (data) {
             // Filter out blocked/blocking users and current user
@@ -61,9 +64,13 @@ export default function SearchScreen() {
             onPress={() => (navigation as any).navigate('UserProfile', { targetUserId: item.id })}
         >
             <Image
-                source={{ uri: item.avatar_url || 'https://via.placeholder.com/150' }}
+                source={{ uri: item.avatar_url }}
                 style={styles.avatar}
+                contentFit="cover"
+                cachePolicy="memory-disk"
+                transition={200}
             />
+
             <View style={styles.userInfo}>
                 <Text style={styles.displayName}>{item.display_name}</Text>
                 <Text style={styles.username}>@{item.username}</Text>

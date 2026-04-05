@@ -18,6 +18,7 @@ import { Image } from 'expo-image';
 import { cardMediaCache } from '../utils/mediaCache';
 
 
+
 const { width } = Dimensions.get('window');
 
 const typeConfig = {
@@ -234,8 +235,10 @@ const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp, userId: passe
                                             mediaCollage.length === 3 && i === 0 && s.collageTripleLarge,
                                         ]}
                                         contentFit="cover"
+                                        cachePolicy="memory-disk"
                                         transition={200}
                                     />
+
 
                                 ))}
                             </View>
@@ -266,8 +269,15 @@ const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp, userId: passe
                             <Ionicons name="play" size={24} color="#fff" style={{ marginLeft: 2 }} />
                         </View>
                         <View style={s.modelCorner}>
-                            <Image source={{ uri: modelImages.closed }} style={s.capsuleCornerImg} contentFit="contain" transition={200} />
+                            <Image 
+                                source={{ uri: modelImages.closed }} 
+                                style={s.capsuleCornerImg} 
+                                contentFit="contain" 
+                                cachePolicy="memory-disk"
+                                transition={200} 
+                            />
                         </View>
+
 
                     </View>
 
@@ -337,11 +347,18 @@ const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp, userId: passe
                         onPress={() => navigation.navigate('UserProfile', { targetUserId: capsule.owner_id })}
                     >
                         {profile.avatar_url
-                            ? <Image source={{ uri: profile.avatar_url }} style={s.avatar} contentFit="cover" transition={200} />
+                            ? <Image 
+                                source={{ uri: profile.avatar_url }} 
+                                style={s.avatar} 
+                                contentFit="cover" 
+                                cachePolicy="memory-disk"
+                                transition={200} 
+                            />
                             : <View style={[s.avatar, s.avatarFallback]}>
                                 <Ionicons name="person" size={14} color={Colors.textMuted} />
                             </View>
                         }
+
 
                         <View style={{ flex: 1, minWidth: 0 }}>
                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>

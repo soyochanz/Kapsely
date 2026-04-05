@@ -102,7 +102,7 @@ export default function InstagramShareScreen() {
 
     const modelImg = isSealed
         ? timerConfigManager.getModelImage(capsule.model) || (MODEL_IMAGES as any)[capsule.model]
-        : (MODEL_IMAGES_OPEN as any)[capsule.model] || (MODEL_IMAGES as any)[capsule.model];
+        : timerConfigManager.getModelImageOpen(capsule.model) || (MODEL_IMAGES_OPEN as any)[capsule.model] || (MODEL_IMAGES as any)[capsule.model];
 
     const captureImage = async () => {
         try {
@@ -253,16 +253,20 @@ export default function InstagramShareScreen() {
                                 ) : (
                                     <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255,255,255,0.04)' }]} />
                                 )}
-                                {/* Blur overlay */}
-                                {Platform.OS === 'ios' ? (
-                                    <BlurView intensity={22} tint="dark" style={StyleSheet.absoluteFill as any} />
-                                ) : (
-                                    <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]} />
+                                {/* Blur overlay (only if sealed) */}
+                                {isSealed && (
+                                    Platform.OS === 'ios' ? (
+                                        <BlurView intensity={22} tint="dark" style={StyleSheet.absoluteFill as any} />
+                                    ) : (
+                                        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]} />
+                                    )
                                 )}
-                                {/* Lock icon */}
-                                <View style={s.photoLock}>
-                                    <Ionicons name="lock-closed" size={10} color="rgba(255,255,255,0.7)" />
-                                </View>
+                                {/* Lock icon (only if sealed) */}
+                                {isSealed && (
+                                    <View style={s.photoLock}>
+                                        <Ionicons name="lock-closed" size={10} color="rgba(255,255,255,0.7)" />
+                                    </View>
+                                )}
                             </View>
                         ))}
                     </View>

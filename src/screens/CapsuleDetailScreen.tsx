@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
-    View, Text, StyleSheet, Image, ScrollView, TouchableOpacity,
+    View, Text, StyleSheet, ScrollView, TouchableOpacity,
     TextInput, Dimensions, Animated, StatusBar, Alert, ActivityIndicator,
     Modal, FlatList, KeyboardAvoidingView, Platform, Pressable, SectionList, Keyboard
 } from 'react-native';
+import { Image } from 'expo-image';
+
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { Video, ResizeMode } from 'expo-av';
@@ -122,6 +124,8 @@ export default function CapsuleDetailScreen() {
 
     const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null);
     const [isFollowedOwner, setIsFollowedOwner] = useState(false);
+    const [isFollowedCapsule, setIsFollowedCapsule] = useState(false);
+    const [followerCount, setFollowerCount] = useState(0);
     const [showOptions, setShowOptions] = useState(false);
     const [showQRModal, setShowQRModal] = useState(false);
     const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
@@ -186,6 +190,11 @@ export default function CapsuleDetailScreen() {
 
     useFocusEffect(useCallback(() => { loadData(); }, [capsuleId]));
 
+    const formatDetailedDate = (dateStr: string) => {
+        const d = new Date(dateStr);
+        return d.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }).toUpperCase();
+    };
+
     useEffect(() => {
         if (!capsuleId) return;
         loadData();
@@ -217,7 +226,7 @@ export default function CapsuleDetailScreen() {
         }, 1000);
     };
 
-    const formatTime = (dateStr: string) => {
+                    const formatTime = (dateStr: string) => {
         const diff = Date.now() - new Date(dateStr).getTime();
         const m = Math.floor(diff / 60000);
         if (m < 1) return t('common.just_now');
@@ -227,20 +236,34 @@ export default function CapsuleDetailScreen() {
         return t('common.d_ago', { count: Math.floor(h / 24) });
     };
 
+
     const loadData = async () => {
         const { data: { user } } = await supabase.auth.getUser();
         setUserId(user?.id ?? null);
         let blocked: string[] = [];
         if (user) { blocked = await safetyService.getAllSafetyUserIds(user.id); setBlockedUserIds(blocked); }
 
-        const [capRes, itemsRes, likesRes, commentsRes, myLikeRes, invitesRes] = await Promise.all([
-            supabase.from('capsules').select('*, profiles:owner_id(*)').eq('id', capsuleId).maybeSingle(),
-            supabase.from('capsule_items').select('*, profiles:owner_id(avatar_url, id)').eq('capsule_id', capsuleId).order('created_at', { ascending: true }),
-            supabase.from('likes').select('*', { count: 'exact', head: true }).eq('capsule_id', capsuleId),
-            supabase.from('comments').select('*, profiles:user_id(*), comment_likes(user_id)').eq('capsule_id', capsuleId).order('created_at', { ascending: false }),
-            user ? supabase.from('likes').select('*').eq('capsule_id', capsuleId).eq('user_id', user.id).maybeSingle() : { data: null },
-            supabase.from('capsule_invites').select('*, profiles:user_id(*)').eq('capsule_id', capsuleId),
+        const [capRes, itemsRes, likesRes, commentsRes, myLikeRes, invitesRes, fCountRes, myFollowRes] = await Promise.all([
+            supabase.from('capsules').select(`
+                id, title, description, created_at, opens_at, status, model, type, owner_id, chain_id, duration_days, is_shared, is_opening, opening_at, open_requests,
+                profiles:owner_id(id, username, display_name, avatar_url, is_verified)
+            `).eq('id', capsuleId).maybeSingle(),
+            supabase.from('capsule_items').select(`
+                id, capsule_id, owner_id, media_url, thumbnail_url, media_type, content, caption, created_at,
+                profiles:owner_id(avatar_url, id, display_name, username)
+            `).eq('capsule_id', capsuleId).order('created_at', { ascending: true }),
+            supabase.from('likes').select('id', { count: 'exact', head: true }).eq('capsule_id', capsuleId),
+            supabase.from('comments').select(`
+                id, capsule_id, user_id, content, created_at,
+                profiles:user_id(id, display_name, username, avatar_url, is_verified),
+                comment_likes(user_id)
+            `).eq('capsule_id', capsuleId).order('created_at', { ascending: false }),
+            user ? supabase.from('likes').select('id').eq('capsule_id', capsuleId).eq('user_id', user.id).maybeSingle() : { data: null },
+            supabase.from('capsule_invites').select('id, capsule_id, user_id, status, profiles:user_id(id, username, display_name, avatar_url)').eq('capsule_id', capsuleId),
+            supabase.from('capsule_followers').select('id', { count: 'exact', head: true }).eq('capsule_id', capsuleId),
+            user ? supabase.from('capsule_followers').select('id').eq('capsule_id', capsuleId).eq('user_id', user.id).maybeSingle() : { data: null },
         ]);
+
 
         const isActuallyOpenCap = capRes.data?.type === 'opencap' || (capRes.data?.status === 'opened' && capRes.data?.duration_days === 0);
         if (capRes.data?.status === 'opened' && !isActuallyOpenCap && (!itemsRes.data || itemsRes.data.length === 0)) {
@@ -275,6 +298,8 @@ export default function CapsuleDetailScreen() {
         setComments((commentsRes.data || []).filter((c: any) => !blocked.includes(c.user_id)).map((c: any) => ({ ...c, myLike: user ? c.comment_likes?.some((l: any) => l.user_id === user.id) : false, likeCount: c.comment_likes?.length || 0 })));
         setIsLiked(!!myLikeRes.data);
         if (invitesRes.data) setInvites(invitesRes.data);
+        setFollowerCount(fCountRes?.count || 0);
+        setIsFollowedCapsule(!!myFollowRes?.data);
         setLoading(false);
     };
 
@@ -287,6 +312,31 @@ export default function CapsuleDetailScreen() {
             await supabase.from('follows').insert({ follower_id: userId, following_id: targetId });
             setIsFollowed(true);
             await supabase.from('notifications').insert({ user_id: targetId, sender_id: userId, type: 'follow', message: t('common.started_following_you') });
+        }
+    };
+
+    const handleCapsuleFollowToggle = async () => {
+        if (!userId || !capsule) return;
+        if (isFollowedCapsule) {
+            await supabase.from('capsule_followers').delete().eq('capsule_id', capsuleId).eq('user_id', userId);
+            setFollowerCount(p => Math.max(0, p - 1));
+            setIsFollowedCapsule(false);
+        } else {
+            await supabase.from('capsule_followers').insert({ capsule_id: capsuleId, user_id: userId });
+            setFollowerCount(p => p + 1);
+            setIsFollowedCapsule(true);
+            if (capsule.owner_id !== userId) {
+                await supabase.from('notifications').insert({ 
+                    user_id: capsule.owner_id, 
+                    sender_id: userId, 
+                    type: 'capsule_follow', 
+                    capsule_id: capsuleId, 
+                    message: t('detail.followed_capsule', { title: capsule.title }) || `Started following your capsule "${capsule.title}"` 
+                });
+                try {
+                    sendPushNotification(capsule.owner_id, "✨ Nuevo seguidor!", `Alguien ha empezado a seguir tu cápsula "${capsule.title}"`, { screen: 'CapsuleDetail', params: { capsuleId } });
+                } catch (e) {}
+            }
         }
     };
 
@@ -506,7 +556,11 @@ export default function CapsuleDetailScreen() {
                     <Image
                         source={{ uri: capsule.profiles?.avatar_url || 'https://via.placeholder.com/150' }}
                         style={[ds.headerAvatar, { borderColor: tint + '40' }]}
+                        cachePolicy="memory-disk"
+                        contentFit="cover"
+                        transition={200}
                     />
+
                     <View style={{ flexShrink: 1 }}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                             <Text style={ds.headerName} numberOfLines={1}>
@@ -546,7 +600,6 @@ export default function CapsuleDetailScreen() {
                 <SectionList
                     ref={sectionListRef}
                     sections={[
-                        { title: 'hero', data: ['hero'] },
                         { title: 'content', data: ['content'] },
                         { title: 'chat', data: showChat ? ['chat'] : [] },
                         { title: 'social', data: ['social'] },
@@ -557,6 +610,60 @@ export default function CapsuleDetailScreen() {
                     keyboardShouldPersistTaps="handled"
                     stickySectionHeadersEnabled={false}
                     renderSectionHeader={() => null}
+                    ListHeaderComponent={() => (
+                        <View style={ds.heroSection}>
+                            {/* Capsule floating stage */}
+                            <View style={ds.capsuleStage}>
+                                <View style={[ds.capsuleGlow, { backgroundColor: tint + '20' }]} />
+                                <View style={[ds.capsuleGlowInner, { backgroundColor: tint + '10' }]} />
+                                <TouchableOpacity
+                                    activeOpacity={0.92}
+                                    onPress={() => { if (isMember && isSealed && !isOpening) navigation.navigate('CreateSelection', { capsuleId: capsule.id }); }}
+                                    disabled={!isMember || !isSealed || isOpening}
+                                    style={{ zIndex: 2 }}
+                                >
+                                    <CapsuleWithTimer
+                                        modelKey={capsule.model}
+                                        source={{ uri: modelImg }}
+                                        date={capsule.opens_at}
+                                        chainId={capsule.chain_id}
+                                        capsuleType={capsule.type || undefined}
+                                        style={{ width: 220, height: 220 }}
+                                    />
+                                </TouchableOpacity>
+                            </View>
+
+                            <View style={ds.heroMeta}>
+                                <View style={ds.statRow}>
+                                    <StatPill icon="people-outline" label={t('detail.members', { count: totalMembers })} />
+                                    {isSealed ? (
+                                        <StatPill icon="lock-closed-outline" label={t('detail.sealed')} color={tint} bg={tint + '12'} />
+                                    ) : (
+                                        <StatPill icon="book-outline" label={t('detail.opened')} color={D.purple} bg={D.purple + '12'} />
+                                    )}
+                                    <StatPill icon="flash-outline" label={totalMembers > 1 ? t('detail.shared') : t('detail.solo')} />
+                                    <StatPill icon="heart-outline" label={`${likeCount}`} color={D.rose} bg={D.rose + '10'} />
+                                    <StatPill icon="eye-outline" label={`${followerCount}`} color={D.purple} bg={D.purple + '10'} />
+                                </View>
+
+                                <Text style={ds.title}>{capsule.title}</Text>
+                                {capsule.description && <Text style={ds.desc}>{capsule.description}</Text>}
+
+                                {userId !== capsule.owner_id && (
+                                    <TouchableOpacity 
+                                        onPress={handleCapsuleFollowToggle}
+                                        style={[ds.capsuleFollowBtn, { backgroundColor: isFollowedCapsule ? D.surfaceAlt : tint, borderColor: isFollowedCapsule ? D.border : tint }]}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Ionicons name={isFollowedCapsule ? "checkmark-circle" : "add-circle"} size={18} color={isFollowedCapsule ? tint : "#fff"} />
+                                        <Text style={[ds.capsuleFollowBtnText, { color: isFollowedCapsule ? D.text : "#fff" }]}>
+                                            {isFollowedCapsule ? t('common.following') : t('common.follow_capsule') || 'Sync with this capsule'}
+                                        </Text>
+                                    </TouchableOpacity>
+                                )}
+                            </View>
+                        </View>
+                    )}
                     renderItem={({ item }) => {
 
                         // ── HERO ─────────────────────────────────────────
@@ -584,6 +691,7 @@ export default function CapsuleDetailScreen() {
                                             style={ds.heroModel}
                                             isOpened={!isSealed}
                                         />
+
                                         {isMember && isSealed && !isOpening && (
                                             <View style={[ds.addHintBubble, { backgroundColor: tint }]}>
                                                 <Ionicons name="add" size={16} color="#fff" />
@@ -636,15 +744,27 @@ export default function CapsuleDetailScreen() {
                                     <View style={[ds.membersStrip, { borderColor: tint + '25', backgroundColor: tint + '07' }]}>
                                         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                                             <TouchableOpacity onPress={() => navigation.navigate('UserProfile', { targetUserId: capsule.owner_id })}>
-                                                <Image source={{ uri: capsule.profiles?.avatar_url }} style={[ds.memberAvatar, { borderColor: tint + '50' }]} />
+                                                <Image 
+                                                    source={{ uri: capsule.profiles?.avatar_url }} 
+                                                    style={[ds.memberAvatar, { borderColor: tint + '50' }]} 
+                                                    cachePolicy="memory-disk"
+                                                    contentFit="cover"
+                                                />
                                             </TouchableOpacity>
+
                                             {acceptedMembers.map((m: any, i: number) => (
                                                 <TouchableOpacity key={i} style={{ marginLeft: -10 }}
                                                     onPress={() => handleFollowToggle(m.id, m.isFollowed, v => setAcceptedMembers(p => p.map(x => x.id === m.id ? { ...x, isFollowed: v } : x)))}
                                                     onLongPress={() => navigation.navigate('UserProfile', { targetUserId: m.id })}
                                                 >
-                                                    <Image source={{ uri: m.avatar_url }} style={[ds.memberAvatar, m.isFollowed && { borderColor: tint }]} />
+                                                    <Image 
+                                                        source={{ uri: m.avatar_url }} 
+                                                        style={[ds.memberAvatar, m.isFollowed && { borderColor: tint }]} 
+                                                        cachePolicy="memory-disk"
+                                                        contentFit="cover"
+                                                    />
                                                 </TouchableOpacity>
+
                                             ))}
                                             {hasWaiting && (
                                                 <View style={[ds.memberAvatar, { marginLeft: -10, backgroundColor: D.surfaceAlt, alignItems: 'center', justifyContent: 'center' }]}>
@@ -663,8 +783,8 @@ export default function CapsuleDetailScreen() {
                                             <Ionicons name="earth" size={18} color={tint} />
                                         </View>
                                         <View style={{ flex: 1 }}>
-                                            <Text style={[ds.eventBannerTitle, { color: tint }]}>Pioneers Event</Text>
-                                            <Text style={ds.eventBannerDesc}>All capsules open simultaneously worldwide.</Text>
+                                            <Text style={[ds.eventBannerTitle, { color: tint }]}>{timerConfigManager.getModel(capsule.model)?.label || 'CapAngel'}</Text>
+                                            <Text style={ds.eventBannerDesc}>{t('create.event_open_desc')}</Text>
                                         </View>
                                     </View>
                                 )}
@@ -790,8 +910,15 @@ export default function CapsuleDetailScreen() {
                                                                         <Text style={{ fontSize: 12, color: '#4A4530', fontFamily: Fonts.medium, textAlign: 'center', lineHeight: 18 }} numberOfLines={4}>{pi.content}</Text>
                                                                     </View>
                                                                 ) : (
-                                                                    <Image source={{ uri: pi.thumbnail_url || pi.media_url }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                                                                    <Image 
+                                                                        source={{ uri: pi.thumbnail_url || pi.media_url }} 
+                                                                        style={StyleSheet.absoluteFill} 
+                                                                        contentFit="cover"
+                                                                        cachePolicy="memory-disk"
+                                                                        transition={200}
+                                                                    />
                                                                 )}
+
                                                                 {pi.media_type === 'video' && (
                                                                     <View style={ds.playBadge}>
                                                                         <Ionicons name="play" size={10} color="#fff" />
@@ -799,8 +926,8 @@ export default function CapsuleDetailScreen() {
                                                                 )}
                                                             </TouchableOpacity>
                                                         )}
-                                                        {pi.caption && pi.caption.replace(/!!b:\w+/, '').trim() ? (
-                                                            <Text style={ds.cellCaption} numberOfLines={1}>{pi.caption.replace(/!!b:\w+/, '').trim()}</Text>
+                                                        {pi.caption && pi.caption.replace(/!!b:[^\s]+/g, '').trim() ? (
+                                                            <Text style={ds.cellCaption} numberOfLines={1}>{pi.caption.replace(/!!b:[^\s]+/g, '').trim()}</Text>
                                                         ) : null}
                                                     </View>
                                                 ))}
@@ -864,8 +991,14 @@ export default function CapsuleDetailScreen() {
                                             ]}
                                         >
                                             <TouchableOpacity onPress={() => navigation.navigate('UserProfile', { targetUserId: c.user_id })}>
-                                                <Image source={{ uri: c.profiles?.avatar_url || 'https://via.placeholder.com/150' }} style={[ds.commentAvatar, { borderColor: D.border }]} />
+                                                <Image 
+                                                    source={{ uri: c.profiles?.avatar_url || 'https://via.placeholder.com/150' }} 
+                                                    style={[ds.commentAvatar, { borderColor: D.border }]} 
+                                                    cachePolicy="memory-disk"
+                                                    contentFit="cover"
+                                                />
                                             </TouchableOpacity>
+
                                             <View style={{ flex: 1 }}>
                                                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>
                                                     <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }} onPress={() => navigation.navigate('UserProfile', { targetUserId: c.user_id })}>
@@ -964,8 +1097,13 @@ export default function CapsuleDetailScreen() {
                     <View style={ds.qrCard}>
                         <View style={[ds.qrAccentTop, { backgroundColor: tint }]} />
                         <Text style={ds.qrTitle}>{t('detail.capsule_qr')}</Text>
-                        <Image source={{ uri: `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=kapsely://capsule/${capsuleId}` }} style={ds.qrImg} />
+                        <Image 
+                            source={{ uri: `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=kapsely://capsule/${capsuleId}` }} 
+                            style={ds.qrImg} 
+                            cachePolicy="memory-disk"
+                        />
                         <Text style={ds.qrSub}>{t('detail.scan_qr_hint')}</Text>
+
                         <TouchableOpacity onPress={() => setShowQRModal(false)}>
                             <LinearGradient colors={[tint, tint + 'CC']} style={ds.qrBtn}>
                                 <Text style={ds.qrBtnText}>{t('common.done')}</Text>
@@ -1008,13 +1146,26 @@ export default function CapsuleDetailScreen() {
                                 ) : vi.media_type === 'video' ? (
                                     <VideoWithTrim item={vi} isActive={activeViewerIndex === index && viewerVisible} style={{ width, height }} />
                                 ) : (
-                                    <Image source={{ uri: vi.media_url }} style={{ width, height }} resizeMode="contain" />
+                                    <Image 
+                                        source={{ uri: vi.media_url }} 
+                                        style={{ width, height }} 
+                                        contentFit="contain" 
+                                        cachePolicy="memory-disk"
+                                        transition={300}
+                                    />
                                 )}
-                                {vi.caption && (
-                                    <View style={ds.viewerCaption}>
-                                        <Text style={ds.viewerCaptionText}>{vi.caption.replace(/\s!!b:\w+/, '').trim()}</Text>
+
+                                <View style={ds.viewerCaption}>
+                                    {vi.caption && vi.caption.replace(/!!b:[^\s]+/g, '').trim() ? (
+                                        <Text style={ds.viewerCaptionText}>{vi.caption.replace(/!!b:[^\s]+/g, '').trim()}</Text>
+                                    ) : null}
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 4, gap: 4, opacity: 0.7 }}>
+                                        <Ionicons name="calendar-outline" size={10} color="#fff" />
+                                        <Text style={[ds.viewerCaptionText, { fontSize: 10, fontFamily: Fonts.bold }]}>
+                                            {formatDetailedDate(vi.created_at)}
+                                        </Text>
                                     </View>
-                                )}
+                                </View>
                             </View>
                         )}
                     />
@@ -1377,4 +1528,14 @@ const ds = StyleSheet.create({
         backgroundColor: 'rgba(0,0,0,0.55)', padding: 12, borderRadius: 14,
     },
     viewerCaptionText: { color: '#fff', fontSize: 14, fontFamily: Fonts.regular, textAlign: 'center' },
+
+    heroMeta: { width: '100%', alignItems: 'center', marginTop: 12 },
+    title: { fontSize: 24, fontFamily: Fonts.bold, color: D.text, textAlign: 'center', marginBottom: 8 },
+    desc: { fontSize: 14, fontFamily: Fonts.regular, color: D.textSec, textAlign: 'center', paddingHorizontal: 24, marginBottom: 16, lineHeight: 20 },
+    capsuleFollowBtn: {
+        flexDirection: 'row', alignItems: 'center', gap: 8,
+        paddingHorizontal: 24, paddingVertical: 12,
+        borderRadius: 24, borderWidth: 1.5,
+    },
+    capsuleFollowBtnText: { fontSize: 14, fontFamily: Fonts.bold },
 });

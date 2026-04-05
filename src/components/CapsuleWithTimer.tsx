@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, StyleSheet, LayoutChangeEvent, Animated } from 'react-native';
+import { View, StyleSheet, LayoutChangeEvent, Animated, Easing } from 'react-native';
 import { Image } from 'expo-image';
 
 import { LinearGradient } from 'expo-linear-gradient';
@@ -45,11 +45,22 @@ const CapsuleWithTimer = React.memo(({
     const glintAnim = useRef(new Animated.Value(-1.5)).current;
 
     useEffect(() => {
+        // Pendulum animation: starts from one side to avoid initial jump
+        swingAnim.setValue(-1);
         Animated.loop(
             Animated.sequence([
-                Animated.timing(swingAnim, { toValue: 1, duration: 1500, useNativeDriver: true }),
-                Animated.timing(swingAnim, { toValue: -1, duration: 3000, useNativeDriver: true }),
-                Animated.timing(swingAnim, { toValue: 0, duration: 1500, useNativeDriver: true })
+                Animated.timing(swingAnim, { 
+                    toValue: 1, 
+                    duration: 5000, 
+                    easing: Easing.inOut(Easing.ease),
+                    useNativeDriver: true 
+                }),
+                Animated.timing(swingAnim, { 
+                    toValue: -1, 
+                    duration: 5000, 
+                    easing: Easing.inOut(Easing.ease),
+                    useNativeDriver: true 
+                })
             ])
         ).start();
 
@@ -127,7 +138,7 @@ const CapsuleWithTimer = React.memo(({
             { translateY: - (height * chainConfig.scale) / 2 }
         ],
         alignItems: 'center' as const,
-        justifyContent: 'center' as const,
+        justifyContent: 'flex-start' as const,
     } : { opacity: 0 };
 
     // Scale font based on timer height
@@ -137,7 +148,7 @@ const CapsuleWithTimer = React.memo(({
 
     const rotateInterp = swingAnim.interpolate({
         inputRange: [-1, 1],
-        outputRange: ['-3deg', '3deg']
+        outputRange: ['-2.5deg', '2.5deg']
     });
 
     const glintTranslate = glintAnim.interpolate({
@@ -205,10 +216,9 @@ const CapsuleWithTimer = React.memo(({
                     <Animated.View style={{
                         width: '100%',
                         height: '100%',
+                        transformOrigin: 'top center' as any,
                         transform: [
-                            { translateY: -((height * chainConfig.scale) / 2) },
-                            { rotate: rotateInterp },
-                            { translateY: (height * chainConfig.scale) / 2 }
+                            { rotate: rotateInterp }
                         ]
                     }}>
                         <Image

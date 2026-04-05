@@ -67,7 +67,13 @@ export default function EditProfileScreen({ onClose }: Props) {
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) return;
             setUserId(user.id);
-            const { data } = await supabase.from('profiles').select('*').eq('id', user.id).single();
+            const { data } = await supabase
+                .from('profiles')
+                .select('username, display_name, avatar_url, bio, favorite_color, favorite_movie, favorite_song, birthdate, display_name_history')
+
+                .eq('id', user.id)
+                .single();
+
             if (data) {
                 setDisplayName(data.display_name ?? '');
                 setBio(data.bio ?? '');
@@ -104,8 +110,9 @@ export default function EditProfileScreen({ onClose }: Props) {
             const manipulated = await ImageManipulator.manipulateAsync(
                 asset.uri,
                 [{ resize: { width: 300 } }],
-                { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
+                { compress: 0.7, format: ImageManipulator.SaveFormat.WEBP }
             );
+
             setAvatarUri(manipulated.uri);
         }
     };
@@ -114,7 +121,8 @@ export default function EditProfileScreen({ onClose }: Props) {
     const uploadAvatar = async (uri: string, uid: string): Promise<string | null> => {
         setUploading(true);
         try {
-            const fileName = `avatar_${uid}_${Date.now()}.jpg`;
+            const fileName = `avatar_${uid}_${Date.now()}.webp`;
+
 
             let body: any;
             if (Platform.OS === 'web') {
@@ -127,9 +135,10 @@ export default function EditProfileScreen({ onClose }: Props) {
             }
 
             const { error } = await supabase.storage.from('avatars').upload(fileName, body, {
-                contentType: 'image/jpeg',
+                contentType: 'image/webp',
                 upsert: true,
             });
+
 
             if (error) throw error;
 
@@ -336,11 +345,18 @@ export default function EditProfileScreen({ onClose }: Props) {
                     <TouchableOpacity onPress={pickAvatar} activeOpacity={0.8} style={styles.avatarWrapper}>
                         <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.avatarRing}>
                         {avatarUri
-                                ? <Image source={{ uri: avatarUri }} style={styles.avatar} contentFit="cover" transition={200} />
+                                ? <Image 
+                                    source={{ uri: avatarUri }} 
+                                    style={styles.avatar} 
+                                    contentFit="cover" 
+                                    cachePolicy="memory-disk"
+                                    transition={200} 
+                                />
                                 : <View style={[styles.avatar, styles.avatarPlaceholder]}>
                                     <Ionicons name="person" size={36} color={Colors.primary} />
                                 </View>
                         }
+
 
                         </LinearGradient>
                         <View style={styles.avatarEditBadge}>

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
     View, Text, StyleSheet, Image, PanResponder, Animated,
     TouchableOpacity, ScrollView, StatusBar,
@@ -40,6 +40,7 @@ export default function AdminCalibrationScreen() {
     const [activeTab, setActiveTab] = useState<'timer' | 'chain' | 'stickers' | 'models'>('timer');
     const [selectedChainId, setSelectedChainId] = useState<string | null>(null);
     const [isDragging, setIsDragging] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
 
     const [showAddModel, setShowAddModel] = useState(false);
     const [newModel, setNewModel] = useState({ 
@@ -165,6 +166,65 @@ export default function AdminCalibrationScreen() {
         updateActiveConfigById(selectedModel.id, updates);
     };
 
+    const saveAsGlobalTimer = async () => {
+        const success = await timerConfigManager.saveConfig('__GLOBAL__', activeConfig);
+        if (success) Alert.alert('Success', 'Global Timer Position saved!');
+    };
+
+    const applyGlobalTimer = async () => {
+        const globalConfig = timerConfigManager.getConfig('__GLOBAL__');
+        if (globalConfig && globalConfig !== timerConfigManager.getConfig('basicred_kap')) {
+            updateActiveConfig({
+                x: globalConfig.x,
+                y: globalConfig.y,
+                w: globalConfig.w,
+                h: globalConfig.h,
+                fontId: globalConfig.fontId,
+                color: globalConfig.color,
+                format: globalConfig.format,
+                themeColor: globalConfig.themeColor
+            });
+            Alert.alert('Applied', 'Global position template applied to current model');
+        } else {
+            Alert.alert('Not Found', 'No global timer position saved yet.');
+        }
+    };
+
+    const saveAsGlobalChain = async () => {
+        if (!selectedChainId) return;
+        const x = (chainPan.x as any)._value;
+        const y = (chainPan.y as any)._value;
+        const success = await timerConfigManager.saveChainConfig({
+            model_id: '__GLOBAL_TEMPLATE__',
+            chain_id: selectedChainId,
+            x: x / FRAME_SIZE,
+            y: y / FRAME_SIZE,
+            scale: chainScale
+        });
+        if (success) Alert.alert('Success', `Global Position for ${selectedChainId} saved!`);
+    };
+
+    const applyGlobalChain = async () => {
+        if (!selectedChainId) return;
+        const globalChain = timerConfigManager.getChainConfig('__GLOBAL_TEMPLATE__', selectedChainId);
+        if (globalChain) {
+            chainPan.setValue({ x: globalChain.x * FRAME_SIZE, y: globalChain.y * FRAME_SIZE });
+            setChainScale(globalChain.scale);
+            Alert.alert('Applied', `Global template for ${selectedChainId} applied to current view`);
+        } else {
+            Alert.alert('Not Found', `No global position saved for ${selectedChainId} yet.`);
+        }
+    };
+
+    const filteredModels = useMemo(() => {
+        if (!searchQuery.trim()) return allModels;
+        const q = searchQuery.toLowerCase().trim();
+        return allModels.filter(m => 
+            (m.label || '').toLowerCase().includes(q) || 
+            (m.id || '').toLowerCase().includes(q)
+        );
+    }, [allModels, searchQuery]);
+
     const pan = useRef(new Animated.ValueXY({ x: activeConfig.x * FRAME_SIZE, y: activeConfig.y * FRAME_SIZE })).current;
 
     useEffect(() => {
@@ -189,7 +249,10 @@ export default function AdminCalibrationScreen() {
 
     const chainResponder = useRef(
         PanResponder.create({
+            onStartShouldSetPanResponder: () => true,
+            onStartShouldSetPanResponderCapture: () => true,
             onMoveShouldSetPanResponder: () => true,
+            onMoveShouldSetPanResponderCapture: () => true,
             onPanResponderGrant: () => {
                 setIsDragging(true);
                 const x = (chainPan.x as any)._value;
@@ -228,13 +291,18 @@ export default function AdminCalibrationScreen() {
                 const fileName = `model_${Date.now()}.jpg`;
                 
                 let body: any;
-                const manipulated = await ImageManipulator.manipulateAsync(
-                    asset.uri,
-                    [{ resize: { width: 800 } }],
-                    { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
-                );
-                const base64 = await FileSystem.readAsStringAsync(manipulated.uri, { encoding: 'base64' });
-                body = decode(base64);
+                if (Platform.OS === 'web') {
+                    const res = await fetch(asset.uri);
+                    body = await res.blob();
+                } else {
+                    const manipulated = await ImageManipulator.manipulateAsync(
+                        asset.uri,
+                        [{ resize: { width: 800 } }],
+                        { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
+                    );
+                    const base64 = await FileSystem.readAsStringAsync(manipulated.uri, { encoding: 'base64' });
+                    body = decode(base64);
+                }
 
                 const { error: uploadError } = await supabase.storage.from('models').upload(fileName, body, {
                     contentType: 'image/jpeg',
@@ -260,11 +328,20 @@ export default function AdminCalibrationScreen() {
             return;
         }
 
-        const success = await timerConfigManager.saveModel(newModel);
+        const modelToSave: any = { ...newModel };
+        // Clean up empty strings to prevent Postgres type errors
+        if (!modelToSave.event_start) modelToSave.event_start = null;
+        if (!modelToSave.event_end) modelToSave.event_end = null;
+        if (!modelToSave.event_title) modelToSave.event_title = null;
+        if (!modelToSave.event_description) modelToSave.event_description = null;
+        if (!modelToSave.image_open) modelToSave.image_open = null;
+        if (!modelToSave.image_cover) modelToSave.image_cover = null;
+
+        const success = await timerConfigManager.saveModel(modelToSave);
         if (success) {
-            await timerConfigManager.saveConfig(newModel.id, DEFAULT_CONFIGS.basicred_kap);
+            await timerConfigManager.saveConfig(modelToSave.id, DEFAULT_CONFIGS.basicred_kap);
             syncConfigs();
-            setSelectedModel(newModel);
+            setSelectedModel(modelToSave);
             setShowAddModel(false);
             setNewModel({ 
                 id: '', label: '', image: '', image_open: '', image_cover: '', 
@@ -273,7 +350,7 @@ export default function AdminCalibrationScreen() {
             });
             Alert.alert('Success', 'Model added successfully');
         } else {
-            Alert.alert('Error', 'Could not save model to database');
+            Alert.alert('Error', 'Could not save model to database. Check if you have permissions or if the dates are corrupted.');
         }
     };
 
@@ -324,7 +401,10 @@ export default function AdminCalibrationScreen() {
 
     const panResponder = useRef(
         PanResponder.create({
+            onStartShouldSetPanResponder: () => true,
+            onStartShouldSetPanResponderCapture: () => true,
             onMoveShouldSetPanResponder: () => true,
+            onMoveShouldSetPanResponderCapture: () => true,
             onPanResponderGrant: () => {
                 setIsDragging(true);
                 const x = (pan.x as any)._value;
@@ -488,7 +568,7 @@ export default function AdminCalibrationScreen() {
                         </TouchableOpacity>
                     </View>
 
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.modelList}>
+                    <View style={styles.modelList}>
                         {allModels.map(m => (
                             <TouchableOpacity
                                 key={m.id}
@@ -503,7 +583,7 @@ export default function AdminCalibrationScreen() {
                                 <Text style={[styles.tabLabel, selectedModel.id === m.id && styles.activeTabText]}>{m.label}</Text>
                             </TouchableOpacity>
                         ))}
-                    </ScrollView>
+                    </View>
 
                     <View style={styles.divider} />
 
@@ -598,6 +678,23 @@ export default function AdminCalibrationScreen() {
                             <TouchableOpacity style={styles.saveBtn} activeOpacity={0.8} onPress={saveChanges}>
                                 <Text style={styles.saveBtnText}>Save Configuration</Text>
                             </TouchableOpacity>
+
+                            <View style={[styles.grid, { marginTop: 10 }]}>
+                                <TouchableOpacity 
+                                    style={[styles.globalBtn, { backgroundColor: '#FF8A00' }]} 
+                                    onPress={saveAsGlobalTimer}
+                                >
+                                    <Ionicons name="earth" size={16} color="#fff" />
+                                    <Text style={styles.globalBtnText}>Set Global Timer</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity 
+                                    style={[styles.globalBtn, { backgroundColor: '#00D1FF' }]} 
+                                    onPress={applyGlobalTimer}
+                                >
+                                    <Ionicons name="download" size={16} color="#fff" />
+                                    <Text style={styles.globalBtnText}>Use Global Timer</Text>
+                                </TouchableOpacity>
+                            </View>
                         </View>
                     ) : activeTab === 'chain' ? (
                         <View style={styles.chainSection}>
@@ -608,7 +705,7 @@ export default function AdminCalibrationScreen() {
                                     <Text style={styles.addModelBtnText}>New Chain</Text>
                                 </TouchableOpacity>
                             </View>
-                            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chainList}>
+                            <View style={styles.chainList}>
                                 {timerConfigManager.getChainLibrary().map(c => (
                                     <TouchableOpacity
                                         key={c.id}
@@ -620,7 +717,7 @@ export default function AdminCalibrationScreen() {
                                         <Text style={styles.chainLabel} numberOfLines={1}>{c.name}</Text>
                                     </TouchableOpacity>
                                 ))}
-                            </ScrollView>
+                            </View>
 
                             {selectedChainId && (
                                 <View style={styles.chainCalibration}>
@@ -656,6 +753,23 @@ export default function AdminCalibrationScreen() {
                                     >
                                         <Text style={styles.saveBtnText}>Save Chain Calibration</Text>
                                     </TouchableOpacity>
+
+                                    <View style={[styles.grid, { marginTop: 10 }]}>
+                                        <TouchableOpacity 
+                                            style={[styles.globalBtn, { backgroundColor: '#FF8A00' }]} 
+                                            onPress={saveAsGlobalChain}
+                                        >
+                                            <Ionicons name="earth" size={16} color="#fff" />
+                                            <Text style={styles.globalBtnText}>Set Global Chain</Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity 
+                                            style={[styles.globalBtn, { backgroundColor: '#00D1FF' }]} 
+                                            onPress={applyGlobalChain}
+                                        >
+                                            <Ionicons name="download" size={16} color="#fff" />
+                                            <Text style={styles.globalBtnText}>Use Global Chain</Text>
+                                        </TouchableOpacity>
+                                    </View>
                                 </View>
                             )}
                         </View>
@@ -711,8 +825,24 @@ export default function AdminCalibrationScreen() {
                                 </TouchableOpacity>
                             </View>
 
+                            <View style={styles.searchContainer}>
+                                <Ionicons name="search" size={18} color={Colors.textMuted} style={styles.searchIcon} />
+                                <TextInput
+                                    style={styles.searchInput}
+                                    placeholder="Search capsule by name or ID..."
+                                    placeholderTextColor={Colors.textMuted}
+                                    value={searchQuery}
+                                    onChangeText={setSearchQuery}
+                                />
+                                {searchQuery.length > 0 && (
+                                    <TouchableOpacity onPress={() => setSearchQuery('')}>
+                                        <Ionicons name="close-circle" size={18} color={Colors.textMuted} />
+                                    </TouchableOpacity>
+                                )}
+                            </View>
+
                             <View>
-                                {allModels.map((m) => (
+                                {filteredModels.map((m: any) => (
                                     <View key={m.id} style={styles.modelLibraryCard}>
                                         <Image source={{ uri: m.image_cover || m.image }} style={styles.modelLibraryThumb} />
                                         <View style={{ flex: 1, gap: 2 }}>
@@ -1052,7 +1182,7 @@ const styles = StyleSheet.create({
     label: { fontSize: 12, fontFamily: Fonts.bold, color: Colors.textPrimary, marginBottom: 8, textTransform: 'uppercase' },
     addModelBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
     addModelBtnText: { fontSize: 12, color: Colors.primary, fontFamily: Fonts.bold },
-    modelList: { gap: 12, marginBottom: 20 },
+    modelList: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 20 },
     modelTab: { alignItems: 'center', width: 66, gap: 4, opacity: 0.5 },
     activeTab: { opacity: 1 },
     tabImg: { width: 50, height: 50, borderRadius: 10, backgroundColor: '#f5f5f5' },
@@ -1122,5 +1252,37 @@ const styles = StyleSheet.create({
     sectionSub: { fontSize: 12, color: Colors.textMuted, fontFamily: Fonts.regular, marginTop: 2 },
     divider: { height: 1, backgroundColor: '#f0f0f0', marginVertical: 20 },
     chainSection: { gap: 15 },
-    chainList: { gap: 12, paddingBottom: 10 },
+    chainList: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, paddingBottom: 10 },
+    searchContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#fff',
+        borderWidth: 1,
+        borderColor: '#eee',
+        borderRadius: 12,
+        paddingHorizontal: 12,
+        marginBottom: 15,
+        height: 44,
+    },
+    searchIcon: { marginRight: 10 },
+    searchInput: {
+        flex: 1,
+        fontSize: 14,
+        fontFamily: Fonts.medium,
+        color: Colors.textPrimary,
+    },
+    globalBtn: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        paddingVertical: 10,
+        borderRadius: 12,
+    },
+    globalBtnText: {
+        color: '#fff',
+        fontSize: 11,
+        fontFamily: Fonts.bold,
+    },
 });

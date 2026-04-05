@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-    View, Text, StyleSheet, Modal, Image,
+    View, Text, StyleSheet, Modal,
     TouchableOpacity, Animated, Easing,
     StyleSheet as RNStyleSheet,
     Dimensions, Pressable, StatusBar, TextInput, Platform
 } from 'react-native';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
@@ -395,7 +396,7 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                 <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
 
                 {/* Background image */}
-                <Image source={{ uri: story.media_url }} style={StyleSheet.absoluteFill} resizeMode="contain" />
+                <Image source={{ uri: story.media_url }} style={StyleSheet.absoluteFill} contentFit="contain" />
 
                 {/* Gradient overlays */}
                 <LinearGradient
@@ -426,6 +427,18 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                 {story.metadata?.emojis?.map((e: any) => (
                     <Text key={e.id} style={[{ position: 'absolute', top: e.y * height, left: e.x * width, fontSize: 32 }, { pointerEvents: 'none' } as any]}>{e.emoji}</Text>
                 ))}
+                {story.metadata?.location && (
+                    <View style={[{ position: 'absolute', top: story.metadata.location.y * height, left: story.metadata.location.x * width - 60 }, { pointerEvents: 'none' } as any]}>
+                        <LinearGradient
+                            colors={[Colors.primary, Colors.primaryDark]}
+                            start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                            style={svs.locationPill}
+                        >
+                            <Ionicons name="location" size={12} color="#fff" />
+                            <Text style={svs.locationText}>{story.metadata.location.text}</Text>
+                        </LinearGradient>
+                    </View>
+                )}
 
                 {/* ── HEADER ── */}
                 <View style={[s.header, { paddingTop: insets.top + 10 }]}>
@@ -453,7 +466,12 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                             </View>
                             <View>
                                 <Text style={s.username}>{userGroup.display_name || userGroup.username}</Text>
-                                <Text style={s.capsuleRef}>{story.capsules?.title}</Text>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                    <View style={[s.capsuleTypeDot, { backgroundColor: Colors.primary }]} />
+                                    <Text style={s.capsuleRef}>{story.capsules?.title}</Text>
+                                    <View style={s.dotHeader} />
+                                    <Text style={s.timeRef}>{formatTimeAgo(story.created_at)}</Text>
+                                </View>
                             </View>
                         </TouchableOpacity>
 
@@ -525,7 +543,7 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                                     <Image
                                         source={{ uri: timerConfigManager.getModelImage(story.capsules?.model) || MODEL_IMAGES[story.capsules?.model] }}
                                         style={s.capsuleModel}
-                                        resizeMode="contain"
+                                        contentFit="contain"
                                     />
                                     <View style={s.capsuleChipText}>
                                         <Text style={s.capsuleChipLabel} numberOfLines={1}>{story.capsules?.title || 'View Capsule'}</Text>
@@ -537,7 +555,7 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                                     <Image
                                         source={{ uri: timerConfigManager.getModelImage(story.capsules?.model) || MODEL_IMAGES[story.capsules?.model] }}
                                         style={s.capsuleModel}
-                                        resizeMode="contain"
+                                        contentFit="contain"
                                     />
                                     <View style={s.capsuleChipText}>
                                         <Text style={s.capsuleChipLabel} numberOfLines={1}>{story.capsules?.title || 'View Capsule'}</Text>
@@ -717,4 +735,23 @@ const s = StyleSheet.create({
         color: 'rgba(255,255,255,0.88)', fontSize: 10,
         fontFamily: Fonts.semiBold, letterSpacing: 0.2,
     },
+    capsuleTypeDot: { width: 4, height: 4, borderRadius: 2 },
+    dotHeader: { width: 2, height: 2, borderRadius: 1, backgroundColor: 'rgba(255,255,255,0.4)', marginHorizontal: 2 },
+    timeRef: { fontSize: 11, fontFamily: Fonts.medium, color: 'rgba(255,255,255,0.6)' },
+});
+
+function formatTimeAgo(dateStr: string) {
+    const secs = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+    if (secs < 60) return 'Just now';
+    if (secs < 3600) return `${Math.floor(secs / 60)}m`;
+    if (secs < 86400) return `${Math.floor(secs / 3600)}h`;
+    return `${Math.floor(secs / 86400)}d`;
+}
+
+const svs = StyleSheet.create({
+    locationPill: {
+        flexDirection: 'row', alignItems: 'center', gap: 4,
+        paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12,
+    },
+    locationText: { color: '#fff', fontFamily: Fonts.bold, fontSize: 13 },
 });

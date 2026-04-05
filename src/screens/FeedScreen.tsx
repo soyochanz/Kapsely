@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
     View, Text, StyleSheet, ScrollView, TouchableOpacity,
-    Image, StatusBar, Modal, Pressable, Platform, Alert,
+    StatusBar, Modal, Pressable, Platform, Alert,
     Dimensions, Animated, Easing, ActivityIndicator
 } from 'react-native';
+import { Image } from 'expo-image';
+
 import { FlashList } from '@shopify/flash-list';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -97,13 +99,23 @@ const StoryBubble = React.memo(({ user, isOwn, onPress }: {
                             start={{ x: 0, y: 1 }} end={{ x: 1, y: 0 }}
                         >
                             <View style={st.avatarWrap}>
-                                <Image source={{ uri: avatarUri }} style={st.avatar} />
+                                <Image 
+                                    source={{ uri: avatarUri }} 
+                                    style={st.avatar} 
+                                    cachePolicy="memory-disk"
+                                    transition={200}
+                                />
                             </View>
                         </LinearGradient>
                     ) : (
                         <View style={[st.ring, st.ringRead, isOwn && { borderColor: Colors.primary + '80', borderStyle: 'dashed' }]}>
                             <View style={st.avatarWrap}>
-                                <Image source={{ uri: avatarUri }} style={st.avatar} />
+                                <Image 
+                                    source={{ uri: avatarUri }} 
+                                    style={st.avatar} 
+                                    cachePolicy="memory-disk"
+                                    transition={200}
+                                />
                             </View>
                         </View>
                     )
@@ -252,6 +264,9 @@ export default function FeedScreen() {
     const [capsules, setCapsules] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
+    const [page, setPage] = useState(0);
+    const [hasMore, setHasMore] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
     const [currentUserId, setCurrentUserId] = useState<string | null>(null);
     const [stories, setStories] = useState<any[]>([]);
     const [myStory, setMyStory] = useState<any>(null);
@@ -335,52 +350,28 @@ export default function FeedScreen() {
     // ─── Data loading ──────────────────────────────────────────────────────────
     const feedRequestId = useRef(0);
 
-    const loadFeed = useCallback(async (forceRefresh = false, tabOverride?: FeedTab) => {
+    const loadFeed = useCallback(async (forceRefresh = false, tabOverride?: FeedTab, isNewPage = false) => {
         const currentReqId = ++feedRequestId.current;
         const tab = tabOverride ?? activeTab;
-        const cacheKey = `${tab}_${activeFilter}`;
-        const cached = feedCache[cacheKey];
-
-        // Stale-While-Revalidate (SWR) logic:
-        // If we have VERY fresh cache (< 10s), show it and stop.
-        // If cache is older, show it as a preview BUT keep loading state active if it's the first pull
-        // to avoid the jarring "pop" of new data replacing stale data immediately.
-        const hasStaleData = cached && cached.data.length > 0;
-        const isFresh = hasStaleData && (Date.now() - cached.ts) < 10000;
-
-        if (isFresh && !forceRefresh) {
-            setCapsules(cached.data);
-            setLoading(false);
-            return;
-        }
-
-        if (hasStaleData) {
-            // Explicit user request: "like it is loading and then loads the correct post".
-            // To achieve this, if the cache is stale, we preferred showing the skeleton 
-            // over showing potentially incorrect (stale) data that will jump.
-            setLoading(true);
-            setCapsules([]); // Clear to force skeleton via ListEmptyComponent
-        } else if (!forceRefresh) {
-            const diskCached = await AsyncStorage.getItem(`feed_cache_${cacheKey}`);
-            if (diskCached && feedRequestId.current === currentReqId) {
-                const parsed = JSON.parse(diskCached);
-                const isDiskFresh = (Date.now() - parsed.ts) < 10000;
-                if (isDiskFresh) {
-                    setCapsules(parsed.data);
-                    setLoading(false);
-                    return;
-                }
-                // Stale disk cache: show skeleton
-                setLoading(true);
-                setCapsules([]);
+        const currentPage = isNewPage ? page + 1 : 0;
+        const PAGE_SIZE = 15;
+        
+        if (!isNewPage && !forceRefresh) {
+            const cacheKey = `${tab}_${activeFilter}`;
+            const cached = feedCache[cacheKey];
+            if (cached && (Date.now() - cached.ts) < 10000) {
+                setCapsules(cached.data);
+                setLoading(false);
+                return;
             }
         }
-        if (!refreshing) setLoading(true);
+
+        if (isNewPage) setLoadingMore(true);
+        else if (!refreshing) setLoading(true);
 
         const { data: { session } } = await supabase.auth.getSession();
-
         const user = session?.user;
-        if (!user) { setLoading(false); setRefreshing(false); return; }
+        if (!user) { setLoading(false); setRefreshing(false); setLoadingMore(false); return; }
         setCurrentUserId(user.id);
 
         const [blocked, followsResult] = await Promise.all([
@@ -388,7 +379,6 @@ export default function FeedScreen() {
             supabase.from('follows').select('following_id').eq('follower_id', user.id),
         ]);
         
-        // Final check before state update after slow network calls
         if (feedRequestId.current !== currentReqId) return;
 
         setBlockedUserIds(blocked);
@@ -400,13 +390,16 @@ export default function FeedScreen() {
             setCapsules([]);
             setLoading(false);
             setRefreshing(false);
+            setLoadingMore(false);
+            setHasMore(false);
             return;
         }
 
+        // --- Optimized Query with Pagination ---
         let itemsQuery = supabase
             .from('capsule_items')
             .select(`
-                *,
+                id, media_url, media_type, thumbnail_url, content, caption, created_at, owner_id, capsule_id,
                 profiles:owner_id(username, display_name, avatar_url, is_verified),
                 capsules:capsule_id!inner(
                     id, title, is_public, type, status, opens_at,
@@ -434,70 +427,27 @@ export default function FeedScreen() {
         else if (activeFilter === 'open') itemsQuery = itemsQuery.eq('capsules.status', 'opened');
 
         const rpcName = tab === 'explore' ? 'get_explore_feed' : 'get_following_feed';
-        const rpcLimit = tab === 'following' ? 60 : 80;
+        const rangeStart = currentPage * PAGE_SIZE;
+        const rangeEnd = (currentPage + 1) * PAGE_SIZE - 1;
 
         const [rpcResult, itemsResult] = await Promise.all([
-            supabase.rpc(rpcName, { req_user_id: user.id, req_filter: 'all', req_limit: rpcLimit }),
-            itemsQuery.order('created_at', { ascending: false }).limit(80),
+            supabase.rpc(rpcName, { 
+                req_user_id: user.id, 
+                req_filter: activeFilter, 
+                req_limit: PAGE_SIZE 
+            }),
+            itemsQuery.order('created_at', { ascending: false }).range(rangeStart, rangeEnd),
         ]);
 
         if (feedRequestId.current !== currentReqId) return;
 
         let capsData = (rpcResult.data || []) as any[];
-
-        // Identify capsules missing critical UI info (model, type, or valid model string)
-        const idsMissingInfo = capsData
-            .filter(c => !c.model || typeof c.model !== 'string' || c.model.length < 3)
-            .map(c => c.id);
-
-        if (idsMissingInfo.length > 0) {
-            const { data: fullInfo } = await supabase
-                .from('capsules')
-                .select('id, model, chain_id, description')
-                .in('id', idsMissingInfo);
-            
-            if (fullInfo) {
-                capsData = capsData.map(c => {
-                    const extra = fullInfo.find(f => f.id === c.id);
-                    return extra ? { ...c, ...extra } : c;
-                });
-            }
-        }
-
-        capsData = capsData
-            .filter((c: any) => {
-                if (blocked.includes(c.owner_id) || c.type === 'eventcap') return false;
-                if (activeFilter === 'closed' && c.status !== 'sealed') return false;
-                if (activeFilter === 'open' && c.status !== 'opened') return false;
-                
-                // Strict age filter for capsules
-                const ageHours = (Date.now() - new Date(c.created_at).getTime()) / 3600000;
-                if (ageHours > MAX_CONTENT_AGE_HOURS) return false;
-
-                return true;
-            })
-            .map((c: any) => {
-                const now = Date.now();
-                const createdTs = new Date(c.created_at).getTime();
-                const hoursOld = Math.max(0, (now - createdTs) / 3600000);
-                
-                // Base score from RPC or 0
-                const baseScore = c.score || c.total_score || 0;
-                
-                // Recency: Faster decay for old content, strong boost for new content
-                // exp(-0.06 * hoursOld) gives ~0.5 at 12h, ~0.24 at 24h
-                const recencyScore = Math.exp(-0.06 * hoursOld) * 100;
-                
-                // Freshness Boost: Extra points for the first hours
-                const freshBoost = hoursOld < 2 ? 60 : hoursOld < 12 ? 30 : 0;
-                
-                const score = baseScore + recencyScore + freshBoost + 20; // +20 base for capsule cards
-                return { ...c, feedType: 'capsule', total_score: score };
-            });
-
         const activityData = (itemsResult.data || []) as any[];
 
-        // ── Agrupar items por batch ───────────────────────────────────────────
+        if (activityData.length < PAGE_SIZE) setHasMore(false);
+        else setHasMore(true);
+
+        // --- Deduplication & Grouping ---
         const groupedActivity: any[] = [];
         const activityProcessed = new Set<string>();
 
@@ -516,8 +466,7 @@ export default function FeedScreen() {
                     const nextBatch = next.caption?.match(/!!b:(\w+)/)?.[1];
                     if (
                         next.capsule_id === item.capsule_id &&
-                        nextBatch === batch &&
-                        ['image', 'video', 'audio', 'note'].includes(next.media_type)
+                        nextBatch === batch
                     ) {
                         group.push(next);
                         activityProcessed.add(next.id);
@@ -528,21 +477,7 @@ export default function FeedScreen() {
             const now = Date.now();
             const itemTs = new Date(item.created_at).getTime();
             const hoursOld = Math.max(0, (now - itemTs) / 3600000);
-            
-            // Client-side score: recency + freshness + media richness + group bonus
-            const mediaBonus = item.media_type === 'video' ? 20
-                             : item.media_type === 'audio' ? 15
-                             : item.media_type === 'note'  ? 5
-                             : 8; // image
-            
-            const groupBonus  = group.length >= 3 ? 15 : group.length === 2 ? 8 : 0;
-            
-            // Use same decay as capsules but WITHOUT the 0.5/0.8 penalty
-            const recencyRaw  = Math.exp(-0.06 * hoursOld) * 100;
-            const freshBoost  = hoursOld < 2 ? 70 : hoursOld < 12 ? 35 : 0;
-            
-            // Activity gets a higher base boost (+40 vs +20) to favor content over status
-            const score = recencyRaw + freshBoost + mediaBonus + groupBonus + 40;
+            const score = Math.exp(-0.06 * hoursOld) * 100 + (group.length > 1 ? 20 : 0) + 40;
 
             groupedActivity.push(
                 group.length > 1
@@ -551,77 +486,26 @@ export default function FeedScreen() {
             );
         });
 
-        // ── Deduplicate by capsule_id, keeping the highest score ─────────────
-        const combined = [...capsData, ...groupedActivity];
-        const bestForCapsule: Record<string, any> = {};
-        const standaloneItems: any[] = [];
+        // Merge and Sort
+        const combined = isNewPage ? groupedActivity : [...capsData.map(c => ({...c, feedType: 'capsule', total_score: (c.score || 0) + 20})), ...groupedActivity];
+        
+        let merged = combined.sort((a, b) => (b.total_score || 0) - (a.total_score || 0));
 
-        combined.forEach(item => {
-            const cid = item.feedType === 'capsule' ? item.id : item.capsule_id;
-            if (!cid) {
-                standaloneItems.push(item);
-                return;
-            }
-            if (!bestForCapsule[cid] || item.total_score > bestForCapsule[cid].total_score) {
-                bestForCapsule[cid] = item;
-            }
-        });
-
-        let merged = [...Object.values(bestForCapsule), ...standaloneItems].sort((a, b) => {
-            const sa = a.total_score ?? 0;
-            const sb = b.total_score ?? 0;
-            return sb - sa;
-        });
-
-        // ── Author diversity: track counts separately per feed type ─────────
-        // - Capsule cards (feedType='capsule'): max 2 per author
-        // - Activity items (feedType='activity'|'activity_group'): max 2 per author
-        // - No more than 2 CONSECUTIVE items from the same author
-        const capsuleAuthorCount: Record<string, number> = {};
-        const activityAuthorCount: Record<string, number> = {};
-        const diversified: any[] = [];
-
-        for (const item of merged) {
-            const oid = item.owner_id;
-            const isCapsuleCard = item.feedType === 'capsule';
-
-            if (isCapsuleCard) {
-                const count = capsuleAuthorCount[oid] ?? 0;
-                if (count >= 2) continue;
-                capsuleAuthorCount[oid] = count + 1;
-            } else {
-                const count = activityAuthorCount[oid] ?? 0;
-                if (count >= 2) continue;
-                activityAuthorCount[oid] = count + 1;
-            }
-
-            // Also prevent 3+ consecutive from the same author
-            const last2 = diversified.slice(-2);
-            if (
-                last2.length === 2 &&
-                last2[0].owner_id === oid &&
-                last2[1].owner_id === oid
-            ) continue;
-
-            diversified.push(item);
+        if (isNewPage) {
+            setCapsules(prev => [...prev, ...merged]);
+            setPage(currentPage);
+        } else {
+            setCapsules(merged);
+            setPage(0);
+            const cacheKey = `${tab}_${activeFilter}`;
+            setFeedCache(prev => ({ ...prev, [cacheKey]: { data: merged, ts: Date.now() } }));
         }
 
-        // ── Record capsule IDs into impression buffer (DB flush later) ────────
-        const capsuleIds = diversified
-            .filter(i => i.feedType === 'capsule' && i.id)
-            .map(i => i.id as string);
-        if (capsuleIds.length && user.id) {
-            capsuleIds.forEach(id => impressionBufferRef.current.add(id));
-        }
-
-        if (feedRequestId.current !== currentReqId) return;
-
-        setCapsules(diversified);
-        setFeedCache(prev => ({ ...prev, [cacheKey]: { data: diversified, ts: Date.now() } }));
-        AsyncStorage.setItem(`feed_cache_${cacheKey}`, JSON.stringify({ data: diversified, ts: Date.now() }));
         setLoading(false);
         setRefreshing(false);
-    }, [activeTab, activeFilter, refreshing, feedCache]);
+        setLoadingMore(false);
+    }, [activeTab, activeFilter, page, feedCache]);
+
 
     // ─── Stories ───────────────────────────────────────────────────────────────
     const loadStories = useCallback(async (userIdOverride?: string, blockedIds?: string[]) => {
@@ -699,7 +583,27 @@ export default function FeedScreen() {
                 Alert.alert(t('common.warning'), t('feed.story_cooldown_active'));
                 return;
             }
-            const { data } = await supabase.from('capsules').select('*').eq('owner_id', currentUserId);
+
+            // Check for persistent global pending pick
+            try {
+                const globalPickKey = `@flash_global_pick_${currentUserId}`;
+                const saved = await AsyncStorage.getItem(globalPickKey);
+                if (saved) {
+                    const { capsule: savedCap, item: savedItem } = JSON.parse(saved);
+                    // Verify if capsule still exists and is not opened (if it was sealed)
+                    setSelectedPickerCapsule(savedCap);
+                    setRandomPreviewItem(savedItem);
+                    setSearching(false);
+                    setPickerStep('animation');
+                    setShowCapsulePicker(true);
+                    return;
+                }
+            } catch (e) {}
+
+            const { data } = await supabase.from('capsules')
+                .select('*, profiles:owner_id(username, display_name, avatar_url)')
+                .or(`owner_id.eq.${currentUserId},and(is_public.eq.true,status.eq.opened)`)
+                .order('created_at', { ascending: false });
             if (data && data.length > 0) {
                 setUserCapsules(data);
                 setPickerStep('list');
@@ -736,6 +640,12 @@ export default function FeedScreen() {
                 setSearching(false);
                 setRandomPreviewItem(savedItem);
                 unblurAnim.setValue(0);
+                
+                // Also ensure global pick is updated to this item
+                try {
+                    const globalPickKey = `@flash_global_pick_${currentUserId}`;
+                    await AsyncStorage.setItem(globalPickKey, JSON.stringify({ capsule, item: savedItem }));
+                } catch (e) {}
             } else {
                 setSearching(true);
                 Animated.loop(Animated.sequence([
@@ -750,6 +660,8 @@ export default function FeedScreen() {
                     // Persist selection
                     try {
                         await AsyncStorage.setItem(storageKey, random.id);
+                        const globalPickKey = `@flash_global_pick_${currentUserId}`;
+                        await AsyncStorage.setItem(globalPickKey, JSON.stringify({ capsule, item: random }));
                     } catch (e) {}
 
                     setSearching(false);
@@ -762,15 +674,23 @@ export default function FeedScreen() {
     }, [t, currentUserId]);
 
     const rejectRandomStory = useCallback(async () => {
-        const cd = new Date(); cd.setHours(cd.getHours() + 48);
-        const { error } = await supabase.from('profiles')
-            .update({ story_cooldown_until: cd.toISOString() }).eq('id', currentUserId);
+        // No penalty for rejecting/canceling before actual post confirmation
+        // Clear global pick so user can choose another capsule
+        try {
+            const globalPickKey = `@flash_global_pick_${currentUserId}`;
+            await AsyncStorage.removeItem(globalPickKey);
+        } catch (e) {}
+        
         setPickerStep('list');
-        setShowCapsulePicker(false);
-        if (!error) Alert.alert(t('common.warning'), t('feed.story_cooldown_active'));
-    }, [currentUserId, t]);
+    }, [currentUserId]);
 
     const confirmStory = useCallback(async (item: any, metadata: any = {}) => {
+        // Clear global pick upon successful post
+        try {
+            const globalPickKey = `@flash_global_pick_${currentUserId}`;
+            await AsyncStorage.removeItem(globalPickKey);
+        } catch (e) {}
+        
         const expiresAt = new Date(); expiresAt.setHours(expiresAt.getHours() + 48); // Flashes last 48h
         const { data: cap } = await supabase.from('capsules')
             .select('status').eq('id', item.capsule_id).single();
@@ -911,10 +831,16 @@ export default function FeedScreen() {
 
     const onRefresh = useCallback(() => {
         setRefreshing(true);
-        const cacheKey = `${activeTab}_${activeFilter}`;
-        setFeedCache(prev => { const n = { ...prev }; delete n[cacheKey]; return n; });
+        setPage(0);
+        setHasMore(true);
         loadFeed(true);
-    }, [activeTab, activeFilter, loadFeed]);
+    }, [loadFeed]);
+
+    const handleLoadMore = useCallback(() => {
+        if (!loadingMore && hasMore && !loading) {
+            loadFeed(false, activeTab, true);
+        }
+    }, [loadingMore, hasMore, loading, loadFeed, activeTab]);
 
     const keyExtractor = useCallback((item: any) => item.id, []);
 
@@ -1007,12 +933,35 @@ export default function FeedScreen() {
                         <Image
                             source={{ uri: 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/website/Logomain.png' }}
                             style={s.logoImg}
-                            resizeMode="contain"
+                            contentFit="contain"
+                            cachePolicy="memory-disk"
                         />
                         <Text style={s.logoText}>kapsely</Text>
                     </View>
 
                     <View style={s.headerActions}>
+                        <TouchableOpacity
+                            style={[s.actionBtnSecondary, { width: 44, height: 44, borderRadius: 14, marginRight: 8 }]}
+                            activeOpacity={0.7}
+                            onPress={() => navigation.navigate('Connect')}
+                        >
+                            <View style={{ width: 20, height: 20 }}>
+                                {/* Background Card */}
+                                <View style={{ 
+                                    width: 14, height: 18, borderRadius: 3.5, borderWidth: 1.8, borderColor: Colors.primary, 
+                                    position: 'absolute', top: 0, right: 0, opacity: 0.45, transform: [{ rotate: '8deg' }]
+                                }} />
+                                {/* Foreground Card */}
+                                <View style={{ 
+                                    width: 14, height: 18, borderRadius: 3.5, borderWidth: 1.8, borderColor: Colors.primary, 
+                                    position: 'absolute', bottom: 0, left: 0, backgroundColor: Colors.cardAlt
+                                }}>
+                                    <View style={{ width: 6, height: 1.2, backgroundColor: Colors.primary, borderRadius: 1, marginTop: 4, marginLeft: 3, opacity: 0.6 }} />
+                                    <View style={{ width: 8, height: 1.2, backgroundColor: Colors.primary, borderRadius: 1, marginTop: 2, marginLeft: 3, opacity: 0.4 }} />
+                                </View>
+                            </View>
+                        </TouchableOpacity>
+
                         <TouchableOpacity
                             style={[s.actionBtnSecondary, hasUnread && s.actionBtnUnread, { width: 44, height: 44, borderRadius: 14 }]}
                             activeOpacity={0.7}
@@ -1064,10 +1013,18 @@ export default function FeedScreen() {
                 contentContainerStyle={[s.listContent, { paddingBottom: insets.bottom + 90 }]}
                 refreshing={refreshing}
                 onRefresh={onRefresh}
+                onEndReached={handleLoadMore}
+                onEndReachedThreshold={0.5}
                 ListHeaderComponent={ListHeader}
                 renderItem={renderItem}
-                // @ts-ignore - FlashList typing mismatch in this specific setup
-                estimatedItemSize={280}
+                // @ts-ignore
+                estimatedItemSize={350}
+
+                ListFooterComponent={() => loadingMore ? (
+                    <View style={{ paddingVertical: 20 }}>
+                        <ActivityIndicator color={Colors.primary} />
+                    </View>
+                ) : null}
                 ListEmptyComponent={() =>
                     loading ? (
                         <FeedSkeleton />
@@ -1100,7 +1057,7 @@ export default function FeedScreen() {
                 visible={showCapsulePicker}
                 transparent
                 animationType="slide"
-                onRequestClose={() => { pickerStep === 'animation' ? rejectRandomStory() : setShowCapsulePicker(false); }}
+                onRequestClose={() => { setShowCapsulePicker(false); }}
             >
                 <View style={s.pickerOverlay}>
                     <View style={[
@@ -1143,9 +1100,11 @@ export default function FeedScreen() {
                                             <Image
                                                 source={{ uri: timerConfigManager.getModelImage(cap.model) || MODEL_IMAGES[cap.model] || (MODEL_IMAGES as any).basicred_kap }}
                                                 style={s.pickerModelImg}
-                                                resizeMode="contain"
+                                                contentFit="contain"
+                                                cachePolicy="memory-disk"
                                             />
                                         </View>
+
                                         <View style={{ flex: 1 }}>
                                             <Text style={s.pickerItemTitle}>{cap.title}</Text>
                                             <Text style={[s.pickerItemStatus, { color: cap.status === 'opened' ? Colors.success : Colors.primary }]}>
@@ -1169,8 +1128,14 @@ export default function FeedScreen() {
                                         activeOpacity={0.8}
                                         onPress={() => { setEditingItem(item); setPickerStep('edit'); }}
                                     >
-                                        <Image source={{ uri: item.media_url }} style={s.pickerGridImg} />
+                                        <Image 
+                                            source={{ uri: item.media_url }} 
+                                            style={s.pickerGridImg}
+                                            cachePolicy="memory-disk"
+                                            transition={200}
+                                        />
                                     </TouchableOpacity>
+
                                 )}
                                 // @ts-ignore
                                 estimatedItemSize={80}
@@ -1191,7 +1156,13 @@ export default function FeedScreen() {
                                 ) : (
                                     <View style={{ width: '100%', alignItems: 'center' }}>
                                         <View style={s.previewImgWrap}>
-                                            <Image source={{ uri: randomPreviewItem?.media_url }} style={s.previewImg} />
+                                            <Image 
+                                                source={{ uri: randomPreviewItem?.media_url }} 
+                                                style={s.previewImg} 
+                                                cachePolicy="memory-disk"
+                                                transition={300}
+                                            />
+
                                             <Animated.View style={[StyleSheet.absoluteFill, { opacity: unblurAnim }]}>
                                                 {Platform.OS === 'ios' ? (
                                                     <BlurView intensity={50} tint="dark" style={StyleSheet.absoluteFill} />
@@ -1202,8 +1173,12 @@ export default function FeedScreen() {
                                         </View>
                                         <Text style={s.animTitle}>A memory has surfaced!</Text>
                                         <View style={s.previewActions}>
-                                            <TouchableOpacity style={s.previewCancelBtn} activeOpacity={0.7} onPress={rejectRandomStory}>
-                                                <Text style={s.previewCancelText}>Cancel</Text>
+                                            <TouchableOpacity 
+                                                style={s.previewCancelBtn} 
+                                                activeOpacity={0.7} 
+                                                onPress={rejectRandomStory}
+                                            >
+                                                <Text style={s.previewCancelText}>Choose Another</Text>
                                             </TouchableOpacity>
                                             <TouchableOpacity
                                                 style={s.previewConfirmBtn}
