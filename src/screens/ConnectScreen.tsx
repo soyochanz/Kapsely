@@ -105,14 +105,12 @@ export default function ConnectScreen() {
             handleFollow(item.id);
         }
         
-        // Let React update the current index first, the position reset happens in useEffect
+        // Reset position securely BEFORE updating the index to ensure the next card starts at 0
+        position.setValue({ x: 0, y: 0 });
         setCurrentIndex(prev => prev + 1);
     };
 
-    useEffect(() => {
-        // Reset position securely ONLY when react has actually updated the index
-        position.setValue({ x: 0, y: 0 });
-    }, [currentIndex]);
+    // Remove the useEffect that caused the flicker by resetting position too late
 
     const handleFollow = async (capsuleId: string) => {
         const uid = userIdRef.current;
@@ -222,7 +220,7 @@ export default function ConnectScreen() {
 
     const renderCard = (item: any, index: number) => {
         if (index < currentIndex) return null;
-        if (index > currentIndex + 2) return null;
+        if (index > currentIndex + 10) return null; // Increase pre-render stack for smoother fast swiping
 
         const isCurrent = index === currentIndex;
         

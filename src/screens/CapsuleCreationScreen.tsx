@@ -1140,7 +1140,8 @@ export default function CapsuleCreationScreen() {
                 is_public: selectedType === 'opencap' ? true : isPublic,
                 status: selectedType === 'opencap' ? 'opened' : 'sealed',
                 chain_id: selectedChainId || null,
-                guardian_id: (selectedMode === 'closed' && useCapAngel && selectedCapAngel) ? selectedCapAngel.id : null,
+                cap_angel: (selectedMode === 'closed' && useCapAngel && selectedCapAngel) ? true : false,
+                cap_angel_handle: (selectedMode === 'closed' && useCapAngel && selectedCapAngel) ? selectedCapAngel.username : null,
             }).select().single();
 
             if (error) throw error;
