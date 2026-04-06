@@ -17,6 +17,7 @@ import { Colors, Fonts, Spacing, Shadow, BorderRadius } from '../theme';
 import { supabase } from '../lib/supabase';
 import { sendPushNotification } from '../utils/pushNotifications';
 import { MODEL_IMAGES, MODEL_TINTS, MODEL_IMAGES_OPEN } from '../constants/models';
+import LiveTimer from '../components/LiveTimer';
 import CapsuleWithTimer from '../components/CapsuleWithTimer';
 import LiveChat, { LiveChatRef } from '../components/LiveChat';
 import VerifiedBadge from '../components/VerifiedBadge';
@@ -46,39 +47,6 @@ const D = {
     rose: '#C06090',
     purple: '#7C5CBF',
     purpleLight: '#F3EEFF',
-};
-
-const getPreciseRemaining = (targetDate: string) => {
-    const now = new Date();
-    const target = new Date(targetDate);
-    if (target <= now) return '0 días';
-    const parts: string[] = [];
-    let cursor = new Date(now);
-    const pushUnit = (value: number, singular: string, plural: string) => {
-        if (value > 0) parts.push(`${value} ${value === 1 ? singular : plural}`);
-    };
-
-    let years = 0;
-    while (new Date(cursor.getFullYear() + 1, cursor.getMonth(), cursor.getDate(), cursor.getHours(), cursor.getMinutes(), cursor.getSeconds()) <= target) {
-        years += 1;
-        cursor.setFullYear(cursor.getFullYear() + 1);
-    }
-    let months = 0;
-    while (new Date(cursor.getFullYear(), cursor.getMonth() + 1, cursor.getDate(), cursor.getHours(), cursor.getMinutes(), cursor.getSeconds()) <= target) {
-        months += 1;
-        cursor.setMonth(cursor.getMonth() + 1);
-    }
-    const diffMs = target.getTime() - cursor.getTime();
-    const totalDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-    const weeks = Math.floor(totalDays / 7);
-    const days = totalDays % 7;
-
-    pushUnit(years, 'año', 'años');
-    pushUnit(months, 'mes', 'meses');
-    pushUnit(weeks, 'semana', 'semanas');
-    pushUnit(days, 'día', 'días');
-
-    return parts.length ? parts.join(' · ') : 'menos de 1 día';
 };
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
@@ -1034,7 +1002,6 @@ function CapsuleDetailScreen() {
                             isOwner={isOwner} canBeOpened={canBeOpened} hasRequestedOpen={hasRequestedOpen}
                             handleRequestOpen={handleRequestOpen} reqCount={reqCount} isBornOpen={isBornOpen} userId={userId}
                             setCapsule={setCapsule}
-                            handleLike={handleLike}
 
                         />
                     )}
@@ -1408,26 +1375,10 @@ function CapsuleDetailScreen() {
 const CapsuleHero = React.memo(({
     capsule, tint, isMember, isSealed, isOpening, modelImg, totalMembers,
     likeCount, followerCount, isFollowedCapsule, handleCapsuleFollowToggle,
-    isOwner, canBeOpened, hasRequestedOpen, handleRequestOpen, reqCount, isBornOpen, userId, setCapsule, handleLike
+    isOwner, canBeOpened, hasRequestedOpen, handleRequestOpen, reqCount, isBornOpen, userId, setCapsule
 }: any) => {
     const { t } = useTranslation();
     const navigation = useNavigation<any>();
-    const lastTapRef = useRef(0);
-    const tapTimeoutRef = useRef<any>(null);
-
-    const handleCapsuleTap = () => {
-        const now = Date.now();
-        if (now - lastTapRef.current < 260) {
-            if (tapTimeoutRef.current) clearTimeout(tapTimeoutRef.current);
-            handleLike?.();
-            lastTapRef.current = 0;
-            return;
-        }
-        lastTapRef.current = now;
-        tapTimeoutRef.current = setTimeout(() => {
-            if (isMember && isSealed && !isOpening) navigation.navigate('CreateSelection', { capsuleId: capsule.id });
-        }, 220);
-    };
     return (
         <View style={ds.heroSection}>
             <View style={ds.capsuleStage}>
@@ -1435,7 +1386,7 @@ const CapsuleHero = React.memo(({
                 <View style={[ds.capsuleGlowInner, { backgroundColor: tint + '10' }]} />
                 <TouchableOpacity
                     activeOpacity={0.92}
-                    onPress={handleCapsuleTap}
+                    onPress={() => { if (isMember && isSealed && !isOpening) navigation.navigate('CreateSelection', { capsuleId: capsule.id }); }}
                     disabled={!isMember || !isSealed || isOpening}
                     style={{ zIndex: 2 }}
                 >
@@ -1494,9 +1445,10 @@ const CapsuleHero = React.memo(({
 
                                 <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
                                     {!canBeOpened || isOpening ? (
-                                        <Text style={[ds.countdownTimer, { color: D.text, minWidth: 80 }]}>
-                                            {getPreciseRemaining(isOpening ? capsule.opening_at : capsule.opens_at)}
-                                        </Text>
+                                        <LiveTimer 
+                                            date={isOpening ? capsule.opening_at : capsule.opens_at} 
+                                            style={[ds.countdownTimer, { color: D.text, minWidth: 80 }]} 
+                                        />
                                     ) : (
                                         <Text style={[ds.countdownTimer, { color: tint }]}>READY! ✨</Text>
                                     )}

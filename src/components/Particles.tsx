@@ -21,14 +21,14 @@ const Particles: React.FC<ParticlesProps> = ({ activeTint, capsuleType }) => {
     const isLegacy = capsuleType === 'legacycap';
 
     // EventCap: fewer but larger star particles; others: small dots
-    const count = isEvent ? 8 : 10;
+    const count = isEvent ? 12 : 15;
 
     const particles = useRef([...Array(count)].map((_, i) => ({
         id: Math.random().toString(),
         left: `${Math.random() * 100}%`,
         top: `${Math.random() * 100}%`,
         size: isEvent ? Math.random() * 6 + 5 : Math.random() * 4 + 2,
-        duration: Math.random() * 3600 + (isEvent ? 1800 : 2400),
+        duration: Math.random() * 3000 + (isEvent ? 1500 : 2000),
         opacity: new Animated.Value(0),
         translateY: new Animated.Value(0),
         translateX: new Animated.Value(0),
