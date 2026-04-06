@@ -1,18 +1,15 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Dimensions, Alert, Platform } from 'react-native';
 import { Image } from 'expo-image';
 
-import { supabase } from '../lib/supabase';
+
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts, BorderRadius, Spacing, Shadow } from '../theme';
 import { useNavigation } from '@react-navigation/native';
-import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
-import LiveTimer from './LiveTimer';
-import CapsuleWithTimer from './CapsuleWithTimer';
-import { timerConfigManager } from '../utils/timerConfig';
 import { MODEL_IMAGES, MODEL_IMAGES_OPEN } from '../constants/models';
 import VerifiedBadge from './VerifiedBadge';
+import { timerConfigManager } from '../utils/timerConfig';
 
 const { width } = Dimensions.get('window');
 
@@ -27,12 +24,21 @@ const TYPE_COLORS: Record<string, string[]> = {
 const MEDIA_ICONS: Record<string, string> = {
     image:  'image',
     video:  'videocam',
-    audio:  'stats-chart',
+    audio:  'mic',
     note:   'document-text',
     default:'attach',
 };
 
-const CollageView = ({ items, count, isSealed }: { items: any[], count: number, isSealed: boolean }) => {
+const MEDIA_LABELS: Record<string, string> = {
+    image:  'Photo',
+    video:  'Video',
+    audio:  'Voice Note',
+    note:   'Written Note',
+    default:'Content',
+};
+
+// ─── Collage View (for grouped activity) ─────────────────────────────────────
+const CollageView = React.memo(({ items, count, isSealed }: { items: any[]; count: number; isSealed: boolean }) => {
     const displayItems = items.slice(0, 4);
     return (
         <View style={styles.collageContainer}>
@@ -40,17 +46,16 @@ const CollageView = ({ items, count, isSealed }: { items: any[], count: number, 
                 <Image
                     source={{ uri: displayItems[0].thumbnail_url || displayItems[0].media_url }}
                     style={StyleSheet.absoluteFill}
-                    blurRadius={Platform.OS === 'ios' ? 12 : 30}
+                    blurRadius={Platform.OS === 'ios' ? 35 : 15}
                     contentFit="cover"
                     cachePolicy="memory-disk"
-                    transition={200}
+                    recyclingKey={`collage-sealed-${displayItems[0].id}`}
                 />
-
             ) : (
                 <View style={styles.collageGrid}>
                     {displayItems.map((item, idx) => (
                         <Image
-                            key={idx}
+                            key={item.id || idx}
                             source={{ uri: item.thumbnail_url || item.media_url }}
                             style={[
                                 styles.collageImage,
@@ -60,532 +65,737 @@ const CollageView = ({ items, count, isSealed }: { items: any[], count: number, 
                             ]}
                             contentFit="cover"
                             cachePolicy="memory-disk"
-                            transition={200}
+                            recyclingKey={`collage-${item.id || idx}`}
                         />
-
                     ))}
                 </View>
             )}
             {isSealed && (
-                Platform.OS === 'ios' ? (
-                    <BlurView intensity={45} tint="light" style={StyleSheet.absoluteFill} />
-                ) : (
-                    <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255,255,255,0.45)' }]} />
-                )
+                <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255,255,255,0.5)' }]} />
             )}
-            {/* Group count badge — bottom right, smaller & premium */}
+            {/* Group count badge */}
             <View style={styles.groupCountBadge}>
-                <Ionicons name="images" size={14} color="#fff" />
-                <Text style={styles.groupCountText}>+{count}</Text>
+                <Ionicons name="layers" size={12} color="#fff" />
+                <Text style={styles.groupCountText}>{count}</Text>
             </View>
         </View>
     );
-};
+});
 
-interface TimelineActivityProps {
-    item: any;
-}
-
-const Waveform = ({ active = true }: { active?: boolean }) => {
-    // Stable random-looking heights for the waveform
-    const heights = [18, 32, 24, 38, 28, 35, 22, 16];
+// ─── Waveform (for audio) ────────────────────────────────────────────────────
+const Waveform = React.memo(() => {
+    const heights = [14, 26, 18, 32, 22, 30, 16, 12];
     return (
         <View style={styles.waveContainer}>
             {heights.map((h, i) => (
-                <View 
-                    key={i} 
-                    style={[
-                        styles.waveBar, 
-                        { 
-                            height: h,
-                            opacity: active ? 1 : 0.5,
-                            backgroundColor: '#fff'
-                        }
-                    ]} 
-                />
+                <View key={i} style={[styles.waveBar, { height: h }]} />
             ))}
         </View>
     );
-};
+});
 
-export default React.memo(function TimelineActivity({ item }: TimelineActivityProps) {
+// ─── Media Type Badge ────────────────────────────────────────────────────────
+const MediaTypeBadge = React.memo(({ type }: { type: string }) => {
+    const icon = MEDIA_ICONS[type] ?? MEDIA_ICONS.default;
+    const label = MEDIA_LABELS[type] ?? MEDIA_LABELS.default;
+    const isVideo = type === 'video';
+    return (
+        <View style={[styles.mediaTypeBadge, isVideo && { backgroundColor: 'rgba(239,68,68,0.85)' }]}>
+            <Ionicons name={icon as any} size={10} color="#fff" />
+            <Text style={styles.mediaTypeBadgeText}>{label}</Text>
+        </View>
+    );
+});
+
+interface TimelineActivityProps {
+    item: any;
+    currentUserId?: string | null;
+    isFollowed?: boolean;
+    hasAccess?: boolean;
+    onFollow?: (userId: string, isFollowed: boolean) => void;
+    lightweight?: boolean;
+    gridMode?: boolean;
+}
+
+export default React.memo(function TimelineActivity({ 
+    item, 
+    currentUserId, 
+    isFollowed: isFollowedProp = false,
+    hasAccess: hasAccessProp = true,
+    onFollow,
+    lightweight,
+    gridMode
+}: TimelineActivityProps) {
     const navigation = useNavigation<any>();
     const profile = item.profiles || { username: 'user', avatar_url: null };
     const capsule = Array.isArray(item.capsules) ? item.capsules[0] : (item.capsules || { title: 'Capsule', type: 'instacap', model: 'basicred_kap' });
 
     const isAudio = item.media_type === 'audio';
     const isNote  = item.media_type === 'note';
+    const isVideo = item.media_type === 'video';
+    const isGroup = item.feedType === 'activity_group';
 
-    // Simple map lookups — no function call, no recreated objects per render
     const typeColors = TYPE_COLORS[capsule.type] ?? TYPE_COLORS.default;
     const mediaIcon  = MEDIA_ICONS[item.media_type] ?? MEDIA_ICONS.default;
 
-    // Determine access
-    const [currentUserId, setCurrentUserId] = React.useState<string | null>(null);
-    const [hasAccess, setHasAccess] = React.useState(true);
-    const [isFollowed, setIsFollowed] = useState(false);
-
-    React.useEffect(() => {
-        const checkAccess = async () => {
-             const { data: { user } } = await supabase.auth.getUser();
-             if (user) {
-                 setCurrentUserId(user.id);
-                 const access = capsule.is_public || capsule.owner_id === user.id || item.owner_id === user.id || capsule.is_participant;
-                 setHasAccess(!!access);
-                 // Check follow status
-                 if (user.id !== item.owner_id) {
-                     const { data: followData } = await supabase.from('follows').select('id').eq('follower_id', user.id).eq('following_id', item.owner_id).maybeSingle();
-                     setIsFollowed(!!followData);
-                 }
-             } else {
-                 setHasAccess(!!capsule.is_public);
-             }
-        };
-        checkAccess();
-    }, [capsule.id, item.owner_id]);
-
-    const handleFollow = async () => {
-        if (!currentUserId || currentUserId === item.owner_id) return;
-        if (isFollowed) {
-            await supabase.from('follows').delete().eq('follower_id', currentUserId).eq('following_id', item.owner_id);
-            setIsFollowed(false);
-        } else {
-            await supabase.from('follows').insert({ follower_id: currentUserId, following_id: item.owner_id });
-            setIsFollowed(true);
+    const modelImageUri = useMemo(() => {
+        if (capsule.status === 'opened') {
+            return timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model as keyof typeof MODEL_IMAGES_OPEN] || (MODEL_IMAGES_OPEN as any).basicred_kap;
         }
+        return timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || (MODEL_IMAGES as any).basicred_kap;
+    }, [capsule.model, capsule.status]);
+
+    const handleFollow = () => {
+        if (!currentUserId || currentUserId === item.owner_id) return;
+        if (onFollow) onFollow(item.owner_id, isFollowedProp);
     };
 
     const handlePress = () => {
-        if (!hasAccess) {
+        if (!hasAccessProp) {
              Alert.alert("Private Capsule", "You haven't been invited to this capsule yet.");
              return;
         }
         navigation.navigate('CapsuleDetail', { capsuleId: item.capsule_id });
     };
 
+    const isToday = useMemo(() => {
+        if (!capsule?.opens_at || capsule?.status === 'opened') return false;
+        const d = new Date(capsule.opens_at);
+        const now = new Date();
+        return d.toDateString() === now.toDateString();
+    }, [capsule?.opens_at, capsule?.status]);
+
+    // ─── GRID MODE (Explore tab) ─────────────────────────────────────────────
+    if (gridMode) {
+        return (
+            <TouchableOpacity
+                activeOpacity={0.92}
+                onPress={handlePress}
+                style={[styles.gridCard, isToday && { borderWidth: 2, borderColor: '#A855F7' }]}
+            >
+                {/* Media area */}
+                <View style={styles.gridMediaZone}>
+                    {isGroup ? (
+                        <CollageView items={item.groupItems} count={item.count} isSealed={capsule?.status === 'sealed'} />
+                    ) : (item.media_url || item.thumbnail_url) && (item.media_type === 'image' || isVideo) ? (
+                        <>
+                            <Image
+                                source={{ uri: item.thumbnail_url || item.media_url }}
+                                style={StyleSheet.absoluteFill}
+                                blurRadius={capsule?.status === 'sealed' ? (Platform.OS === 'ios' ? 45 : 22) : 0}
+                                contentFit="cover"
+                                cachePolicy="memory-disk"
+                                recyclingKey={`grid-${item.id}`}
+                            />
+                            {capsule?.status === 'sealed' && (
+                                <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255,255,255,0.3)' }]} />
+                            )}
+                        </>
+                    ) : isAudio ? (
+                        <LinearGradient colors={[Colors.primaryLight, Colors.primary]} style={StyleSheet.absoluteFill} />
+                    ) : isNote ? (
+                        <LinearGradient colors={[Colors.cardAlt, Colors.background]} style={StyleSheet.absoluteFill} />
+                    ) : (
+                        <LinearGradient colors={[Colors.cardAlt, Colors.background]} style={StyleSheet.absoluteFill} />
+                    )}
+
+                    {/* Gradient overlay — lighter */}
+                    <LinearGradient
+                        colors={['transparent', 'rgba(0,0,0,0.25)']}
+                        style={StyleSheet.absoluteFill}
+                    />
+
+                    {/* Media type badge */}
+                    <MediaTypeBadge type={isGroup ? 'image' : item.media_type} />
+
+                    {/* Video play icon */}
+                    {isVideo && !isGroup && (
+                        <View style={styles.gridPlayIcon}>
+                            <Ionicons name="play" size={16} color="#fff" />
+                        </View>
+                    )}
+
+                    {/* Audio center */}
+                    {isAudio && (
+                        <View style={styles.gridCenterContent}>
+                            <Ionicons name="mic" size={24} color={Colors.primary} />
+                        </View>
+                    )}
+
+                    {/* Note center */}
+                    {isNote && capsule?.status !== 'sealed' && (
+                        <View style={styles.gridCenterContent}>
+                            <Text style={styles.gridNoteText} numberOfLines={3}>
+                                {item.content}
+                            </Text>
+                        </View>
+                    )}
+
+                    {/* Sealed lock */}
+                    {capsule?.status === 'sealed' && (
+                        <View style={styles.gridSealedIcon}>
+                            <Ionicons name="lock-closed" size={10} color={Colors.textMuted} />
+                        </View>
+                    )}
+
+                    {/* Group count */}
+                    {isGroup && (
+                        <View style={styles.gridGroupBadge}>
+                            <Ionicons name="layers" size={10} color="#fff" />
+                            <Text style={styles.gridGroupText}>{item.count}</Text>
+                        </View>
+                    )}
+                </View>
+
+                {/* White bottom info */}
+                <View style={styles.gridBottom}>
+                    <View style={styles.gridAvatarRow}>
+                        {profile.avatar_url ? (
+                            <Image source={{ uri: profile.avatar_url }} style={styles.gridAvatar} contentFit="cover" cachePolicy="memory-disk" />
+                        ) : (
+                            <View style={[styles.gridAvatar, { backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' }]}>
+                                <Ionicons name="person" size={8} color="#fff" />
+                            </View>
+                        )}
+                        <Text style={styles.gridUsername} numberOfLines={1}>
+                            {profile.display_name || profile.username || 'user'}
+                        </Text>
+                        {profile.is_verified && <VerifiedBadge size={10} />}
+                    </View>
+                </View>
+            </TouchableOpacity>
+        );
+    }
+
+    // ─── CARD MODE (Following tab) ───────────────────────────────────────────
     return (
         <TouchableOpacity
             activeOpacity={0.95}
             onPress={handlePress}
-            style={styles.card}
+            style={[styles.card, isToday && { borderWidth: 2, borderColor: '#A855F7' }]}
         >
-        {/* Background Layer */}
-            <View style={styles.backgroundLayer}>
-                {item.feedType === 'activity_group' ? (
-                    <CollageView
-                        items={item.groupItems}
-                        count={item.count}
-                        isSealed={capsule?.status === 'sealed'}
-                    />
-                ) : (item.media_url || item.thumbnail_url) && (item.media_type === 'image' || item.media_type === 'video') ? (
-                    <>
-                        <Image
-                            source={{ uri: item.thumbnail_url || item.media_url }}
-                            style={styles.backgroundImage}
-                            blurRadius={capsule?.status === 'sealed' ? (Platform.OS === 'ios' ? 12 : 30) : 0}
-                            contentFit="cover"
-                            cachePolicy="memory-disk"
-                            transition={200}
-                        />
-
-                        {capsule?.status === 'sealed' && (
-                            Platform.OS === 'ios' ? (
-                                <BlurView intensity={45} tint="light" style={StyleSheet.absoluteFill} />
-                            ) : (
-                                <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255,255,255,0.7)' }]} />
-                            )
-                        )}
-                    </>
-                ) : isAudio ? (
-                    <LinearGradient colors={['#a269ff', '#8050d0']} style={styles.backgroundGradient} />
-                ) : isNote ? (
-                    <LinearGradient colors={['#bd9aff', '#a269ff']} style={styles.backgroundGradient} />
-                ) : (
-                    <LinearGradient colors={typeColors as any} style={styles.backgroundGradient} />
-                )}
-                {/* Lighter, more elegant overlay gradient */}
-                <LinearGradient
-                    colors={['rgba(0,0,0,0.28)', 'rgba(0,0,0,0.06)', 'rgba(0,0,0,0.58)']}
-                    style={StyleSheet.absoluteFill}
-                />
-            </View>
-
-            {/* Top Info Bar */}
-            <View style={styles.topBar}>
-                {/* Unified glass pill: avatar + name + follow */}
+            {/* ── Author Row ────────────────────────────────────────────── */}
+            <View style={styles.authorRow}>
                 <TouchableOpacity
-                    style={styles.userSection}
+                    style={styles.authorLeft}
+                    activeOpacity={0.8}
                     onPress={() => navigation.navigate('UserProfile', { targetUserId: item.owner_id })}
                 >
                     {profile.avatar_url ? (
-                        <Image 
-                            source={{ uri: profile.avatar_url }} 
-                            style={styles.avatar} 
-                            contentFit="cover" 
-                            cachePolicy="memory-disk"
-                            transition={200}
-                        />
+                        <Image source={{ uri: profile.avatar_url }} style={styles.avatar} contentFit="cover" cachePolicy="memory-disk" />
                     ) : (
-
-                        <View style={styles.avatarPlaceholder}>
+                        <View style={[styles.avatar, styles.avatarPlaceholder]}>
                             <Ionicons name="person" size={12} color="#fff" />
                         </View>
                     )}
-                    <View>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                            <TouchableOpacity
-                                style={{ flexDirection: 'row', alignItems: 'center' }}
-                                onPress={() => navigation.navigate('UserProfile', { targetUserId: item.owner_id })}
-                            >
-                                <Text style={styles.username}>{profile.display_name || profile.username || 'user'}</Text>
-                                {profile.is_verified && <VerifiedBadge size={13} style={{ marginLeft: 2 }} />}
-                            </TouchableOpacity>
-                            {currentUserId && currentUserId !== item.owner_id && (
-                                <TouchableOpacity
-                                    activeOpacity={0.7}
-                                    onPress={handleFollow}
-                                    style={[styles.followMiniBtn, isFollowed && styles.followMiniBtnActive]}
-                                >
-                                    <Text style={[styles.followMiniText, isFollowed && styles.followMiniTextActive]}>
-                                        {isFollowed ? 'Following' : 'Follow'}
-                                    </Text>
-                                </TouchableOpacity>
-                            )}
+                    <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                            <Text style={styles.authorName} numberOfLines={1}>
+                                {profile.display_name || profile.username || 'user'}
+                            </Text>
+                            {profile.is_verified && <VerifiedBadge size={13} style={{ marginLeft: 1 }} />}
                         </View>
-                        <Text style={styles.activityType}>
-                            {item.feedType === 'activity_group'
-                                ? `Added ${item.count} memories`
-                                : `Added ${item.media_type || 'content'}`
+                        <Text style={styles.activityMeta}>
+                            {isGroup
+                                ? `Added ${item.count} items`
+                                : `Added ${MEDIA_LABELS[item.media_type] || 'content'}`
                             }
                         </Text>
                     </View>
                 </TouchableOpacity>
 
-                {/* Capsule mini — unified glass style */}
-                {capsule && (
+                {/* Follow button */}
+                {currentUserId && currentUserId !== item.owner_id && (
                     <TouchableOpacity
-                        style={styles.capsuleCorner}
-                        onPress={() => navigation.navigate('CapsuleDetail', { capsuleId: item.capsule_id })}
+                        activeOpacity={0.7}
+                        onPress={handleFollow}
+                        style={[styles.followBtn, isFollowedProp && styles.followBtnActive]}
                     >
-                        <CapsuleWithTimer
-                            modelKey={capsule.model || 'basicred_kap'}
-                            source={{ uri: capsule.status === 'opened' ? (timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model as keyof typeof MODEL_IMAGES_OPEN] || (MODEL_IMAGES_OPEN as any).basicred_kap) : (timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || (MODEL_IMAGES as any).basicred_kap) }}
-                            date={capsule.opens_at}
-                            chainId={capsule.chain_id}
-                            capsuleType={capsule.type}
-                            hideTimer
-                            isOpened={capsule.status === 'opened'}
-                            style={styles.capsuleMini}
-                            hideParticles
-                        />
+                        <Text style={[styles.followBtnText, isFollowedProp && styles.followBtnTextActive]}>
+                            {isFollowedProp ? 'Following' : 'Follow'}
+                        </Text>
                     </TouchableOpacity>
                 )}
             </View>
-            {/* Middle Content — simplified, consistent across types */}
-            {(isAudio || isNote || item.media_type === 'video') && (
-                <View style={styles.middleContent}>
-                    {isAudio && (
-                        <View style={styles.audioPreviewWrap}>
-                            <LinearGradient colors={['rgba(255,255,255,0.2)', 'rgba(255,255,255,0.05)']} style={styles.audioMainCircle}>
-                                <Ionicons name="mic-outline" size={32} color="#fff" />
-                            </LinearGradient>
+
+            {/* ── Media Area ────────────────────────────────────────────── */}
+            <View style={styles.mediaArea}>
+                {isGroup ? (
+                    <CollageView items={item.groupItems} count={item.count} isSealed={capsule?.status === 'sealed'} />
+                ) : (item.media_url || item.thumbnail_url) && (item.media_type === 'image' || isVideo) ? (
+                    <>
+                        <Image
+                            source={{ uri: item.thumbnail_url || item.media_url }}
+                            style={styles.mediaImage}
+                            blurRadius={capsule?.status === 'sealed' ? (Platform.OS === 'ios' ? 45 : 22) : 0}
+                            contentFit="cover"
+                            cachePolicy="memory-disk"
+                            recyclingKey={`card-${item.id}`}
+                        />
+                        {capsule?.status === 'sealed' && (
+                            <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255,255,255,0.4)' }]} />
+                        )}
+                    </>
+                ) : isAudio ? (
+                    <LinearGradient colors={['#a269ff', '#7938ff']} style={styles.mediaGradient}>
+                        <View style={styles.audioCenter}>
+                            <View style={styles.audioCircle}>
+                                <Ionicons name="mic-outline" size={28} color="#fff" />
+                            </View>
                             <Waveform />
                         </View>
-                    )}
-                    {item.media_type === 'video' && (
-                        <View style={styles.videoPlayOverlay}>
-                            <View style={styles.playIconCircle}>
-                                <Ionicons name="play" size={28} color="#fff" style={{ marginLeft: 3 }} />
+                    </LinearGradient>
+                ) : isNote ? (
+                    <LinearGradient colors={['#c59dff', '#a269ff']} style={styles.mediaGradient}>
+                        {capsule?.status === 'sealed' ? (
+                            <View style={styles.sealedNoteCenter}>
+                                <Ionicons name="lock-closed-outline" size={24} color="rgba(255,255,255,0.6)" />
+                                <Text style={styles.sealedNoteLabel}>ENCRYPTED THOUGHT</Text>
                             </View>
-                        </View>
-                    )}
-                    {isNote && (
-                        <View style={styles.noteContainer}>
-                            {capsule?.status === 'sealed' ? (
-                                <>
-                                    {Platform.OS === 'ios' ? (
-                                        <BlurView intensity={80} tint="light" style={StyleSheet.absoluteFill} />
-                                    ) : (
-                                        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255,255,255,0.88)' }]} />
-                                    )}
-                                    <View style={styles.sealedNoteOverlay}>
-                                        <Ionicons name="lock-closed-outline" size={28} color="rgba(0,0,0,0.22)" />
-                                        <Text style={styles.aestheticHintText}>ENCRYPTED THOUGHT</Text>
-                                        <Text style={{ fontSize: 11, color: 'rgba(0,0,0,0.35)', fontFamily: Fonts.medium, marginTop: 6 }}>Note Memory</Text>
-                                    </View>
-                                </>
-                            ) : (
-                                <View style={{ width: '100%', padding: 32, alignItems: 'center', justifyContent: 'center', flex: 1 }}>
-                                    <Ionicons name="document-text-outline" size={28} color="rgba(255,255,255,0.55)" style={{ marginBottom: 16 }} />
-                                    <Text style={styles.noteContentText} numberOfLines={7}>
-                                        {item.content}
-                                    </Text>
-                                </View>
-                            )}
-                        </View>
-                    )}
-                </View>
-            )}
+                        ) : (
+                            <View style={styles.noteCenter}>
+                                <Ionicons name="document-text-outline" size={22} color="rgba(255,255,255,0.5)" style={{ marginBottom: 10 }} />
+                                <Text style={styles.noteText} numberOfLines={5}>{item.content}</Text>
+                            </View>
+                        )}
+                    </LinearGradient>
+                ) : (
+                    <LinearGradient colors={typeColors as any} style={styles.mediaGradient} />
+                )}
 
-            {/* Bottom Info Section */}
-            {!isNote && (
-                <View style={styles.bottomSection}>
-                    {/* Sealed badge — floating top-right of the glass card */}
-                    {capsule?.status === 'sealed' && (
-                        <View style={styles.sealedBadge}>
-                            <Ionicons name="lock-closed" size={11} color="#fff" />
+                {/* Video play overlay */}
+                {isVideo && !isGroup && (
+                    <View style={styles.videoPlayOverlay}>
+                        <View style={styles.playCircle}>
+                            <Ionicons name="play" size={24} color="#fff" style={{ marginLeft: 2 }} />
                         </View>
-                    )}
-                    {Platform.OS === 'ios' ? (
-                        <BlurView intensity={30} tint="dark" style={styles.glassInfo}>
-                            <View style={styles.capsuleInfo}>
-                                <View style={[styles.typeIndicator, { backgroundColor: typeColors[0] as any }]} />
-                                <Text style={styles.capsuleTitle} numberOfLines={1}>{capsule.title}</Text>
-                                {!hasAccess && (
-                                    <Ionicons name="lock-closed" size={13} color="rgba(255,100,100,0.9)" style={{ marginLeft: 6 }} />
-                                )}
-                            </View>
-                            <View style={styles.itemPreview}>
-                                <View style={styles.iconContainer}>
-                                    <Ionicons name={mediaIcon as any} size={14} color="#fff" />
-                                </View>
-                                <Text style={styles.previewText} numberOfLines={1}>
-                                    {item.feedType === 'activity_group'
-                                        ? `New collection · ${item.count} items`
-                                        : isAudio ? `Voice Note · ${item.content || '--:--'}` : isNote ? 'Written Note' : ((item.caption?.replace(/!!b:\w+/, '').trim()) || (item.media_type === 'video' ? `Video · ${item.content || '--:--'}` : ''))
-                                    }
-                                </Text>
-                                {isAudio && (
-                                    <View style={styles.durationBadge}>
-                                        <Ionicons name="mic" size={9} color="#fff" style={{ marginRight: 3 }} />
-                                        <Text style={styles.durationText}>{item.content || '--:--'}</Text>
-                                    </View>
-                                )}
-                            </View>
-                        </BlurView>
-                    ) : (
-                        <View style={[styles.glassInfo, { backgroundColor: 'rgba(0,0,0,0.45)' }]}>
-                            <View style={styles.capsuleInfo}>
-                                <View style={[styles.typeIndicator, { backgroundColor: typeColors[0] as any }]} />
-                                <Text style={styles.capsuleTitle} numberOfLines={1}>{capsule.title}</Text>
-                                {!hasAccess && (
-                                    <Ionicons name="lock-closed" size={13} color="rgba(255,100,100,0.9)" style={{ marginLeft: 6 }} />
-                                )}
-                            </View>
-                            <View style={styles.itemPreview}>
-                                <View style={styles.iconContainer}>
-                                    <Ionicons name={mediaIcon as any} size={14} color="#fff" />
-                                </View>
-                                <Text style={styles.previewText} numberOfLines={1}>
-                                    {item.feedType === 'activity_group'
-                                        ? `New collection · ${item.count} items`
-                                        : isAudio ? `Voice Note · ${item.content || '--:--'}` : isNote ? 'Written Note' : ((item.caption?.replace(/!!b:\w+/, '').trim()) || (item.media_type === 'video' ? `Video · ${item.content || '--:--'}` : ''))
-                                    }
-                                </Text>
-                                {isAudio && (
-                                    <View style={styles.durationBadge}>
-                                        <Ionicons name="mic" size={9} color="#fff" style={{ marginRight: 3 }} />
-                                        <Text style={styles.durationText}>{item.content || '--:--'}</Text>
-                                    </View>
-                                )}
-                            </View>
-                        </View>
+                    </View>
+                )}
+
+                {/* Media type badge */}
+                <MediaTypeBadge type={isGroup ? 'image' : item.media_type} />
+
+                {/* Sealed lock */}
+                {capsule?.status === 'sealed' && (
+                    <View style={styles.sealedBadge}>
+                        <Ionicons name="lock-closed" size={11} color="#fff" />
+                    </View>
+                )}
+            </View>
+
+            {/* ── Bottom Info Bar ───────────────────────────────────────── */}
+            <View style={styles.bottomBar}>
+                {/* Capsule info */}
+                <View style={styles.capsuleRow}>
+                    <Image
+                        source={{ uri: modelImageUri }}
+                        style={styles.capsuleMiniImg}
+                        contentFit="contain"
+                        cachePolicy="memory-disk"
+                    />
+                    <View style={{ flex: 1 }}>
+                        <Text style={styles.capsuleTitle} numberOfLines={1}>{capsule.title}</Text>
+                        <Text style={styles.capsuleType}>{capsule.type?.replace('cap', '') ?? 'capsule'}</Text>
+                    </View>
+                    {!hasAccessProp && (
+                        <Ionicons name="lock-closed" size={12} color={Colors.error} style={{ marginLeft: 4 }} />
                     )}
                 </View>
-            )}
+            </View>
         </TouchableOpacity>
     );
 });
 
-const styles = StyleSheet.create({
-    card: {
-        height: 350,
-        marginHorizontal: Spacing.md,
-        marginBottom: Spacing.lg,
-        borderRadius: BorderRadius.xl,
-        overflow: 'hidden',
-        backgroundColor: Colors.cardAlt,
-        ...Shadow.card
-    },
-    backgroundLayer: { ...StyleSheet.absoluteFillObject },
-    backgroundImage: { width: '100%', height: '100%' },
-    backgroundGradient: { flex: 1 },
+// ─── Styles ───────────────────────────────────────────────────────────────────
+const GRID_GAP = 2;
+const GRID_COLS = 2;
+const GRID_ITEM_WIDTH = (width - Spacing.md * 2 - GRID_GAP * (GRID_COLS - 1)) / GRID_COLS;
 
-    topBar: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        padding: Spacing.md,
-        zIndex: 5,
-    },
-    // Unified glass pill for user info
-    userSection: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: 6,
-        paddingHorizontal: 10,
+const styles = StyleSheet.create({
+    // ── Card Mode (Following) ────────────────────────────────────────────────
+    card: {
+        marginHorizontal: Spacing.md,
+        marginBottom: 14,
         borderRadius: 20,
-        backgroundColor: 'rgba(255,255,255,0.14)',
+        backgroundColor: Colors.surface,
         borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.18)',
+        borderColor: Colors.border,
+        overflow: 'hidden',
+        ...Platform.select({
+            ios: { shadowColor: 'rgba(0,0,0,0.06)', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 1, shadowRadius: 10 },
+            android: { elevation: 2 },
+        }),
+    },
+
+    authorRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+    },
+    authorLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        flex: 1,
+        minWidth: 0,
     },
     avatar: {
-        width: 28,
-        height: 28,
-        borderRadius: 14,
-        marginRight: 8,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.4)',
+        width: 34,
+        height: 34,
+        borderRadius: 17,
+        borderWidth: 1.5,
+        borderColor: Colors.border,
     },
     avatarPlaceholder: {
-        width: 28,
-        height: 28,
-        borderRadius: 14,
-        marginRight: 8,
         backgroundColor: Colors.primary,
         alignItems: 'center',
         justifyContent: 'center',
     },
-    username: { fontSize: 12, fontFamily: Fonts.bold, color: '#fff' },
-    activityType: { fontSize: 11, color: 'rgba(255,255,255,0.75)', marginTop: 1, fontFamily: Fonts.medium },
+    authorName: {
+        fontSize: 13,
+        fontFamily: Fonts.bold,
+        color: Colors.textPrimary,
+    },
+    activityMeta: {
+        fontSize: 11,
+        fontFamily: Fonts.medium,
+        color: Colors.textMuted,
+        marginTop: 1,
+    },
 
-    // Follow pill
-    followMiniBtn: { marginLeft: 6, paddingHorizontal: 9, paddingVertical: 3, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.16)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' },
-    followMiniBtnActive: { backgroundColor: 'rgba(255,255,255,0.1)' },
-    followMiniText: { fontSize: 10, fontFamily: Fonts.bold, color: '#fff' },
-    followMiniTextActive: { color: 'rgba(255,255,255,0.6)' },
+    followBtn: {
+        paddingHorizontal: 12,
+        paddingVertical: 5,
+        borderRadius: 20,
+        borderWidth: 1.5,
+        borderColor: Colors.primary,
+        marginLeft: 8,
+    },
+    followBtnActive: {
+        borderColor: Colors.border,
+        backgroundColor: Colors.cardAlt,
+    },
+    followBtnText: {
+        fontSize: 11,
+        fontFamily: Fonts.bold,
+        color: Colors.primary,
+    },
+    followBtnTextActive: {
+        color: Colors.textMuted,
+    },
 
-    // Capsule corner — unified glass style
-    capsuleCorner: {
-        width: 48,
-        height: 48,
-        borderRadius: 24,
+    // Media Area
+    mediaArea: {
+        width: '100%',
+        height: 300,
+        position: 'relative',
+        overflow: 'hidden',
+        backgroundColor: Colors.cardAlt,
+    },
+    mediaImage: {
+        width: '100%',
+        height: '100%',
+    },
+    mediaGradient: {
+        flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: 'rgba(255,255,255,0.14)',
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.18)',
-        overflow: 'hidden',
     },
-    topRightContainer: { alignItems: 'center' },
-    miniTimerContainer: { marginTop: 4, backgroundColor: 'rgba(0,0,0,0.4)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 12 },
-    miniTimerText: { fontSize: 10, color: '#fff', fontFamily: Fonts.bold },
-    capsuleMini: { width: 42, height: 42 },
 
-    // Middle content
-    middleContent: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', padding: 40, zIndex: 2 },
-    videoPlayOverlay: { alignItems: 'center', justifyContent: 'center' },
-    playIconCircle: {
-        width: 58,
-        height: 58,
-        borderRadius: 29,
-        backgroundColor: 'rgba(0,0,0,0.35)',
+    // Video
+    videoPlayOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    playCircle: {
+        width: 52,
+        height: 52,
+        borderRadius: 26,
+        backgroundColor: 'rgba(0,0,0,0.32)',
         alignItems: 'center',
         justifyContent: 'center',
         borderWidth: 1.5,
-        borderColor: 'rgba(255,255,255,0.5)',
+        borderColor: 'rgba(255,255,255,0.45)',
     },
-    audioPreviewWrap: { alignItems: 'center', gap: 20 },
-    audioMainCircle: {
-        width: 76,
-        height: 76,
-        borderRadius: 38,
+
+    // Audio
+    audioCenter: {
+        alignItems: 'center',
+        gap: 16,
+    },
+    audioCircle: {
+        width: 64,
+        height: 64,
+        borderRadius: 32,
+        backgroundColor: 'rgba(255,255,255,0.15)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.3)',
         alignItems: 'center',
         justifyContent: 'center',
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.35)',
     },
-    waveContainer: { flexDirection: 'row', alignItems: 'center', gap: 4, height: 40 },
-    waveBar: { width: 4, borderRadius: 2 },
+    waveContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 3,
+        height: 34,
+    },
+    waveBar: {
+        width: 3.5,
+        borderRadius: 2,
+        backgroundColor: 'rgba(255,255,255,0.7)',
+    },
 
-    // Note container — simplified
-    noteContainer: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' },
-    sealedNoteOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', zIndex: 10, gap: 8 },
-    aestheticHintText: { fontFamily: Fonts.bold, fontSize: 11, color: 'rgba(0,0,0,0.35)', letterSpacing: 3, textTransform: 'uppercase' },
-    noteContentText: { fontSize: 17, fontFamily: Fonts.medium, color: '#fff', lineHeight: 26, textAlign: 'center', fontStyle: 'italic' },
+    // Note
+    noteCenter: {
+        padding: 28,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    noteText: {
+        fontSize: 16,
+        fontFamily: Fonts.medium,
+        color: '#fff',
+        lineHeight: 24,
+        textAlign: 'center',
+        fontStyle: 'italic',
+    },
+    sealedNoteCenter: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 10,
+    },
+    sealedNoteLabel: {
+        fontSize: 10,
+        fontFamily: Fonts.bold,
+        color: 'rgba(255,255,255,0.5)',
+        letterSpacing: 2.5,
+    },
 
-    // Unused but kept for reference
-    noteTextSkeletonWrap: { width: '100%', padding: 30, gap: 14 },
-    scrambledText: { fontSize: 16, color: 'rgba(0,0,0,0.25)', lineHeight: 28, letterSpacing: 4, textAlign: 'center' },
-    notePaper: { width: '100%', height: '100%', backgroundColor: 'rgba(255,255,255,0.14)', borderRadius: 22, borderWidth: 1, borderColor: 'rgba(255,255,255,0.35)', alignItems: 'center', justifyContent: 'center' },
-    sparkle: { position: 'absolute', borderRadius: 2 },
-    skeletonLine: { height: 6, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 3, width: '100%' },
-    aestheticIconWrap: { width: 64, height: 64, borderRadius: 32, backgroundColor: 'rgba(255,255,255,0.95)', alignItems: 'center', justifyContent: 'center', marginBottom: 16, borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)' },
-
-    timerChip: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, overflow: 'hidden' },
-    timerText: { fontSize: 10, color: '#fff', fontFamily: Fonts.bold },
-
-    // Bottom section
-    bottomSection: {
+    // Media type badge
+    mediaTypeBadge: {
         position: 'absolute',
-        bottom: 0,
-        left: 0,
-        right: 0,
-        padding: Spacing.md,
-    },
-    glassInfo: {
-        borderRadius: 20,
-        paddingVertical: 14,
-        paddingHorizontal: 14,
-        overflow: 'hidden',
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.12)',
-        backgroundColor: 'rgba(255,255,255,0.06)',
-    },
-    capsuleInfo: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-    typeIndicator: { width: 7, height: 7, borderRadius: 3.5, marginRight: 8 },
-    capsuleTitle: { fontSize: 15, fontFamily: Fonts.bold, color: '#fff', flex: 1 },
-    itemPreview: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-    iconContainer: {
-        width: 28,
-        height: 28,
-        borderRadius: 14,
-        backgroundColor: 'rgba(255,255,255,0.18)',
+        top: 10,
+        left: 10,
+        flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'center',
+        gap: 4,
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 20,
+        backgroundColor: 'rgba(0,0,0,0.45)',
     },
-    previewText: { flex: 1, fontSize: 13, color: 'rgba(255,255,255,0.88)', lineHeight: 18, fontFamily: Fonts.medium },
-    durationBadge: { backgroundColor: 'rgba(0,0,0,0.36)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999 },
-    durationText: { fontSize: 11, fontFamily: Fonts.bold, color: '#fff' },
+    mediaTypeBadgeText: {
+        fontSize: 10,
+        fontFamily: Fonts.bold,
+        color: '#fff',
+    },
 
-    // Sealed badge — small floating circle top-right
+    // Sealed badge
     sealedBadge: {
         position: 'absolute',
-        top: -12,
-        right: Spacing.md,
+        top: 10,
+        right: 10,
+        width: 26,
+        height: 26,
+        borderRadius: 13,
+        backgroundColor: 'rgba(0,0,0,0.4)',
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: 'rgba(0,0,0,0.52)',
-        width: 28,
-        height: 28,
-        borderRadius: 14,
         borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.2)',
+        borderColor: 'rgba(255,255,255,0.15)',
     },
 
-    // Collage
-    collageContainer: { flex: 1, width: '100%', height: '100%' },
-    collageGrid: { flex: 1, flexDirection: 'row', flexWrap: 'wrap' },
-    collageImage: { width: '50%', height: '50%' },
-    collageSingle: { width: '100%', height: '100%' },
-    collageDual: { width: '50%', height: '100%' },
-    collageTripleLarge: { width: '100%', height: '50%' },
+    // Bottom bar
+    bottomBar: {
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+    },
+    capsuleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+    },
+    capsuleMiniImg: {
+        width: 32,
+        height: 32,
+    },
+    capsuleTitle: {
+        fontSize: 13,
+        fontFamily: Fonts.bold,
+        color: Colors.textPrimary,
+    },
+    capsuleType: {
+        fontSize: 10,
+        fontFamily: Fonts.medium,
+        color: Colors.textMuted,
+        textTransform: 'capitalize',
+        marginTop: 1,
+    },
 
-    // Group count badge — bottom right, premium
-    groupCountBadge: {
+    // ── Grid Mode (Explore) ──────────────────────────────────────────────────
+    gridCard: {
+        width: GRID_ITEM_WIDTH,
+        borderRadius: 18,
+        overflow: 'hidden',
+        backgroundColor: Colors.surface,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        ...Platform.select({
+            ios: { shadowColor: Colors.shadow, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 1, shadowRadius: 10 },
+            android: { elevation: 3 },
+        }),
+    },
+
+    gridMediaZone: {
+        height: GRID_ITEM_WIDTH * 0.85,
+        position: 'relative',
+        overflow: 'hidden',
+    },
+
+    gridPlayIcon: {
         position: 'absolute',
-        bottom: 14,
-        right: 14,
-        backgroundColor: 'rgba(0,0,0,0.52)',
-        paddingHorizontal: 11,
-        paddingVertical: 7,
-        borderRadius: 999,
+        top: '50%',
+        left: '50%',
+        marginTop: -16,
+        marginLeft: -16,
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: 'rgba(0,0,0,0.4)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1.5,
+        borderColor: 'rgba(255,255,255,0.4)',
+    },
+
+    gridCenterContent: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 14,
+    },
+
+    gridNoteText: {
+        fontSize: 11,
+        fontFamily: Fonts.medium,
+        color: Colors.textSecondary,
+        textAlign: 'center',
+        lineHeight: 16,
+        fontStyle: 'italic',
+    },
+
+    gridSealedIcon: {
+        position: 'absolute',
+        top: 8,
+        right: 8,
+        width: 22,
+        height: 22,
+        borderRadius: 11,
+        backgroundColor: Colors.cardAlt,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1,
+        borderColor: Colors.border,
+    },
+
+    gridGroupBadge: {
+        position: 'absolute',
+        top: 8,
+        right: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 3,
+        paddingHorizontal: 7,
+        paddingVertical: 3,
+        borderRadius: 12,
+        backgroundColor: 'rgba(0,0,0,0.45)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.12)',
+    },
+    gridGroupText: {
+        fontSize: 10,
+        fontFamily: Fonts.bold,
+        color: '#fff',
+    },
+
+    gridBottom: {
+        paddingHorizontal: 10,
+        paddingVertical: 8,
+        backgroundColor: Colors.surface,
+        borderTopWidth: 1,
+        borderTopColor: Colors.borderLight,
+    },
+    gridAvatarRow: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 5,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.18)',
     },
-    groupCountText: { color: '#fff', fontSize: 13, fontFamily: Fonts.bold },
-});
+    gridAvatar: {
+        width: 16,
+        height: 16,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: Colors.border,
+    },
+    gridUsername: {
+        fontSize: 10,
+        fontFamily: Fonts.bold,
+        color: Colors.textPrimary,
+        flex: 1,
+    },
 
+    // ── Collage ──────────────────────────────────────────────────────────────
+    collageContainer: {
+        flex: 1,
+        width: '100%',
+        height: '100%',
+    },
+    collageGrid: {
+        flex: 1,
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+    },
+    collageImage: {
+        width: '50%',
+        height: '50%',
+    },
+    collageSingle: {
+        width: '100%',
+        height: '100%',
+    },
+    collageDual: {
+        width: '50%',
+        height: '100%',
+    },
+    collageTripleLarge: {
+        width: '100%',
+        height: '50%',
+    },
+
+    groupCountBadge: {
+        position: 'absolute',
+        bottom: 10,
+        right: 10,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        paddingHorizontal: 9,
+        paddingVertical: 5,
+        borderRadius: 999,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.15)',
+    },
+    groupCountText: {
+        color: '#fff',
+        fontSize: 12,
+        fontFamily: Fonts.bold,
+    },
+});

@@ -45,7 +45,7 @@ const ONBOARDING_DATA = [
         id: '4',
         title: 'onboarding.step4_title',
         desc: 'onboarding.step4_desc',
-        icon: 'bolt',
+        icon: 'flash',
         colors: ['#FF6B6B', '#E91E63'],
     },
     {

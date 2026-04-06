@@ -358,7 +358,14 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
         } else {
             await supabase.from('story_likes').insert({ story_id: sid, user_id: currentUserId });
             if (ownerId && ownerId !== currentUserId) {
-                await supabase.from('notifications').insert({ user_id: ownerId, sender_id: currentUserId, type: 'story_like', message: 'ha dado like a tu Flash', is_read: false });
+                const { data: existing } = await supabase.from('notifications')
+                    .select('id').eq('user_id', ownerId).eq('sender_id', currentUserId).eq('type', 'story_like').maybeSingle();
+                
+                if (existing) {
+                    await supabase.from('notifications').update({ created_at: new Date().toISOString(), is_read: false }).eq('id', existing.id);
+                } else {
+                    await supabase.from('notifications').insert({ user_id: ownerId, sender_id: currentUserId, type: 'story_like', message: 'ha dado like a tu Flash', is_read: false });
+                }
             }
         }
     };

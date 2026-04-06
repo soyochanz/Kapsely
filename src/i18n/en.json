@@ -66,6 +66,8 @@
     "next": "Next",
     "let_go": "Let's go!",
     "follow_capsule": "Sync",
+    "synced": "Synced",
+    "unsync": "Unsync",
     "created_by": "created by"
   },
   "profile": {
@@ -394,6 +396,15 @@
   },
   "detail": {
     "no_items": "There is no content yet.",
+    "unseals_in": "Unseals in",
+    "unsealing_soon": "Unsealing soon",
+    "follow_error": "Could not sync capsule. Please check your connection.",
+    "opening_in": "Opening in",
+    "epic_revealing": "✨ REVEALING...",
+    "epic_opened": "OPENED!",
+    "epic_hint": "All members will see this at the same time",
+
+
     "sealed_message": "This capsule is sealed.",
     "deleted_empty": "Capsule was empty and has been deleted.",
     "sealed_memories": "Sealed Memories",
@@ -415,6 +426,7 @@
     "delete_confirm_msg": "This cannot be undone.",
     "opening_soon": "Opening in {{timer}}s...",
     "opening_now": "capsule is opening now!",
+    "followed_capsule": "synced your capsule \"{{title}}\"",
     "liked_your_capsule": "liked your capsule",
     "commented": "commented: {{text}}",
     "keep_it": "Keep it",

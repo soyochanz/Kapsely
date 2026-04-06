@@ -1,171 +1,140 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, Animated, Easing, Dimensions, TouchableOpacity, Platform } from 'react-native';
+import React, { useEffect, useRef, useCallback, useState } from 'react';
+import { View, StyleSheet, Animated, Easing, Dimensions, Text } from 'react-native';
 import { supabase } from '../lib/supabase';
-import { Colors } from '../theme';
 
-const { height } = Dimensions.get('window');
+const { width, height } = Dimensions.get('window');
 
-interface FloatingEmoji {
+// ✅ Same channel name used in LiveChat.tsx — ensures all users see reactions
+const EMOJI_CHANNEL = (capsuleId: string) => `capsule-emoji-${capsuleId}`;
+
+interface FloatingItem {
     id: string;
     emoji: string;
     left: number;
-    animValue: Animated.Value;
+    anim: Animated.Value;
+    size: number;
+    wiggle: number;
 }
 
-export default function FloatingEmojis({ capsuleId }: { capsuleId: string }) {
-    const [emojis, setEmojis] = useState<FloatingEmoji[]>([]);
+interface Props {
+    capsuleId: string;
+    // Optional callback to trigger a local emoji (for sender-side immediate feedback)
+    onLocalEmoji?: (triggerFn: (emoji: string) => void) => void;
+}
 
-    useEffect(() => {
-        const channel = supabase.channel(`capsule-${capsuleId}-reactions`);
-
-        channel.on('broadcast', { event: 'reaction' }, (payload) => {
-            if (payload.payload?.emoji) {
-                addEmoji(payload.payload.emoji);
-            }
-        }).subscribe();
-
-        return () => {
-            supabase.removeChannel(channel);
-        };
-    }, [capsuleId]);
+/**
+ * FloatingEmojis - Premium Version
+ *
+ * ✅ Higher fidelity animations
+ * ✅ Randomized sizes and wiggles
+ * ✅ Sender also sees their own emoji immediately via the channel
+ */
+export default function FloatingEmojis({ capsuleId, onLocalEmoji }: Props) {
+    const itemsRef = useRef<FloatingItem[]>([]);
+    const [, forceUpdate] = useState(0);
 
     const addEmoji = useCallback((emoji: string) => {
-        const id = Math.random().toString();
-        const animValue = new Animated.Value(0);
-        // Random horizontal position for some variance
-        const left = Math.random() * 40 - 20;
+        const id = `${Date.now()}-${Math.random()}`;
+        const anim = new Animated.Value(0);
 
-        setEmojis((prev) => [...prev, { id, emoji, left, animValue }]);
+        // Randomize spawn and behavior
+        const left = 10 + Math.random() * 80; // range 10% to 90%
+        const size = 28 + Math.random() * 18;  // range 28 to 46
+        const wiggle = (Math.random() - 0.5) * 60; // horizontal drift
 
-        Animated.timing(animValue, {
+        const item: FloatingItem = { id, emoji, left, anim, size, wiggle };
+        itemsRef.current = [...itemsRef.current, item];
+        forceUpdate(n => n + 1);
+
+        Animated.timing(anim, {
             toValue: 1,
-            duration: 2500,
-            easing: Easing.out(Easing.ease),
+            duration: 3000 + Math.random() * 1200,
+            easing: Easing.out(Easing.quad),
             useNativeDriver: true,
         }).start(() => {
-            setEmojis((prev) => prev.filter((e) => e.id !== id));
+            itemsRef.current = itemsRef.current.filter(e => e.id !== id);
+            forceUpdate(n => n + 1);
         });
     }, []);
 
-    const sendReaction = async (emoji: string) => {
-        // Show locally instantly
-        addEmoji(emoji);
-        // Broadcast to others
-        const channel = supabase.channel(`capsule-${capsuleId}-reactions`);
-        await channel.send({
-            type: 'broadcast',
-            event: 'reaction',
-            payload: { emoji },
-        });
-    };
+    // Expose the addEmoji trigger to the parent so sender can call it directly
+    useEffect(() => {
+        if (onLocalEmoji) {
+            onLocalEmoji(addEmoji);
+        }
+    }, [onLocalEmoji, addEmoji]);
 
-    const REACTION_EMOJIS = ['❤️', '😂', '🎉', '🔥', '💯'];
+    useEffect(() => {
+        // Subscribe to Supabase Realtime emoji broadcasts
+        // NOTE: Supabase broadcasts are received by ALL subscribers, including the sender,
+        // because they are sent server-side. So the sender WILL see their emoji here too.
+        const channel = supabase
+            .channel(EMOJI_CHANNEL(capsuleId))
+            .on('broadcast', { event: 'reaction' }, payload => {
+                if (payload.payload?.emoji) addEmoji(payload.payload.emoji);
+            })
+            .subscribe();
+
+        return () => { supabase.removeChannel(channel); };
+    }, [capsuleId, addEmoji]);
 
     return (
-        <View style={[styles.container, { pointerEvents: 'box-none' }]}>
-            {/* The floating animation layer */}
-            <View style={[styles.animationLayer, { pointerEvents: 'none' }]}>
-                {emojis.map((e) => {
-                    const translateY = e.animValue.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [0, -height * 0.4] // Float up 40% of screen
-                    });
-                    const opacity = e.animValue.interpolate({
-                        inputRange: [0, 0.1, 0.8, 1],
-                        outputRange: [0, 1, 1, 0] // Fade in, then out
-                    });
-                    const scale = e.animValue.interpolate({
-                        inputRange: [0, 0.1, 1],
-                        outputRange: [0.5, 1.2, 1]
-                    });
+        <View style={st.container} pointerEvents="none">
+            {itemsRef.current.map(e => {
+                const translateY = e.anim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0, -(height * 0.72)],
+                });
+                const opacity = e.anim.interpolate({
+                    inputRange: [0, 0.08, 0.75, 1],
+                    outputRange: [0, 1, 1, 0],
+                });
+                const scale = e.anim.interpolate({
+                    inputRange: [0, 0.12, 0.45, 1],
+                    outputRange: [0.2, 1.5, 1.15, 0.85],
+                });
+                const translateX = e.anim.interpolate({
+                    inputRange: [0, 0.3, 0.65, 1],
+                    outputRange: [0, e.wiggle * 0.5, -e.wiggle * 0.8, e.wiggle],
+                });
+                const rotate = e.anim.interpolate({
+                    inputRange: [0, 0.5, 1],
+                    outputRange: ['0deg', `${e.wiggle > 0 ? 22 : -22}deg`, '0deg'],
+                });
 
-                    return (
-                        <Animated.Text
-                            key={e.id}
-                            style={[
-                                styles.emoji,
-                                {
-                                    transform: [
-                                        { translateY },
-                                        { translateX: e.left },
-                                        { scale }
-                                    ],
-                                    opacity
-                                }
-                            ]}
-                        >
-                            {e.emoji}
-                        </Animated.Text>
-                    );
-                })}
-            </View>
-
-            {/* The reaction toolbar (like YouTube Live chat side reactions) */}
-            <View style={styles.toolbar}>
-                {REACTION_EMOJIS.map((emoji) => (
-                    <TouchableOpacity
-                        key={emoji}
-                        style={styles.reactionBtn}
-                        activeOpacity={0.7}
-                        onPress={() => sendReaction(emoji)}
+                return (
+                    <Animated.Text
+                        key={e.id}
+                        style={[
+                            st.emoji,
+                            {
+                                left: `${e.left}%`,
+                                fontSize: e.size,
+                                opacity,
+                                transform: [
+                                    { translateY },
+                                    { translateX },
+                                    { scale },
+                                    { rotate }
+                                ],
+                            },
+                        ]}
                     >
-                        <Text style={styles.toolbarEmoji}>{emoji}</Text>
-                    </TouchableOpacity>
-                ))}
-            </View>
+                        {e.emoji}
+                    </Animated.Text>
+                );
+            })}
         </View>
     );
 }
 
-const styles = StyleSheet.create({
+const st = StyleSheet.create({
     container: {
         ...StyleSheet.absoluteFillObject,
-        zIndex: 9999, // Floating above everything
-        justifyContent: 'flex-end',
-        alignItems: 'flex-end',
-    },
-    animationLayer: {
-        position: 'absolute',
-        right: 20, // Align with the toolbar
-        bottom: 120, // Start just above the toolbar
-        width: 50,
-        height: 300,
-        alignItems: 'center',
+        zIndex: 99999,
     },
     emoji: {
         position: 'absolute',
-        fontSize: 28,
-        bottom: 0,
+        bottom: 80,
     },
-    toolbar: {
-        width: 50,
-        backgroundColor: 'rgba(20,20,30,0.85)',
-        borderRadius: 25,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.1)',
-        paddingVertical: 10,
-        alignItems: 'center',
-        marginRight: 10,
-        marginBottom: 80, // Above typical bottom bars
-        ...Platform.select({
-            web: { boxShadow: '0px 4px 10px rgba(0, 0, 0, 0.3)' },
-            ios: {
-                shadowColor: '#000',
-                shadowOffset: { width: 0, height: 4 },
-                shadowOpacity: 0.3,
-                shadowRadius: 10,
-            },
-            android: {
-                elevation: 10,
-            }
-        }),
-    },
-    reactionBtn: {
-        padding: 10,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    toolbarEmoji: {
-        fontSize: 22,
-    }
 });

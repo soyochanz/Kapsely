@@ -1,8 +1,8 @@
 {
   "expo": {
     "name": "Kapsely",
-    "slug": "kapsely-kewwwk32872ibsljuv47u",
-    "version": "2.0.7",
+    "slug": "kapsely",
+    "version": "2.0.9",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -57,10 +57,10 @@
     },
     "extra": {
       "eas": {
-        "owner": "ochanz1s-organization",
-        "projectId": "dc8cecbd-0bb6-45a1-8e44-e102a012ead2"
+        "owner": "ochanz",
+        "projectId": "83b31c5a-24f0-44d0-9772-00426508c2e8"
       }
     },
-    "owner": "ochanz1s-organization"
+    "owner": "ochanz"
   }
 }

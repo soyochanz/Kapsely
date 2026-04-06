@@ -22,6 +22,8 @@ interface CapsuleWithTimerProps {
     isOpened?: boolean; // New prop for status
     hideParticles?: boolean; // Suppress particles (for thumbnails, notifications)
     darkerShadow?: boolean; // Use more intense shadow
+    lightweight?: boolean; // Mode for off-screen or secondary cards
+    disableAnimations?: boolean; // Stop pendulum/glint to save CPU
 }
 
 const CapsuleWithTimer = React.memo(({
@@ -37,15 +39,27 @@ const CapsuleWithTimer = React.memo(({
     hideParticles,
     darkerShadow,
     chainConfigOverride,
+    lightweight,
+    disableAnimations,
 }: CapsuleWithTimerProps) => {
-    const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
-    const [config, setConfig] = useState(configOverride || timerConfigManager.getConfig(modelKey));
-    const [chainConfig, setChainConfig] = useState(chainConfigOverride || (chainId ? timerConfigManager.getChainConfig(modelKey, chainId) : null));
+    const [configVersion, setConfigVersion] = useState(0);
+    
+    // Try to pre-initialize size from style if they are numbers to avoid the onLayout flicker
+    const flatStyle = StyleSheet.flatten(style);
+    const initialWidth = (flatStyle?.width && typeof flatStyle.width === 'number') ? flatStyle.width : 0;
+    const initialHeight = (flatStyle?.height && typeof flatStyle.height === 'number') ? flatStyle.height : 0;
+    const [layoutSize, setLayoutSize] = useState({ width: initialWidth, height: initialHeight });
+
+    const config = configOverride || timerConfigManager.getConfig(modelKey);
+    const chainConfig = chainConfigOverride || (chainId ? timerConfigManager.getChainConfig(modelKey, chainId) : null);
+
     const swingAnim = useRef(new Animated.Value(0)).current;
     const glintAnim = useRef(new Animated.Value(-1.5)).current;
 
     useEffect(() => {
-        // Pendulum animation: starts from one side to avoid initial jump
+        if (disableAnimations) return;
+
+        // Pendulum animation
         swingAnim.setValue(-1);
         Animated.loop(
             Animated.sequence([
@@ -64,7 +78,7 @@ const CapsuleWithTimer = React.memo(({
             ])
         ).start();
 
-        // Glint reflection animation every 6 seconds
+        // Glint reflection
         Animated.loop(
             Animated.sequence([
                 Animated.timing(glintAnim, { toValue: 1.5, duration: 1200, useNativeDriver: true }),
@@ -72,42 +86,18 @@ const CapsuleWithTimer = React.memo(({
             ])
         ).start();
 
-        return () => { };
-    }, []);
-
-    useEffect(() => {
-        if (configOverride) {
-            setConfig(configOverride);
-            return;
-        }
-
-        const updateAll = () => {
-            setConfig(timerConfigManager.getConfig(modelKey));
-            setChainConfig(chainId ? timerConfigManager.getChainConfig(modelKey, chainId) : null);
-        };
-        
-        if (chainConfigOverride) {
-            setChainConfig(chainConfigOverride);
-        } else if (chainId) {
-            setChainConfig(timerConfigManager.getChainConfig(modelKey, chainId) || null);
-        } else {
-            setChainConfig(null);
-        }
-
-        const unsubscribe = timerConfigManager.subscribe(updateAll);
-        updateAll();
-
+        const unsubscribe = timerConfigManager.subscribe(() => setConfigVersion(v => v + 1));
         return unsubscribe;
-    }, [modelKey, configOverride, chainId, chainConfigOverride]);
+    }, []);
 
     const onLayout = (e: LayoutChangeEvent) => {
         const { width, height } = e.nativeEvent.layout;
         if (width > 0 && height > 0) {
-            setDimensions({ width, height });
+            setLayoutSize({ width, height });
         }
     };
 
-    const { width, height } = dimensions;
+    const { width, height } = layoutSize;
 
     // Calculate absolute position based on normalized config (0..1)
     const containerStyle = [styles.container, style];
@@ -160,8 +150,8 @@ const CapsuleWithTimer = React.memo(({
 
     return (
         <View style={containerStyle} onLayout={onLayout}>
-            {/* Particles */}
-            {width > 0 && !hideParticles && <Particles activeTint={activeTint} capsuleType={capsuleType} />}
+            {/* Particles - Hide if lightweight or explicitly requested */}
+            {width > 0 && !hideParticles && !lightweight && <Particles activeTint={activeTint} capsuleType={capsuleType} />}
 
             {/* Shadow: behind everything via zIndex */}
             {width > 0 && (
@@ -183,6 +173,8 @@ const CapsuleWithTimer = React.memo(({
                     { zIndex: 1 }
                 ]}
                 contentFit="contain"
+                cachePolicy="memory-disk"
+                transition={0} // Disable transition to avoid additional flicker on mount
             />
 
             {width > 0 && !hideTimer && (
@@ -193,22 +185,25 @@ const CapsuleWithTimer = React.memo(({
                         configOverride={config}
                         style={{ fontSize: baseFontSize }}
                         hideLabel={isOpened}
+                        lightweight={lightweight}
                     />
 
-                    {/* Screen Glint Reflection overlay */}
-                    <Animated.View style={{
-                        position: 'absolute',
-                        top: 0, left: 0, right: 0, bottom: 0,
-                        transform: [{ translateX: glintTranslate }],
-                        zIndex: 3
-                    }}>
-                        <LinearGradient
-                            colors={['transparent', 'rgba(255,255,255,0.1)', 'rgba(255,255,255,0.25)', 'rgba(255,255,255,0.1)', 'transparent']}
-                            start={{ x: 0, y: 0 }}
-                            end={{ x: 1, y: 1 }}
-                            style={StyleSheet.absoluteFillObject}
-                        />
-                    </Animated.View>
+                    {/* Screen Glint Reflection overlay - Skip for performance if lightweight */}
+                    {!lightweight && !disableAnimations && (
+                        <Animated.View style={{
+                            position: 'absolute',
+                            top: 0, left: 0, right: 0, bottom: 0,
+                            transform: [{ translateX: glintTranslate }],
+                            zIndex: 3
+                        }}>
+                            <LinearGradient
+                                colors={['transparent', 'rgba(255,255,255,0.1)', 'rgba(255,255,255,0.25)', 'rgba(255,255,255,0.1)', 'transparent']}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 1 }}
+                                style={StyleSheet.absoluteFillObject}
+                            />
+                        </Animated.View>
+                    )}
                 </View>
             )}
             {width > 0 && chainItem && chainConfig && (
@@ -225,6 +220,7 @@ const CapsuleWithTimer = React.memo(({
                             source={{ uri: chainItem.image_url }}
                             style={{ width: '100%', height: '100%' }}
                             contentFit="contain"
+                            cachePolicy="memory-disk"
                         />
 
                     </Animated.View>

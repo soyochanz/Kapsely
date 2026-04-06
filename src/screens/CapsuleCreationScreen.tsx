@@ -631,13 +631,7 @@ function SealAnimation({ accent, modelUri, modelOpenUri, onDone, isOpen }: {
             <Animated.View style={{ position: 'absolute', width: 240, height: 240, borderRadius: 120, borderWidth: 1, borderColor: accent + '30', transform: [{ scale: ring3Scale }], opacity: ring3Opacity }} />
             <Animated.View style={{ position: 'absolute', width: 300, height: 300, borderRadius: 150, backgroundColor: accent + '18', transform: [{ scale: glowScale }], opacity: glowOpacity }} />
             <Animated.View style={{ position: 'absolute', width: 340, height: 340, borderRadius: 170, borderWidth: 1.5, borderColor: accent + '22', transform: [{ scale: glowScale }], opacity: glowOpacity }} />
-            {items.map((item, i) => (
-                <Animated.View key={i} style={{ position: 'absolute', bottom: '40%', left: width / 2 - 28 + (i - 1) * 72, transform: [{ translateY: item.y }, { scale: item.sc }], opacity: item.op }}>
-                    <View style={{ width: 56, height: 56, borderRadius: 16, backgroundColor: accent + '15', borderWidth: 1.5, borderColor: accent + '30', alignItems: 'center', justifyContent: 'center' }}>
-                        <Ionicons name={ITEM_ICONS[i]} size={26} color={accent} />
-                    </View>
-                </Animated.View>
-            ))}
+            {/* Sealing animation logic - items behind removed as per user request */}
             <Animated.View style={{ position: 'absolute', opacity: stage === 'sealed' ? new Animated.Value(0) : capOpacity, transform: [{ scale: Animated.multiply(capScale, breathe) }, { translateY: capY }] }}>
                 <Image source={{ uri: modelOpenUri || modelUri }} style={{ width: 230, height: 230 }} resizeMode="contain" />
             </Animated.View>

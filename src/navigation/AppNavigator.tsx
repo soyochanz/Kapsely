@@ -20,7 +20,6 @@ import OnboardingScreen from '../screens/OnboardingScreen';
 import UserListScreen from '../screens/UsersListScreen';
 import PersonalizeProfileScreen from '../screens/PersonalizeProfileScreen';
 import AdminCalibrationScreen from '../screens/AdminCalibrationScreen';
-import ConnectScreen from '../screens/ConnectScreen';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { View, StyleSheet, ActivityIndicator } from 'react-native';
 import { Colors } from '../theme';
@@ -120,7 +119,6 @@ export default function AppNavigator() {
                 <Stack.Screen name="UserList" component={UserListScreen} />
                 <Stack.Screen name="PersonalizeProfile" component={PersonalizeProfileScreen} />
                 <Stack.Screen name="AdminCalibration" component={AdminCalibrationScreen} />
-                <Stack.Screen name="Connect" component={ConnectScreen} />
                 <Stack.Screen name="InstagramShare" component={require('../screens/InstagramShareScreen').default} />
             </Stack.Navigator>
         </View>

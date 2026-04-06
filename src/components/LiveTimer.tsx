@@ -20,8 +20,8 @@ const FONT_MAP: Record<string, string> = {
 };
 
 const LiveTimer = React.memo(({
-    date, modelId, style, configOverride, hideLabel
-}: LiveTimerProps) => {
+    date, modelId, style, configOverride, hideLabel, lightweight
+}: LiveTimerProps & { lightweight?: boolean }) => {
     const [label, setLabel] = useState('');
     const [savedConfig, setSavedConfig] = useState<ModelTimerConfig | null>(null);
     const { t } = useTranslation();
@@ -40,7 +40,15 @@ const LiveTimer = React.memo(({
 
     useEffect(() => {
         const update = () => {
+            if (!date) {
+                setLabel('');
+                return 0;
+            }
             const end = new Date(date).getTime();
+            if (isNaN(end)) {
+                setLabel('');
+                return 0;
+            }
             const now = Date.now();
             const diff = end - now;
 
@@ -74,15 +82,29 @@ const LiveTimer = React.memo(({
                 if (prev === newLabel) return prev;
                 return newLabel;
             });
+
+            return diff;
         };
 
-        update();
+        const initialDiff = update();
+        
+        // Optimization: If distant (> 72h) or Ready or lightweight, don't tick every second
+        const isFar = initialDiff > (72 * 3600000);
+        const isReady = initialDiff <= 0;
+        
+        if (isReady || (lightweight && isFar)) {
+            // Check again in 1 minute instead of every second
+            const timer = setInterval(update, 60000);
+            return () => clearInterval(timer);
+        }
+
         const timer = setInterval(update, 1000);
         return () => clearInterval(timer);
-    }, [date, config, t]);
+    }, [date, config, t, lightweight]);
 
     const renderContent = () => {
-        if (!config || config.curvature === 0 || label === 'Ready!') {
+        const isReadyString = label === 'Ready!' || label === '¡Lista!' || label === 'Ready';
+        if (!config || config.curvature === 0 || isReadyString) {
             return (
                 <Text style={[
                     style,

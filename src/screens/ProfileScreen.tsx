@@ -35,6 +35,8 @@ type ProfileTab = 'all' | 'opened' | 'sealed';
 const TYPE_CONFIG = (t: any): Record<string, { icon: string; color: string; label: string }> => ({
     instacap: { icon: 'camera', color: Colors.instaCap, label: t('create.instacap_label') },
     legacycap: { icon: 'time', color: Colors.legacyCap, label: t('create.legacycap_label') },
+    eventcap: { icon: 'flash', color: Colors.eventCap, label: t('create.eventcap_label') || 'EventCap' },
+    opencap: { icon: 'book', color: Colors.primary, label: t('create.opencap_label') || 'OpenCap' },
 });
 
 const STICKER_POSITIONS = [
@@ -67,9 +69,16 @@ const ProfileCapsuleCell = React.memo(({
         return timerConfigManager.subscribe(update);
     }, [cap.model, isSealed]);
 
+    const isToday = React.useMemo(() => {
+        if (!cap.opens_at || !isSealed) return false;
+        const d = new Date(cap.opens_at);
+        const now = new Date();
+        return d.toDateString() === now.toDateString();
+    }, [cap.opens_at, isSealed]);
+
     return (
         <TouchableOpacity
-            style={[s.capsuleCell, !cap.isAccessible && { opacity: 0.85 }]}
+            style={[s.capsuleCell, !cap.isAccessible && { opacity: 0.85 }, isToday && { borderWidth: 2, borderColor: '#A855F7' }]}
             activeOpacity={0.8}
             onPress={() => {
                 if (!cap.isAccessible) {
@@ -90,6 +99,8 @@ const ProfileCapsuleCell = React.memo(({
                         capsuleType={cap.type}
                         style={s.capsuleModelImg}
                         hideParticles
+                        lightweight={true}
+                        disableAnimations={true}
                     />
 
                 ) : coverUrl ? (
@@ -104,6 +115,8 @@ const ProfileCapsuleCell = React.memo(({
                         capsuleType={cap.type}
                         style={s.capsuleModelImg}
                         hideTimer hideParticles
+                        lightweight={true}
+                        disableAnimations={true}
                     />
                 )}
 
@@ -131,7 +144,7 @@ const ProfileCapsuleCell = React.memo(({
             <View style={s.capsuleMeta}>
                 <Text style={s.capsuleTitle} numberOfLines={1}>{cap.title}</Text>
                 {isSealed
-                    ? <LiveTimer date={cap.opens_at} modelId={cap.model} style={s.capsuleTimer} />
+                    ? <LiveTimer date={cap.opens_at} modelId={cap.model} style={s.capsuleTimer} lightweight={true} />
                     : <Text style={s.capsuleOpenedTag}>{t('common.opened').toUpperCase()}</Text>
                 }
             </View>
@@ -217,18 +230,11 @@ export default function ProfileScreen() {
         if (error) Alert.alert('Error', error.message);
     };
 
-    const getHoursUntilMonday = () => {
-        const now = new Date();
-        const currentDay = now.getDay();
-        if (currentDay === 1) return 0;
-        let days = (1 - currentDay + 7) % 7;
-        const nextMonday = new Date(now);
-        nextMonday.setDate(now.getDate() + (days === 0 ? 7 : days));
-        nextMonday.setHours(0, 0, 0, 0);
-        return Math.max(0, Math.floor((nextMonday.getTime() - now.getTime()) / 3600000));
-    };
+    const [page, setPage] = useState(0);
+    const [hasMore, setHasMore] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
 
-    const loadData = async () => {
+    const loadData = async (isNewPage = false) => {
         const { data: { session } } = await supabase.auth.getSession();
         const user = session?.user;
         if (!user) return;
@@ -239,18 +245,40 @@ export default function ProfileScreen() {
         const own = idToLoad === myId;
         setIsOwnProfileState(own);
 
-        const [profileRes, capsRes, followersRes, followingRes, followCheck, storiesRes, readsRes, myInvitesRes] = await Promise.all([
-            supabase.from('profiles').select('id, username, display_name, avatar_url, bio, favorite_color, favorite_movie, favorite_song, is_verified, is_admin, created_at, push_notifications_enabled, push_notif_comments, push_notif_invites, verification_status').eq('id', idToLoad).maybeSingle(),
-            supabase.rpc('get_user_capsules_v2', { target_user_id: idToLoad }),
+        const PAGE_SIZE = 12;
+        const currentPage = isNewPage ? page + 1 : 0;
+        const rangeStart = currentPage * PAGE_SIZE;
+        const rangeEnd = (currentPage + 1) * PAGE_SIZE - 1;
 
+        if (isNewPage) setLoadingMore(true);
+        else if (!refreshing) setLoading(true);
+
+        const [profileRes, followersCountRes, followingCountRes, followCheckRes, capsRes, storiesRes, readsRes, myInvitesRes] = await Promise.all([
+            // Profile Info
+            supabase.from('profiles').select('*').eq('id', idToLoad).maybeSingle(),
+            // Separate Counts (still parallelized)
             supabase.from('follows').select('*', { count: 'exact', head: true }).eq('following_id', idToLoad),
             supabase.from('follows').select('*', { count: 'exact', head: true }).eq('follower_id', idToLoad),
-            targetUserId ? supabase.from('follows').select('*').eq('follower_id', user.id).eq('following_id', targetUserId).maybeSingle() : { data: null },
-            supabase.from('capsule_items').select('id, media_url, media_type, content, expires_at, created_at, capsule_id, capsules:capsule_id(id, title, model)').eq('owner_id', idToLoad).eq('is_story', true).gt('expires_at', new Date().toISOString()).order('created_at', { ascending: false }),
+            // Follow check for current user
+            myId !== idToLoad 
+              ? supabase.from('follows').select('id').eq('follower_id', myId).eq('following_id', idToLoad).maybeSingle()
+              : Promise.resolve({ data: null, error: null }),
+
+            supabase.rpc('get_user_capsules_v2', { target_user_id: idToLoad }).range(rangeStart, rangeEnd),
+
+            supabase.from('capsule_items').select(`
+                id, media_url, media_type, content, expires_at, created_at, capsule_id, 
+                capsules:capsule_id(id, title, model)
+            `).eq('owner_id', idToLoad).eq('is_story', true).gt('expires_at', new Date().toISOString()).order('created_at', { ascending: false }),
 
             supabase.from('story_reads').select('story_id').eq('user_id', myId),
             supabase.from('capsule_invites').select('capsule_id').eq('user_id', myId).eq('status', 'accepted')
         ]);
+
+        if (profileRes.data) setProfile(profileRes.data);
+        setFollowersCount(followersCountRes.count || 0);
+        setFollowingCount(followingCountRes.count || 0);
+        setIsFollowing(!!followCheckRes?.data);
 
         const storiesData = storiesRes.data || [];
         const readIds = new Set((readsRes.data || []).map(r => r.story_id));
@@ -268,7 +296,7 @@ export default function ProfileScreen() {
                 ...c,
                 isAccessible: own || c.is_public || c.owner_id === user.id || myAcceptedCaps.has(c.id) || (c.invited_user_id === myId && c.invite_status === 'accepted')
             }));
-            const filtered = viewable.filter((c: any) => c.type !== 'eventcap');
+            const filtered = viewable; // Removed filter for 'eventcap'
             let opened = filtered.filter((c: any) => c.status === 'opened');
             const sealed = filtered.filter((c: any) => c.status === 'sealed');
             if (own) {
@@ -286,8 +314,12 @@ export default function ProfileScreen() {
                     }));
                 }
             }
-            setOpenedCaps(opened);
-            setSealedCaps(sealed);
+            setOpenedCaps(prev => isNewPage ? [...prev, ...opened] : opened);
+            setSealedCaps(prev => isNewPage ? [...prev, ...sealed] : sealed);
+            setHasMore(all.length >= PAGE_SIZE);
+            if (isNewPage) setPage(currentPage);
+            else setPage(0);
+
             if (opened.length > 0) {
                 const { data: mediaItems } = await supabase.from('capsule_items').select('id, capsule_id, media_url, media_type, created_at').in('capsule_id', opened.map((c: any) => c.id)).in('media_type', ['image', 'video']).order('created_at', { ascending: true });
                 const mediaMap: Record<string, any[]> = {};
@@ -295,18 +327,16 @@ export default function ProfileScreen() {
                     if (!mediaMap[item.capsule_id]) mediaMap[item.capsule_id] = [];
                     mediaMap[item.capsule_id].push(item);
                 });
-                setCapsuleMediaMap(mediaMap);
+                setCapsuleMediaMap(prev => isNewPage ? { ...prev, ...mediaMap } : mediaMap);
                 const defaultCovers: Record<string, string> = {};
                 Object.entries(mediaMap).forEach(([capId, items]) => { if ((items as any[])[0]?.media_url) defaultCovers[capId] = (items as any[])[0].media_url; });
                 setCoverMap(prev => ({ ...defaultCovers, ...prev }));
             }
         }
 
-        setFollowersCount(followersRes.count ?? 0);
-        setFollowingCount(followingRes.count ?? 0);
-        setIsFollowing(!!followCheck.data);
         setLoading(false);
         setRefreshing(false);
+        setLoadingMore(false);
 
         const { data: stks } = await supabase.from('profile_stickers').select('*, stickers(*)').eq('user_id', idToLoad);
         if (stks) setProfileStickers(stks);
@@ -373,8 +403,17 @@ export default function ProfileScreen() {
             await supabase.from('follows').insert({ follower_id: currentUserId, following_id: targetUserId });
             setFollowersCount(p => p + 1);
             setIsFollowing(true);
-            await supabase.from('notifications').insert({ user_id: targetUserId, sender_id: currentUserId, type: 'follow', message: t('common.started_following_you') });
-            sendPushNotification(targetUserId, "Nuevo Seguidor 👥", "¡Alguien ha empezado a seguirte en Kapsely!", { screen: 'UserProfile', params: { targetUserId: currentUserId } });
+            
+            // Notification with anti-spam check
+            const { data: existing } = await supabase.from('notifications')
+                .select('id').eq('user_id', targetUserId).eq('sender_id', currentUserId).eq('type', 'follow').maybeSingle();
+            
+            if (existing) {
+                await supabase.from('notifications').update({ created_at: new Date().toISOString(), is_read: false }).eq('id', existing.id);
+            } else {
+                await supabase.from('notifications').insert({ user_id: targetUserId, sender_id: currentUserId, type: 'follow', message: t('common.started_following_you') });
+                sendPushNotification(targetUserId, "Nuevo Seguidor 👥", "¡Alguien ha empezado a seguirte en Kapsely!", { screen: 'UserProfile', params: { targetUserId: currentUserId } });
+            }
         }
     };
 
@@ -610,23 +649,19 @@ export default function ProfileScreen() {
                         <View style={s.favRow}>
                             {profile?.favorite_movie && (
                                 <View style={s.favChip}>
-                                    <View style={[s.favIcon, { backgroundColor: '#FFEDF6' }]}>
-                                        <Ionicons name="film" size={12} color="#F72585" />
-                                    </View>
-                                    <View style={{ flex: 1, minWidth: 0 }}>
+                                    <Ionicons name="film-outline" size={18} color={accentColor} />
+                                    <View style={{ flex: 1 }}>
                                         <Text style={s.favLabel}>{t('profile.favoriteMovie')}</Text>
-                                        <Text style={s.favValue} numberOfLines={1}>{profile.favorite_movie}</Text>
+                                        <Text style={s.favValue}>{profile.favorite_movie}</Text>
                                     </View>
                                 </View>
                             )}
                             {profile?.favorite_song && (
                                 <View style={s.favChip}>
-                                    <View style={[s.favIcon, { backgroundColor: '#E0F2FE' }]}>
-                                        <Ionicons name="musical-notes" size={12} color="#0EA5E9" />
-                                    </View>
-                                    <View style={{ flex: 1, minWidth: 0 }}>
+                                    <Ionicons name="musical-notes-outline" size={18} color="#0EA5E9" />
+                                    <View style={{ flex: 1 }}>
                                         <Text style={s.favLabel}>{t('profile.favoriteSong')}</Text>
-                                        <Text style={s.favValue} numberOfLines={1}>{profile.favorite_song}</Text>
+                                        <Text style={s.favValue}>{profile.favorite_song}</Text>
                                     </View>
                                 </View>
                             )}
@@ -725,6 +760,9 @@ export default function ProfileScreen() {
                                 </Text>
                             </View>
                         }
+                        onEndReached={() => { if (!loadingMore && hasMore) loadData(true); }}
+                        onEndReachedThreshold={0.5}
+                        ListFooterComponent={loadingMore ? <ActivityIndicator size="small" color={accentColor} style={{ padding: 20 }} /> : null}
                     />
                 </View>
 
@@ -1047,16 +1085,14 @@ const s = StyleSheet.create({
     metaChipText: { fontSize: 11, fontFamily: Fonts.medium, color: Colors.textSecondary },
 
     // Favorites
-    favRow: { flexDirection: 'row', gap: 8, marginBottom: 14, flexWrap: 'wrap' },
+    favRow: { gap: 10, marginBottom: 16 },
     favChip: {
-        flex: 1, minWidth: 140,
-        flexDirection: 'row', alignItems: 'center', gap: 8,
-        padding: 10, backgroundColor: Colors.cardAlt,
-        borderRadius: 14, borderWidth: 1, borderColor: Colors.divider,
+        flexDirection: 'row', alignItems: 'center', gap: 14,
+        padding: 14, backgroundColor: Colors.surface,
+        borderRadius: 16, borderWidth: 1, borderColor: Colors.divider,
     },
-    favIcon: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-    favLabel: { fontSize: 9, fontFamily: Fonts.bold, color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 },
-    favValue: { fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textPrimary, marginTop: 1 },
+    favLabel: { fontSize: 10, fontFamily: Fonts.bold, color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 2 },
+    favValue: { fontSize: 14, fontFamily: Fonts.medium, color: Colors.textPrimary, lineHeight: 20 },
 
     // Actions
     actionsRow: { flexDirection: 'row', gap: 10 },

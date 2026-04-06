@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, TextInput, ActivityIndicator, SafeAreaView, ScrollView, Alert, Platform, Modal, StatusBar } from 'react-native';
-
+import {
+    View, Text, StyleSheet, TouchableOpacity, TextInput,
+    ActivityIndicator, SafeAreaView, ScrollView, Alert,
+    Platform, Modal, StatusBar, Dimensions
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -10,14 +13,59 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Audio, Video, ResizeMode } from 'expo-av';
 import * as VideoThumbnails from 'expo-video-thumbnails';
-import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
 import { BlurView } from 'expo-blur';
 import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from '../lib/supabase';
-import { decode } from 'base64-arraybuffer';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
-
 import Slider from '@react-native-community/slider';
+
+const { width } = Dimensions.get('window');
+
+// ─── Design Tokens ────────────────────────────────────────────────────────────
+const P = {
+    // Purples
+    p50: '#F5F3FF',
+    p100: '#EDE9FE',
+    p200: '#DDD6FE',
+    p300: '#C4B5FD',
+    p400: '#A78BFA',
+    p500: '#8B5CF6',
+    p600: '#7C3AED',
+    p700: '#6D28D9',
+    p800: '#5B21B6',
+    // Neutrals
+    white: '#FFFFFF',
+    gray50: '#FAFAFA',
+    gray100: '#F4F4F5',
+    gray200: '#E4E4E7',
+    gray300: '#D1D1D6',
+    gray400: '#A1A1AA',
+    gray500: '#71717A',
+    gray700: '#3F3F46',
+    gray900: '#18181B',
+    // Semantic
+    red: '#EF4444',
+    redPale: '#FEF2F2',
+    green: '#10B981',
+};
+
+const R = { xs: 8, sm: 14, md: 18, lg: 24, xl: 32, full: 999 };
+
+const shadow = {
+    soft: Platform.select({
+        ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 10 },
+        android: { elevation: 3 },
+    }),
+    medium: Platform.select({
+        ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.09, shadowRadius: 18 },
+        android: { elevation: 6 },
+    }),
+    purple: Platform.select({
+        ios: { shadowColor: P.p600, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.28, shadowRadius: 20 },
+        android: { elevation: 10 },
+    }),
+};
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function AddItemScreen() {
     const navigation = useNavigation<any>();
@@ -31,185 +79,104 @@ export default function AddItemScreen() {
     const [uploadProgress, setUploadProgress] = useState<{ [key: string]: number }>({});
     const [text, setText] = useState('');
     const [caption, setCaption] = useState('');
-
-    // Audio recording state
     const [recording, setRecording] = useState<Audio.Recording | null>(null);
     const [isRecording, setIsRecording] = useState(false);
     const [recordedUri, setRecordedUri] = useState<string | null>(null);
     const [audioDuration, setAudioDuration] = useState<number | null>(null);
     const [previewVideo, setPreviewVideo] = useState<string | null>(null);
-
-    // Video Trimming State
     const [trimModalVisible, setTrimModalVisible] = useState(false);
     const [trimmingIndex, setTrimmingIndex] = useState<number | null>(null);
     const [trimStart, setTrimStart] = useState(0);
     const [trimEnd, setTrimEnd] = useState(0);
     const [trimSeekingValue, setTrimSeekingValue] = useState<number | null>(null);
-
-    const [aestheticAlert, setAestheticAlert] = useState<{
-        visible: boolean;
-        title: string;
-        message: string;
-        errors?: string[];
-        onClose: () => void;
-    } | null>(null);
+    const [aestheticAlert, setAestheticAlert] = useState<any>(null);
 
     useEffect(() => {
-        return () => {
-            if (recording) {
-                recording.stopAndUnloadAsync();
-            }
-        };
+        return () => { if (recording) recording.stopAndUnloadAsync(); };
     }, []);
 
     const processAssets = async (assets: any[]) => {
         setLoading(true);
-        const processedAssets: any[] = [];
-
+        const processed: any[] = [];
         for (const asset of assets) {
-            let currentAsset = { ...asset };
+            let cur = { ...asset };
             if (contentType === 'image') {
                 try {
-                    const manipResult = await ImageManipulator.manipulateAsync(
-                        asset.uri,
-                        [{ resize: { width: 1200 } }],
-                        { compress: 0.6, format: ImageManipulator.SaveFormat.WEBP }
-                    );
-                    currentAsset = { ...currentAsset, uri: manipResult.uri, width: manipResult.width, height: manipResult.height };
-
-                } catch (e) {
-                    console.log('Error optimizing image:', e);
-                }
+                    // Optimize image: 1080px is plenty for mobile, 0.7 quality saves ~40% size vs 0.8
+                    const r = await ImageManipulator.manipulateAsync(asset.uri, [{ resize: { width: 1080 } }], { 
+                        compress: 0.7, 
+                        format: ImageManipulator.SaveFormat.WEBP 
+                    });
+                    cur = { ...cur, uri: r.uri, width: r.width, height: r.height };
+                } catch (e) { }
             } else if (contentType === 'video') {
                 try {
-                    // Check duration limit (60s)
-                    if (asset.duration && asset.duration > 61000) { // small buffer for processing
-                        Alert.alert(t('common.error'), "Videos must be 1 minute or less. Please trim your video.");
-                        setLoading(false);
-                        return;
-                    }
+                    if (asset.duration && asset.duration > 61000) { Alert.alert('Error', 'Videos must be 1 minute or less.'); setLoading(false); return; }
                     const { uri: thumbUri } = await VideoThumbnails.getThumbnailAsync(asset.uri, { time: 1000 });
-                    (currentAsset as any).thumbnailUri = thumbUri;
-                    (currentAsset as any).duration = asset.duration;
-                } catch (e) {
-                    console.log('Error generating thumbnail:', e);
-                }
+                    cur.thumbnailUri = thumbUri; cur.duration = asset.duration;
+                } catch (e) { }
             }
-            processedAssets.push(currentAsset);
+            processed.push(cur);
         }
-
-        setMediaList(prev => [...prev, ...processedAssets]);
+        setMediaList(prev => [...prev, ...processed]);
         setLoading(false);
     };
 
     const pickMedia = async () => {
         const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: contentType === 'image' ? ImagePicker.MediaTypeOptions.Images : ImagePicker.MediaTypeOptions.Videos,
-            allowsMultipleSelection: true,
-            selectionLimit: 20,
-            quality: 0.8,
-            videoMaxDuration: 60,
+            allowsMultipleSelection: true, 
+            selectionLimit: 20, 
+            quality: 0.7, // Reduced from 0.8 to save bandwidth
+            videoMaxDuration: 60, 
             videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720,
-            videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
+            videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium, 
             base64: false,
         });
-
-        if (!result.canceled && result.assets && result.assets.length > 0) {
-            await processAssets(result.assets);
-        } else if (mediaList.length === 0) {
-            navigation.goBack();
-        }
+        if (!result.canceled && result.assets?.length > 0) await processAssets(result.assets);
+        else if (mediaList.length === 0) navigation.goBack();
     };
 
     const captureMedia = async () => {
         try {
             const permission = await ImagePicker.requestCameraPermissionsAsync();
-            if (permission.status !== 'granted') {
-                Alert.alert(t('common.permission_required'), t('common.camera_permission'));
-                return;
-            }
-
+            if (permission.status !== 'granted') { Alert.alert('Permiso requerido', 'Necesitamos acceso a tu cámara.'); return; }
             const result = await ImagePicker.launchCameraAsync({
                 mediaTypes: contentType === 'image' ? ImagePicker.MediaTypeOptions.Images : ImagePicker.MediaTypeOptions.Videos,
-                quality: 0.8,
-                videoMaxDuration: 60,
+                quality: 0.8, videoMaxDuration: 60,
                 videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720,
                 videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
             });
-
-            if (!result.canceled && result.assets && result.assets.length > 0) {
-                await processAssets(result.assets);
-            }
-        } catch (e) {
-            console.error('Camera error:', e);
-            Alert.alert(t('common.error'), t('common.upload_failed'));
-        }
+            if (!result.canceled && result.assets?.length > 0) await processAssets(result.assets);
+        } catch (e) { Alert.alert('Error', 'No se pudo abrir la cámara.'); }
     };
 
     const [lastSource, setLastSource] = useState<'camera' | 'gallery' | null>(null);
-
-    const captureMediaWithTrack = () => {
-        setLastSource('camera');
-        captureMedia();
-    };
-
-    const pickMediaWithTrack = () => {
-        setLastSource('gallery');
-        pickMedia();
-    };
-
-    const handleAddMore = () => {
-        if (lastSource === 'gallery') {
-            pickMedia();
-        } else if (lastSource === 'camera') {
-            captureMedia();
-        } else {
-            pickMedia(); // fallback
-        }
-    };
-
-    const removeMedia = (index: number) => {
-        setMediaList(prev => prev.filter((_, i) => i !== index));
-    };
+    const captureMediaWithTrack = () => { setLastSource('camera'); captureMedia(); };
+    const pickMediaWithTrack = () => { setLastSource('gallery'); pickMedia(); };
+    const handleAddMore = () => { lastSource === 'camera' ? captureMedia() : pickMedia(); };
+    const removeMedia = (index: number) => setMediaList(prev => prev.filter((_, i) => i !== index));
 
     const openTrimModal = (index: number) => {
-        const item = mediaList[index];
-        if (!item) return;
-        setTrimmingIndex(index);
-        setTrimStart(item.trimStart || 0);
-        setTrimEnd(item.trimEnd || item.duration || 0);
-        setTrimModalVisible(true);
+        const item = mediaList[index]; if (!item) return;
+        setTrimmingIndex(index); setTrimStart(item.trimStart || 0);
+        setTrimEnd(item.trimEnd || item.duration || 0); setTrimModalVisible(true);
     };
 
     const saveTrim = () => {
         if (trimmingIndex === null) return;
-        setMediaList(prev => prev.map((item, idx) => 
-            idx === trimmingIndex 
-                ? { ...item, trimStart, trimEnd, duration: trimEnd - trimStart } 
-                : item
-        ));
-        setTrimModalVisible(false);
-        setTrimmingIndex(null);
+        setMediaList(prev => prev.map((item, idx) => idx === trimmingIndex ? { ...item, trimStart, trimEnd, duration: trimEnd - trimStart } : item));
+        setTrimModalVisible(false); setTrimmingIndex(null);
     };
 
     const startRecording = async () => {
         try {
-            const permission = await Audio.requestPermissionsAsync();
-            if (permission.status !== 'granted') return;
-
-            await Audio.setAudioModeAsync({
-                allowsRecordingIOS: true,
-                playsInSilentModeIOS: true,
-            });
-
-            const { recording } = await Audio.Recording.createAsync(
-                Audio.RecordingOptionsPresets.HIGH_QUALITY
-            );
-            setRecording(recording);
-            setIsRecording(true);
-        } catch (err) {
-            console.error('Failed to start recording', err);
-        }
+            const p = await Audio.requestPermissionsAsync();
+            if (p.status !== 'granted') return;
+            await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+            const { recording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+            setRecording(recording); setIsRecording(true);
+        } catch (err) { console.error(err); }
     };
 
     const stopRecording = async () => {
@@ -217,16 +184,10 @@ export default function AddItemScreen() {
         if (!recording) return;
         try {
             const status = await recording.getStatusAsync();
-            if (status && 'durationMillis' in status) {
-                setAudioDuration(status.durationMillis);
-            }
+            if (status && 'durationMillis' in status) setAudioDuration(status.durationMillis);
             await recording.stopAndUnloadAsync();
-            const uri = recording.getURI();
-            setRecordedUri(uri);
-            setRecording(null);
-        } catch (err) {
-            console.error('Failed to stop recording', err);
-        }
+            setRecordedUri(recording.getURI()); setRecording(null);
+        } catch (err) { console.error(err); }
     };
 
     const handleUpload = async () => {
@@ -237,89 +198,55 @@ export default function AddItemScreen() {
 
         const batchId = Math.random().toString(36).substring(2, 11);
         setLoading(true);
-
         try {
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) throw new Error('Not authenticated');
-
             const uploadTasks: Promise<any>[] = [];
 
-            // 1. Handle Audio
             if (contentType === 'audio' && recordedUri) {
-                const audioTask = async () => {
+                uploadTasks.push((async () => {
                     const url = await uploadFile(recordedUri, 'audio', user.id);
                     return { mediaUrl: url, thumbUrl: null, duration: audioDuration, type: 'audio' };
-                };
-                uploadTasks.push(audioTask());
-            } 
-            // 2. Handle Media List (Images/Videos)
-            else if (mediaList.length > 0) {
+                })());
+            } else if (mediaList.length > 0) {
                 mediaList.forEach((media) => {
-                    const uploadPromise = async () => {
+                    uploadTasks.push((async () => {
                         const mediaUrl = await uploadFile(media.uri, contentType, user.id);
                         let thumbUrl = null;
                         if (contentType === 'video' && media.thumbnailUri) {
-                            // Thumbnails are smaller, but we try to upload them too
-                            try {
-                                thumbUrl = await uploadFile(media.thumbnailUri, 'image', user.id, true);
-                            } catch (e) {
-                                console.log("Thumbnail upload failed, but proceeding with video.");
-                            }
+                            try { thumbUrl = await uploadFile(media.thumbnailUri, 'image', user.id, true); } catch (e) { }
                         }
                         return { mediaUrl, thumbUrl, duration: media.duration, type: contentType, originalMedia: media };
-                    };
-                    uploadTasks.push(uploadPromise());
+                    })());
                 });
-            }
-            // 3. Handle Note (no file but data entry)
-            else if (contentType === 'note') {
+            } else if (contentType === 'note') {
                 uploadTasks.push(Promise.resolve({ mediaUrl: '', thumbUrl: '', duration: null, type: 'note' }));
             }
 
             const results = await Promise.allSettled(uploadTasks);
-            
             const successfulUploads: any[] = [];
             const failedUploads: any[] = [];
-
             results.forEach((res, idx) => {
-                if (res.status === 'fulfilled') {
-                    successfulUploads.push(res.value);
-                } else {
-                    failedUploads.push({ 
-                        index: idx, 
-                        reason: res.reason?.message || "Unknown error",
-                        item: mediaList[idx]
-                    });
-                }
+                if (res.status === 'fulfilled') successfulUploads.push(res.value);
+                else failedUploads.push({ index: idx, reason: res.reason?.message || 'Unknown error', item: mediaList[idx] });
             });
 
-            if (successfulUploads.length === 0 && failedUploads.length > 0) {
-                throw new Error(failedUploads[0].reason);
-            }
+            if (successfulUploads.length === 0 && failedUploads.length > 0) throw new Error(failedUploads[0].reason);
 
-            // Create entries in DB for successes
             const entries = successfulUploads.map((res: any) => {
-                const mediaItem = res.originalMedia || {};
+                const mi = res.originalMedia || {};
                 let contentStr = text || null;
-
                 if (res.type === 'video' || res.type === 'audio') {
-                    const dur = mediaItem.duration || res.duration;
+                    const dur = mi.duration || res.duration;
                     const min = Math.floor(dur / 60000);
                     const sec = Math.floor((dur % 60000) / 1000).toString().padStart(2, '0');
                     contentStr = `${min}:${sec}`;
-
-                    if (mediaItem.trimStart !== undefined && mediaItem.trimEnd !== undefined) {
-                        contentStr += `|${mediaItem.trimStart}-${mediaItem.trimEnd}`;
-                    }
+                    if (mi.trimStart !== undefined && mi.trimEnd !== undefined) contentStr += `|${mi.trimStart}-${mi.trimEnd}`;
                 }
-
                 return {
-                    capsule_id: capsuleId,
-                    owner_id: user.id,
-                    media_url: res.mediaUrl || '',
-                    thumbnail_url: res.thumbUrl || '',
-                    media_type: res.type,
-                    content: contentStr,
+                    capsule_id: capsuleId, owner_id: user.id,
+                    media_url: res.mediaUrl || '', thumbnail_url: res.thumbUrl || '',
+                    media_type: res.type, content: contentStr,
                     caption: caption ? `${caption} !!b:${batchId}` : `!!b:${batchId}`,
                 };
             });
@@ -327,353 +254,311 @@ export default function AddItemScreen() {
             const { error: dbError } = await supabase.from('capsule_items').insert(entries);
             if (dbError) throw dbError;
 
-            // Notify followers & owner
             try {
-                const { data: followers } = await supabase
-                    .from('capsule_followers')
-                    .select('user_id')
-                    .eq('capsule_id', capsuleId);
-                
+                const { data: followers } = await supabase.from('capsule_followers').select('user_id').eq('capsule_id', capsuleId);
                 const { data: capData } = await supabase.from('capsules').select('title, owner_id').eq('id', capsuleId).single();
-                
-                const recipients = new Set((followers || []).map(f => f.user_id));
+                const recipients = new Set((followers || []).map((f: any) => f.user_id));
                 if (capData) recipients.add(capData.owner_id);
-                recipients.delete(user.id); // Don't notify self
-
+                recipients.delete(user.id);
                 const notifs = Array.from(recipients).map(rid => ({
-                    user_id: rid,
-                    sender_id: user.id,
-                    type: 'item_added',
-                    capsule_id: capsuleId,
-                    message: t('feed.new_content_added', { title: capData?.title || 'a capsule' }) || `New items were added to "${capData?.title || 'a capsule'}"`
+                    user_id: rid, sender_id: user.id, type: 'item_added', capsule_id: capsuleId,
+                    message: `New items were added to "${capData?.title || 'a capsule'}"`
                 }));
-
-                if (notifs.length > 0) {
-                    await supabase.from('notifications').insert(notifs);
-                }
-            } catch (e) {
-                console.warn('Notification failed:', e);
-            }
+                if (notifs.length > 0) await supabase.from('notifications').insert(notifs);
+            } catch (e) { }
 
             if (failedUploads.length > 0) {
                 setAestheticAlert({
-                    visible: true,
-                    title: t('common.upload_partially_complete') || "Ups, casi listo...",
-                    message: `${successfulUploads.length} archivos se subieron correctamente, pero tuvimos un inconveniente con ${failedUploads.length} de ellos:`,
-                    errors: failedUploads.map(f => {
-                        if (f.reason?.includes('allowed size')) return 'El archivo es demasiado grande (máximo permitido excedido).';
-                        return f.reason;
-                    }),
-                    onClose: () => {
-                        setAestheticAlert(null);
-                        navigation.pop(2);
-                    }
+                    visible: true, title: 'Casi listo...',
+                    message: `${successfulUploads.length} subidos, ${failedUploads.length} fallaron.`,
+                    errors: failedUploads.map(f => f.reason?.includes('allowed size') ? 'Archivo demasiado grande.' : f.reason),
+                    onClose: () => { setAestheticAlert(null); navigation.pop(2); }
                 });
             } else {
-                Alert.alert(t('common.success'), t('common.items_added', { count: entries.length }));
-                navigation.pop(2); 
+                Alert.alert('¡Listo!', `${entries.length} elemento${entries.length !== 1 ? 's' : ''} guardado${entries.length !== 1 ? 's' : ''}.`);
+                navigation.pop(2);
             }
-
         } catch (err: any) {
-            console.error(err);
             setAestheticAlert({
-                visible: true,
-                title: "Vaya...",
-                message: err.message?.includes('allowed size') ? 'El archivo es demasiado grande y no puede subirse.' : (err.message || t('common.upload_failed')),
+                visible: true, title: 'Algo salió mal',
+                message: err.message?.includes('allowed size') ? 'El archivo es demasiado grande.' : (err.message || 'Error al subir.'),
                 onClose: () => setAestheticAlert(null)
             });
-        } finally {
-            setLoading(false);
-        }
+        } finally { setLoading(false); }
     };
 
     const uploadFile = async (uri: string, type: string, userId: string, isThumbnail = false) => {
         let ext = 'jpg';
         const lastDot = uri.lastIndexOf('.');
-        if (lastDot !== -1 && lastDot > uri.lastIndexOf('/')) {
-            ext = uri.substring(lastDot + 1).split('?')[0];
-        } else {
-        ext = type === 'video' ? 'mp4' : type === 'audio' ? 'm4a' : 'webp';
-
-        }
-
+        if (lastDot !== -1 && lastDot > uri.lastIndexOf('/')) ext = uri.substring(lastDot + 1).split('?')[0];
+        else ext = type === 'video' ? 'mp4' : type === 'audio' ? 'm4a' : 'webp';
         const fileName = `${userId}/${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
         const filePath = isThumbnail ? `thumbnails/${fileName}` : `items/${fileName}`;
-
         try {
-            if (!isThumbnail) {
-                setUploadProgress(prev => ({ ...prev, [uri]: 20 }));
-            }
-
-            // --- Memory Safe Upload using FormData ---
+            if (!isThumbnail) setUploadProgress(prev => ({ ...prev, [uri]: 20 }));
             const formData = new FormData();
-            formData.append('file', {
-                uri: Platform.OS === 'android' ? uri : uri.replace('file://', ''),
-                name: `file.${ext}`,
-                type: type === 'video' ? 'video/mp4' : type === 'audio' ? 'audio/x-m4a' : 'image/jpeg'
-            } as any);
-
-            const { data, error } = await supabase.storage
-                .from('capsule-media')
-                .upload(filePath, formData, {
-                    contentType: 'multipart/form-data',
-                    upsert: true
-                });
-
+            formData.append('file', { uri: Platform.OS === 'android' ? uri : uri.replace('file://', ''), name: `file.${ext}`, type: type === 'video' ? 'video/mp4' : type === 'audio' ? 'audio/x-m4a' : 'image/jpeg' } as any);
+            const { data, error } = await supabase.storage.from('capsule-media').upload(filePath, formData, { contentType: 'multipart/form-data', upsert: true });
             if (error) throw error;
-
-            if (!isThumbnail) {
-                setUploadProgress(prev => ({ ...prev, [uri]: 100 }));
-            }
-
+            if (!isThumbnail) setUploadProgress(prev => ({ ...prev, [uri]: 100 }));
             const { data: { publicUrl } } = supabase.storage.from('capsule-media').getPublicUrl(filePath);
             return publicUrl;
         } catch (error: any) {
-            console.error('File upload error:', error);
             throw new Error(`Upload failed: ${error.message || 'Network error'}`);
         }
     };
 
+    const isUploadDisabled = loading
+        || (contentType === 'note' && !text)
+        || (contentType === 'audio' && !recordedUri)
+        || ((contentType === 'image' || contentType === 'video') && mediaList.length === 0);
+
+    const typeConfig: Record<string, { label: string; icon: any; accent: string }> = {
+        image: { label: 'Foto', icon: 'image-outline', accent: '#7C3AED' },
+        video: { label: 'Video', icon: 'videocam-outline', accent: '#7C3AED' },
+        audio: { label: 'Audio', icon: 'mic-outline', accent: '#7C3AED' },
+        note: { label: 'Nota', icon: 'document-text-outline', accent: '#7C3AED' },
+    };
+    const tc = typeConfig[contentType] || typeConfig.note;
+
     return (
-        <View style={[styles.container, { paddingTop: insets.top }]}>
-            <StatusBar barStyle="dark-content" backgroundColor={Colors.background} />
-            <View style={styles.header}>
-                <TouchableOpacity activeOpacity={0.7} onPress={() => navigation.goBack()}>
-                    <Ionicons name="close" size={28} color={Colors.textPrimary} />
+        <View style={[s.root, { paddingTop: insets.top }]}>
+            <StatusBar barStyle="dark-content" backgroundColor={P.white} />
+
+            {/* ── Header ── */}
+            <View style={s.header}>
+                <TouchableOpacity style={s.backBtn} activeOpacity={0.7} onPress={() => navigation.goBack()}>
+                    <Ionicons name="chevron-back" size={22} color={P.gray700} />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>Add {contentType}</Text>
-                <TouchableOpacity activeOpacity={0.8} onPress={handleUpload} disabled={loading || (contentType === 'note' && !text) || (contentType === 'audio' && !recordedUri) || ((contentType === 'image' || contentType === 'video') && mediaList.length === 0)}>
-                    {loading ? <ActivityIndicator size="small" color={Colors.primary} /> : <Text style={styles.postBtn}>Add</Text>}
+
+                <View style={s.headerMid}>
+                    <View style={s.typePill}>
+                        <Ionicons name={tc.icon} size={12} color={P.p600} />
+                        <Text style={s.typePillText}>{tc.label}</Text>
+                    </View>
+                    <Text style={s.headerTitle}>Nueva memoria</Text>
+                </View>
+
+                <TouchableOpacity
+                    style={[s.publishBtn, isUploadDisabled && s.publishBtnOff]}
+                    activeOpacity={0.85}
+                    onPress={handleUpload}
+                    disabled={isUploadDisabled}
+                >
+                    {loading
+                        ? <ActivityIndicator size="small" color={P.white} />
+                        : <Text style={s.publishBtnText}>Guardar</Text>
+                    }
                 </TouchableOpacity>
             </View>
 
-            <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-                {contentType === 'note' ? (
-                    <TextInput
-                        style={styles.textInput}
-                        placeholder="Write something..."
-                        multiline
-                        value={text}
-                        onChangeText={setText}
-                        autoFocus
-                        autoCorrect={false}
-                        spellCheck={false}
-                    />
-                ) : contentType === 'audio' ? (
-                    <View style={styles.recordingSection}>
+            {/* ── Thin accent line below header ── */}
+            <View style={s.headerRule} />
+
+            <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+
+                {/* ════════ NOTE ════════ */}
+                {contentType === 'note' && (
+                    <View style={s.noteWrapper}>
+                        <View style={s.noteTopRow}>
+                            <View style={s.noteIconWrap}>
+                                <Ionicons name="create" size={16} color={P.p600} />
+                            </View>
+                            <Text style={s.noteSectionLabel}>Tu nota</Text>
+                        </View>
+
+                        <View style={s.noteField}>
+                            <TextInput
+                                style={s.noteInput}
+                                placeholder="Escribe algo que quieras recordar..."
+                                placeholderTextColor={P.gray300}
+                                multiline
+                                value={text}
+                                onChangeText={setText}
+                                autoFocus
+                                autoCorrect={false}
+                                spellCheck={false}
+                            />
+                            <View style={s.noteFooter}>
+                                <View style={s.noteFooterDot} />
+                                <Text style={s.noteCharCount}>{text.length} caracteres</Text>
+                            </View>
+                        </View>
+                    </View>
+                )}
+
+                {/* ════════ AUDIO ════════ */}
+                {contentType === 'audio' && (
+                    <View style={s.audioCard}>
+                        {/* waveform decoration */}
+                        <View style={s.waveRow}>
+                            {[6, 14, 10, 22, 16, 28, 20, 34, 18, 26, 12, 20, 8, 16, 24, 12].map((h, i) => (
+                                <View
+                                    key={i}
+                                    style={[
+                                        s.wave,
+                                        { height: h },
+                                        isRecording
+                                            ? { backgroundColor: P.p500, opacity: 0.5 + (i % 4) * 0.12 }
+                                            : recordedUri
+                                                ? { backgroundColor: P.green, opacity: 0.6 }
+                                                : { backgroundColor: P.p200 },
+                                    ]}
+                                />
+                            ))}
+                        </View>
+
                         <TouchableOpacity
-                            style={[styles.recordBtn, isRecording && styles.recordBtnActive]}
+                            style={s.micBtnOuter}
                             activeOpacity={0.9}
                             onPress={isRecording ? stopRecording : startRecording}
                         >
-                            <Ionicons name={isRecording ? "stop" : "mic"} size={40} color="#fff" />
+                            <LinearGradient
+                                colors={
+                                    isRecording ? [P.red, '#DC2626'] :
+                                        recordedUri ? [P.green, '#059669'] :
+                                            [P.p500, P.p800]
+                                }
+                                style={s.micBtnGrad}
+                                start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                            >
+                                <Ionicons
+                                    name={isRecording ? 'square' : recordedUri ? 'checkmark' : 'mic'}
+                                    size={34} color={P.white}
+                                />
+                            </LinearGradient>
                         </TouchableOpacity>
-                        <Text style={styles.recordingLabel}>
-                            {isRecording ? "Recording..." : recordedUri ? "Recording saved" : "Tap to record voice note"}
+
+                        <Text style={s.micStatus}>
+                            {isRecording ? 'Grabando…' : recordedUri ? '¡Listo!' : 'Toca para grabar'}
                         </Text>
+                        <Text style={s.micHint}>
+                            {isRecording ? 'Toca de nuevo para detener' : recordedUri ? 'Nota de voz guardada' : 'Nota de voz'}
+                        </Text>
+
                         {recordedUri && (
-                            <TouchableOpacity style={styles.retryBtn} activeOpacity={0.7} onPress={() => setRecordedUri(null)}>
-                                <Text style={styles.retryText}>Discard & Retry</Text>
+                            <TouchableOpacity style={s.retryRow} activeOpacity={0.7} onPress={() => setRecordedUri(null)}>
+                                <Ionicons name="refresh-circle-outline" size={16} color={P.red} />
+                                <Text style={s.retryLabel}>Grabar de nuevo</Text>
                             </TouchableOpacity>
                         )}
                     </View>
-                ) : (
+                )}
+
+                {/* ════════ IMAGE / VIDEO ════════ */}
+                {(contentType === 'image' || contentType === 'video') && (
                     <>
-                        <View style={styles.mediaContainer}>
-                            {mediaList.length === 0 ? (
-                                <View style={styles.emptyMedia}>
-                                    <View style={styles.illustrationContainer}>
-                                        <View style={[styles.glowCircle, { backgroundColor: Colors.primary + '20' }]} />
-                                        <Ionicons name={contentType === 'image' ? 'images' : 'videocam'} size={80} color={Colors.primary} style={{ opacity: 0.8 }} />
-                                    </View>
-                                    
-                                    <TouchableOpacity style={styles.modernChoiceBtn} activeOpacity={0.8} onPress={captureMediaWithTrack}>
-                                        <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.modernChoiceGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-                                            <View style={styles.modernIconBox}>
-                                                <Ionicons name="camera" size={32} color="#fff" />
+                        {mediaList.length === 0 ? (
+                            /* ── Empty picker ── */
+                            <View style={s.emptyWrap}>
+                                <View style={s.emptyIcon}>
+                                    <LinearGradient colors={[P.p50, P.p100]} style={s.emptyIconGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+                                        <Ionicons
+                                            name={contentType === 'image' ? 'images-outline' : 'film-outline'}
+                                            size={40} color={P.p600}
+                                        />
+                                    </LinearGradient>
+                                </View>
+
+                                <Text style={s.emptyTitle}>
+                                    {contentType === 'image' ? 'Añade tus fotos' : 'Añade tu video'}
+                                </Text>
+                                <Text style={s.emptySub}>
+                                    {contentType === 'image'
+                                        ? 'Captura un momento o elige desde la galería'
+                                        : 'Máximo 1 minuto · HD listo para guardar'}
+                                </Text>
+
+                                <View style={s.pickerRow}>
+                                    {/* Camera */}
+                                    <TouchableOpacity style={s.pickerCardPrimary} activeOpacity={0.85} onPress={captureMediaWithTrack}>
+                                        <LinearGradient colors={[P.p500, P.p800]} style={s.pickerCardGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+                                            <View style={s.pickerIconCircle}>
+                                                <Ionicons name="camera" size={28} color={P.white} />
                                             </View>
-                                            <View>
-                                                <Text style={styles.modernChoiceLabel}>Capture Now</Text>
-                                                <Text style={styles.modernChoiceSub}>Use your camera for a new memory</Text>
-                                            </View>
+                                            <Text style={s.pickerLabelPrimary}>Cámara</Text>
+                                            <Text style={s.pickerSubPrimary}>Captura ahora</Text>
                                         </LinearGradient>
                                     </TouchableOpacity>
-                                    
-                                    <TouchableOpacity style={[styles.modernChoiceBtn, { backgroundColor: Colors.cardAlt }]} activeOpacity={0.8} onPress={pickMediaWithTrack}>
-                                        <View style={styles.modernChoiceGrad}>
-                                            <View style={[styles.modernIconBox, { backgroundColor: Colors.primary + '15' }]}>
-                                                <Ionicons name="library" size={32} color={Colors.primary} />
-                                            </View>
-                                            <View>
-                                                <Text style={[styles.modernChoiceLabel, { color: Colors.textPrimary }]}>From Gallery</Text>
-                                                <Text style={[styles.modernChoiceSub, { color: Colors.textMuted }]}>Choose from your photos and videos</Text>
-                                            </View>
+
+                                    {/* Gallery */}
+                                    <TouchableOpacity style={s.pickerCardSecondary} activeOpacity={0.85} onPress={pickMediaWithTrack}>
+                                        <View style={s.pickerIconCircleGhost}>
+                                            <Ionicons name="images-outline" size={28} color={P.p600} />
                                         </View>
+                                        <Text style={s.pickerLabelSecondary}>Galería</Text>
+                                        <Text style={s.pickerSubSecondary}>Tus fotos</Text>
                                     </TouchableOpacity>
                                 </View>
-                            ) : (
-                                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.mediaList}>
+                            </View>
+                        ) : (
+                            /* ── Media strip ── */
+                            <>
+                                <View style={s.stripHeader}>
+                                    <View style={s.countChip}>
+                                        <View style={s.countDot} />
+                                        <Text style={s.countText}>
+                                            {mediaList.length} {contentType === 'image' ? 'foto' : 'video'}{mediaList.length !== 1 ? 's' : ''}
+                                        </Text>
+                                    </View>
+                                    <TouchableOpacity style={s.addMoreBtn} onPress={handleAddMore} activeOpacity={0.7}>
+                                        <Ionicons name="add" size={15} color={P.p600} />
+                                        <Text style={s.addMoreText}>Añadir más</Text>
+                                    </TouchableOpacity>
+                                </View>
+
+                                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.strip}>
                                     {mediaList.map((item, index) => {
                                         const progress = uploadProgress[item.uri] || 0;
                                         return (
-                                            <View key={index} style={styles.mediaPreviewWrapper}>
-                                                <Image source={{ uri: item.thumbnailUri || item.uri }} style={styles.mediaPreview} contentFit="cover" transition={200} />
+                                            <View key={index} style={s.mediaCard}>
+                                                <Image source={{ uri: item.thumbnailUri || item.uri }} style={s.mediaThumb} contentFit="cover" transition={200} />
 
-                                                
+                                                <LinearGradient
+                                                    colors={['transparent', 'rgba(24,24,27,0.65)']}
+                                                    style={StyleSheet.absoluteFill}
+                                                    start={{ x: 0, y: 0.45 }} end={{ x: 0, y: 1 }}
+                                                />
+
                                                 {loading && progress < 100 && (
-                                                    Platform.OS === 'ios' ? (
-                                                        <BlurView intensity={20} tint="dark" style={styles.progressOverlay}>
-                                                            <View style={{ alignItems: 'center', width: '100%' }}>
-                                                                <Text style={styles.progressText}>{progress}%</Text>
-                                                                <View style={styles.progressTrack}>
-                                                                    <View style={[styles.progressBar, { width: `${progress}%` }]} />
-                                                                </View>
-                                                            </View>
-                                                        </BlurView>
-                                                    ) : (
-                                                        <View style={[styles.progressOverlay, { backgroundColor: 'rgba(0,0,0,0.7)' }]}>
-                                                            <View style={{ alignItems: 'center', width: '100%' }}>
-                                                                <Text style={styles.progressText}>{progress}%</Text>
-                                                                <View style={styles.progressTrack}>
-                                                                    <View style={[styles.progressBar, { width: `${progress}%` }]} />
-                                                                </View>
-                                                            </View>
+                                                    <View style={s.progressWrap}>
+                                                        <View style={s.progressTrack}>
+                                                            <View style={[s.progressFill, { width: `${progress}%` as any }]} />
                                                         </View>
-                                                    )
+                                                    </View>
                                                 )}
 
                                                 {contentType === 'video' && (
-                                                    <TouchableOpacity 
-                                                        style={styles.playOverlay} 
-                                                        activeOpacity={0.7}
-                                                        onPress={() => setPreviewVideo(item.uri)}
-                                                    >
-                                                        <View style={styles.playCircle}>
-                                                            <Ionicons name="play" size={30} color="#fff" />
-                                                        </View>
+                                                    <TouchableOpacity style={s.playCircle} activeOpacity={0.7} onPress={() => setPreviewVideo(item.uri)}>
+                                                        <Ionicons name="play" size={18} color={P.white} />
                                                     </TouchableOpacity>
                                                 )}
-
                                                 {contentType === 'video' && (
-                                                    <TouchableOpacity 
-                                                        style={styles.trimBtnOverlay} 
-                                                        activeOpacity={0.8}
-                                                        onPress={() => openTrimModal(index)}
-                                                    >
-                                                        <Ionicons name="cut" size={16} color="#fff" />
+                                                    <TouchableOpacity style={s.trimChip} activeOpacity={0.8} onPress={() => openTrimModal(index)}>
+                                                        <Ionicons name="cut-outline" size={11} color={P.white} />
+                                                        <Text style={s.trimChipText}>Cortar</Text>
                                                     </TouchableOpacity>
                                                 )}
 
-                                                <TouchableOpacity style={styles.removeBtn} activeOpacity={0.7} onPress={() => removeMedia(index)}>
-                                                    <Ionicons name="close-circle" size={24} color="#ff4757" />
+                                                <TouchableOpacity style={s.removeBtn} activeOpacity={0.7} onPress={() => removeMedia(index)}>
+                                                    <Ionicons name="close" size={13} color={P.white} />
                                                 </TouchableOpacity>
                                             </View>
                                         );
                                     })}
-                                    <TouchableOpacity style={[styles.addMoreBtnModern, { borderStyle: 'solid', backgroundColor: Colors.primary + '08', borderColor: Colors.primary + '30' }]} activeOpacity={0.8} onPress={handleAddMore}>
-                                        <Ionicons name="add" size={32} color={Colors.primary} />
-                                        <Text style={{ fontSize: 10, fontFamily: Fonts.bold, color: Colors.primary, marginTop: 4 }}>Add more</Text>
-                                    </TouchableOpacity>
                                 </ScrollView>
-                            )}
-                        </View>
+                            </>
+                        )}
 
-                        <Modal visible={!!previewVideo} transparent animationType="fade">
-                            <View style={styles.videoModal}>
-                                {previewVideo && (
-                                    <Video
-                                        source={{ uri: (previewVideo && !previewVideo.startsWith('text://')) ? previewVideo : '' }}
-                                        rate={1.0}
-                                        volume={1.0}
-                                        isMuted={false}
-                                        resizeMode={ResizeMode.CONTAIN}
-                                        shouldPlay
-                                        useNativeControls
-                                        style={styles.fullVideo}
-                                    />
-                                )}
-                                <TouchableOpacity style={styles.closeVideo} activeOpacity={0.7} onPress={() => setPreviewVideo(null)}>
-                                    <Ionicons name="close-circle" size={40} color="#fff" />
-                                </TouchableOpacity>
+                        {/* Caption */}
+                        <View style={s.captionRow}>
+                            <View style={s.captionIconWrap}>
+                                <Ionicons name="chatbubble-ellipses-outline" size={16} color={P.p500} />
                             </View>
-                        </Modal>
-
-                        <Modal visible={trimModalVisible} transparent animationType="slide">
-                            <View style={styles.trimModalContainer}>
-                                {Platform.OS === 'ios' ? (
-                                    <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFill} />
-                                ) : (
-                                    <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.85)' }]} />
-                                )}
-                                <View style={styles.trimContent}>
-                                    <Text style={styles.trimTitle}>Trim Video</Text>
-                                    
-                                    {trimmingIndex !== null && mediaList[trimmingIndex] && (
-                                        <Video
-                                            source={{ uri: mediaList[trimmingIndex].uri }}
-                                            rate={1.0}
-                                            volume={1.0}
-                                            isMuted={false}
-                                            resizeMode={ResizeMode.CONTAIN}
-                                            shouldPlay={trimSeekingValue === null}
-                                            useNativeControls={false}
-                                            style={styles.trimVideoPreview}
-                                            positionMillis={trimSeekingValue !== null ? trimSeekingValue : trimStart}
-                                        />
-                                    )}
-
-                                    <View style={styles.sliderGroup}>
-                                        <Text style={styles.sliderLabel}>Start: {Math.floor(trimStart / 1000)}s</Text>
-                                        <Slider
-                                            style={{ width: '100%', height: 40 }}
-                                            minimumValue={0}
-                                            maximumValue={trimmingIndex !== null ? (mediaList[trimmingIndex]?.duration || 0) : 1000}
-                                            value={trimStart}
-                                            onValueChange={(val) => {
-                                                setTrimStart(Math.min(val, trimEnd - 1000));
-                                                setTrimSeekingValue(val);
-                                            }}
-                                            onSlidingComplete={() => setTrimSeekingValue(null)}
-                                            minimumTrackTintColor={Colors.primary}
-                                            maximumTrackTintColor="#ffffff33"
-                                            thumbTintColor="#fff"
-                                        />
-
-                                        <Text style={styles.sliderLabel}>End: {Math.floor(trimEnd / 1000)}s</Text>
-                                        <Slider
-                                            style={{ width: '100%', height: 40 }}
-                                            minimumValue={0}
-                                            maximumValue={trimmingIndex !== null ? (mediaList[trimmingIndex]?.duration || 0) : 1000}
-                                            value={trimEnd}
-                                            onValueChange={(val) => {
-                                                setTrimEnd(Math.max(val, trimStart + 1000));
-                                                setTrimSeekingValue(val);
-                                            }}
-                                            onSlidingComplete={() => setTrimSeekingValue(null)}
-                                            minimumTrackTintColor="#ffffff33"
-                                            maximumTrackTintColor={Colors.primary}
-                                            thumbTintColor="#fff"
-                                        />
-                                    </View>
-
-                                    <View style={styles.trimActions}>
-                                        <TouchableOpacity style={[styles.trimActionBtn, { backgroundColor: '#ff475715' }]} onPress={() => setTrimModalVisible(false)}>
-                                            <Text style={{ color: '#ff4757', fontFamily: Fonts.bold }}>Cancel</Text>
-                                        </TouchableOpacity>
-                                        <TouchableOpacity style={[styles.trimActionBtn, { backgroundColor: Colors.primary }]} onPress={saveTrim}>
-                                            <Text style={{ color: '#fff', fontFamily: Fonts.bold }}>Save</Text>
-                                        </TouchableOpacity>
-                                    </View>
-                                </View>
-                            </View>
-                        </Modal>
-
-                        <View style={styles.captionWrapper}>
-                            <Ionicons name="chatbubble-ellipses-outline" size={20} color={Colors.primary} style={styles.captionIcon} />
                             <TextInput
-                                style={styles.captionInputModern}
-                                placeholder="Write a caption..."
-                                placeholderTextColor={Colors.textMuted}
+                                style={s.captionInput}
+                                placeholder="Añade un pie de foto…"
+                                placeholderTextColor={P.gray300}
                                 value={caption}
                                 onChangeText={setCaption}
                                 multiline={false}
@@ -684,43 +569,131 @@ export default function AddItemScreen() {
                     </>
                 )}
             </ScrollView>
+
+            {/* ── Video Preview Modal ── */}
+            <Modal visible={!!previewVideo} transparent animationType="fade">
+                <View style={s.videoModal}>
+                    {previewVideo && (
+                        <Video source={{ uri: previewVideo }} rate={1.0} volume={1.0} isMuted={false}
+                            resizeMode={ResizeMode.CONTAIN} shouldPlay useNativeControls style={s.videoFull} />
+                    )}
+                    <TouchableOpacity style={s.videoClose} activeOpacity={0.7} onPress={() => setPreviewVideo(null)}>
+                        <View style={s.videoCloseCircle}>
+                            <Ionicons name="close" size={20} color={P.white} />
+                        </View>
+                    </TouchableOpacity>
+                </View>
+            </Modal>
+
+            {/* ── Trim Modal ── */}
+            <Modal visible={trimModalVisible} transparent animationType="slide">
+                <View style={s.trimOverlay}>
+                    {Platform.OS === 'ios'
+                        ? <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFill} />
+                        : <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(10,8,20,0.93)' }]} />
+                    }
+                    <View style={s.trimSheet}>
+                        <View style={s.trimHandle} />
+                        <Text style={s.trimTitle}>Recortar video</Text>
+
+                        {trimmingIndex !== null && mediaList[trimmingIndex] && (
+                            <Video source={{ uri: mediaList[trimmingIndex].uri }}
+                                rate={1.0} volume={1.0} isMuted={false}
+                                resizeMode={ResizeMode.CONTAIN}
+                                shouldPlay={trimSeekingValue === null}
+                                useNativeControls={false}
+                                style={s.trimPreview}
+                                positionMillis={trimSeekingValue !== null ? trimSeekingValue : trimStart}
+                            />
+                        )}
+
+                        <View style={s.trimSliders}>
+                            <View style={s.trimRow}>
+                                <Text style={s.trimLabel}>Inicio</Text>
+                                <View style={s.trimBadge}><Text style={s.trimBadgeText}>{Math.floor(trimStart / 1000)}s</Text></View>
+                            </View>
+                            <Slider style={{ width: '100%', height: 36 }}
+                                minimumValue={0}
+                                maximumValue={trimmingIndex !== null ? (mediaList[trimmingIndex]?.duration || 0) : 1000}
+                                value={trimStart}
+                                onValueChange={val => { setTrimStart(Math.min(val, trimEnd - 1000)); setTrimSeekingValue(val); }}
+                                onSlidingComplete={() => setTrimSeekingValue(null)}
+                                minimumTrackTintColor={P.p500}
+                                maximumTrackTintColor="rgba(255,255,255,0.12)"
+                                thumbTintColor={P.p300}
+                            />
+                            <View style={[s.trimRow, { marginTop: 10 }]}>
+                                <Text style={s.trimLabel}>Fin</Text>
+                                <View style={s.trimBadge}><Text style={s.trimBadgeText}>{Math.floor(trimEnd / 1000)}s</Text></View>
+                            </View>
+                            <Slider style={{ width: '100%', height: 36 }}
+                                minimumValue={0}
+                                maximumValue={trimmingIndex !== null ? (mediaList[trimmingIndex]?.duration || 0) : 1000}
+                                value={trimEnd}
+                                onValueChange={val => { setTrimEnd(Math.max(val, trimStart + 1000)); setTrimSeekingValue(val); }}
+                                onSlidingComplete={() => setTrimSeekingValue(null)}
+                                minimumTrackTintColor="rgba(255,255,255,0.12)"
+                                maximumTrackTintColor={P.p500}
+                                thumbTintColor={P.p300}
+                            />
+                        </View>
+
+                        <View style={s.trimActions}>
+                            <TouchableOpacity style={s.trimCancel} onPress={() => setTrimModalVisible(false)}>
+                                <Text style={s.trimCancelText}>Cancelar</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={s.trimSave} onPress={saveTrim}>
+                                <LinearGradient colors={[P.p500, P.p800]} style={s.trimSaveGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+                                    <Text style={s.trimSaveText}>Guardar</Text>
+                                </LinearGradient>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* ── Upload Overlay ── */}
             {loading && (
-                <View style={{ ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
-                    <ActivityIndicator size="large" color={Colors.primary} />
-                    <Text style={{ marginTop: 16, fontFamily: Fonts.bold, color: Colors.textPrimary, fontSize: 16 }}>
-                        {mediaList.length > 0 ? "Uploading media..." : "Processing media..."}
-                    </Text>
+                <View style={s.uploadOverlay}>
+                    <View style={s.uploadCard}>
+                        <View style={s.uploadSpinner}>
+                            <ActivityIndicator size="large" color={P.p600} />
+                        </View>
+                        <Text style={s.uploadTitle}>Subiendo…</Text>
+                        <Text style={s.uploadSub}>{mediaList.length > 0 ? 'Procesando archivos' : 'Un momento'}</Text>
+                    </View>
                 </View>
             )}
 
-            {/* Aesthetic Alert Modal */}
+            {/* ── Aesthetic Alert ── */}
             <Modal visible={!!aestheticAlert?.visible} transparent animationType="fade">
-                <View style={styles.aestheticAlertOverlay}>
-                    {Platform.OS === 'ios' ? (
-                        <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
-                    ) : (
-                        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]} />
-                    )}
-                    <View style={styles.aestheticAlertCard}>
-                        <View style={styles.aestheticAlertIconBox}>
-                            <Ionicons name="alert-circle" size={48} color="#FF6B6B" />
+                <View style={s.alertOverlay}>
+                    {Platform.OS === 'ios'
+                        ? <BlurView intensity={18} tint="light" style={StyleSheet.absoluteFill} />
+                        : <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(90,80,120,0.22)' }]} />
+                    }
+                    <View style={s.alertCard}>
+                        <View style={s.alertIconWrap}>
+                            <Ionicons name="alert-circle-outline" size={38} color={P.red} />
                         </View>
-                        <Text style={styles.aestheticAlertTitle}>{aestheticAlert?.title}</Text>
-                        <Text style={styles.aestheticAlertMessage}>{aestheticAlert?.message}</Text>
-                        
-                        {aestheticAlert?.errors && aestheticAlert.errors.length > 0 && (
-                            <View style={styles.aestheticAlertErrorBox}>
-                                {aestheticAlert.errors.map((err, i) => (
-                                    <View key={i} style={styles.aestheticAlertErrorRow}>
-                                        <Ionicons name="close-circle" size={16} color="#FF6B6B" style={{marginRight: 8, marginTop: 2}} />
-                                        <Text style={styles.aestheticAlertErrorText}>{err}</Text>
+                        <Text style={s.alertTitle}>{aestheticAlert?.title}</Text>
+                        <Text style={s.alertMsg}>{aestheticAlert?.message}</Text>
+
+                        {aestheticAlert?.errors?.length > 0 && (
+                            <View style={s.alertErrors}>
+                                {aestheticAlert.errors.map((err: string, i: number) => (
+                                    <View key={i} style={s.alertErrorItem}>
+                                        <View style={s.alertDot} />
+                                        <Text style={s.alertErrorText}>{err}</Text>
                                     </View>
                                 ))}
                             </View>
                         )}
-                        
-                        <TouchableOpacity style={styles.aestheticAlertBtn} activeOpacity={0.8} onPress={() => aestheticAlert?.onClose()}>
-                            <Text style={styles.aestheticAlertBtnText}>Entendido</Text>
+
+                        <TouchableOpacity style={s.alertBtn} activeOpacity={0.85} onPress={() => aestheticAlert?.onClose()}>
+                            <LinearGradient colors={[P.p500, P.p800]} style={s.alertBtnGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+                                <Text style={s.alertBtnText}>Entendido</Text>
+                            </LinearGradient>
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -729,282 +702,261 @@ export default function AddItemScreen() {
     );
 }
 
-const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: Colors.background },
-    header: { 
-        flexDirection: 'row', 
-        alignItems: 'center', 
-        justifyContent: 'space-between', 
-        paddingHorizontal: Spacing.md, 
-        paddingVertical: Platform.OS === 'android' ? 20 : Spacing.md,
-        height: Platform.OS === 'android' ? 80 : 64,
-        borderBottomWidth: 1, 
-        borderBottomColor: Colors.border + '44'
+// ─── Styles ──────────────────────────────────────────────────────────────────
+const s = StyleSheet.create({
+    root: { flex: 1, backgroundColor: P.white },
+
+    // Header
+    header: {
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+        paddingHorizontal: 20, paddingVertical: 12, backgroundColor: P.white,
     },
-    headerTitle: { fontSize: 18, fontFamily: Fonts.bold, color: Colors.textPrimary, textTransform: 'capitalize' },
-    postBtn: { color: Colors.primary, fontFamily: Fonts.bold, fontSize: 16 },
-    content: { padding: Spacing.md },
-    textInput: { 
-        fontSize: 18, 
-        fontFamily: Fonts.regular, 
-        color: Colors.textPrimary, 
-        minHeight: 250, 
-        textAlignVertical: 'top',
-        backgroundColor: Colors.cardAlt,
-        borderRadius: 20,
-        padding: 20,
-        borderWidth: 1,
-        borderColor: Colors.border,
+    headerRule: { height: 1, backgroundColor: P.gray100, marginHorizontal: 0 },
+    backBtn: {
+        width: 38, height: 38, borderRadius: 19,
+        backgroundColor: P.gray100,
+        alignItems: 'center', justifyContent: 'center',
     },
-    
-    mediaContainer: { marginBottom: 30, minHeight: 280 },
-    mediaList: { paddingHorizontal: 4, gap: 16, paddingRight: 20 },
-    mediaPreviewWrapper: { 
-        width: 150, 
-        height: 260, 
-        borderRadius: 24, 
-        overflow: 'hidden', 
-        backgroundColor: Colors.cardAlt, 
-        ...Shadow.subtle,
-        borderWidth: 1,
-        borderColor: Colors.border
+    headerMid: { alignItems: 'center', flex: 1, marginHorizontal: 10 },
+    typePill: {
+        flexDirection: 'row', alignItems: 'center', gap: 4,
+        backgroundColor: P.p100, paddingHorizontal: 10, paddingVertical: 3,
+        borderRadius: R.full, marginBottom: 3,
     },
-    mediaPreview: { width: '100%', height: '100%' },
-    removeBtn: { 
-        position: 'absolute', 
-        top: 10, 
-        right: 10, 
-        zIndex: 10,
-        backgroundColor: 'rgba(255,255,255,0.9)',
-        borderRadius: 12,
-        padding: 2
+    typePillText: { fontSize: 10, fontWeight: '700', color: P.p600, textTransform: 'uppercase', letterSpacing: 0.8 },
+    headerTitle: { fontSize: 16, fontWeight: '700', color: P.gray900 },
+    publishBtn: {
+        backgroundColor: P.p600, paddingHorizontal: 20, paddingVertical: 10,
+        borderRadius: R.full, minWidth: 78, alignItems: 'center',
+        ...shadow.purple,
+    },
+    publishBtnOff: { backgroundColor: P.gray200, ...Platform.select({ ios: { shadowOpacity: 0 }, android: { elevation: 0 } }) },
+    publishBtnText: { color: P.white, fontSize: 14, fontWeight: '700' },
+
+    // Scroll
+    scroll: { padding: 20, paddingBottom: 60 },
+
+    // ── NOTE
+    noteWrapper: { gap: 14 },
+    noteTopRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    noteIconWrap: {
+        width: 30, height: 30, borderRadius: 10,
+        backgroundColor: P.p100, alignItems: 'center', justifyContent: 'center',
+    },
+    noteSectionLabel: { fontSize: 13, fontWeight: '700', color: P.p600, letterSpacing: 0.3 },
+    noteField: {
+        borderWidth: 1.5, borderColor: P.gray200,
+        borderRadius: R.lg, backgroundColor: P.white,
+        overflow: 'hidden', ...shadow.soft,
+    },
+    noteInput: {
+        fontSize: 16, color: P.gray900, lineHeight: 26,
+        minHeight: 230, textAlignVertical: 'top', padding: 20,
+    },
+    noteFooter: {
+        flexDirection: 'row', alignItems: 'center', gap: 8,
+        paddingHorizontal: 20, paddingVertical: 12,
+        borderTopWidth: 1, borderTopColor: P.gray100,
+    },
+    noteFooterDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: P.p300 },
+    noteCharCount: { fontSize: 12, color: P.gray400, fontWeight: '500' },
+
+    // ── AUDIO
+    audioCard: {
+        alignItems: 'center', paddingVertical: 48, paddingHorizontal: 24, gap: 6,
+        backgroundColor: P.p50, borderRadius: R.xl,
+        borderWidth: 1.5, borderColor: P.p100, marginTop: 8,
+        ...shadow.soft,
+    },
+    waveRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 28, height: 40 },
+    wave: { width: 3.5, borderRadius: 2 },
+    micBtnOuter: {
+        width: 96, height: 96, borderRadius: 48, overflow: 'hidden',
+        ...shadow.purple,
+    },
+    micBtnGrad: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    micStatus: { fontSize: 18, fontWeight: '700', color: P.gray900, marginTop: 22 },
+    micHint: { fontSize: 13, color: P.gray400, marginBottom: 10 },
+    retryRow: {
+        flexDirection: 'row', alignItems: 'center', gap: 6,
+        paddingHorizontal: 16, paddingVertical: 9,
+        borderRadius: R.full, borderWidth: 1.5,
+        borderColor: P.red + '35', backgroundColor: P.redPale, marginTop: 6,
+    },
+    retryLabel: { color: P.red, fontSize: 13, fontWeight: '600' },
+
+    // ── EMPTY STATE
+    emptyWrap: { alignItems: 'center', paddingVertical: 32, gap: 0 },
+    emptyIcon: { width: 110, height: 110, borderRadius: 55, overflow: 'hidden', marginBottom: 22, ...shadow.soft },
+    emptyIconGrad: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    emptyTitle: { fontSize: 22, fontWeight: '700', color: P.gray900, marginBottom: 8 },
+    emptySub: { fontSize: 14, color: P.gray400, textAlign: 'center', lineHeight: 20, marginBottom: 30 },
+    pickerRow: { flexDirection: 'row', gap: 14, width: '100%' },
+
+    pickerCardPrimary: { flex: 1, borderRadius: R.lg, overflow: 'hidden', ...shadow.purple },
+    pickerCardGrad: { padding: 22, alignItems: 'center', gap: 10 },
+    pickerIconCircle: {
+        width: 54, height: 54, borderRadius: 27,
+        backgroundColor: 'rgba(255,255,255,0.18)',
+        alignItems: 'center', justifyContent: 'center', marginBottom: 2,
+    },
+    pickerLabelPrimary: { fontSize: 15, fontWeight: '700', color: P.white },
+    pickerSubPrimary: { fontSize: 12, color: 'rgba(255,255,255,0.7)' },
+
+    pickerCardSecondary: {
+        flex: 1, borderRadius: R.lg,
+        backgroundColor: P.white, borderWidth: 1.5, borderColor: P.gray200,
+        padding: 22, alignItems: 'center', gap: 10, ...shadow.soft,
+    },
+    pickerIconCircleGhost: {
+        width: 54, height: 54, borderRadius: 27,
+        backgroundColor: P.p100, alignItems: 'center', justifyContent: 'center', marginBottom: 2,
+    },
+    pickerLabelSecondary: { fontSize: 15, fontWeight: '700', color: P.gray900 },
+    pickerSubSecondary: { fontSize: 12, color: P.gray400 },
+
+    // ── STRIP
+    stripHeader: {
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14,
+    },
+    countChip: {
+        flexDirection: 'row', alignItems: 'center', gap: 7,
+        backgroundColor: P.p100, paddingHorizontal: 12, paddingVertical: 6, borderRadius: R.full,
+    },
+    countDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: P.p600 },
+    countText: { fontSize: 13, fontWeight: '700', color: P.p600 },
+    addMoreBtn: {
+        flexDirection: 'row', alignItems: 'center', gap: 4,
+        paddingHorizontal: 12, paddingVertical: 6,
+        borderRadius: R.full, borderWidth: 1.5, borderColor: P.p200,
+        backgroundColor: P.white,
+    },
+    addMoreText: { fontSize: 13, fontWeight: '600', color: P.p600 },
+
+    strip: { paddingBottom: 4, gap: 12, paddingRight: 4 },
+    mediaCard: {
+        width: 146, height: 254, borderRadius: R.lg,
+        overflow: 'hidden', backgroundColor: P.gray100,
+        ...shadow.medium,
+    },
+    mediaThumb: { width: '100%', height: '100%' },
+    progressWrap: { position: 'absolute', bottom: 14, left: 12, right: 12 },
+    progressTrack: { height: 3, backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: 2, overflow: 'hidden' },
+    progressFill: { height: '100%', backgroundColor: P.white, borderRadius: 2 },
+    playCircle: {
+        position: 'absolute', top: '50%', left: '50%',
+        marginTop: -22, marginLeft: -22,
+        width: 44, height: 44, borderRadius: 22,
+        backgroundColor: 'rgba(0,0,0,0.42)',
+        alignItems: 'center', justifyContent: 'center',
+    },
+    trimChip: {
+        position: 'absolute', bottom: 32, left: 10,
+        flexDirection: 'row', alignItems: 'center', gap: 3,
+        backgroundColor: 'rgba(0,0,0,0.48)',
+        borderRadius: R.xs, paddingHorizontal: 8, paddingVertical: 5,
+    },
+    trimChipText: { color: P.white, fontSize: 11, fontWeight: '600' },
+    removeBtn: {
+        position: 'absolute', top: 10, right: 10,
+        width: 26, height: 26, borderRadius: 13,
+        backgroundColor: 'rgba(0,0,0,0.48)',
+        alignItems: 'center', justifyContent: 'center',
     },
 
-    captionWrapper: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: Colors.surface,
-        borderRadius: 24,
-        borderWidth: 1.5,
-        borderColor: Colors.border,
-        paddingHorizontal: 18,
-        marginTop: 20,
-        marginHorizontal: 4,
-        ...Shadow.subtle
+    // Caption
+    captionRow: {
+        flexDirection: 'row', alignItems: 'center', gap: 10,
+        backgroundColor: P.white, borderWidth: 1.5, borderColor: P.gray200,
+        borderRadius: R.md, paddingHorizontal: 16, marginTop: 18,
+        ...shadow.soft,
     },
-    captionIcon: { marginRight: 12 },
-    captionInputModern: {
-        flex: 1,
-        paddingVertical: 18,
-        fontSize: 16,
-        fontFamily: Fonts.medium,
-        color: Colors.textPrimary,
+    captionIconWrap: {
+        width: 32, height: 32, borderRadius: 10,
+        backgroundColor: P.p50, alignItems: 'center', justifyContent: 'center',
     },
-    recordingSection: { 
-        alignItems: 'center', 
-        justifyContent: 'center', 
-        paddingVertical: 60, 
-        gap: 24,
-        backgroundColor: Colors.cardAlt,
-        borderRadius: 32,
-        marginVertical: 20
-    },
-    recordBtn: {
-        width: 110, height: 110, borderRadius: 55, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center',
-        ...Platform.select({
-            ios: {
-                shadowColor: Colors.primary,
-                shadowOffset: { width: 0, height: 8 },
-                shadowOpacity: 0.4,
-                shadowRadius: 12,
-            },
-            android: {
-                elevation: 8,
-            }
-        })
-    },
-    recordBtnActive: { backgroundColor: '#ff4757', transform: [{ scale: 1.1 }] },
-    recordingLabel: { fontSize: 17, fontFamily: Fonts.semiBold, color: Colors.textSecondary },
-    retryBtn: { padding: 12, backgroundColor: '#ff475715', borderRadius: 20 },
-    retryText: { color: '#ff4757', fontFamily: Fonts.bold },
+    captionInput: { flex: 1, paddingVertical: 14, fontSize: 15, color: P.gray900 },
 
-    playOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.15)' },
-    playCircle: { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.9)', alignItems: 'center', justifyContent: 'center', ...Shadow.subtle },
+    // Video Modal
     videoModal: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
-    fullVideo: { width: '100%', height: '80%' },
-    closeVideo: { position: 'absolute', top: 50, right: 20 },
+    videoFull: { width: '100%', height: '80%' },
+    videoClose: { position: 'absolute', top: 56, right: 20 },
+    videoCloseCircle: {
+        width: 40, height: 40, borderRadius: 20,
+        backgroundColor: 'rgba(255,255,255,0.14)',
+        alignItems: 'center', justifyContent: 'center',
+    },
 
-    emptyMedia: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 20, paddingVertical: 40 },
-    modernChoiceBtn: { 
-        width: '100%', 
-        backgroundColor: Colors.surface, 
-        borderRadius: 28, 
-        flexDirection: 'row', 
-        alignItems: 'center', 
-        gap: 16, 
-        borderWidth: 1.5, 
-        borderColor: Colors.border,
-        overflow: 'hidden',
-        minHeight: 120,
-        ...Shadow.card 
+    // Trim Modal
+    trimOverlay: { flex: 1, justifyContent: 'flex-end' },
+    trimSheet: {
+        backgroundColor: '#0F0D1A', borderTopLeftRadius: R.xl, borderTopRightRadius: R.xl,
+        padding: 28, paddingBottom: 40, borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)',
     },
-    modernChoiceGrad: {
-        flex: 1,
-        flexDirection: 'row',
-        alignItems: 'center',
-        padding: 28,
-        gap: 24,
+    trimHandle: {
+        width: 38, height: 4, borderRadius: 2,
+        backgroundColor: 'rgba(255,255,255,0.18)', alignSelf: 'center', marginBottom: 20,
     },
-    // Custom Alert Styles
-    aestheticAlertOverlay: {
-        flex: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
+    trimTitle: { fontSize: 17, fontWeight: '700', color: P.white, textAlign: 'center', marginBottom: 18 },
+    trimPreview: { width: '100%', height: 180, borderRadius: R.md, marginBottom: 22, backgroundColor: '#000' },
+    trimSliders: { marginBottom: 6 },
+    trimRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    trimLabel: { fontSize: 12, color: 'rgba(255,255,255,0.45)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.6 },
+    trimBadge: {
+        backgroundColor: P.p600 + '30', paddingHorizontal: 10, paddingVertical: 3,
+        borderRadius: R.full, borderWidth: 1, borderColor: P.p500 + '50',
     },
-    aestheticAlertCard: {
-        width: '85%',
-        backgroundColor: Colors.surface,
-        borderRadius: 24,
-        padding: 24,
-        alignItems: 'center',
-        ...Shadow.card,
-        borderWidth: 1,
-        borderColor: Colors.border,
+    trimBadgeText: { fontSize: 12, color: P.p300, fontWeight: '700' },
+    trimActions: { flexDirection: 'row', gap: 12, marginTop: 22 },
+    trimCancel: {
+        flex: 1, paddingVertical: 15, alignItems: 'center',
+        backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: R.full,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
     },
-    aestheticAlertIconBox: {
-        width: 80,
-        height: 80,
-        borderRadius: 40,
-        backgroundColor: '#FF6B6B15',
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginBottom: 16,
-    },
-    aestheticAlertTitle: {
-        fontSize: 20,
-        fontFamily: Fonts.bold,
-        color: Colors.textPrimary,
-        marginBottom: 8,
-        textAlign: 'center',
-    },
-    aestheticAlertMessage: {
-        fontSize: 16,
-        fontFamily: Fonts.medium,
-        color: Colors.textSecondary,
-        textAlign: 'center',
-        marginBottom: 20,
-        lineHeight: 24,
-    },
-    aestheticAlertErrorBox: {
-        width: '100%',
-        backgroundColor: Colors.cardAlt,
-        borderRadius: 16,
-        padding: 16,
-        marginBottom: 24,
-        gap: 8,
-    },
-    aestheticAlertErrorRow: {
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-    },
-    aestheticAlertErrorText: {
-        fontSize: 14,
-        fontFamily: Fonts.medium,
-        color: Colors.textPrimary,
-        lineHeight: 20,
-        flex: 1,
-    },
-    aestheticAlertBtn: {
-        width: '100%',
-        backgroundColor: Colors.primary,
-        paddingVertical: 16,
-        borderRadius: 100,
-        alignItems: 'center',
-    },
-    aestheticAlertBtnText: {
-        color: '#fff',
-        fontSize: 16,
-        fontFamily: Fonts.bold,
-    },
-    modernIconBox: { 
-        width: 64, 
-        height: 64, 
-        borderRadius: 22, 
-        backgroundColor: 'rgba(255,255,255,0.25)', 
-        alignItems: 'center', 
-        justifyContent: 'center' 
-    },
-    modernChoiceLabel: { fontSize: 18, fontFamily: Fonts.bold, color: '#fff' },
-    modernChoiceSub: { fontSize: 14, fontFamily: Fonts.regular, color: 'rgba(255,255,255,0.85)', marginTop: 4 },
-    
-    progressOverlay: {
+    trimCancelText: { color: 'rgba(255,255,255,0.65)', fontWeight: '600' },
+    trimSave: { flex: 1, borderRadius: R.full, overflow: 'hidden' },
+    trimSaveGrad: { paddingVertical: 15, alignItems: 'center' },
+    trimSaveText: { color: P.white, fontWeight: '700' },
+
+    // Upload Overlay
+    uploadOverlay: {
         ...StyleSheet.absoluteFillObject,
-        backgroundColor: 'rgba(0,0,0,0.6)',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 20,
+        backgroundColor: 'rgba(255,255,255,0.9)',
+        alignItems: 'center', justifyContent: 'center', zIndex: 999,
     },
-    progressTrack: {
-        width: '100%',
-        height: 6,
-        backgroundColor: 'rgba(255,255,255,0.2)',
-        borderRadius: 3,
-        overflow: 'hidden',
-        marginTop: 8,
+    uploadCard: {
+        alignItems: 'center', gap: 10, backgroundColor: P.white,
+        borderRadius: R.xl, padding: 36,
+        borderWidth: 1, borderColor: P.gray100, ...shadow.medium,
     },
-    illustrationContainer: {
-        width: 160,
-        height: 160,
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginVertical: 20,
+    uploadSpinner: {
+        width: 70, height: 70, borderRadius: 35,
+        backgroundColor: P.p50, alignItems: 'center', justifyContent: 'center', marginBottom: 2,
     },
-    glowCircle: {
-        position: 'absolute',
-        width: 140,
-        height: 140,
-        borderRadius: 70,
-        opacity: 0.5,
+    uploadTitle: { fontSize: 17, fontWeight: '700', color: P.gray900 },
+    uploadSub: { fontSize: 13, color: P.gray400 },
+
+    // Alert
+    alertOverlay: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    alertCard: {
+        width: '88%', backgroundColor: P.white,
+        borderRadius: R.xl, padding: 28, alignItems: 'center',
+        borderWidth: 1, borderColor: P.gray100, ...shadow.medium,
     },
-    progressBar: {
-        height: '100%',
-        backgroundColor: Colors.primary,
-        borderRadius: 2,
+    alertIconWrap: {
+        width: 70, height: 70, borderRadius: 35,
+        backgroundColor: P.redPale, alignItems: 'center', justifyContent: 'center', marginBottom: 14,
     },
-    progressText: {
-        color: '#fff',
-        fontSize: 14,
-        fontFamily: Fonts.bold,
-        textShadowColor: 'rgba(0,0,0,0.5)',
-        textShadowOffset: { width: 0, height: 1 },
-        textShadowRadius: 3
+    alertTitle: { fontSize: 19, fontWeight: '700', color: P.gray900, marginBottom: 6, textAlign: 'center' },
+    alertMsg: { fontSize: 14, color: P.gray500, textAlign: 'center', lineHeight: 21, marginBottom: 18 },
+    alertErrors: {
+        width: '100%', backgroundColor: P.gray50, borderRadius: R.md,
+        padding: 14, marginBottom: 22, gap: 8, borderWidth: 1, borderColor: P.gray100,
     },
-    addMoreBtnModern: {
-        width: 150,
-        height: 260,
-        borderRadius: 24,
-        backgroundColor: Colors.cardAlt,
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderWidth: 2,
-        borderColor: Colors.primary + '30',
-        borderStyle: 'dashed',
-    },
-    trimBtnOverlay: {
-        position: 'absolute',
-        top: 10,
-        left: 10,
-        zIndex: 10,
-        backgroundColor: 'rgba(0,0,0,0.6)',
-        borderRadius: 12,
-        padding: 5
-    },
-    trimModalContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-    trimContent: { width: '85%', backgroundColor: 'rgba(0,0,0,0.85)', borderRadius: 24, padding: 25, borderWidth: 1, borderColor: '#ffffff22' },
-    trimTitle: { fontSize: 18, fontFamily: Fonts.bold, color: '#fff', textAlign: 'center', marginBottom: 20 },
-    trimVideoPreview: { width: '100%', height: 200, borderRadius: 12, marginBottom: 20 },
-    sliderGroup: { marginVertical: 10 },
-    sliderLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 13, fontFamily: Fonts.medium, marginTop: 10 },
-    trimActions: { flexDirection: 'row', justifyContent: 'space-between', gap: 15, marginTop: 25 },
-    trimActionBtn: { flex: 1, paddingVertical: 14, borderRadius: 15, alignItems: 'center' },
+    alertErrorItem: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+    alertDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: P.red, marginTop: 7 },
+    alertErrorText: { fontSize: 13, color: P.gray500, flex: 1, lineHeight: 19 },
+    alertBtn: { width: '100%', borderRadius: R.full, overflow: 'hidden' },
+    alertBtnGrad: { paddingVertical: 15, alignItems: 'center' },
+    alertBtnText: { color: P.white, fontSize: 15, fontWeight: '700' },
 });

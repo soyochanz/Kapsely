@@ -20,6 +20,7 @@ const TYPE_CONFIG: Record<string, { icon: string; color: string; label: string }
     instacap:  { icon: 'camera',   color: Colors.instaCap,  label: 'InstaCap'  },
     legacycap: { icon: 'time',     color: Colors.legacyCap, label: 'LegacyCap' },
     opencap:   { icon: 'book',     color: Colors.primary,   label: 'Open Cap'  },
+    eventcap:  { icon: 'flash',    color: Colors.eventCap,  label: 'EventCap'  },
 };
 
 export default function CapsuleSelectorScreen() {
@@ -71,7 +72,7 @@ export default function CapsuleSelectorScreen() {
 
         setCapsules(
             allCaps
-                .filter(c => c.type !== 'eventcap')
+                // .filter(c => c.type !== 'eventcap') // Removed filter for 'eventcap'
                 .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
         );
         setLoading(false);

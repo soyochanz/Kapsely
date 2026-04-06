@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
 import { Notification } from '../data/mockNotifications';
 import { useNavigation } from '@react-navigation/native';
@@ -32,6 +33,7 @@ interface NotificationItemProps {
 }
 
 export default function NotificationItem({ notification, onMarkRead, onAcceptInvite, onRejectInvite }: NotificationItemProps) {
+    const { t } = useTranslation();
     const navigation = useNavigation<any>();
     const iconCfg = notifIcons[notification.type] || { name: 'notifications', color: Colors.textMuted };
     const isMemory = notification.type === 'memory';
@@ -87,10 +89,10 @@ export default function NotificationItem({ notification, onMarkRead, onAcceptInv
                     {!isMemory ? (
                         <Text style={styles.message}>
                             <Text style={styles.boldText}>{notification.user.username}</Text>
-                            {' '}{notification.message}
+                            {' '}{t(notification.message, { title: notification.capsuleTitle || '...' })}
                         </Text>
                     ) : (
-                        <Text style={styles.message}>{notification.message}</Text>
+                        <Text style={styles.message}>{t(notification.message, { title: notification.capsuleTitle || '...' })}</Text>
                     )}
                     {notification.capsuleTitle && (
                         <View style={styles.capsuleRef}>

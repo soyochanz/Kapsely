@@ -28,8 +28,6 @@ if (Platform.OS === 'ios') {
     }
 }
 import CapsuleCard from '../components/CapsuleCard';
-import CapsuleWithTimer from '../components/CapsuleWithTimer';
-import LiveTimer from '../components/LiveTimer';
 import { supabase } from '../lib/supabase';
 import { MODEL_IMAGES } from '../constants/models';
 import { timerConfigManager } from '../utils/timerConfig';
@@ -99,9 +97,9 @@ const StoryBubble = React.memo(({ user, isOwn, onPress }: {
                             start={{ x: 0, y: 1 }} end={{ x: 1, y: 0 }}
                         >
                             <View style={st.avatarWrap}>
-                                <Image 
-                                    source={{ uri: avatarUri }} 
-                                    style={st.avatar} 
+                                <Image
+                                    source={{ uri: avatarUri }}
+                                    style={st.avatar}
                                     cachePolicy="memory-disk"
                                     transition={200}
                                 />
@@ -110,9 +108,9 @@ const StoryBubble = React.memo(({ user, isOwn, onPress }: {
                     ) : (
                         <View style={[st.ring, st.ringRead, isOwn && { borderColor: Colors.primary + '80', borderStyle: 'dashed' }]}>
                             <View style={st.avatarWrap}>
-                                <Image 
-                                    source={{ uri: avatarUri }} 
-                                    style={st.avatar} 
+                                <Image
+                                    source={{ uri: avatarUri }}
+                                    style={st.avatar}
                                     cachePolicy="memory-disk"
                                     transition={200}
                                 />
@@ -295,10 +293,10 @@ export default function FeedScreen() {
     useEffect(() => {
         const checkATT = async () => {
             if (Platform.OS !== 'ios') return;
-            
+
             // Wait 2 seconds as requested
             await new Promise(resolve => setTimeout(resolve, 2000));
-            
+
             // Check if already asked
             const alreadyAsked = await AsyncStorage.getItem('att_asked');
             if (alreadyAsked) return;
@@ -324,7 +322,7 @@ export default function FeedScreen() {
 
     // Impression tracking: buffer seen capsule IDs, flush to DB periodically
     const impressionBufferRef = useRef<Set<string>>(new Set());
-    const impressionFlushRef  = useRef<NodeJS.Timeout | null>(null);
+    const impressionFlushRef = useRef<NodeJS.Timeout | null>(null);
 
     useWebDragScroll(flatListRef);
     useWebDragScroll(storiesScrollRef);
@@ -347,6 +345,10 @@ export default function FeedScreen() {
         ).start();
     }, []);
 
+    const [likedCapsules, setLikedCapsules] = useState<Set<string>>(new Set());
+    const [followingSet, setFollowingSet] = useState<Set<string>>(new Set());
+    const [participantCapsules, setParticipantCapsules] = useState<Set<string>>(new Set());
+
     // ─── Data loading ──────────────────────────────────────────────────────────
     const feedRequestId = useRef(0);
 
@@ -354,12 +356,12 @@ export default function FeedScreen() {
         const currentReqId = ++feedRequestId.current;
         const tab = tabOverride ?? activeTab;
         const currentPage = isNewPage ? page + 1 : 0;
-        const PAGE_SIZE = 15;
-        
+        const PAGE_SIZE = 10;
+
         if (!isNewPage && !forceRefresh) {
             const cacheKey = `${tab}_${activeFilter}`;
             const cached = feedCache[cacheKey];
-            if (cached && (Date.now() - cached.ts) < 10000) {
+            if (cached && (Date.now() - cached.ts) < 300000) { // 5 min cache
                 setCapsules(cached.data);
                 setLoading(false);
                 return;
@@ -374,17 +376,27 @@ export default function FeedScreen() {
         if (!user) { setLoading(false); setRefreshing(false); setLoadingMore(false); return; }
         setCurrentUserId(user.id);
 
-        const [blocked, followsResult] = await Promise.all([
+        // COMBINED INITIAL QUERIES
+        const [blocked, followsResult, likesResult, participantResult] = await Promise.all([
             safetyService.getAllSafetyUserIds(user.id),
             supabase.from('follows').select('following_id').eq('follower_id', user.id),
+            supabase.from('likes').select('capsule_id').eq('user_id', user.id),
+            supabase.from('capsule_invites').select('capsule_id').eq('user_id', user.id).eq('status', 'accepted'),
         ]);
-        
+
         if (feedRequestId.current !== currentReqId) return;
 
         setBlockedUserIds(blocked);
-        loadStories(user.id, blocked);
+        if (!isNewPage) loadStories(user.id, blocked);
 
         const followingIds = (followsResult.data || []).map((f: any) => f.following_id);
+        const followingSetNew = new Set(followingIds);
+        const likedSetNew = new Set((likesResult.data || []).map((l: any) => l.capsule_id));
+        const participantSetNew = new Set((participantResult.data || []).map((p: any) => p.capsule_id));
+
+        setFollowingSet(followingSetNew);
+        setLikedCapsules(likedSetNew);
+        setParticipantCapsules(participantSetNew);
 
         if (tab === 'following' && followingIds.length === 0) {
             setCapsules([]);
@@ -395,7 +407,7 @@ export default function FeedScreen() {
             return;
         }
 
-        // --- Optimized Query with Pagination ---
+        // --- Optimized Query with Pagination & Joins ---
         let itemsQuery = supabase
             .from('capsule_items')
             .select(`
@@ -404,7 +416,10 @@ export default function FeedScreen() {
                 capsules:capsule_id!inner(
                     id, title, is_public, type, status, opens_at,
                     created_at, model, description, chain_id, owner_id,
-                    profiles:owner_id(username, display_name, avatar_url, is_verified)
+                    profiles:owner_id(username, display_name, avatar_url, is_verified),
+                    likes:likes(count),
+                    comments:comments(count),
+                    postsCount:capsule_items(count)
                 )
             `)
             .in('media_type', ['image', 'video', 'audio', 'note'])
@@ -412,12 +427,14 @@ export default function FeedScreen() {
             .gt('created_at', new Date(Date.now() - MAX_CONTENT_AGE_DAYS * 24 * 60 * 60 * 1000).toISOString());
 
         if (tab === 'following') {
-            itemsQuery = itemsQuery.in('owner_id', followingIds);
+            const filters = [];
+            if (followingIds.length > 0) filters.push(`owner_id.in.(${followingIds.join(',')})`);
+            itemsQuery = itemsQuery.or(filters.join(','));
         } else {
             itemsQuery = itemsQuery
                 .eq('capsules.is_public', true)
                 .neq('owner_id', user.id)
-                .neq('capsules.type', 'eventcap');
+                // .neq('capsules.type', 'eventcap'); // Removed filter for 'eventcap'
             if (followingIds.length > 0) {
                 itemsQuery = itemsQuery.not('owner_id', 'in', `(${followingIds.join(',')})`);
             }
@@ -431,10 +448,10 @@ export default function FeedScreen() {
         const rangeEnd = (currentPage + 1) * PAGE_SIZE - 1;
 
         const [rpcResult, itemsResult] = await Promise.all([
-            supabase.rpc(rpcName, { 
-                req_user_id: user.id, 
-                req_filter: activeFilter, 
-                req_limit: PAGE_SIZE 
+            supabase.rpc(rpcName, {
+                req_user_id: user.id,
+                req_filter: activeFilter,
+                req_limit: PAGE_SIZE
             }),
             itemsQuery.order('created_at', { ascending: false }).range(rangeStart, rangeEnd),
         ]);
@@ -487,8 +504,8 @@ export default function FeedScreen() {
         });
 
         // Merge and Sort
-        const combined = isNewPage ? groupedActivity : [...capsData.map(c => ({...c, feedType: 'capsule', total_score: (c.score || 0) + 20})), ...groupedActivity];
-        
+        const combined = isNewPage ? groupedActivity : [...capsData.map(c => ({ ...c, feedType: 'capsule', total_score: (c.score || 0) + 20 })), ...groupedActivity];
+
         let merged = combined.sort((a, b) => (b.total_score || 0) - (a.total_score || 0));
 
         if (isNewPage) {
@@ -598,7 +615,7 @@ export default function FeedScreen() {
                     setShowCapsulePicker(true);
                     return;
                 }
-            } catch (e) {}
+            } catch (e) { }
 
             const { data } = await supabase.from('capsules')
                 .select('*, profiles:owner_id(username, display_name, avatar_url)')
@@ -629,7 +646,7 @@ export default function FeedScreen() {
             setPickerStep('select');
         } else {
             setPickerStep('animation');
-            
+
             // Check if there is a previously generated flash item for this user/capsule
             const storageKey = `@flash_selection_${currentUserId}_${capsule.id}`;
             const savedId = await AsyncStorage.getItem(storageKey);
@@ -640,29 +657,29 @@ export default function FeedScreen() {
                 setSearching(false);
                 setRandomPreviewItem(savedItem);
                 unblurAnim.setValue(0);
-                
+
                 // Also ensure global pick is updated to this item
                 try {
                     const globalPickKey = `@flash_global_pick_${currentUserId}`;
                     await AsyncStorage.setItem(globalPickKey, JSON.stringify({ capsule, item: savedItem }));
-                } catch (e) {}
+                } catch (e) { }
             } else {
                 setSearching(true);
                 Animated.loop(Animated.sequence([
                     Animated.timing(searchingAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
                     Animated.timing(searchingAnim, { toValue: 0, duration: 300, useNativeDriver: true }),
                 ])).start();
-                
+
                 setTimeout(async () => {
                     const random = items[Math.floor(Math.random() * items.length)];
                     setRandomPreviewItem(random);
-                    
+
                     // Persist selection
                     try {
                         await AsyncStorage.setItem(storageKey, random.id);
                         const globalPickKey = `@flash_global_pick_${currentUserId}`;
                         await AsyncStorage.setItem(globalPickKey, JSON.stringify({ capsule, item: random }));
-                    } catch (e) {}
+                    } catch (e) { }
 
                     setSearching(false);
                     searchingAnim.stopAnimation();
@@ -679,8 +696,8 @@ export default function FeedScreen() {
         try {
             const globalPickKey = `@flash_global_pick_${currentUserId}`;
             await AsyncStorage.removeItem(globalPickKey);
-        } catch (e) {}
-        
+        } catch (e) { }
+
         setPickerStep('list');
     }, [currentUserId]);
 
@@ -689,8 +706,8 @@ export default function FeedScreen() {
         try {
             const globalPickKey = `@flash_global_pick_${currentUserId}`;
             await AsyncStorage.removeItem(globalPickKey);
-        } catch (e) {}
-        
+        } catch (e) { }
+
         const expiresAt = new Date(); expiresAt.setHours(expiresAt.getHours() + 48); // Flashes last 48h
         const { data: cap } = await supabase.from('capsules')
             .select('status').eq('id', item.capsule_id).single();
@@ -709,7 +726,7 @@ export default function FeedScreen() {
             try {
                 const storageKey = `@flash_selection_${currentUserId}_${item.capsule_id}`;
                 await AsyncStorage.removeItem(storageKey);
-            } catch (e) {}
+            } catch (e) { }
 
             setShowCapsulePicker(false);
             setEditingItem(null);
@@ -761,7 +778,7 @@ export default function FeedScreen() {
 
     useEffect(() => {
         if (!isFirstMount.current && currentUserId && isFocused) {
-            loadFeed(false, activeTab);
+            loadFeed(true, activeTab);
             loadStories();
         }
     }, [activeTab, activeFilter, currentUserId, isFocused]);
@@ -784,7 +801,7 @@ export default function FeedScreen() {
                     const parsed = JSON.parse(existingDeleted);
                     if (Array.isArray(parsed)) parsed.forEach((id: string) => { deletedStamps[id] = new Date(0).toISOString(); });
                     else deletedStamps = parsed;
-                } catch (e) {}
+                } catch (e) { }
             }
 
             const convIds = myConvs.map(c => c.conversation_id);
@@ -844,19 +861,134 @@ export default function FeedScreen() {
 
     const keyExtractor = useCallback((item: any) => item.id, []);
 
+    const handleGlobalFollow = useCallback(async (ownerId: string, isFollowed: boolean) => {
+        if (!currentUserId) return;
+        if (isFollowed) {
+            await supabase.from('follows').delete().eq('follower_id', currentUserId).eq('following_id', ownerId);
+            setFollowingSet(prev => { const n = new Set(prev); n.delete(ownerId); return n; });
+        } else {
+            await supabase.from('follows').insert({ follower_id: currentUserId, following_id: ownerId });
+            setFollowingSet(prev => { const n = new Set(prev); n.add(ownerId); return n; });
+            // Notification anti-spam
+            const { data: existing } = await supabase.from('notifications')
+                .select('id').eq('user_id', ownerId).eq('sender_id', currentUserId).eq('type', 'follow').maybeSingle();
+
+            if (existing) {
+                await supabase.from('notifications').update({ created_at: new Date().toISOString(), is_read: false }).eq('id', existing.id);
+            } else {
+                await supabase.from('notifications').insert({ user_id: ownerId, sender_id: currentUserId, type: 'follow', message: 'started following you' });
+            }
+        }
+    }, [currentUserId]);
+
+    const handleGlobalLike = useCallback(async (capsuleId: string, isLiked: boolean) => {
+        if (!currentUserId) return;
+        if (isLiked) {
+            await supabase.from('likes').delete().eq('capsule_id', capsuleId).eq('user_id', currentUserId);
+            setLikedCapsules(prev => { const n = new Set(prev); n.delete(capsuleId); return n; });
+        } else {
+            await supabase.from('likes').insert({ capsule_id: capsuleId, user_id: currentUserId });
+            setLikedCapsules(prev => { const n = new Set(prev); n.add(capsuleId); return n; });
+
+            // Notification anti-spam
+            const { data: capsule } = await supabase.from('capsules').select('owner_id').eq('id', capsuleId).maybeSingle();
+            if (capsule && capsule.owner_id !== currentUserId) {
+                const { data: existing } = await supabase.from('notifications')
+                    .select('id').eq('user_id', capsule.owner_id).eq('sender_id', currentUserId).eq('type', 'like').eq('capsule_id', capsuleId).maybeSingle();
+
+                if (existing) {
+                    await supabase.from('notifications').update({ created_at: new Date().toISOString(), is_read: false }).eq('id', existing.id);
+                } else {
+                    await supabase.from('notifications').insert({ user_id: capsule.owner_id, sender_id: currentUserId, type: 'like', capsule_id: capsuleId, message: 'liked your capsule' });
+                }
+            }
+        }
+    }, [currentUserId]);
+
     // ─── renderItem ────────────────────────────────────────────────────────────
+    const isExplore = activeTab === 'explore';
+
     const renderItem = useCallback(({ item }: { item: any }) => {
         // Posts de actividad (fotos/videos/audios/notas añadidas a cápsulas)
+        const capsule = item.feedType === 'activity' || item.feedType === 'activity_group'
+            ? (Array.isArray(item.capsules) ? item.capsules[0] : item.capsules)
+            : item;
+
+        const isFollowed = followingSet.has(item.owner_id);
+        const isLiked = likedCapsules.has(capsule?.id);
+        const hasAccess = capsule?.is_public || capsule?.owner_id === currentUserId || item.owner_id === currentUserId || participantCapsules.has(capsule?.id);
+
+        const gridMode = activeTab === 'explore';
+
         if (item.feedType === 'activity' || item.feedType === 'activity_group') {
-            return <TimelineActivity item={item} />;
+            if (gridMode) {
+                return (
+                    <View style={s.gridItemWrap}>
+                        <TimelineActivity
+                            item={item}
+                            currentUserId={currentUserId}
+                            isFollowed={isFollowed}
+                            hasAccess={hasAccess}
+                            onFollow={handleGlobalFollow}
+                            lightweight={true}
+                            gridMode={true}
+                        />
+                    </View>
+                );
+            }
+            return (
+                <TimelineActivity
+                    item={item}
+                    currentUserId={currentUserId}
+                    isFollowed={isFollowed}
+                    hasAccess={hasAccess}
+                    onFollow={handleGlobalFollow}
+                    lightweight={true}
+                />
+            );
         }
-        // Tarjetas de cápsula (creación de cápsula)
-        const capsule = item.feedType === 'capsule'
-            ? item
-            : (Array.isArray(item.capsules) ? item.capsules[0] : item.capsules);
+
         if (!capsule) return null;
-        return <CapsuleCard capsule={capsule} userId={currentUserId} />;
-    }, []);
+
+        if (gridMode) {
+            return (
+                <View style={s.gridItemWrap}>
+                    <CapsuleCard
+                        capsule={capsule}
+                        userId={currentUserId}
+                        isFollowed={isFollowed}
+                        isLiked={isLiked}
+                        likeCount={capsule.likes?.[0]?.count}
+                        commentCount={capsule.comments?.[0]?.count}
+                        postsCount={capsule.postsCount?.[0]?.count}
+                        isLocked={!hasAccess}
+                        onFollow={handleGlobalFollow}
+                        onLike={handleGlobalLike}
+                        lightweight={true}
+                        hideParticles={true}
+                        gridMode={true}
+                    />
+                </View>
+            );
+        }
+
+        return (
+            <CapsuleCard
+                capsule={capsule}
+                userId={currentUserId}
+                isFollowed={isFollowed}
+                isLiked={isLiked}
+                likeCount={capsule.likes?.[0]?.count}
+                commentCount={capsule.comments?.[0]?.count}
+                postsCount={capsule.postsCount?.[0]?.count}
+                isLocked={!hasAccess}
+                onFollow={handleGlobalFollow}
+                onLike={handleGlobalLike}
+                lightweight={true}
+                hideParticles={true}
+            />
+        );
+    }, [currentUserId, followingSet, likedCapsules, participantCapsules, handleGlobalFollow, handleGlobalLike, activeTab]);
 
     // ─── List Header ───────────────────────────────────────────────────────────
     const ListHeader = useMemo(() => (
@@ -941,28 +1073,6 @@ export default function FeedScreen() {
 
                     <View style={s.headerActions}>
                         <TouchableOpacity
-                            style={[s.actionBtnSecondary, { width: 44, height: 44, borderRadius: 14, marginRight: 8 }]}
-                            activeOpacity={0.7}
-                            onPress={() => navigation.navigate('Connect')}
-                        >
-                            <View style={{ width: 20, height: 20 }}>
-                                {/* Background Card */}
-                                <View style={{ 
-                                    width: 14, height: 18, borderRadius: 3.5, borderWidth: 1.8, borderColor: Colors.primary, 
-                                    position: 'absolute', top: 0, right: 0, opacity: 0.45, transform: [{ rotate: '8deg' }]
-                                }} />
-                                {/* Foreground Card */}
-                                <View style={{ 
-                                    width: 14, height: 18, borderRadius: 3.5, borderWidth: 1.8, borderColor: Colors.primary, 
-                                    position: 'absolute', bottom: 0, left: 0, backgroundColor: Colors.cardAlt
-                                }}>
-                                    <View style={{ width: 6, height: 1.2, backgroundColor: Colors.primary, borderRadius: 1, marginTop: 4, marginLeft: 3, opacity: 0.6 }} />
-                                    <View style={{ width: 8, height: 1.2, backgroundColor: Colors.primary, borderRadius: 1, marginTop: 2, marginLeft: 3, opacity: 0.4 }} />
-                                </View>
-                            </View>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
                             style={[s.actionBtnSecondary, hasUnread && s.actionBtnUnread, { width: 44, height: 44, borderRadius: 14 }]}
                             activeOpacity={0.7}
                             onPress={() => navigation.navigate('ChatList')}
@@ -1006,11 +1116,13 @@ export default function FeedScreen() {
 
             {/* ── FEED ──────────────────────────────────────────────────── */}
             <FlashList
+                key={`feed-${activeTab}`}
                 ref={flatListRef}
                 data={capsules}
                 keyExtractor={keyExtractor}
+                numColumns={isExplore ? 2 : 1}
                 showsVerticalScrollIndicator={false}
-                contentContainerStyle={[s.listContent, { paddingBottom: insets.bottom + 90 }]}
+                contentContainerStyle={[isExplore ? s.gridListContent : s.listContent, { paddingBottom: insets.bottom + 90 }]}
                 refreshing={refreshing}
                 onRefresh={onRefresh}
                 onEndReached={handleLoadMore}
@@ -1018,7 +1130,7 @@ export default function FeedScreen() {
                 ListHeaderComponent={ListHeader}
                 renderItem={renderItem}
                 // @ts-ignore
-                estimatedItemSize={350}
+                estimatedItemSize={isExplore ? 240 : 350}
 
                 ListFooterComponent={() => loadingMore ? (
                     <View style={{ paddingVertical: 20 }}>
@@ -1061,7 +1173,7 @@ export default function FeedScreen() {
             >
                 <View style={s.pickerOverlay}>
                     <View style={[
-                        s.pickerSheet, 
+                        s.pickerSheet,
                         (pickerStep === 'edit' || pickerStep === 'animation' || pickerStep === 'select') && { height: height * 0.85 }
                     ]}>
                         <View style={s.pickerHandle} />
@@ -1128,8 +1240,8 @@ export default function FeedScreen() {
                                         activeOpacity={0.8}
                                         onPress={() => { setEditingItem(item); setPickerStep('edit'); }}
                                     >
-                                        <Image 
-                                            source={{ uri: item.media_url }} 
+                                        <Image
+                                            source={{ uri: item.media_url }}
                                             style={s.pickerGridImg}
                                             cachePolicy="memory-disk"
                                             transition={200}
@@ -1156,9 +1268,9 @@ export default function FeedScreen() {
                                 ) : (
                                     <View style={{ width: '100%', alignItems: 'center' }}>
                                         <View style={s.previewImgWrap}>
-                                            <Image 
-                                                source={{ uri: randomPreviewItem?.media_url }} 
-                                                style={s.previewImg} 
+                                            <Image
+                                                source={{ uri: randomPreviewItem?.media_url }}
+                                                style={s.previewImg}
                                                 cachePolicy="memory-disk"
                                                 transition={300}
                                             />
@@ -1173,9 +1285,9 @@ export default function FeedScreen() {
                                         </View>
                                         <Text style={s.animTitle}>A memory has surfaced!</Text>
                                         <View style={s.previewActions}>
-                                            <TouchableOpacity 
-                                                style={s.previewCancelBtn} 
-                                                activeOpacity={0.7} 
+                                            <TouchableOpacity
+                                                style={s.previewCancelBtn}
+                                                activeOpacity={0.7}
                                                 onPress={rejectRandomStory}
                                             >
                                                 <Text style={s.previewCancelText}>Choose Another</Text>
@@ -1309,6 +1421,8 @@ const s = StyleSheet.create({
     feedDivider: { height: 1, backgroundColor: Colors.divider, marginBottom: 4 },
 
     listContent: { paddingTop: 0 },
+    gridListContent: { paddingHorizontal: 12, paddingTop: 6 },
+    gridItemWrap: { flex: 1, padding: 4 },
 
     emptyState: { alignItems: 'center', paddingTop: 60, paddingHorizontal: 40, paddingBottom: 40 },
     emptyIconWrap: { width: 90, height: 90, borderRadius: 45, alignItems: 'center', justifyContent: 'center', marginBottom: 20 },

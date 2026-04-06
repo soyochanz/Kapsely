@@ -1,8 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
     View, Text, TouchableOpacity, StyleSheet,
     Dimensions, Platform, Alert, Animated
-
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
@@ -10,14 +9,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, BorderRadius, Spacing, Shadow } from '../theme';
 import { supabase } from '../lib/supabase';
-import { MODEL_IMAGES } from '../constants/models';
-import CapsuleWithTimer from './CapsuleWithTimer';
+import { MODEL_IMAGES, MODEL_IMAGES_OPEN } from '../constants/models';
 import VerifiedBadge from './VerifiedBadge';
 import { timerConfigManager } from '../utils/timerConfig';
 import { Image } from 'expo-image';
-import { cardMediaCache } from '../utils/mediaCache';
-
-
+import CapsuleWithTimer from './CapsuleWithTimer';
 
 const { width } = Dimensions.get('window');
 
@@ -42,30 +38,62 @@ function formatOpenDate(dateStr: string): string {
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp, userId: passedUserId }: { capsule: any; isLocked?: boolean; userId?: string | null }) => {
+const CapsuleCard = React.memo(({ 
+    capsule, 
+    userId: currentUserId, 
+    isLocked: isLockedProp,
+    isLiked: isLikedProp,
+    likeCount: likeCountProp,
+    commentCount: commentCountProp,
+    postsCount: postsCountProp,
+    isFollowed: isFollowedProp,
+    latestItem: latestItemProp,
+    mediaCollage: mediaCollageProp,
+    onLike,
+    onFollow,
+    lightweight,
+    hideParticles,
+    gridMode,
+}: { 
+    capsule: any; 
+    userId?: string | null;
+    isLocked?: boolean; 
+    isLiked?: boolean;
+    likeCount?: number;
+    commentCount?: number;
+    postsCount?: number;
+    isFollowed?: boolean;
+    latestItem?: any;
+    mediaCollage?: any[];
+    onLike?: (capsuleId: string, isLiked: boolean) => void;
+    onFollow?: (ownerId: string, isFollowed: boolean) => void;
+    lightweight?: boolean;
+    hideParticles?: boolean;
+    gridMode?: boolean;
+}) => {
     const navigation = useNavigation<any>();
     const { t } = useTranslation();
 
-    const [isFollowed, setIsFollowed] = useState(false);
-    const [currentUserId, setCurrentUserId] = useState<string | null>(passedUserId || null);
-    const [likeCount, setLikeCount] = useState(0);
-    const [isLiked, setIsLiked] = useState(false);
-    const [commentCount, setCommentCount] = useState(0);
-    const [postsCount, setPostsCount] = useState(0);
-    const [mediaCollage, setMediaCollage] = useState<any[]>([]);
-    const [latestItem, setLatestItem] = useState<any>(null);
-    const [latestItemLoaded, setLatestItemLoaded] = useState(false);
-    const [isLocked, setIsLocked] = useState(isLockedProp || false);
-
+    const [isFollowed, setIsFollowed] = useState(isFollowedProp ?? !!capsule.is_followed);
+    const [likeCount, setLikeCount] = useState(likeCountProp ?? capsule.likes_count ?? 0);
+    const [isLiked, setIsLiked] = useState(isLikedProp ?? !!capsule.is_liked);
+    const [commentCount, setCommentCount] = useState(commentCountProp ?? capsule.comments_count ?? 0);
+    const [postsCount, setPostsCount] = useState(postsCountProp ?? capsule.posts_count ?? 0);
+    const [mediaCollage, setMediaCollage] = useState<any[]>(mediaCollageProp ?? capsule.collage_items ?? []);
+    const [latestItem, setLatestItem] = useState<any>(latestItemProp ?? capsule.latest_item ?? null);
+    const [latestItemLoaded, setLatestItemLoaded] = useState(!!(latestItemProp || capsule.latest_item));
+    
+    const isLocked = isLockedProp ?? !(capsule.is_public || capsule.owner_id === currentUserId || capsule.is_participant);
     const cfg = typeConfig[capsule.type as keyof typeof typeConfig] || typeConfig.legacycap;
 
-    const [themeColor, setThemeColor] = useState<string>(() =>
-        timerConfigManager.getConfig(capsule.model)?.themeColor || '#a269ff'
-    );
-    const [modelImages, setModelImages] = useState({
+    const modelImages = useMemo(() => ({
         closed: timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || (MODEL_IMAGES as any).basicred_kap,
-        open: timerConfigManager.getModelImageOpen(capsule.model) || (MODEL_IMAGES as any).basicred_kap,
-    });
+        open: timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model as keyof typeof MODEL_IMAGES_OPEN] || (MODEL_IMAGES as any).basicred_kap,
+    }), [capsule.model]);
+
+    const themeColor = useMemo(() => {
+        return timerConfigManager.getConfig(capsule.model)?.themeColor || '#a269ff';
+    }, [capsule.model]);
 
     const heartScale = React.useRef(new Animated.Value(1)).current;
     const bounceHeart = () => {
@@ -76,108 +104,58 @@ const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp, userId: passe
     };
 
     useEffect(() => {
-        // Initial sync of images/theme when model changes (important for FlashList recycling)
-        const config = timerConfigManager.getConfig(capsule.model);
-        setThemeColor(config?.themeColor || '#a269ff');
-        setModelImages({
-            closed: timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || (MODEL_IMAGES as any).basicred_kap,
-            open: timerConfigManager.getModelImageOpen(capsule.model) || (MODEL_IMAGES as any).basicred_kap,
-        });
-
-        return timerConfigManager.subscribe(() => {
-            const upConfig = timerConfigManager.getConfig(capsule.model);
-            setThemeColor(upConfig?.themeColor || '#a269ff');
-            setModelImages({
-                closed: timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || (MODEL_IMAGES as any).basicred_kap,
-                open: timerConfigManager.getModelImageOpen(capsule.model) || (MODEL_IMAGES as any).basicred_kap,
-            });
-        });
-    }, [capsule.model]);
-
-    useEffect(() => {
-        let isMounted = true;
-        const init = async () => {
-            if (passedUserId) {
-                setCurrentUserId(passedUserId);
-                const hasAccess = capsule.is_public || capsule.owner_id === passedUserId || capsule.is_participant;
-                if (isLockedProp === undefined && isMounted) setIsLocked(!hasAccess);
-            } else {
-                const { data: { session } } = await supabase.auth.getSession();
-                const user = session?.user;
-                if (user) {
-                    if (isMounted) setCurrentUserId(user.id);
-                    const hasAccess = capsule.is_public || capsule.owner_id === user.id || capsule.is_participant;
-                    if (isLockedProp === undefined && isMounted) setIsLocked(!hasAccess);
-                } else if (isLockedProp === undefined && isMounted) {
-                    setIsLocked(!capsule.is_public);
-                }
-            }
-
-            if (capsule.likes_count !== undefined && isMounted) {
-                setLikeCount(capsule.likes_count || 0);
-                setCommentCount(capsule.comments_count || 0);
-                setPostsCount(capsule.posts_count || 0);
-                setIsLiked(!!capsule.is_liked);
-                setIsFollowed(!!capsule.is_followed);
-
-                // Fetch media from cache if available to save network calls
-                const cached = cardMediaCache.get(capsule.id);
-                if (cached) {
-                    setLatestItem(cached.latestItem);
-                    setMediaCollage(cached.collage);
-                    setLatestItemLoaded(true);
-                } else {
-                    const [latestRes, collageRes] = await Promise.all([
-                        supabase.from('capsule_items').select('media_url, media_type, thumbnail_url, content, caption').eq('capsule_id', capsule.id).order('created_at', { ascending: false }).limit(1).maybeSingle(),
-                        capsule.status === 'opened'
-                            ? supabase.from('capsule_items').select('media_url, media_type').eq('capsule_id', capsule.id).in('media_type', ['image', 'video']).order('created_at', { ascending: true }).limit(4)
-                            : Promise.resolve({ data: [] }),
-                    ]);
-
-                    const fetchedLatest = latestRes?.data ? (Array.isArray(latestRes.data) ? latestRes.data[0] : latestRes.data) : null;
-                    const fetchedCollage = collageRes?.data?.length ? collageRes.data : [];
-
-                    cardMediaCache.set(capsule.id, { latestItem: fetchedLatest, collage: fetchedCollage });
-
-                    if (isMounted) {
-                        setLatestItem(fetchedLatest);
-                        setMediaCollage(fetchedCollage);
-                        setLatestItemLoaded(true);
-                    }
-                }
-            }
-        };
-        init();
-        return () => { isMounted = false; };
-    }, [capsule.id, capsule.likes_count, capsule.is_public, capsule.owner_id, capsule.status]);
+        setIsFollowed(isFollowedProp ?? !!capsule.is_followed);
+        setLikeCount(likeCountProp ?? capsule.likes_count ?? 0);
+        setIsLiked(isLikedProp ?? !!capsule.is_liked);
+        setCommentCount(commentCountProp ?? capsule.comments_count ?? 0);
+        setPostsCount(postsCountProp ?? capsule.posts_count ?? 0);
+        setMediaCollage(mediaCollageProp ?? capsule.collage_items ?? []);
+        setLatestItem(latestItemProp ?? capsule.latest_item ?? null);
+        setLatestItemLoaded(!!(latestItemProp || capsule.latest_item));
+    }, [isFollowedProp, likeCountProp, isLikedProp, commentCountProp, postsCountProp, mediaCollageProp, latestItemProp, capsule]);
 
     const handleFollow = async () => {
         if (!currentUserId || currentUserId === capsule.owner_id) return;
-        if (isFollowed) {
-            await supabase.from('follows').delete().eq('follower_id', currentUserId).eq('following_id', capsule.owner_id);
-            setIsFollowed(false);
+        if (onFollow) {
+             onFollow(capsule.owner_id, isFollowed);
         } else {
-            await supabase.from('follows').insert({ follower_id: currentUserId, following_id: capsule.owner_id });
-            setIsFollowed(true);
+            if (isFollowed) {
+                await supabase.from('follows').delete().eq('follower_id', currentUserId).eq('following_id', capsule.owner_id);
+                setIsFollowed(false);
+            } else {
+                await supabase.from('follows').insert({ follower_id: currentUserId, following_id: capsule.owner_id });
+                setIsFollowed(true);
+            }
         }
     };
 
     const handleLike = async () => {
         if (!currentUserId) return;
         bounceHeart();
-        if (isLiked) {
-            const { error } = await supabase.from('likes').delete().eq('capsule_id', capsule.id).eq('user_id', currentUserId);
-            if (!error) { setIsLiked(false); setLikeCount(p => p - 1); }
+        if (onLike) {
+            onLike(capsule.id, isLiked);
         } else {
-            const { error } = await supabase.from('likes').insert({ capsule_id: capsule.id, user_id: currentUserId });
-            if (!error) {
-                setIsLiked(true);
-                setLikeCount(p => p + 1);
-                if (currentUserId !== capsule.owner_id) {
-                    await supabase.from('notifications').insert({
-                        user_id: capsule.owner_id, sender_id: currentUserId,
-                        type: 'like', capsule_id: capsule.id, message: 'liked your capsule',
-                    });
+            if (isLiked) {
+                const { error } = await supabase.from('likes').delete().eq('capsule_id', capsule.id).eq('user_id', currentUserId);
+                if (!error) { setIsLiked(false); setLikeCount((p: number) => p - 1); }
+            } else {
+                const { error } = await supabase.from('likes').insert({ capsule_id: capsule.id, user_id: currentUserId });
+                if (!error) {
+                    setIsLiked(true);
+                    setLikeCount((p: number) => p + 1);
+                    if (currentUserId !== capsule.owner_id) {
+                        const { data: existing } = await supabase.from('notifications')
+                            .select('id').eq('user_id', capsule.owner_id).eq('sender_id', currentUserId).eq('type', 'like').eq('capsule_id', capsule.id).maybeSingle();
+                        
+                        if (existing) {
+                            await supabase.from('notifications').update({ created_at: new Date().toISOString(), is_read: false }).eq('id', existing.id);
+                        } else {
+                            await supabase.from('notifications').insert({
+                                user_id: capsule.owner_id, sender_id: currentUserId,
+                                type: 'like', capsule_id: capsule.id, message: 'liked your capsule',
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -191,11 +169,125 @@ const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp, userId: passe
     const profile = capsule.profiles || { username: 'user', avatar_url: null };
     const isOpened = capsule.status === 'opened';
     const isSealed = capsule.status === 'sealed';
-    // Only consider it a video post once we've confirmed the latest item (avoids capsule→video flicker)
     const isVideoPost = isSealed && latestItemLoaded && latestItem?.media_type === 'video';
 
+    const isToday = useMemo(() => {
+        if (!capsule.opens_at || isOpened) return false;
+        const d = new Date(capsule.opens_at);
+        const now = new Date();
+        return d.toDateString() === now.toDateString();
+    }, [capsule.opens_at, isOpened]);
+
+    // ─── GRID MODE (Explore tab) ─────────────────────────────────────────────
+    if (gridMode) {
+        const previewItems = mediaCollage.slice(0, 4);
+        const hasPreview = previewItems.length > 0;
+
+        return (
+            <TouchableOpacity activeOpacity={0.92} onPress={handlePress} style={[s.gridCard, isToday && { borderWidth: 2, borderColor: '#A855F7' }]}>
+
+                {/* ── Top: Capsule model zone ── */}
+                <View style={s.gridTopZone}>
+                    <LinearGradient
+                        colors={[Colors.cardAlt, Colors.background]}
+                        style={StyleSheet.absoluteFill}
+                    />
+                    {/* Subtle radial glow */}
+                    <View style={[s.gridGlow, { backgroundColor: themeColor + '12' }]} />
+
+                    <CapsuleWithTimer
+                        modelKey={capsule.model}
+                        source={{ uri: isOpened ? modelImages.open : modelImages.closed }}
+                        date={capsule.opens_at}
+                        chainId={capsule.chain_id}
+                        capsuleType={capsule.type}
+                        hideTimer={isOpened}
+                        isOpened={isOpened}
+                        style={s.gridCapsuleImg}
+                        hideParticles={true}
+                        lightweight={true}
+                        disableAnimations={true}
+                    />
+
+                    {/* Type badge */}
+                    <View style={[s.gridTypeBadge, { backgroundColor: cfg.color }]}>
+                        <Ionicons name={cfg.icon} size={8} color="#fff" />
+                        <Text style={s.gridTypeBadgeText}>{cfg.label}</Text>
+                    </View>
+
+                    {/* Status badge */}
+                    {isSealed && (
+                        <View style={s.gridStatusBadge}>
+                            <Ionicons name="lock-closed" size={9} color={Colors.textMuted} />
+                        </View>
+                    )}
+                    {isOpened && (
+                        <View style={[s.gridStatusBadge, { backgroundColor: themeColor + '18', borderColor: themeColor + '30' }]}>
+                            <Ionicons name="lock-open" size={9} color={themeColor} />
+                        </View>
+                    )}
+                </View>
+
+                {/* ── Middle: 3-column post preview ── */}
+                <View style={s.gridPreviewRow}>
+                    {postsCount > 0 ? (
+                        previewItems.slice(0, 3).map((pi: any, idx: number) => {
+                            const src = pi.thumbnail_url || (pi.media_url && !pi.media_url.startsWith('text://') ? pi.media_url : null);
+                            return (
+                                <View key={pi.id || idx} style={s.gridPreviewItem}>
+                                    {src ? (
+                                        <Image
+                                            source={{ uri: src }}
+                                            style={StyleSheet.absoluteFill}
+                                            blurRadius={!isOpened ? (Platform.OS === 'ios' ? 45 : 22) : 0}
+                                            contentFit="cover"
+                                            cachePolicy="memory-disk"
+                                            recyclingKey={`gp-${capsule.id}-${idx}`}
+                                        />
+                                    ) : (
+                                        <View style={[StyleSheet.absoluteFill, { backgroundColor: Colors.cardAlt, alignItems: 'center', justifyContent: 'center' }]}>
+                                            <Ionicons name="document-text-outline" size={12} color={Colors.textMuted} opacity={0.5} />
+                                        </View>
+                                    )}
+                                </View>
+                            );
+                        })
+                    ) : (
+                        /* 3 Placeholders if 0 items */
+                        [0, 1, 2].map((i) => (
+                            <View key={i} style={s.gridPreviewItem}>
+                                <View style={s.gridPlaceholderInner}>
+                                    <View style={[s.gridPlaceholderDot, { backgroundColor: themeColor + '20' }]} />
+                                </View>
+                            </View>
+                        ))
+                    )}
+                </View>
+
+                {/* ── Bottom: white info bar ── */}
+                <View style={s.gridBottom}>
+                    <Text style={s.gridTitle} numberOfLines={1}>{capsule.title}</Text>
+                    <View style={s.gridAuthorRow}>
+                        {profile.avatar_url ? (
+                            <Image source={{ uri: profile.avatar_url }} style={s.gridAvatar} contentFit="cover" cachePolicy="memory-disk" />
+                        ) : (
+                            <View style={[s.gridAvatar, { backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' }]}>
+                                <Ionicons name="person" size={7} color="#fff" />
+                            </View>
+                        )}
+                        <Text style={s.gridAuthorName} numberOfLines={1}>
+                            {profile.display_name || profile.username}
+                        </Text>
+                        {profile.is_verified && <VerifiedBadge size={9} />}
+                    </View>
+                </View>
+            </TouchableOpacity>
+        );
+    }
+
+    // ─── CARD MODE (Following tab) ───────────────────────────────────────────
     return (
-        <TouchableOpacity activeOpacity={0.95} onPress={handlePress} style={s.card}>
+        <TouchableOpacity activeOpacity={0.95} onPress={handlePress} style={[s.card, isToday && { borderWidth: 2, borderColor: '#A855F7' }]}>
 
             {/* ── VISUAL ZONE ──────────────────────────────────────────── */}
             <View style={s.visual}>
@@ -210,14 +302,20 @@ const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp, userId: passe
                     />
                 )}
 
-                {/* Blurred bg for video */}
+                {/* Blurred bg for video — using blurRadius on Image (no BlurView) */}
                 {isVideoPost && latestItem?.thumbnail_url && (
                     <View style={StyleSheet.absoluteFill}>
-                        <Image source={{ uri: latestItem.thumbnail_url }} style={s.blurBg} blurRadius={Platform.OS === 'ios' ? 28 : 12} contentFit="cover" transition={300} />
+                        <Image 
+                            source={{ uri: latestItem.thumbnail_url }} 
+                            style={s.blurBg} 
+                            blurRadius={Platform.OS === 'ios' ? 40 : 20} 
+                            contentFit="cover" 
+                            cachePolicy="memory-disk"
+                            recyclingKey={`card-vid-${capsule.id}`}
+                        />
                         <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.3)' }]} />
                     </View>
                 )}
-
 
                 {/* ── Opened: collage + model ── */}
                 {isOpened && mediaCollage.length > 0 ? (
@@ -226,7 +324,7 @@ const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp, userId: passe
                             <View style={s.collageGrid}>
                                 {mediaCollage.map((item, i) => (
                                     <Image
-                                        key={i}
+                                        key={item.id || i}
                                         source={{ uri: (item.media_url && !item.media_url.startsWith('text://')) ? item.media_url : '' }}
                                         style={[
                                             s.collageItem,
@@ -236,10 +334,8 @@ const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp, userId: passe
                                         ]}
                                         contentFit="cover"
                                         cachePolicy="memory-disk"
-                                        transition={200}
+                                        recyclingKey={`cap-collage-${item.id || i}`}
                                     />
-
-
                                 ))}
                             </View>
                             <LinearGradient
@@ -253,17 +349,19 @@ const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp, userId: passe
                                 modelKey={capsule.model}
                                 source={{ uri: modelImages.open }}
                                 date={capsule.opens_at}
-                                capsuleType={capsule.type}
                                 chainId={capsule.chain_id}
+                                capsuleType={capsule.type}
                                 hideTimer
-                                style={s.capsuleSmall}
                                 isOpened
+                                style={s.capsuleSmall}
+                                hideParticles={true}
+                                lightweight={true}
+                                disableAnimations={true}
                             />
                         </View>
                     </View>
 
                 ) : isVideoPost ? (
-                    // Video sealed: blurred bg + play + small model in corner
                     <View style={s.videoWrap}>
                         <View style={s.videoPlayBtn}>
                             <Ionicons name="play" size={24} color="#fff" style={{ marginLeft: 2 }} />
@@ -274,15 +372,11 @@ const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp, userId: passe
                                 style={s.capsuleCornerImg} 
                                 contentFit="contain" 
                                 cachePolicy="memory-disk"
-                                transition={200} 
                             />
                         </View>
-
-
                     </View>
 
                 ) : (
-                    // Default sealed
                     <View style={s.sealedWrap}>
                         <CapsuleWithTimer
                             modelKey={capsule.model}
@@ -291,21 +385,21 @@ const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp, userId: passe
                             chainId={capsule.chain_id}
                             capsuleType={capsule.type}
                             hideTimer={isOpened}
-                            style={s.capsuleLarge}
                             isOpened={isOpened}
+                            style={s.capsuleLarge}
+                            hideParticles={true}
+                            lightweight={true}
+                            disableAnimations={true}
                         />
                     </View>
                 )}
 
-                {/* ── Badges — no overlaps ── */}
-
-                {/* Type — TOP LEFT always */}
+                {/* ── Badges ── */}
                 <View style={[s.typeBadge, { backgroundColor: cfg.color }]}>
                     <Ionicons name={cfg.icon} size={9} color="#fff" />
                     <Text style={s.typeBadgeText}>{cfg.label}</Text>
                 </View>
 
-                {/* Duration — TOP RIGHT, only on video (no opened badge on video) */}
                 {isVideoPost && latestItem?.content && (
                     <View style={s.durationBadge}>
                         <Ionicons name="play" size={10} color="#fff" />
@@ -313,7 +407,6 @@ const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp, userId: passe
                     </View>
                 )}
 
-                {/* Opened — TOP RIGHT, only when opened */}
                 {isOpened && (
                     <View style={[s.openedBadge, { backgroundColor: themeColor }]}>
                         <Ionicons name="lock-open-outline" size={10} color="#fff" />
@@ -321,14 +414,12 @@ const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp, userId: passe
                     </View>
                 )}
 
-                {/* Lock — BOTTOM RIGHT */}
                 {isSealed && (
                     <View style={s.lockBadge}>
                         <Ionicons name="lock-closed" size={11} color="rgba(255,255,255,0.9)" />
                     </View>
                 )}
 
-                {/* Multi-media — BOTTOM RIGHT, beside lock */}
                 {isSealed && postsCount > 1 && (
                     <View style={[s.lockBadge, { right: 46 }]}>
                         <Ionicons name="images" size={11} color="rgba(255,255,255,0.9)" />
@@ -352,13 +443,11 @@ const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp, userId: passe
                                 style={s.avatar} 
                                 contentFit="cover" 
                                 cachePolicy="memory-disk"
-                                transition={200} 
                             />
                             : <View style={[s.avatar, s.avatarFallback]}>
                                 <Ionicons name="person" size={14} color={Colors.textMuted} />
                             </View>
                         }
-
 
                         <View style={{ flex: 1, minWidth: 0 }}>
                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
@@ -420,7 +509,6 @@ const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp, userId: passe
 
                     <View style={{ flex: 1 }} />
 
-                    {/* Opening date — always grey */}
                     {capsule.opens_at && (
                         <View style={s.dateChip}>
                             <Ionicons
@@ -442,7 +530,12 @@ const CapsuleCard = React.memo(({ capsule, isLocked: isLockedProp, userId: passe
 export default CapsuleCard;
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
+const GRID_GAP = 2;
+const GRID_COLS = 2;
+const GRID_ITEM_WIDTH = (width - Spacing.md * 2 - GRID_GAP * (GRID_COLS - 1)) / GRID_COLS;
+
 const s = StyleSheet.create({
+    // ── Card Mode ────────────────────────────────────────────────────────────
     card: {
         marginHorizontal: 14,
         marginBottom: 12,
@@ -479,7 +572,6 @@ const s = StyleSheet.create({
         alignItems: 'center', justifyContent: 'center',
         borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.4)',
     },
-    // Capsule model mini in bottom-right of video post
     modelCorner: {
         position: 'absolute', bottom: 8, right: 10,
         width: 50, height: 50,
@@ -510,9 +602,7 @@ const s = StyleSheet.create({
     },
     capsuleSmall: { width: 128, height: 128 },
 
-    // ── Badges ───────────────────────────────────────────────────────────────
-
-    // TOP LEFT — type
+    // Badges
     typeBadge: {
         position: 'absolute', top: 10, left: 10,
         flexDirection: 'row', alignItems: 'center', gap: 3,
@@ -521,7 +611,6 @@ const s = StyleSheet.create({
     },
     typeBadgeText: { fontSize: 9, fontFamily: Fonts.bold, color: '#fff', letterSpacing: 0.2 },
 
-    // TOP RIGHT — duration (video only, mutually exclusive with openedBadge)
     durationBadge: {
         position: 'absolute', top: 10, right: 10,
         flexDirection: 'row', alignItems: 'center', gap: 3,
@@ -530,7 +619,6 @@ const s = StyleSheet.create({
     },
     durationText: { fontSize: 10, fontFamily: Fonts.bold, color: '#fff' },
 
-    // TOP RIGHT — opened (mutually exclusive with durationBadge)
     openedBadge: {
         position: 'absolute', top: 10, right: 10,
         flexDirection: 'row', alignItems: 'center', gap: 3,
@@ -539,7 +627,6 @@ const s = StyleSheet.create({
     },
     openedBadgeText: { fontSize: 9, fontFamily: Fonts.bold, color: '#fff' },
 
-    // BOTTOM RIGHT — lock
     lockBadge: {
         position: 'absolute', bottom: 8, right: 10,
         width: 26, height: 26, borderRadius: 13,
@@ -548,7 +635,7 @@ const s = StyleSheet.create({
         borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
     },
 
-    // ── Body ─────────────────────────────────────────────────────────────────
+    // Body
     body: { paddingHorizontal: 12, paddingTop: 10, paddingBottom: 10 },
 
     authorRow: {
@@ -595,11 +682,155 @@ const s = StyleSheet.create({
     },
     actionNum: { fontSize: 11, fontFamily: Fonts.semiBold, color: Colors.textMuted },
 
-    // Grey date chip — always neutral
     dateChip: {
         flexDirection: 'row', alignItems: 'center', gap: 4,
         paddingHorizontal: 8, paddingVertical: 4,
         borderRadius: 18, backgroundColor: Colors.cardAlt,
     },
     dateText: { fontSize: 10, fontFamily: Fonts.medium, color: Colors.textMuted },
+
+    // ── Grid Mode (Explore) ──────────────────────────────────────────────────
+    gridCard: {
+        width: GRID_ITEM_WIDTH,
+        borderRadius: 18,
+        overflow: 'hidden',
+        backgroundColor: Colors.surface,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        ...Platform.select({
+            ios: { shadowColor: Colors.shadow, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 1, shadowRadius: 10 },
+            android: { elevation: 3 },
+        }),
+    },
+
+    // Top zone with capsule model
+    gridTopZone: {
+        height: GRID_ITEM_WIDTH * 0.7,
+        alignItems: 'center',
+        justifyContent: 'center',
+        position: 'relative',
+        overflow: 'hidden',
+    },
+    gridGlow: {
+        position: 'absolute',
+        width: 120,
+        height: 120,
+        borderRadius: 60,
+        top: '50%',
+        left: '50%',
+        marginTop: -60,
+        marginLeft: -60,
+        opacity: 0.6,
+    },
+    gridCapsuleImg: {
+        width: 88,
+        height: 88,
+    },
+
+    gridTypeBadge: {
+        position: 'absolute',
+        top: 8,
+        left: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 3,
+        paddingHorizontal: 7,
+        paddingVertical: 3,
+        borderRadius: 20,
+    },
+    gridTypeBadgeText: {
+        fontSize: 8,
+        fontFamily: Fonts.bold,
+        color: '#fff',
+        letterSpacing: 0.3,
+    },
+
+    gridStatusBadge: {
+        position: 'absolute',
+        top: 8,
+        right: 8,
+        width: 22,
+        height: 22,
+        borderRadius: 11,
+        backgroundColor: Colors.cardAlt,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1,
+        borderColor: Colors.border,
+    },
+
+    // 2×2 post preview
+    gridPreviewRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        height: GRID_ITEM_WIDTH * 0.35,
+        borderTopWidth: 1,
+        borderTopColor: Colors.borderLight,
+    },
+    gridPreviewItem: {
+        width: '33.33%',
+        height: '100%',
+        backgroundColor: Colors.cardAlt,
+        borderRightWidth: 1,
+        borderRightColor: Colors.borderLight,
+    },
+    gridPlaceholderInner: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: Colors.cardAlt,
+    },
+    gridPlaceholderDot: {
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+    },
+    gridPreviewEmpty: {
+        height: GRID_ITEM_WIDTH * 0.35,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: Colors.cardAlt,
+        borderTopWidth: 1,
+        borderTopColor: Colors.borderLight,
+        gap: 4,
+    },
+    gridPreviewEmptyText: {
+        fontSize: 10,
+        fontFamily: Fonts.medium,
+        color: Colors.textMuted,
+    },
+
+    // White bottom bar
+    gridBottom: {
+        paddingHorizontal: 10,
+        paddingVertical: 8,
+        backgroundColor: Colors.surface,
+        borderTopWidth: 1,
+        borderTopColor: Colors.borderLight,
+    },
+    gridTitle: {
+        fontSize: 12,
+        fontFamily: Fonts.bold,
+        color: Colors.textPrimary,
+        marginBottom: 4,
+        letterSpacing: -0.2,
+    },
+    gridAuthorRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 5,
+    },
+    gridAvatar: {
+        width: 16,
+        height: 16,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: Colors.border,
+    },
+    gridAuthorName: {
+        fontSize: 10,
+        fontFamily: Fonts.medium,
+        color: Colors.textMuted,
+        flex: 1,
+    },
 });
