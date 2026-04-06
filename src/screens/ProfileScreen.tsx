@@ -532,11 +532,10 @@ export default function ProfileScreen() {
                             } : [s.bannerSticker, pos, { width: size, height: size, transform: [{ rotate: rotation }], opacity: 0.8 }];
 
                             return ps.stickers?.image_url && (
-                                <Image key={ps.id} source={{ uri: optimizeAssetUrl(ps.stickers.image_url, 240) }}
+                                <Image key={ps.id} source={{ uri: ps.stickers.image_url }}
                                     style={style}
                                     contentFit="contain"
                                     transition={300}
-                                    cachePolicy="memory-disk"
                                 />
 
                             );
@@ -1224,7 +1223,3 @@ const s = StyleSheet.create({
 
     legalText: { fontSize: 14, fontFamily: Fonts.regular, color: Colors.textSecondary, lineHeight: 22 },
 });
-const optimizeAssetUrl = (uri?: string, width = 320) => {
-    if (!uri || !uri.includes('/storage/v1/object/public/')) return uri;
-    return `${uri}${uri.includes('?') ? '&' : '?'}width=${width}&quality=72&format=webp`;
-};

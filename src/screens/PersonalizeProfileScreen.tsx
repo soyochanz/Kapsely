@@ -24,10 +24,6 @@ const MAX_STICKERS = 5;
 const DEFAULT_SIZE = 72;
 const MIN_SIZE = 36;
 const MAX_SIZE = 140;
-const optimizeAssetUrl = (uri?: string, width = 256) => {
-    if (!uri || !uri.includes('/storage/v1/object/public/')) return uri || '';
-    return `${uri}${uri.includes('?') ? '&' : '?'}width=${width}&quality=72&format=webp`;
-};
 
 // ─── Sticker state ────────────────────────────────────────────────────────────
 interface StickerInstance {
@@ -161,11 +157,10 @@ function DraggableSticker({
             ]}
         >
             <Image 
-                source={{ uri: optimizeAssetUrl(sticker.imageUrl, 256) }} 
+                source={{ uri: sticker.imageUrl }} 
                 style={StyleSheet.absoluteFill} 
                 contentFit="contain"
                 cachePolicy="memory-disk"
-                transition={0}
             />
 
 
