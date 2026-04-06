@@ -38,6 +38,7 @@ import StoryEditor from '../components/StoryEditor';
 import { safetyService } from '../utils/safety';
 import { useWebDragScroll } from '../utils/useWebDragScroll';
 import TimelineActivity from '../components/TimelineActivity';
+import { feedScrollBus } from '../utils/feedScrollBus';
 
 type CapsuleType = 'instacap' | 'eventcap' | 'legacycap' | 'opencap';
 type FeedTab = 'following' | 'explore';
@@ -329,6 +330,14 @@ export default function FeedScreen() {
     useWebDragScroll(filterScrollRef);
 
     // ─── Animations ───────────────────────────────────────────────────────────
+    useEffect(() => {
+        return feedScrollBus.subscribe(() => {
+            flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true });
+            storiesScrollRef.current?.scrollTo?.({ x: 0, y: 0, animated: true });
+            filterScrollRef.current?.scrollTo?.({ x: 0, y: 0, animated: true });
+        });
+    }, []);
+
     useEffect(() => {
         Animated.parallel([
             Animated.timing(headerOpacity, { toValue: 1, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: true }),

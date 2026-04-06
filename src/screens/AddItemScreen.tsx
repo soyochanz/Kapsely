@@ -18,6 +18,7 @@ import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from '../lib/supabase';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
 import Slider from '@react-native-community/slider';
+import { optimizeImageForUpload } from '../utils/mediaOptimization';
 
 const { width } = Dimensions.get('window');
 
@@ -102,12 +103,9 @@ export default function AddItemScreen() {
             let cur = { ...asset };
             if (contentType === 'image') {
                 try {
-                    // Optimize image: 1080px is plenty for mobile, 0.7 quality saves ~40% size vs 0.8
-                    const r = await ImageManipulator.manipulateAsync(asset.uri, [{ resize: { width: 1080 } }], { 
-                        compress: 0.7, 
-                        format: ImageManipulator.SaveFormat.WEBP 
-                    });
-                    cur = { ...cur, uri: r.uri, width: r.width, height: r.height };
+                    const optimizedUri = await optimizeImageForUpload(asset.uri);
+                    const r = await ImageManipulator.manipulateAsync(optimizedUri, [], {});
+                    cur = { ...cur, uri: optimizedUri, width: r.width, height: r.height };
                 } catch (e) { }
             } else if (contentType === 'video') {
                 try {
