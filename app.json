@@ -49,7 +49,8 @@
       "@react-native-community/datetimepicker",
       "expo-audio",
       "expo-video",
-      "expo-tracking-transparency"
+      "expo-tracking-transparency",
+      "expo-localization"
     ],
     "web": {
       "favicon": "./assets/favicon.png",

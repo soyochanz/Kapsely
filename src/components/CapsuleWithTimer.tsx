@@ -60,21 +60,11 @@ const CapsuleWithTimer = React.memo(({
         if (disableAnimations) return;
 
         // Pendulum animation
-        swingAnim.setValue(-1);
+        swingAnim.setValue(0);
         Animated.loop(
             Animated.sequence([
-                Animated.timing(swingAnim, { 
-                    toValue: 1, 
-                    duration: 5000, 
-                    easing: Easing.inOut(Easing.ease),
-                    useNativeDriver: true 
-                }),
-                Animated.timing(swingAnim, { 
-                    toValue: -1, 
-                    duration: 5000, 
-                    easing: Easing.inOut(Easing.ease),
-                    useNativeDriver: true 
-                })
+                Animated.timing(swingAnim, { toValue: 1, duration: 3000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+                Animated.timing(swingAnim, { toValue: -1, duration: 3000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
             ])
         ).start();
 
@@ -138,7 +128,7 @@ const CapsuleWithTimer = React.memo(({
 
     const rotateInterp = swingAnim.interpolate({
         inputRange: [-1, 1],
-        outputRange: ['-2.5deg', '2.5deg']
+        outputRange: ['-3.5deg', '3.5deg']
     });
 
     const glintTranslate = glintAnim.interpolate({

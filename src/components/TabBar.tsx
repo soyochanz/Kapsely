@@ -6,6 +6,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Colors } from '../theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
+import { feedScrollBus } from '../utils/feedScrollBus';
 
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -43,7 +44,15 @@ function TabItem({ route, index, state, navigation, cfg, hasBadge }: {
 
     const onPress = () => {
         const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
-        if (!isFocused && !event.defaultPrevented) navigation.navigate(route.name);
+        if (!isFocused && !event.defaultPrevented) {
+            navigation.navigate(route.name);
+            return;
+        }
+
+        if (isFocused && cfg.name === 'Feed') {
+            feedScrollBus.emitScrollToTop();
+            feedScrollBus.emitRefresh();
+        }
     };
 
     const onLongPress = () => {

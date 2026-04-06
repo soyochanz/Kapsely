@@ -87,8 +87,8 @@ const CapsuleCard = React.memo(({
     const cfg = typeConfig[capsule.type as keyof typeof typeConfig] || typeConfig.legacycap;
 
     const modelImages = useMemo(() => ({
-        closed: timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || (MODEL_IMAGES as any).basicred_kap,
-        open: timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model as keyof typeof MODEL_IMAGES_OPEN] || (MODEL_IMAGES as any).basicred_kap,
+        closed: timerConfigManager.getModelThumbnail(capsule.model) || MODEL_IMAGES[capsule.model as keyof typeof MODEL_IMAGES] || (MODEL_IMAGES as any).basicred_kap,
+        open: timerConfigManager.getModelThumbnail(capsule.model) || MODEL_IMAGES_OPEN[capsule.model as keyof typeof MODEL_IMAGES_OPEN] || (MODEL_IMAGES as any).basicred_kap,
     }), [capsule.model]);
 
     const themeColor = useMemo(() => {

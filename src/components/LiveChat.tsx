@@ -123,44 +123,42 @@ const LiveChat = React.forwardRef<LiveChatRef, LiveChatProps>(
                 .channel(`capsule-chat-${capsuleId}`)
                 .on(
                     'postgres_changes',
-                    { event: 'INSERT', schema: 'public', table: 'capsule_chat', filter: `capsule_id=eq.${capsuleId}` },
+                    { event: '*', schema: 'public', table: 'capsule_chat', filter: `capsule_id=eq.${capsuleId}` },
                     async (payload) => {
-                        const newMsg = payload.new as ChatMessage;
-                        if (blockedRef.current.includes(newMsg.user_id)) return;
+                        if (payload.eventType === 'INSERT') {
+                            const newMsg = payload.new as ChatMessage;
+                            if (blockedRef.current.includes(newMsg.user_id)) return;
 
-                        setMessages(prev => {
-                            if (prev.some(m => m.id === newMsg.id)) return prev;
+                            setMessages(prev => {
+                                if (prev.some(m => m.id === newMsg.id)) return prev;
 
-                            if (newMsg.user_id === userIdRef.current) {
-                                const tempIdx = prev.findIndex(m => m.id.startsWith('temp-') && m.message === newMsg.message);
-                                if (tempIdx !== -1) {
-                                    const updated = [...prev];
-                                    updated[tempIdx] = { ...newMsg, profiles: prev[tempIdx].profiles };
-                                    return updated;
-                                }
-                            }
-
-                            supabase.from('profiles').select('username, avatar_url, is_verified').eq('id', newMsg.user_id).single().then(({ data }) => {
-                                setMessages(curr => {
-                                    if (curr.some(m => m.id === newMsg.id)) {
-                                        return curr.map(m => m.id === newMsg.id ? { ...m, profiles: data ?? undefined } : m);
+                                if (newMsg.user_id === userIdRef.current) {
+                                    const tempIdx = prev.findIndex(m => m.id.startsWith('temp-') && m.message === newMsg.message);
+                                    if (tempIdx !== -1) {
+                                        const updated = [...prev];
+                                        updated[tempIdx] = { ...newMsg, profiles: prev[tempIdx].profiles };
+                                        return updated;
                                     }
-                                    return [{ ...newMsg, profiles: data ?? undefined }, ...curr];
-                                });
-                            });
+                                }
 
-                            return prev;
-                        });
+                                supabase.from('profiles').select('username, avatar_url, is_verified').eq('id', newMsg.user_id).single().then(({ data }) => {
+                                    setMessages(curr => {
+                                        if (curr.some(m => m.id === newMsg.id)) {
+                                            return curr.map(m => m.id === newMsg.id ? { ...m, profiles: data ?? undefined } : m);
+                                        }
+                                        return [{ ...newMsg, profiles: data ?? undefined }, ...curr];
+                                    });
+                                });
+                                return prev;
+                            });
+                        } else if (payload.eventType === 'DELETE') {
+                            setMessages(prev => prev.filter(m => m.id !== payload.old.id));
+                        } else if (payload.eventType === 'UPDATE') {
+                            const updatedMsg = payload.new as ChatMessage;
+                            setMessages(prev => prev.map(m => m.id === updatedMsg.id ? { ...m, ...updatedMsg } : m));
+                        }
                     }
-                )
-                .on(
-                    'postgres_changes',
-                    { event: 'DELETE', schema: 'public', table: 'capsule_chat', filter: `capsule_id=eq.${capsuleId}` },
-                    (payload) => {
-                        setMessages(prev => prev.filter(m => m.id !== payload.old.id));
-                    }
-                )
-                .subscribe();
+                ).subscribe();
 
             return () => {
                 supabase.removeChannel(msgChannel);
@@ -362,9 +360,17 @@ const LiveChat = React.forwardRef<LiveChatRef, LiveChatProps>(
                             <PulseDot color={tint} />
                             <Text style={[st.headerTitle, { color: tint }]}>CHAT EN VIVO</Text>
                         </View>
-                        <View style={[st.viewerBadge, { borderColor: tint + '25', backgroundColor: tint + '08' }]}>
-                            <Ionicons name="people" size={10} color={tint} />
-                            <Text style={[st.viewerCount, { color: tint }]}>{uniqueUsersCount}</Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                            <TouchableOpacity style={st.callBtn} onPress={() => Alert.alert('Kapsely', 'Llamada de audio no disponible en modo Demo.')}>
+                                <Ionicons name="call-outline" size={13} color={tint} />
+                            </TouchableOpacity>
+                            <TouchableOpacity style={st.callBtn} onPress={() => Alert.alert('Kapsely', 'Llamada de video no disponible en modo Demo.')}>
+                                <Ionicons name="videocam-outline" size={13} color={tint} />
+                            </TouchableOpacity>
+                            <View style={[st.viewerBadge, { borderColor: tint + '25', backgroundColor: tint + '08' }]}>
+                                <Ionicons name="people" size={10} color={tint} />
+                                <Text style={[st.viewerCount, { color: tint }]}>{uniqueUsersCount}</Text>
+                            </View>
                         </View>
                     </View>
                     <View style={[st.headerLine, { backgroundColor: tint + '15' }]} />
@@ -503,6 +509,16 @@ const st = StyleSheet.create({
     viewerCount: {
         fontSize: 11,
         fontFamily: Fonts.bold,
+    },
+    callBtn: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: 'rgba(255,255,255,0.8)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(124,92,191,0.12)',
     },
 
 

@@ -12,6 +12,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { sendPushNotification } from '../utils/pushNotifications';
 import * as ImagePicker from 'expo-image-picker';
 import { Audio, Video } from 'expo-av';
+import { optimizeImageForUpload } from '../utils/mediaOptimization';
 
 const AudioMessageBubble = ({ uri, isMe }: { uri: string, isMe: boolean }) => {
     const [sound, setSound] = useState<Audio.Sound | null>(null);
@@ -387,10 +388,11 @@ export default function ChatDetailScreen() {
     };
 
     const uploadFile = async (uri: string, type: string, userId: string) => {
+        const normalizedUri = type === 'image' ? await optimizeImageForUpload(uri) : uri;
         let ext = 'jpg';
-        const lastDot = uri.lastIndexOf('.');
-        if (lastDot !== -1 && lastDot > uri.lastIndexOf('/')) {
-            ext = uri.substring(lastDot + 1).split('?')[0];
+        const lastDot = normalizedUri.lastIndexOf('.');
+        if (lastDot !== -1 && lastDot > normalizedUri.lastIndexOf('/')) {
+            ext = normalizedUri.substring(lastDot + 1).split('?')[0];
         } else {
             ext = type === 'video' ? 'mp4' : type === 'audio' ? 'm4a' : 'jpg';
         }
@@ -400,9 +402,9 @@ export default function ChatDetailScreen() {
 
         const formData = new FormData();
         formData.append('file', {
-            uri: Platform.OS === 'android' ? uri : uri.replace('file://', ''),
+            uri: Platform.OS === 'android' ? normalizedUri : normalizedUri.replace('file://', ''),
             name: `file.${ext}`,
-            type: type === 'audio' ? 'audio/x-m4a' : type === 'video' ? 'video/mp4' : 'image/jpeg'
+            type: type === 'audio' ? 'audio/x-m4a' : type === 'video' ? 'video/mp4' : 'image/webp'
         } as any);
 
         const { data, error } = await supabase.storage
@@ -614,18 +616,12 @@ export default function ChatDetailScreen() {
 
     const deleteMessageEveryone = async (msgId: string) => {
         try {
-            const { error } = await supabase.from('messages').update({ 
-                is_deleted: true, 
-                content: 'Este mensaje fue eliminado',
-                media_url: null,
-                media_type: 'text'
-            }).eq('id', msgId);
-            
+            const { error } = await supabase.from('messages').delete().eq('id', msgId);
             if (error) throw error;
-            setMessages(prev => prev.map(m => m.id === msgId ? { ...m, is_deleted: true, content: 'Este mensaje fue eliminado', media_url: null, media_type: 'text' } : m));
+            setMessages(prev => prev.filter(m => m.id !== msgId));
         } catch (e) {
             console.error('Delete everyone error:', e);
-            Alert.alert('Error', 'No se pudo eliminar el mensaje para todos.');
+            Alert.alert('Error', 'No se pudo eliminar el mensaje.');
         }
     };
 
@@ -782,7 +778,14 @@ export default function ChatDetailScreen() {
                         {conversation?.is_group && <Text style={{ fontSize: 11, color: Colors.textSecondary, fontFamily: Fonts.regular }}>{groupParticipants.length + 1} participantes · Toca para editar</Text>}
                     </View>
                 </TouchableOpacity>
-                <View style={{ width: 40 }} />
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    <TouchableOpacity onPress={() => Alert.alert('Kapsely', 'Llamada de audio no disponible en modo Demo.')} style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.background, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: Colors.border }}>
+                         <Ionicons name="call-outline" size={18} color={Colors.primary} />
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => Alert.alert('Kapsely', 'Llamada de video no disponible en modo Demo.')} style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.background, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: Colors.border }}>
+                         <Ionicons name="videocam-outline" size={18} color={Colors.primary} />
+                    </TouchableOpacity>
+                </View>
             </View>
 
             <KeyboardAvoidingView 
@@ -966,10 +969,10 @@ export default function ChatDetailScreen() {
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: Colors.background },
     header: {
-        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-        padding: Spacing.md, backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.border
+        flexDirection: 'row', alignItems: 'center',
+        paddingHorizontal: Spacing.md, paddingVertical: 10, backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.border
     },
-    headerUserInfo: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    headerUserInfo: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, marginLeft: 4 },
     headerAvatar: { width: 32, height: 32, borderRadius: 16 },
     headerTitle: { fontSize: 17, fontFamily: Fonts.bold, color: Colors.textPrimary },
     backBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
