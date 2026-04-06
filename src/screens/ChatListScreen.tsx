@@ -93,11 +93,10 @@ export default function ChatListScreen() {
         const chats = await Promise.all(convIds.map(async (cId) => {
             const conv = convsMap[cId];
             const lastMsg = latestMsgMap[cId];
-            const lastMsgAt = conv?.last_message_at;
             const delTime = deletedStamps[cId];
 
-            // If deleted, hide unless there's a NEW message AFTER the deletion timestamp
-            if (delTime && (!lastMsgAt || new Date(lastMsgAt).getTime() <= new Date(delTime).getTime())) {
+            // If deleted, keep it hidden until user explicitly starts a conversation again
+            if (delTime) {
                 return null;
             }
 

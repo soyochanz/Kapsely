@@ -102,6 +102,48 @@ const ds = StyleSheet.create({
         fontFamily: Fonts.medium, lineHeight: 12, paddingHorizontal: 4,
         textAlign: 'center', height: 12
     },
+    notePreview: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: '#FFFEF5',
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        justifyContent: 'space-between',
+    },
+    notePreviewIcon: {
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(124,92,191,0.12)',
+        alignSelf: 'flex-start',
+    },
+    notePreviewText: {
+        fontSize: 12,
+        color: '#4A4530',
+        fontFamily: Fonts.medium,
+        textAlign: 'left',
+        lineHeight: 17,
+    },
+    audioPreviewFooter: {
+        position: 'absolute',
+        left: 8,
+        right: 8,
+        bottom: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        backgroundColor: 'rgba(0,0,0,0.2)',
+        borderRadius: 10,
+        paddingHorizontal: 8,
+        paddingVertical: 6,
+    },
+    audioPreviewLabel: {
+        color: '#fff',
+        fontSize: 10,
+        fontFamily: Fonts.semiBold,
+        letterSpacing: 0.2,
+    },
     playBadge: { position: 'absolute', top: 8, right: 8, width: 24, height: 24, borderRadius: 8, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', zIndex: 11 },
     socialSection: { paddingHorizontal: 18, paddingTop: 8, paddingBottom: 40 },
     actionRow: { flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 20 },
@@ -1084,10 +1126,17 @@ function CapsuleDetailScreen() {
                                                                             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
                                                                                 <Ionicons name={playingAudio === pi.media_url ? 'pause-circle' : 'mic-circle'} size={36} color="rgba(255,255,255,0.9)" />
                                                                             </View>
+                                                                            <View style={ds.audioPreviewFooter}>
+                                                                                <Text style={ds.audioPreviewLabel}>{playingAudio === pi.media_url ? 'Reproduciendo' : 'Nota de voz'}</Text>
+                                                                                <Ionicons name="pulse-outline" size={14} color="rgba(255,255,255,0.9)" />
+                                                                            </View>
                                                                         </LinearGradient>
                                                                     ) : pi.media_type === 'note' ? (
-                                                                        <View style={[StyleSheet.absoluteFill, { backgroundColor: '#FFFEF5', padding: 12, alignItems: 'center', justifyContent: 'center' }]}>
-                                                                            <Text style={{ fontSize: 12, color: '#4A4530', fontFamily: Fonts.medium, textAlign: 'center', lineHeight: 18 }} numberOfLines={4}>{pi.content}</Text>
+                                                                        <View style={ds.notePreview}>
+                                                                            <View style={ds.notePreviewIcon}>
+                                                                                <Ionicons name="document-text-outline" size={12} color={tint} />
+                                                                            </View>
+                                                                            <Text style={ds.notePreviewText} numberOfLines={4}>{pi.content}</Text>
                                                                         </View>
                                                                     ) : (
                                                                         <Image source={{ uri: pi.thumbnail_url || pi.media_url }} style={ds.cellWrap as any} contentFit="cover" cachePolicy="memory-disk" transition={200} />

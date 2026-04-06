@@ -12,6 +12,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { sendPushNotification } from '../utils/pushNotifications';
 import * as ImagePicker from 'expo-image-picker';
 import { Audio, Video } from 'expo-av';
+import { optimizeImageForUpload } from '../utils/mediaOptimization';
 
 const AudioMessageBubble = ({ uri, isMe }: { uri: string, isMe: boolean }) => {
     const [sound, setSound] = useState<Audio.Sound | null>(null);
@@ -387,10 +388,11 @@ export default function ChatDetailScreen() {
     };
 
     const uploadFile = async (uri: string, type: string, userId: string) => {
+        const normalizedUri = type === 'image' ? await optimizeImageForUpload(uri) : uri;
         let ext = 'jpg';
-        const lastDot = uri.lastIndexOf('.');
-        if (lastDot !== -1 && lastDot > uri.lastIndexOf('/')) {
-            ext = uri.substring(lastDot + 1).split('?')[0];
+        const lastDot = normalizedUri.lastIndexOf('.');
+        if (lastDot !== -1 && lastDot > normalizedUri.lastIndexOf('/')) {
+            ext = normalizedUri.substring(lastDot + 1).split('?')[0];
         } else {
             ext = type === 'video' ? 'mp4' : type === 'audio' ? 'm4a' : 'jpg';
         }
@@ -400,9 +402,9 @@ export default function ChatDetailScreen() {
 
         const formData = new FormData();
         formData.append('file', {
-            uri: Platform.OS === 'android' ? uri : uri.replace('file://', ''),
+            uri: Platform.OS === 'android' ? normalizedUri : normalizedUri.replace('file://', ''),
             name: `file.${ext}`,
-            type: type === 'audio' ? 'audio/x-m4a' : type === 'video' ? 'video/mp4' : 'image/jpeg'
+            type: type === 'audio' ? 'audio/x-m4a' : type === 'video' ? 'video/mp4' : 'image/webp'
         } as any);
 
         const { data, error } = await supabase.storage
