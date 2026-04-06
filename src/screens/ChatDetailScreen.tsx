@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useIsFocused, useNavigation, useRoute } from '@react-navigation/native';
 import { Colors, Fonts, Spacing, BorderRadius } from '../theme';
 import { supabase } from '../lib/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -109,6 +109,9 @@ export default function ChatDetailScreen() {
     const isCancelled = useRef(false);
     const [replyingTo, setReplyingTo] = useState<any>(null);
     const currentUserIdRef = useRef<string | null>(null);
+    const deletedIdsRef = useRef<string[]>([]);
+    const latestMessageAtRef = useRef<string | null>(null);
+    const isFocused = useIsFocused();
 
     useEffect(() => {
         const showSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', () => setKeyboardVisible(true));
@@ -188,8 +191,15 @@ export default function ChatDetailScreen() {
         if (msgs) {
             const stored = await AsyncStorage.getItem(`deletedMsgs_${conversationId}`);
             const deletedIds = stored ? JSON.parse(stored) : [];
+            deletedIdsRef.current = deletedIds;
             const filtered = msgs.filter((m: any) => !deletedIds.includes(m.id));
             setMessages(filtered);
+            latestMessageAtRef.current = filtered.length > 0
+                ? filtered.reduce((acc: string | null, curr: any) => {
+                    if (!acc) return curr.created_at;
+                    return new Date(curr.created_at).getTime() > new Date(acc).getTime() ? curr.created_at : acc;
+                }, null)
+                : null;
             if (msgs.length < PAGE_SIZE) setHasMore(false);
         }
         setLoading(false);
@@ -251,7 +261,7 @@ export default function ChatDetailScreen() {
 
         const setupRealtime = async () => {
             const storedDeletions = await AsyncStorage.getItem(`deletedMsgs_${conversationId}`);
-            const deletedIds = storedDeletions ? JSON.parse(storedDeletions) : [];
+            deletedIdsRef.current = storedDeletions ? JSON.parse(storedDeletions) : [];
 
             const sub = supabase
                 .channel(`chat_detail_${conversationId}`)
@@ -265,12 +275,15 @@ export default function ChatDetailScreen() {
 
                         if (payload.eventType === 'INSERT') {
                             if (newMsg.sender_id === myId) return;
-                            if (deletedIds.includes(newMsg.id)) return;
+                            if (deletedIdsRef.current.includes(newMsg.id)) return;
 
                             setMessages(prev => {
                                 if (prev.some(m => m.id === newMsg.id)) return prev;
                                 return [newMsg, ...prev];
                             });
+                            if (!latestMessageAtRef.current || new Date(newMsg.created_at).getTime() > new Date(latestMessageAtRef.current).getTime()) {
+                                latestMessageAtRef.current = newMsg.created_at;
+                            }
                             supabase.rpc('mark_messages_read', { p_conversation_id: conversationId }).then();
                         } else if (payload.eventType === 'UPDATE') {
                             setMessages(prev => prev.map(m => m.id === newMsg.id ? { ...m, ...newMsg } : m));
@@ -302,6 +315,44 @@ export default function ChatDetailScreen() {
             if (activeSub) supabase.removeChannel(activeSub);
         };
     }, [conversationId]);
+
+    // Fallback polling: if realtime misses an event, keep the open chat in sync.
+    useEffect(() => {
+        if (!isFocused || !conversationId || conversationId === 'new') return;
+
+        const pollLatest = async () => {
+            const since = latestMessageAtRef.current;
+            let q = supabase
+                .from('messages')
+                .select('*')
+                .eq('conversation_id', conversationId)
+                .order('created_at', { ascending: false })
+                .limit(25);
+
+            if (since) q = q.gt('created_at', since);
+
+            const { data } = await q;
+            if (!data?.length) return;
+
+            const newMsgs = data.filter((m: any) => !deletedIdsRef.current.includes(m.id));
+            if (!newMsgs.length) return;
+
+            setMessages(prev => {
+                const seen = new Set(prev.map(m => m.id));
+                const merged = [...newMsgs.filter(m => !seen.has(m.id)), ...prev];
+                return merged.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+            });
+
+            const newest = newMsgs[0]?.created_at;
+            if (newest && (!latestMessageAtRef.current || new Date(newest).getTime() > new Date(latestMessageAtRef.current).getTime())) {
+                latestMessageAtRef.current = newest;
+            }
+        };
+
+        const timer = setInterval(pollLatest, 2500);
+        pollLatest();
+        return () => clearInterval(timer);
+    }, [conversationId, isFocused]);
 
     const handleCamera = async () => {
         const { status } = await ImagePicker.requestCameraPermissionsAsync();
@@ -553,6 +604,7 @@ export default function ChatDetailScreen() {
             if (!list.includes(msgId)) {
                 list.push(msgId);
                 await AsyncStorage.setItem(`deletedMsgs_${conversationId}`, JSON.stringify(list));
+                deletedIdsRef.current = list;
             }
             setMessages(prev => prev.filter(m => m.id !== msgId));
         } catch (e) {

@@ -778,7 +778,7 @@ export default function FeedScreen() {
 
     useEffect(() => {
         if (!isFirstMount.current && currentUserId && isFocused) {
-            loadFeed(true, activeTab);
+            loadFeed(false, activeTab);
             loadStories();
         }
     }, [activeTab, activeFilter, currentUserId, isFocused]);
@@ -860,6 +860,43 @@ export default function FeedScreen() {
     }, [loadingMore, hasMore, loading, loadFeed, activeTab]);
 
     const keyExtractor = useCallback((item: any) => item.id, []);
+
+    const handleTabChange = useCallback((tab: FeedTab) => {
+        if (tab === activeTab) return;
+        setActiveTab(tab);
+        setPage(0);
+        setHasMore(true);
+
+        const cacheKey = `${tab}_${activeFilter}`;
+        const cached = feedCache[cacheKey];
+        if (cached && (Date.now() - cached.ts) < FEED_CACHE_TTL) {
+            setCapsules(cached.data);
+            setLoading(false);
+            return;
+        }
+
+        // Evita mostrar publicaciones de la pestaña anterior durante la transición
+        setCapsules([]);
+        setLoading(true);
+    }, [activeTab, activeFilter, feedCache]);
+
+    const handleFilterChange = useCallback((filter: FilterType) => {
+        if (filter === activeFilter) return;
+        setActiveFilter(filter);
+        setPage(0);
+        setHasMore(true);
+
+        const cacheKey = `${activeTab}_${filter}`;
+        const cached = feedCache[cacheKey];
+        if (cached && (Date.now() - cached.ts) < FEED_CACHE_TTL) {
+            setCapsules(cached.data);
+            setLoading(false);
+            return;
+        }
+
+        setCapsules([]);
+        setLoading(true);
+    }, [activeFilter, activeTab, feedCache]);
 
     const handleGlobalFollow = useCallback(async (ownerId: string, isFollowed: boolean) => {
         if (!currentUserId) return;
@@ -1030,7 +1067,7 @@ export default function FeedScreen() {
                         key={key}
                         filterKey={key}
                         isActive={activeFilter === key}
-                        onPress={setActiveFilter}
+                        onPress={handleFilterChange}
                         t={t}
                         pulseAnim={pulseAnim}
                     />
@@ -1094,7 +1131,7 @@ export default function FeedScreen() {
                             <TouchableOpacity
                                 key={tab}
                                 style={[s.tab, isActive && s.tabActive]}
-                                onPress={() => setActiveTab(tab)}
+                                onPress={() => handleTabChange(tab)}
                                 activeOpacity={0.7}
                             >
                                 <Text style={[s.tabText, isActive && s.tabTextActive]}>
@@ -1151,7 +1188,7 @@ export default function FeedScreen() {
                             </Text>
                             <TouchableOpacity
                                 activeOpacity={0.85}
-                                onPress={() => setActiveTab('explore')}
+                                onPress={() => handleTabChange('explore')}
                                 style={s.emptyBtn}
                             >
                                 <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={s.emptyBtnGrad}>
