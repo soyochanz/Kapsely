@@ -18,7 +18,7 @@ import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from '../lib/supabase';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
 import Slider from '@react-native-community/slider';
-import { optimizeImageForUpload } from '../utils/mediaOptimization';
+import { optimizeImageForUpload, optimizeThumbnailForUpload } from '../utils/mediaOptimization';
 
 const { width } = Dimensions.get('window');
 
@@ -104,14 +104,16 @@ export default function AddItemScreen() {
             if (contentType === 'image') {
                 try {
                     const optimizedUri = await optimizeImageForUpload(asset.uri);
+                    const thumbUri = await optimizeThumbnailForUpload(asset.uri);
                     const r = await ImageManipulator.manipulateAsync(optimizedUri, [], {});
-                    cur = { ...cur, uri: optimizedUri, width: r.width, height: r.height };
+                    cur = { ...cur, uri: optimizedUri, thumbnailUri: thumbUri, width: r.width, height: r.height };
                 } catch (e) { }
             } else if (contentType === 'video') {
                 try {
                     if (asset.duration && asset.duration > 61000) { Alert.alert('Error', 'Videos must be 1 minute or less.'); setLoading(false); return; }
-                    const { uri: thumbUri } = await VideoThumbnails.getThumbnailAsync(asset.uri, { time: 1000 });
-                    cur.thumbnailUri = thumbUri; cur.duration = asset.duration;
+                    const { uri: rawThumbUri } = await VideoThumbnails.getThumbnailAsync(asset.uri, { time: 1000 });
+                    const optimizedThumbUri = await optimizeThumbnailForUpload(rawThumbUri);
+                    cur.thumbnailUri = optimizedThumbUri; cur.duration = asset.duration;
                 } catch (e) { }
             }
             processed.push(cur);
@@ -125,7 +127,7 @@ export default function AddItemScreen() {
             mediaTypes: contentType === 'image' ? ImagePicker.MediaTypeOptions.Images : ImagePicker.MediaTypeOptions.Videos,
             allowsMultipleSelection: true, 
             selectionLimit: 20, 
-            quality: 0.7, // Reduced from 0.8 to save bandwidth
+            quality: 1, 
             videoMaxDuration: 60, 
             videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720,
             videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium, 
@@ -141,7 +143,7 @@ export default function AddItemScreen() {
             if (permission.status !== 'granted') { Alert.alert('Permiso requerido', 'Necesitamos acceso a tu cámara.'); return; }
             const result = await ImagePicker.launchCameraAsync({
                 mediaTypes: contentType === 'image' ? ImagePicker.MediaTypeOptions.Images : ImagePicker.MediaTypeOptions.Videos,
-                quality: 0.8, videoMaxDuration: 60,
+                quality: 1, videoMaxDuration: 60,
                 videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720,
                 videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
             });
@@ -211,7 +213,7 @@ export default function AddItemScreen() {
                     uploadTasks.push((async () => {
                         const mediaUrl = await uploadFile(media.uri, contentType, user.id);
                         let thumbUrl = null;
-                        if (contentType === 'video' && media.thumbnailUri) {
+                        if (media.thumbnailUri) {
                             try { thumbUrl = await uploadFile(media.thumbnailUri, 'image', user.id, true); } catch (e) { }
                         }
                         return { mediaUrl, thumbUrl, duration: media.duration, type: contentType, originalMedia: media };

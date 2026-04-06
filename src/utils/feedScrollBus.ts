@@ -1,21 +1,25 @@
 type Listener = () => void;
 
-const listeners = new Set<Listener>();
+const scrollListeners = new Set<Listener>();
+const refreshListeners = new Set<Listener>();
 
 export const feedScrollBus = {
-    subscribe(listener: Listener) {
-        listeners.add(listener);
-        return () => {
-            listeners.delete(listener);
-        };
+    subscribeScroll(listener: Listener) {
+        scrollListeners.add(listener);
+        return () => scrollListeners.delete(listener);
+    },
+    subscribeRefresh(listener: Listener) {
+        refreshListeners.add(listener);
+        return () => refreshListeners.delete(listener);
     },
     emitScrollToTop() {
-        listeners.forEach((listener) => {
-            try {
-                listener();
-            } catch (error) {
-                console.warn('feedScrollBus listener error', error);
-            }
+        scrollListeners.forEach(l => {
+            try { l(); } catch (e) { console.warn('scroll listener error', e); }
         });
     },
+    emitRefresh() {
+        refreshListeners.forEach(l => {
+            try { l(); } catch (e) { console.warn('refresh listener error', e); }
+        });
+    }
 };

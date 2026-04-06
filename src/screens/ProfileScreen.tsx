@@ -25,7 +25,7 @@ import VerifiedBadge from '../components/VerifiedBadge';
 import SupportModal from '../components/SupportModal';
 import { timerConfigManager } from '../utils/timerConfig';
 import { sendPushNotification } from '../utils/pushNotifications';
-import StoryViewer from '../components/StoryViewer';
+import FlashViewer from '../components/FlashViewer';
 import { safetyService } from '../utils/safety';
 
 const { width } = Dimensions.get('window');
@@ -191,8 +191,8 @@ export default function ProfileScreen() {
     const [showVerificationFeedback, setShowVerificationFeedback] = useState(false);
     const feedbackAnim = useRef(new Animated.Value(0)).current;
     const [profileStickers, setProfileStickers] = useState<any[]>([]);
-    const [userStories, setUserStories] = useState<any>(null);
-    const [activeStoryViewer, setActiveStoryViewer] = useState(false);
+    const [userFlashes, setUserFlashes] = useState<any>(null);
+    const [activeFlashViewer, setActiveFlashViewer] = useState(false);
     const [isBlocked, setIsBlocked] = useState(false);
     const [showUserOptions, setShowUserOptions] = useState(false);
 
@@ -253,7 +253,7 @@ export default function ProfileScreen() {
         if (isNewPage) setLoadingMore(true);
         else if (!refreshing) setLoading(true);
 
-        const [profileRes, followersCountRes, followingCountRes, followCheckRes, capsRes, storiesRes, readsRes, myInvitesRes] = await Promise.all([
+        const [profileRes, followersCountRes, followingCountRes, followCheckRes, capsRes, flashesRes, readRes, myInvitesRes] = await Promise.all([
             // Profile Info
             supabase.from('profiles').select('*').eq('id', idToLoad).maybeSingle(),
             // Separate Counts (still parallelized)
@@ -280,12 +280,12 @@ export default function ProfileScreen() {
         setFollowingCount(followingCountRes.count || 0);
         setIsFollowing(!!followCheckRes?.data);
 
-        const storiesData = storiesRes.data || [];
-        const readIds = new Set((readsRes.data || []).map(r => r.story_id));
-        if (storiesData.length > 0) {
-            const sw = storiesData.map(s => ({ ...s, is_read: readIds.has(s.id) }));
-            setUserStories({ owner_id: idToLoad, username: profileRes.data?.username, avatar_url: profileRes.data?.avatar_url, stories: sw, all_read: sw.every(s => s.is_read) });
-        } else setUserStories(null);
+        const flashesData = flashesRes.data || [];
+        const readIds = new Set((readRes.data || []).map(r => r.story_id));
+        if (flashesData.length > 0) {
+            const sw = flashesData.map(s => ({ ...s, is_read: readIds.has(s.id) }));
+            setUserFlashes({ owner_id: idToLoad, username: profileRes.data?.username, avatar_url: profileRes.data?.avatar_url, stories: sw, all_read: sw.every(s => s.is_read) });
+        } else setUserFlashes(null);
 
         const myAcceptedCaps = new Set((myInvitesRes.data || []).map((i: any) => i.capsule_id));
         if (profileRes.data) setProfile(profileRes.data);
@@ -567,19 +567,19 @@ export default function ProfileScreen() {
                         <TouchableOpacity
                             style={s.avatarWrap}
                             activeOpacity={0.9}
-                            disabled={!userStories}
-                            onPress={() => setActiveStoryViewer(true)}
+                            disabled={!userFlashes}
+                            onPress={() => setActiveFlashViewer(true)}
                         >
-                            {userStories ? (
-                                userStories.all_read ? (
-                                    <View style={[s.storyRing, { borderColor: accentColor + '55' }]}>
+                            {userFlashes ? (
+                            userFlashes.all_read ? (
+                                <View style={[s.flashRing, { borderColor: accentColor + '55' }]}>
                                         {profile?.avatar_url
                                             ? <Image source={{ uri: profile.avatar_url }} style={s.avatar} />
                                             : <View style={s.avatarFallback}><Ionicons name="person" size={28} color={Colors.primary} /></View>
                                         }
                                     </View>
                                 ) : (
-                                    <LinearGradient colors={[accentColor, Colors.accent || '#F72585']} style={s.storyRing}>
+                                    <LinearGradient colors={[accentColor, Colors.accent || '#F72585']} style={s.flashRing}>
                                         {profile?.avatar_url
                                             ? <Image source={{ uri: profile.avatar_url }} style={s.avatar} />
                                             : <View style={s.avatarFallback}><Ionicons name="person" size={28} color={Colors.primary} /></View>
@@ -587,7 +587,7 @@ export default function ProfileScreen() {
                                     </LinearGradient>
                                 )
                             ) : (
-                                <View style={[s.storyRing, { borderColor: Colors.border }]}>
+                                <View style={[s.flashRing, { borderColor: Colors.border }]}>
                                     {profile?.avatar_url
                                         ? <Image 
                                             source={{ uri: profile.avatar_url }} 
@@ -996,16 +996,16 @@ export default function ProfileScreen() {
                 </Pressable>
             </Modal>
 
-            <StoryViewer
-                visible={activeStoryViewer}
-                userGroup={userStories}
-                onClose={() => setActiveStoryViewer(false)}
-                onStoryRead={async (storyId) => {
+            <FlashViewer
+                visible={activeFlashViewer}
+                userGroup={userFlashes}
+                onClose={() => setActiveFlashViewer(false)}
+                onFlashRead={async (flashId: string) => {
                     if (!currentUserId) return;
-                    await supabase.from('story_reads').upsert({ user_id: currentUserId, story_id: storyId }, { onConflict: 'user_id,story_id' });
-                    if (userStories) {
-                        const updated = userStories.stories.map((s: any) => s.id === storyId ? { ...s, is_read: true } : s);
-                        setUserStories({ ...userStories, stories: updated, all_read: updated.every((s: any) => s.is_read) });
+                    await supabase.from('story_reads').upsert({ user_id: currentUserId, story_id: flashId }, { onConflict: 'user_id,story_id' });
+                    if (userFlashes) {
+                        const updated = userFlashes.stories.map((s: any) => s.id === flashId ? { ...s, is_read: true } : s);
+                        setUserFlashes({ ...userFlashes, stories: updated, all_read: updated.every((s: any) => s.is_read) });
                     }
                 }}
             />
@@ -1055,7 +1055,7 @@ const s = StyleSheet.create({
     // Avatar row
     avatarRow: { flexDirection: 'row', alignItems: 'center', gap: 16, marginBottom: 14 },
     avatarWrap: { flexShrink: 0 },
-    storyRing: {
+    flashRing: {
         width: 80, height: 80, borderRadius: 40,
         padding: 2.5, borderWidth: 2.5, borderColor: Colors.divider,
         alignItems: 'center', justifyContent: 'center',

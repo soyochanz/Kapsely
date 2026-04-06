@@ -32,9 +32,9 @@ import { supabase } from '../lib/supabase';
 import { MODEL_IMAGES } from '../constants/models';
 import { timerConfigManager } from '../utils/timerConfig';
 import InteractiveTour, { TutorialStep } from '../components/InteractiveTour';
-import StoryViewer from '../components/StoryViewer';
+import FlashViewer from '../components/FlashViewer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import StoryEditor from '../components/StoryEditor';
+import FlashEditor from '../components/FlashEditor';
 import { safetyService } from '../utils/safety';
 import { useWebDragScroll } from '../utils/useWebDragScroll';
 import TimelineActivity from '../components/TimelineActivity';
@@ -63,8 +63,8 @@ const FILTER_META: Record<FilterType, { icon: string; label: (t: any) => string;
     open: { icon: 'book-outline', label: () => 'Open' },
 };
 
-// ─── Story bubble ─────────────────────────────────────────────────────────────
-const StoryBubble = React.memo(({ user, isOwn, onPress }: {
+// ─── Flash bubble ─────────────────────────────────────────────────────────────
+const FlashBubble = React.memo(({ user, isOwn, onPress }: {
     user: any; isOwn?: boolean; onPress: () => void;
 }) => {
     const scaleAnim = useRef(new Animated.Value(1)).current;
@@ -258,7 +258,7 @@ export default function FeedScreen() {
     const navigation = useNavigation<any>();
     const isFocused = useIsFocused();
 
-    const [activeTab, setActiveTab] = useState<FeedTab>('explore');
+    const [activeTab, setActiveTab] = useState<FeedTab>('following');
     const [activeFilter, setActiveFilter] = useState<FilterType>('all');
     const [capsules, setCapsules] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
@@ -279,7 +279,7 @@ export default function FeedScreen() {
     const [searching, setSearching] = useState(false);
     const [feedCache, setFeedCache] = useState<Record<string, { data: any[]; ts: number }>>({});
     const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
-    const [activeStory, setActiveStory] = useState<any>(null);
+    const [activeFlash, setActiveFlash] = useState<any>(null);
     const [hasUnread, setHasUnread] = useState(false);
     const [tutorialStep, setTutorialStep] = useState<TutorialStep>('IDLE');
 
@@ -331,11 +331,20 @@ export default function FeedScreen() {
 
     // ─── Animations ───────────────────────────────────────────────────────────
     useEffect(() => {
-        return feedScrollBus.subscribe(() => {
+        const unsubScroll = feedScrollBus.subscribeScroll(() => {
             flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true });
             storiesScrollRef.current?.scrollTo?.({ x: 0, y: 0, animated: true });
             filterScrollRef.current?.scrollTo?.({ x: 0, y: 0, animated: true });
         });
+        const unsubRefresh = feedScrollBus.subscribeRefresh(() => {
+            setRefreshing(true);
+            setActiveTab('following');
+            loadFeed(true, 'following');
+        });
+        return () => {
+            unsubScroll();
+            unsubRefresh();
+        };
     }, []);
 
     useEffect(() => {
@@ -396,7 +405,7 @@ export default function FeedScreen() {
         if (feedRequestId.current !== currentReqId) return;
 
         setBlockedUserIds(blocked);
-        if (!isNewPage) loadStories(user.id, blocked);
+        if (!isNewPage) loadFlashes(user.id, blocked);
 
         const followingIds = (followsResult.data || []).map((f: any) => f.following_id);
         const followingSetNew = new Set(followingIds);
@@ -533,8 +542,8 @@ export default function FeedScreen() {
     }, [activeTab, activeFilter, page, feedCache]);
 
 
-    // ─── Stories ───────────────────────────────────────────────────────────────
-    const loadStories = useCallback(async (userIdOverride?: string, blockedIds?: string[]) => {
+    // ─── Flashes ───────────────────────────────────────────────────────────────
+    const loadFlashes = useCallback(async (userIdOverride?: string, blockedIds?: string[]) => {
         const { data: { session } } = await supabase.auth.getSession();
         const user = session?.user;
         if (!user) return;
@@ -575,20 +584,20 @@ export default function FeedScreen() {
         setMyStory(processed.find(u => u.owner_id === targetUserId) || null);
     }, [blockedUserIds]);
 
-    const markStoryRead = useCallback(async (storyId: string) => {
+    const markFlashRead = useCallback(async (flashId: string) => {
         if (!currentUserId) return;
         await supabase.from('story_reads').upsert(
-            { user_id: currentUserId, story_id: storyId },
+            { user_id: currentUserId, story_id: flashId },
             { onConflict: 'user_id,story_id' }
         );
         setStories(prev =>
             prev.map(u => ({
                 ...u,
-                stories: u.stories.map((s: any) => s.id === storyId ? { ...s, is_read: true } : s),
+                stories: u.stories.map((s: any) => s.id === flashId ? { ...s, is_read: true } : s),
             })).map(u => ({ ...u, all_read: u.stories.every((s: any) => s.is_read) }))
         );
         if (myStory) {
-            const updated = myStory.stories.map((s: any) => s.id === storyId ? { ...s, is_read: true } : s);
+            const updated = myStory.stories.map((s: any) => s.id === flashId ? { ...s, is_read: true } : s);
             setMyStory({ ...myStory, stories: updated, all_read: updated.every((s: any) => s.is_read) });
         }
     }, [currentUserId, myStory]);
@@ -600,7 +609,7 @@ export default function FeedScreen() {
             AsyncStorage.setItem('hasSeenTutorialV2', 'true');
         }
         if (myStory) {
-            setActiveStory(myStory);
+            setActiveFlash(myStory);
         } else {
             if (!currentUserId) return;
             const { data: profile } = await supabase.from('profiles')
@@ -710,7 +719,7 @@ export default function FeedScreen() {
         setPickerStep('list');
     }, [currentUserId]);
 
-    const confirmStory = useCallback(async (item: any, metadata: any = {}) => {
+    const confirmFlash = useCallback(async (item: any, metadata: any = {}) => {
         // Clear global pick upon successful post
         try {
             const globalPickKey = `@flash_global_pick_${currentUserId}`;
@@ -740,11 +749,11 @@ export default function FeedScreen() {
             setShowCapsulePicker(false);
             setEditingItem(null);
             setPickerStep('list');
-            loadStories();
+            loadFlashes();
         } else {
             Alert.alert(t('common.error'), t('feed.share_error'));
         }
-    }, [currentUserId, t, loadStories]);
+    }, [currentUserId, t, loadFlashes]);
 
     // ─── Init & effects ────────────────────────────────────────────────────────
     useEffect(() => {
@@ -788,7 +797,7 @@ export default function FeedScreen() {
     useEffect(() => {
         if (!isFirstMount.current && currentUserId && isFocused) {
             loadFeed(false, activeTab);
-            loadStories();
+            loadFlashes();
         }
     }, [activeTab, activeFilter, currentUserId, isFocused]);
 
@@ -1046,21 +1055,18 @@ export default function FeedScreen() {
                     showsHorizontalScrollIndicator={false}
                     contentContainerStyle={s.storiesContent}
                 >
-                    <StoryBubble
-                        key="your-cap"
-                        user={myStory || null}
+                    <FlashBubble
                         isOwn
                         onPress={handleYourCapPress}
+                        user={myStory}
                     />
-                    {stories
-                        .filter(u => u.owner_id !== currentUserId)
-                        .map(u => (
-                            <StoryBubble
-                                key={u.owner_id}
-                                user={u}
-                                onPress={() => setActiveStory(u)}
-                            />
-                        ))}
+                    {stories.filter(u => u.owner_id !== currentUserId).map(u => (
+                        <FlashBubble
+                            key={u.owner_id}
+                            user={u}
+                            onPress={() => setActiveFlash(u)}
+                        />
+                    ))}
                 </ScrollView>
             </View>
 
@@ -1354,30 +1360,31 @@ export default function FeedScreen() {
                         )}
 
                         {pickerStep === 'edit' && editingItem && (
-                            <StoryEditor
+                            <FlashEditor
                                 item={editingItem}
+                                capsule={selectedPickerCapsule}
                                 onCancel={() => setPickerStep(selectedPickerCapsule?.status === 'opened' ? 'select' : 'animation')}
-                                onConfirm={meta => confirmStory(editingItem, meta)}
+                                onConfirm={meta => confirmFlash(editingItem, meta)}
                             />
                         )}
                     </View>
                 </View>
             </Modal>
 
-            {/* Story viewer */}
-            <StoryViewer
-                visible={!!activeStory}
-                userGroup={activeStory}
-                onClose={() => setActiveStory(null)}
+            {/* Flash viewer */}
+            <FlashViewer
+                visible={!!activeFlash}
+                userGroup={activeFlash}
+                onClose={() => setActiveFlash(null)}
                 onNextUser={() => {
-                    const idx = stories.findIndex(u => u.owner_id === activeStory?.owner_id);
-                    setActiveStory(idx < stories.length - 1 ? stories[idx + 1] : null);
+                    const idx = stories.findIndex(u => u.owner_id === activeFlash?.owner_id);
+                    setActiveFlash(idx < stories.length - 1 ? stories[idx + 1] : null);
                 }}
                 onPrevUser={() => {
-                    const idx = stories.findIndex(u => u.owner_id === activeStory?.owner_id);
-                    if (idx > 0) setActiveStory(stories[idx - 1]);
+                    const idx = stories.findIndex(u => u.owner_id === activeFlash?.owner_id);
+                    if (idx > 0) setActiveFlash(stories[idx - 1]);
                 }}
-                onStoryRead={markStoryRead}
+                onFlashRead={markFlashRead}
                 currentUserId={currentUserId || undefined}
             />
 

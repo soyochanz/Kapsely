@@ -51,6 +51,7 @@ function TabItem({ route, index, state, navigation, cfg, hasBadge }: {
 
         if (isFocused && cfg.name === 'Feed') {
             feedScrollBus.emitScrollToTop();
+            feedScrollBus.emitRefresh();
         }
     };
 

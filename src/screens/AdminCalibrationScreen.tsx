@@ -44,7 +44,7 @@ export default function AdminCalibrationScreen() {
 
     const [showAddModel, setShowAddModel] = useState(false);
     const [newModel, setNewModel] = useState({ 
-        id: '', label: '', image: '', image_open: '', image_cover: '', 
+        id: '', label: '', image: '', thumbnail_url: '', image_open: '', 
         category: 'Vibe', tint: '#a269ff', is_active: true, is_event: false,
         event_start: '', event_end: '', event_title: '', event_description: ''
     });
@@ -104,7 +104,7 @@ export default function AdminCalibrationScreen() {
 
 
     const [showAddChain, setShowAddChain] = useState(false);
-    const [newChain, setNewChain] = useState({ id: '', name: '', image_url: '', thumbnail_url: '', is_active: true });
+    const [newChain, setNewChain] = useState({ id: '', name: '', image_url: '', is_active: true });
 
     const [stickers, setStickers] = useState<any[]>([]);
     const [showAddSticker, setShowAddSticker] = useState(false);
@@ -271,7 +271,7 @@ export default function AdminCalibrationScreen() {
 
     const [uploading, setUploading] = useState(false);
 
-    const pickAndUploadImage = async (onDone: (url: string) => void) => {
+    const pickAndUploadImage = async (onDone: (url: string, thumbUrl?: string) => void) => {
         try {
             const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
             if (!perm.granted) {
@@ -288,32 +288,57 @@ export default function AdminCalibrationScreen() {
             if (!result.canceled && result.assets[0]) {
                 setUploading(true);
                 const asset = result.assets[0];
-                const fileName = `model_${Date.now()}.jpg`;
+                const timestamp = Date.now();
+                const fileName = `model_${timestamp}.webp`;
+                const thumbFileName = `model_${timestamp}_thumb.webp`;
                 
                 let body: any;
+                let thumbBody: any;
+
                 if (Platform.OS === 'web') {
                     const res = await fetch(asset.uri);
                     body = await res.blob();
+                    // Web doesn't easily support thumbnail generation in this simple tool without more deps, 
+                    // so we use same for now or just skip thumb upload
+                    thumbBody = body; 
                 } else {
+                    // Optimized Full Version
                     const manipulated = await ImageManipulator.manipulateAsync(
                         asset.uri,
-                        [{ resize: { width: 800 } }],
-                        { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
+                        [{ resize: { width: 1024 } }],
+                        { compress: 0.85, format: ImageManipulator.SaveFormat.WEBP }
                     );
                     const base64 = await FileSystem.readAsStringAsync(manipulated.uri, { encoding: 'base64' });
                     body = decode(base64);
+
+                    // Optimized Thumbnail
+                    const thumbManipulated = await ImageManipulator.manipulateAsync(
+                        asset.uri,
+                        [{ resize: { width: 360 } }],
+                        { compress: 0.5, format: ImageManipulator.SaveFormat.WEBP }
+                    );
+                    const thumbBase64 = await FileSystem.readAsStringAsync(thumbManipulated.uri, { encoding: 'base64' });
+                    thumbBody = decode(thumbBase64);
                 }
 
+                // Upload Full
                 const { error: uploadError } = await supabase.storage.from('models').upload(fileName, body, {
-                    contentType: 'image/jpeg',
+                    contentType: 'image/webp',
+                    upsert: true,
+                });
+                if (uploadError) throw uploadError;
+
+                // Upload Thumb
+                const { error: thumbError } = await supabase.storage.from('models').upload(thumbFileName, thumbBody, {
+                    contentType: 'image/webp',
                     upsert: true,
                 });
 
-                if (uploadError) throw uploadError;
-
-                const { data: { publicUrl } } = supabase.storage.from('models').getPublicUrl(fileName);
-                onDone(publicUrl);
-                Alert.alert('Success', 'Image uploaded successfully!');
+                const { data: { publicUrl: url } } = supabase.storage.from('models').getPublicUrl(fileName);
+                const { data: { publicUrl: thumbUrl } } = supabase.storage.from('models').getPublicUrl(thumbFileName);
+                
+                onDone(url, thumbUrl);
+                Alert.alert('Success', 'WebP images and thumbnail uploaded!');
             }
         } catch (e: any) {
             Alert.alert('Upload Error', e.message || 'Could not upload image.');
@@ -329,13 +354,15 @@ export default function AdminCalibrationScreen() {
         }
 
         const modelToSave: any = { ...newModel };
+        // Remove thumbnail_url if it's not in DB
+        delete modelToSave.thumbnail_url;
+
         // Clean up empty strings to prevent Postgres type errors
         if (!modelToSave.event_start) modelToSave.event_start = null;
         if (!modelToSave.event_end) modelToSave.event_end = null;
         if (!modelToSave.event_title) modelToSave.event_title = null;
         if (!modelToSave.event_description) modelToSave.event_description = null;
         if (!modelToSave.image_open) modelToSave.image_open = null;
-        if (!modelToSave.image_cover) modelToSave.image_cover = null;
 
         const success = await timerConfigManager.saveModel(modelToSave);
         if (success) {
@@ -344,7 +371,7 @@ export default function AdminCalibrationScreen() {
             setSelectedModel(modelToSave);
             setShowAddModel(false);
             setNewModel({ 
-                id: '', label: '', image: '', image_open: '', image_cover: '', 
+                id: '', label: '', image: '', thumbnail_url: '', image_open: '', 
                 category: 'Vibe', tint: '#a269ff', is_active: true, is_event: false,
                 event_start: '', event_end: '', event_title: '', event_description: ''
             });
@@ -363,7 +390,7 @@ export default function AdminCalibrationScreen() {
         if (success) {
             setSelectedChainId(newChain.id);
             setShowAddChain(false);
-            setNewChain({ id: '', name: '', image_url: '', thumbnail_url: '', is_active: true });
+            setNewChain({ id: '', name: '', image_url: '', is_active: true });
         }
     };
 
@@ -713,7 +740,7 @@ export default function AdminCalibrationScreen() {
                                         activeOpacity={0.7}
                                         onPress={() => setSelectedChainId(c.id)}
                                     >
-                                        <Image source={{ uri: c.thumbnail_url || c.image_url }} style={styles.chainImg} resizeMode="cover" />
+                                        <Image source={{ uri: c.image_url }} style={styles.chainImg} resizeMode="cover" />
                                         <Text style={styles.chainLabel} numberOfLines={1}>{c.name}</Text>
                                     </TouchableOpacity>
                                 ))}
@@ -814,7 +841,7 @@ export default function AdminCalibrationScreen() {
                                 </View>
                                 <TouchableOpacity style={styles.addModelBtn} onPress={() => {
                                     setNewModel({ 
-                                        id: '', label: '', image: '', image_open: '', image_cover: '', 
+                                        id: '', label: '', image: '', thumbnail_url: '', image_open: '', 
                                         category: 'Vibe', tint: '#a269ff', is_active: true, is_event: false,
                                         event_start: '', event_end: '', event_title: '', event_description: ''
                                     });
@@ -844,7 +871,7 @@ export default function AdminCalibrationScreen() {
                             <View>
                                 {filteredModels.map((m: any) => (
                                     <View key={m.id} style={styles.modelLibraryCard}>
-                                        <Image source={{ uri: m.image_cover || m.image }} style={styles.modelLibraryThumb} />
+                                        <Image source={{ uri: m.image }} style={styles.modelLibraryThumb} />
                                         <View style={{ flex: 1, gap: 2 }}>
                                             <Text style={styles.modelLibraryLabel}>{m.label || m.id}</Text>
                                             <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -861,7 +888,8 @@ export default function AdminCalibrationScreen() {
                                             <TouchableOpacity 
                                                 style={styles.libActionBtn}
                                                 onPress={() => {
-                                                    setNewModel({ ...m, 
+                                                    setNewModel({ 
+                                                        ...m, 
                                                         event_start: m.event_start || '', 
                                                         event_end: m.event_end || '', 
                                                         event_title: m.event_title || '', 
@@ -926,19 +954,19 @@ export default function AdminCalibrationScreen() {
                                 <Text style={styles.innerLabel}>Assets</Text>
                                 <View style={styles.assetInputRow}>
                                     <TextInput
-                                        placeholder="Image URL (PNG)"
+                                        placeholder="Image URL (WebP)"
                                         placeholderTextColor="#999"
                                         value={newModel.image}
                                         onChangeText={t => setNewModel(p => ({ ...p, image: t }))}
                                         style={[styles.input, { flex: 1, marginBottom: 0 }]}
                                     />
-                                    <TouchableOpacity style={styles.uploadSmallBtn} onPress={() => pickAndUploadImage(url => setNewModel(p => ({ ...p, image: url })))}>
+                                    <TouchableOpacity style={styles.uploadSmallBtn} onPress={() => pickAndUploadImage((url, thumb) => setNewModel(p => ({ ...p, image: url, thumbnail_url: thumb || url })))}>
                                         <Ionicons name="camera" size={20} color="#fff" />
                                     </TouchableOpacity>
                                 </View>
                                 <View style={[styles.assetInputRow, { marginTop: 10 }]}>
                                     <TextInput
-                                        placeholder="Image Open URL (PNG)"
+                                        placeholder="Image Open URL (WebP)"
                                         placeholderTextColor="#999"
                                         value={newModel.image_open}
                                         onChangeText={t => setNewModel(p => ({ ...p, image_open: t }))}
@@ -948,18 +976,7 @@ export default function AdminCalibrationScreen() {
                                         <Ionicons name="camera" size={20} color="#fff" />
                                     </TouchableOpacity>
                                 </View>
-                                <View style={[styles.assetInputRow, { marginTop: 10 }]}>
-                                    <TextInput
-                                        placeholder="Cover Image URL (PNG)"
-                                        placeholderTextColor="#999"
-                                        value={newModel.image_cover}
-                                        onChangeText={t => setNewModel(p => ({ ...p, image_cover: t }))}
-                                        style={[styles.input, { flex: 1, marginBottom: 0 }]}
-                                    />
-                                    <TouchableOpacity style={styles.uploadSmallBtn} onPress={() => pickAndUploadImage(url => setNewModel(p => ({ ...p, image_cover: url })))}>
-                                        <Ionicons name="camera" size={20} color="#fff" />
-                                    </TouchableOpacity>
-                                </View>
+
                             </View>
 
                             <View style={styles.inputSection}>
@@ -1091,18 +1108,7 @@ export default function AdminCalibrationScreen() {
                                 <Ionicons name="camera" size={20} color="#fff" />
                             </TouchableOpacity>
                         </View>
-                        <View style={[styles.assetInputRow, { marginTop: 10 }]}>
-                            <TextInput
-                                placeholder="Thumbnail URL (Square, Optional)"
-                                placeholderTextColor="#999"
-                                value={newChain.thumbnail_url}
-                                onChangeText={t => setNewChain(p => ({ ...p, thumbnail_url: t }))}
-                                style={[styles.input, { flex: 1, marginBottom: 0 }]}
-                            />
-                            <TouchableOpacity style={styles.uploadSmallBtn} onPress={() => pickAndUploadImage(url => setNewChain(p => ({ ...p, thumbnail_url: url })))}>
-                                <Ionicons name="camera" size={20} color="#fff" />
-                            </TouchableOpacity>
-                        </View>
+
                         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 4, marginTop: 4 }}>
                             <Text style={{ fontSize: 14, fontFamily: Fonts.medium, color: Colors.textPrimary }}>Available in Creation Screen</Text>
                             <Switch value={newChain.is_active} onValueChange={v => setNewChain(p => ({ ...p, is_active: v }))} trackColor={{ true: Colors.primary }} />

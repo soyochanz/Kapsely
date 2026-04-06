@@ -104,26 +104,53 @@ const ds = StyleSheet.create({
     },
     notePreview: {
         ...StyleSheet.absoluteFillObject,
-        backgroundColor: '#FFFEF5',
-        paddingHorizontal: 12,
-        paddingVertical: 10,
-        justifyContent: 'space-between',
+        backgroundColor: '#FFF9E0',
+        padding: 16,
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderLeftWidth: 6,
+        borderLeftColor: '#F6E05E',
     },
     notePreviewIcon: {
-        width: 24,
-        height: 24,
+        width: 32,
+        height: 32,
         borderRadius: 12,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: 'rgba(124,92,191,0.12)',
-        alignSelf: 'flex-start',
+        backgroundColor: 'rgba(0,0,0,0.05)',
+        marginBottom: 10,
     },
     notePreviewText: {
-        fontSize: 12,
-        color: '#4A4530',
+        fontSize: 13,
+        color: '#5D4037',
         fontFamily: Fonts.medium,
-        textAlign: 'left',
-        lineHeight: 17,
+        textAlign: 'center',
+        lineHeight: 19,
+        fontStyle: 'italic',
+    },
+    noteTape: {
+        position: 'absolute',
+        top: -6,
+        width: 36,
+        height: 14,
+        backgroundColor: 'rgba(255,255,255,0.4)',
+        borderRadius: 2,
+        transform: [{ rotate: '-4deg' }],
+        zIndex: 5,
+    },
+    audioWaveContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 3,
+        height: 30,
+        width: '60%',
+        marginBottom: 12,
+    },
+    audioWaveBar: {
+        width: 4,
+        borderRadius: 2,
+        backgroundColor: 'rgba(255,255,255,0.45)',
     },
     audioPreviewFooter: {
         position: 'absolute',
@@ -133,16 +160,18 @@ const ds = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        backgroundColor: 'rgba(0,0,0,0.2)',
-        borderRadius: 10,
-        paddingHorizontal: 8,
-        paddingVertical: 6,
+        backgroundColor: 'rgba(255,255,255,0.18)',
+        borderRadius: 14,
+        paddingHorizontal: 10,
+        paddingVertical: 7,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.2)',
     },
     audioPreviewLabel: {
         color: '#fff',
         fontSize: 10,
-        fontFamily: Fonts.semiBold,
-        letterSpacing: 0.2,
+        fontFamily: Fonts.bold,
+        letterSpacing: 0.3,
     },
     playBadge: { position: 'absolute', top: 8, right: 8, width: 24, height: 24, borderRadius: 8, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', zIndex: 11 },
     socialSection: { paddingHorizontal: 18, paddingTop: 8, paddingBottom: 40 },
@@ -952,7 +981,7 @@ function CapsuleDetailScreen() {
                     return (
                         <TouchableOpacity key={type} style={[ds.filterChip, isActive && { backgroundColor: tint, borderColor: tint }]} onPress={() => setFilterType(type)}>
                             <Ionicons name={icons[type]} size={12} color={isActive ? '#fff' : D.textMuted} />
-                            <Text style={[ds.filterChipText, isActive && { color: '#fff' }]}>{type.charAt(0).toUpperCase() + type.slice(1)}</Text>
+                            <Text style={[ds.filterChipText, isActive && { color: '#fff' }]}>{t('detail.' + type)}</Text>
                         </TouchableOpacity>
                     );
                 })}
@@ -1067,7 +1096,6 @@ function CapsuleDetailScreen() {
                                             decelerationRate="fast"
                                             snapToInterval={((width - 44) / 2.4) + 10}
                                             contentContainerStyle={{ paddingHorizontal: 2, gap: 10 }}
-                                            // Performance optimizations for lag-free scrolling
                                             initialNumToRender={3}
                                             windowSize={2.5}
                                             maxToRenderPerBatch={2}
@@ -1082,7 +1110,7 @@ function CapsuleDetailScreen() {
                                                                     activeOpacity={0.7}
                                                                     disabled={!(isMember && isSealed && !isOpening)}
                                                                     onPress={() => {
-                                                                        if (!isSealed) return; // opened capsules cannot receive more content
+                                                                        if (!isSealed) return;
                                                                         navigation.navigate('CreateSelection', { capsuleId: capsule.id });
                                                                     }}
                                                                 >
@@ -1094,22 +1122,46 @@ function CapsuleDetailScreen() {
                                                                 </TouchableOpacity>
                                                             ) : isSealed ? (
                                                                 <View style={[ds.cellWrap, ds.cellSealed]}>
-                                                                    {(pi.media_url || pi.thumbnail_url) && (pi.media_type === 'image' || pi.media_type === 'video') && (
+                                                                    {pi.media_type === 'audio' ? (
+                                                                        <LinearGradient colors={[tint, tint + 'CC', D.rose + 'AA']} style={StyleSheet.absoluteFill} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+                                                                            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', opacity: 0.15 }}>
+                                                                                <Ionicons name="mic" size={((width - 44) / 2.4) * 0.6} color="#fff" />
+                                                                            </View>
+                                                                        </LinearGradient>
+                                                                    ) : pi.media_type === 'note' ? (
+                                                                        <View style={[StyleSheet.absoluteFill, { backgroundColor: '#FFF9E0' }]}>
+                                                                            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', opacity: 0.1 }}>
+                                                                                <Ionicons name="document-text" size={((width - 44) / 2.4) * 0.5} color="#000" />
+                                                                            </View>
+                                                                            <View style={[ds.noteTape, { top: 4, transform: [{ rotate: '-6deg' }], width: '40%', opacity: 0.3 }]} />
+                                                                        </View>
+                                                                    ) : (pi.media_url || pi.thumbnail_url) && (pi.media_type === 'image' || pi.media_type === 'video') && (
                                                                         <Image 
                                                                             source={{ uri: pi.thumbnail_url || pi.media_url }} 
                                                                             style={StyleSheet.absoluteFill} 
-                                                                            blurRadius={Platform.OS === 'ios' ? 15 : 15} 
+                                                                            blurRadius={15} 
                                                                             cachePolicy="memory-disk"
                                                                         />
                                                                     )}
                                                                     {Platform.OS === 'ios' ? (
-                                                                        <BlurView intensity={60} tint="light" style={StyleSheet.absoluteFill} />
+                                                                        (pi.media_type === 'image' || pi.media_type === 'video') && (
+                                                                            <BlurView 
+                                                                                intensity={32} 
+                                                                                tint="extraLight" 
+                                                                                style={StyleSheet.absoluteFill} 
+                                                                            />
+                                                                        )
                                                                     ) : (
-                                                                        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255,255,255,0.85)' }]} />
+                                                                        (pi.media_type === 'image' || pi.media_type === 'video') && (
+                                                                            <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255,255,255,0.65)' }]} />
+                                                                        )
                                                                     )}
-                                                                    <View style={[ds.cellTypeTag, { backgroundColor: tint + '18', borderColor: tint + '30' }]}>
-                                                                        <Ionicons name={pi.media_type === 'video' ? 'videocam' : pi.media_type === 'note' ? 'document-text' : pi.media_type === 'audio' ? 'mic' : 'image'} size={11} color={tint} />
-                                                                    </View>
+
+                                                                    {(pi.media_type === 'image' || pi.media_type === 'video') && (
+                                                                        <View style={[ds.cellTypeTag, { backgroundColor: tint + '18', borderColor: tint + '30' }]}>
+                                                                            <Ionicons name={pi.media_type === 'video' ? 'videocam' : 'image'} size={11} color={tint} />
+                                                                        </View>
+                                                                    )}
                                                                     <Ionicons name="lock-closed" size={20} color={tint + '50'} />
                                                                 </View>
                                                             ) : (
@@ -1124,17 +1176,23 @@ function CapsuleDetailScreen() {
                                                                     {pi.media_type === 'audio' ? (
                                                                         <LinearGradient colors={[tint, tint + 'CC', D.rose + 'AA']} style={StyleSheet.absoluteFill} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
                                                                             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                                                                                <Ionicons name={playingAudio === pi.media_url ? 'pause-circle' : 'mic-circle'} size={36} color="rgba(255,255,255,0.9)" />
+                                                                                <View style={ds.audioWaveContainer}>
+                                                                                    {[12, 22, 16, 28, 20, 14, 18].map((h, i) => (
+                                                                                        <View key={i} style={[ds.audioWaveBar, { height: h }]} />
+                                                                                    ))}
+                                                                                </View>
+                                                                                <Ionicons name={playingAudio === pi.media_url ? 'pause-circle' : 'mic-circle'} size={38} color="#fff" />
                                                                             </View>
                                                                             <View style={ds.audioPreviewFooter}>
-                                                                                <Text style={ds.audioPreviewLabel}>{playingAudio === pi.media_url ? 'Reproduciendo' : 'Nota de voz'}</Text>
-                                                                                <Ionicons name="pulse-outline" size={14} color="rgba(255,255,255,0.9)" />
+                                                                                <Text style={ds.audioPreviewLabel}>{playingAudio === pi.media_url ? (t('detail.playing') || 'Playing') : (t('detail.voice_note') || 'Voice note')}</Text>
+                                                                                <Ionicons name="pulse" size={14} color="#fff" />
                                                                             </View>
                                                                         </LinearGradient>
                                                                     ) : pi.media_type === 'note' ? (
                                                                         <View style={ds.notePreview}>
+                                                                            <View style={ds.noteTape} />
                                                                             <View style={ds.notePreviewIcon}>
-                                                                                <Ionicons name="document-text-outline" size={12} color={tint} />
+                                                                                <Ionicons name="document-text" size={16} color="#B49D4F" />
                                                                             </View>
                                                                             <Text style={ds.notePreviewText} numberOfLines={4}>{pi.content}</Text>
                                                                         </View>
@@ -1160,7 +1218,6 @@ function CapsuleDetailScreen() {
                                 </View>
                             );
                         }
-
                         if (item === 'chat' && showChat) {
                             return (
                                 <LiveChat
@@ -1171,10 +1228,8 @@ function CapsuleDetailScreen() {
                                     isOwner={isOwner}
                                     isNested
                                 />
-
                             );
                         }
-
                         if (item === 'social') {
                             return (
                                 <View style={ds.socialSection}>
@@ -1198,7 +1253,7 @@ function CapsuleDetailScreen() {
                                     </View>
                                     <View style={{ gap: 10 }}>
                                         {comments.map(c => (
-                                            <BlurView key={c.id} intensity={40} tint="light" style={[ds.commentCard, { borderColor: highlightedCommentId === c.id ? tint + '60' : D.border }, highlightedCommentId === c.id && { borderLeftWidth: 3, borderLeftColor: tint }]}>
+                                            <BlurView key={c.id} intensity={25} tint="extraLight" style={[ds.commentCard, { borderColor: highlightedCommentId === c.id ? tint + '60' : D.border }, highlightedCommentId === c.id && { borderLeftWidth: 3, borderLeftColor: tint }]}>
                                                 <TouchableOpacity onPress={() => navigation.navigate('UserProfile', { targetUserId: c.user_id })}>
                                                     <Image source={{ uri: c.profiles?.avatar_url || 'https://via.placeholder.com/150' }} style={[ds.commentAvatar as any, { borderColor: D.border }]} cachePolicy="memory-disk" contentFit="cover" />
                                                 </TouchableOpacity>
@@ -1234,7 +1289,7 @@ function CapsuleDetailScreen() {
                 />
 
                 {/* Comment / chat input bar */}
-                <BlurView intensity={80} tint="light" style={[ds.commentBar, { paddingBottom: Math.max(insets.bottom, 14) }]}>
+                <BlurView intensity={70} tint="extraLight" style={[ds.commentBar, { paddingBottom: Math.max(insets.bottom, 14) }]}>
                     <View style={[ds.commentBarBorderTop, { backgroundColor: tint + '20' }]} />
                     {showChat && (
                         <View style={ds.emojiRow}>
