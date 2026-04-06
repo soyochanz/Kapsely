@@ -96,6 +96,8 @@ const CapsuleCard = React.memo(({
     }, [capsule.model]);
 
     const heartScale = React.useRef(new Animated.Value(1)).current;
+    const lastTapRef = React.useRef(0);
+    const singleTapTimeoutRef = React.useRef<any>(null);
     const bounceHeart = () => {
         Animated.sequence([
             Animated.timing(heartScale, { toValue: 1.35, duration: 90, useNativeDriver: true }),
@@ -166,6 +168,20 @@ const CapsuleCard = React.memo(({
         navigation.navigate('CapsuleDetail', { capsuleId: capsule.id });
     };
 
+    const handleCardTap = () => {
+        const now = Date.now();
+        if (now - lastTapRef.current < 260) {
+            if (singleTapTimeoutRef.current) clearTimeout(singleTapTimeoutRef.current);
+            handleLike();
+            lastTapRef.current = 0;
+            return;
+        }
+        lastTapRef.current = now;
+        singleTapTimeoutRef.current = setTimeout(() => {
+            handlePress();
+        }, 220);
+    };
+
     const profile = capsule.profiles || { username: 'user', avatar_url: null };
     const isOpened = capsule.status === 'opened';
     const isSealed = capsule.status === 'sealed';
@@ -184,7 +200,7 @@ const CapsuleCard = React.memo(({
         const hasPreview = previewItems.length > 0;
 
         return (
-            <TouchableOpacity activeOpacity={0.92} onPress={handlePress} style={[s.gridCard, isToday && { borderWidth: 2, borderColor: '#A855F7' }]}>
+            <TouchableOpacity activeOpacity={0.92} onPress={handleCardTap} style={[s.gridCard, isToday && { borderWidth: 2, borderColor: '#A855F7' }]}>
 
                 {/* ── Top: Capsule model zone ── */}
                 <View style={s.gridTopZone}>
@@ -287,7 +303,7 @@ const CapsuleCard = React.memo(({
 
     // ─── CARD MODE (Following tab) ───────────────────────────────────────────
     return (
-        <TouchableOpacity activeOpacity={0.95} onPress={handlePress} style={[s.card, isToday && { borderWidth: 2, borderColor: '#A855F7' }]}>
+        <TouchableOpacity activeOpacity={0.95} onPress={handleCardTap} style={[s.card, isToday && { borderWidth: 2, borderColor: '#A855F7' }]}>
 
             {/* ── VISUAL ZONE ──────────────────────────────────────────── */}
             <View style={s.visual}>

@@ -8,6 +8,12 @@ import { timerConfigManager, ModelTimerConfig, ModelChainConfig } from '../utils
 import { MODEL_TINTS } from '../constants/models';
 import Particles from './Particles';
 
+const optimizePublicImageUrl = (uri?: string, width = 512) => {
+    if (!uri) return uri;
+    if (!uri.includes('/storage/v1/object/public/')) return uri;
+    const separator = uri.includes('?') ? '&' : '?';
+    return `${uri}${separator}width=${width}&quality=72&format=webp`;
+};
 
 interface CapsuleWithTimerProps {
     modelKey: string;
@@ -75,7 +81,8 @@ const CapsuleWithTimer = React.memo(({
                     easing: Easing.inOut(Easing.ease),
                     useNativeDriver: true 
                 })
-            ])
+            ]),
+            { resetBeforeIteration: false }
         ).start();
 
         // Glint reflection
@@ -166,7 +173,7 @@ const CapsuleWithTimer = React.memo(({
 
 
             <Image
-                source={source}
+                source={source?.uri ? { ...source, uri: optimizePublicImageUrl(source.uri, Math.max(300, Math.round(width || 420))) } : source}
                 style={[
                     styles.image, 
                     width > 0 ? { width, height } : {}, 
@@ -217,7 +224,7 @@ const CapsuleWithTimer = React.memo(({
                         ]
                     }}>
                         <Image
-                            source={{ uri: chainItem.image_url }}
+                            source={{ uri: optimizePublicImageUrl((chainItem as any).thumbnail_url || chainItem.image_url, Math.max(220, Math.round(width || 280))) }}
                             style={{ width: '100%', height: '100%' }}
                             contentFit="contain"
                             cachePolicy="memory-disk"
