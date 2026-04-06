@@ -12,6 +12,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { sendPushNotification } from '../utils/pushNotifications';
 import * as ImagePicker from 'expo-image-picker';
 import { Audio, Video } from 'expo-av';
+import * as ImageManipulator from 'expo-image-manipulator';
 
 const AudioMessageBubble = ({ uri, isMe }: { uri: string, isMe: boolean }) => {
     const [sound, setSound] = useState<Audio.Sound | null>(null);
@@ -108,10 +109,12 @@ export default function ChatDetailScreen() {
     const recordingInterval = useRef<any>(null);
     const isCancelled = useRef(false);
     const [replyingTo, setReplyingTo] = useState<any>(null);
+    const [messageLikes, setMessageLikes] = useState<Record<string, { count: number; mine: boolean }>>({});
     const currentUserIdRef = useRef<string | null>(null);
     const deletedIdsRef = useRef<string[]>([]);
     const latestMessageAtRef = useRef<string | null>(null);
     const isFocused = useIsFocused();
+    const lastTapRef = useRef<Record<string, number>>({});
 
     useEffect(() => {
         const showSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', () => setKeyboardVisible(true));
@@ -192,8 +195,9 @@ export default function ChatDetailScreen() {
             const stored = await AsyncStorage.getItem(`deletedMsgs_${conversationId}`);
             const deletedIds = stored ? JSON.parse(stored) : [];
             deletedIdsRef.current = deletedIds;
-            const filtered = msgs.filter((m: any) => !deletedIds.includes(m.id));
+            const filtered = msgs.filter((m: any) => !deletedIds.includes(m.id) && !(m.deleted_for || []).includes(user.id));
             setMessages(filtered);
+            if (filtered.length > 0) await hydrateMessageLikes(filtered.map((m: any) => m.id), user.id);
             latestMessageAtRef.current = filtered.length > 0
                 ? filtered.reduce((acc: string | null, curr: any) => {
                     if (!acc) return curr.created_at;
@@ -242,8 +246,9 @@ export default function ChatDetailScreen() {
                 const stored = await AsyncStorage.getItem(`deletedMsgs_${conversationId}`);
                 const deletedIds = stored ? JSON.parse(stored) : [];
                 setMessages(prev => {
-                    const newMsgs = msgs.filter(m => !prev.some(p => p.id === m.id) && !deletedIds.includes(m.id));
-                    return [...prev, ...newMsgs];
+                const newMsgs = msgs.filter(m => !prev.some(p => p.id === m.id) && !deletedIds.includes(m.id) && !(m.deleted_for || []).includes(currentUserIdRef.current));
+                if (newMsgs.length > 0 && currentUserIdRef.current) hydrateMessageLikes(newMsgs.map(m => m.id), currentUserIdRef.current);
+                return [...prev, ...newMsgs];
                 });
                 setPage(nextPage);
                 if (msgs.length < PAGE_SIZE) setHasMore(false);
@@ -276,6 +281,7 @@ export default function ChatDetailScreen() {
                         if (payload.eventType === 'INSERT') {
                             if (newMsg.sender_id === myId) return;
                             if (deletedIdsRef.current.includes(newMsg.id)) return;
+                            if ((newMsg.deleted_for || []).includes(myId)) return;
 
                             setMessages(prev => {
                                 if (prev.some(m => m.id === newMsg.id)) return prev;
@@ -334,8 +340,9 @@ export default function ChatDetailScreen() {
             const { data } = await q;
             if (!data?.length) return;
 
-            const newMsgs = data.filter((m: any) => !deletedIdsRef.current.includes(m.id));
+            const newMsgs = data.filter((m: any) => !deletedIdsRef.current.includes(m.id) && !(m.deleted_for || []).includes(currentUserIdRef.current));
             if (!newMsgs.length) return;
+            if (currentUserIdRef.current) hydrateMessageLikes(newMsgs.map((m: any) => m.id), currentUserIdRef.current);
 
             setMessages(prev => {
                 const seen = new Set(prev.map(m => m.id));
@@ -357,12 +364,13 @@ export default function ChatDetailScreen() {
     const handleCamera = async () => {
         const { status } = await ImagePicker.requestCameraPermissionsAsync();
         if (status !== 'granted') return;
-        const result = await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, quality: 0.85, videoMaxDuration: 600 });
+        const result = await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, quality: 0.72, videoMaxDuration: 120, videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720 });
         if (!result.canceled && result.assets[0]) {
-            setPendingMedia(result.assets[0].uri);
+            const mediaUri = await optimizeMediaForUpload(result.assets[0].uri, result.assets[0].type === 'video' ? 'video' : 'image');
+            setPendingMedia(mediaUri);
             await sendMessage(
                 '', 
-                result.assets[0].uri, 
+                mediaUri, 
                 result.assets[0].type === 'video' ? 'video' : 'image'
             );
         }
@@ -372,12 +380,13 @@ export default function ChatDetailScreen() {
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (status !== 'granted') return;
         try {
-            const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, quality: 0.85, videoMaxDuration: 600 });
+            const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, quality: 0.72, videoMaxDuration: 120, videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720 });
             if (!result.canceled && result.assets[0]) {
-                setPendingMedia(result.assets[0].uri);
+                const mediaUri = await optimizeMediaForUpload(result.assets[0].uri, result.assets[0].type === 'video' ? 'video' : 'image');
+                setPendingMedia(mediaUri);
                 await sendMessage(
                     '', 
-                    result.assets[0].uri, 
+                    mediaUri, 
                     result.assets[0].type === 'video' ? 'video' : 'image'
                 );
             }
@@ -417,13 +426,79 @@ export default function ChatDetailScreen() {
         return publicUrl;
     };
 
+    const optimizeMediaForUpload = async (uri: string, type: string) => {
+        if (type !== 'image') return uri;
+        try {
+            const optimized = await ImageManipulator.manipulateAsync(
+                uri,
+                [{ resize: { width: 1600 } }],
+                { compress: 0.72, format: ImageManipulator.SaveFormat.WEBP }
+            );
+            return optimized.uri;
+        } catch {
+            return uri;
+        }
+    };
+
+    const hydrateMessageLikes = async (messageIds: string[], myId: string) => {
+        if (messageIds.length === 0) return;
+        const { data } = await supabase.from('message_likes').select('message_id, user_id').in('message_id', messageIds);
+        const aggregate: Record<string, { count: number; mine: boolean }> = {};
+        messageIds.forEach((id) => { aggregate[id] = { count: 0, mine: false }; });
+        (data || []).forEach((row: any) => {
+            if (!aggregate[row.message_id]) aggregate[row.message_id] = { count: 0, mine: false };
+            aggregate[row.message_id].count += 1;
+            if (row.user_id === myId) aggregate[row.message_id].mine = true;
+        });
+        setMessageLikes(prev => ({ ...prev, ...aggregate }));
+    };
+
+    const toggleMessageLike = async (msgId: string) => {
+        if (!currentUserId) return;
+        const current = messageLikes[msgId] || { count: 0, mine: false };
+        const optimistic = current.mine
+            ? { count: Math.max(0, current.count - 1), mine: false }
+            : { count: current.count + 1, mine: true };
+        setMessageLikes(prev => ({ ...prev, [msgId]: optimistic }));
+        try {
+            if (current.mine) {
+                await supabase.from('message_likes').delete().eq('message_id', msgId).eq('user_id', currentUserId);
+            } else {
+                await supabase.from('message_likes').insert({ message_id: msgId, user_id: currentUserId });
+            }
+        } catch {
+            setMessageLikes(prev => ({ ...prev, [msgId]: current }));
+        }
+    };
+
     const startRecording = async () => {
         try {
             isCancelled.current = false;
             const permission = await Audio.requestPermissionsAsync();
             if (permission.status !== 'granted') return;
             await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true, playThroughEarpieceAndroid: false });
-            const { recording: rec } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+            const { recording: rec } = await Audio.Recording.createAsync({
+                android: {
+                    extension: '.m4a',
+                    outputFormat: Audio.AndroidOutputFormat.MPEG_4,
+                    audioEncoder: Audio.AndroidAudioEncoder.AAC,
+                    sampleRate: 32000,
+                    numberOfChannels: 1,
+                    bitRate: 64000,
+                },
+                ios: {
+                    extension: '.m4a',
+                    outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
+                    audioQuality: Audio.IOSAudioQuality.MEDIUM,
+                    sampleRate: 32000,
+                    numberOfChannels: 1,
+                    bitRate: 64000,
+                    linearPCMBitDepth: 16,
+                    linearPCMIsBigEndian: false,
+                    linearPCMIsFloat: false,
+                },
+                web: {},
+            });
             setRecording(rec);
             setIsRecordingAudio(true);
             setRecordingDuration(0);
@@ -463,7 +538,7 @@ export default function ChatDetailScreen() {
     };
 
     const sendMessage = async (overrideContent?: string, mediaUriOverride?: string, mediaTypeOverride?: string) => {
-        const msg = overrideContent || newMessage.trim();
+            const msg = (overrideContent || newMessage.trim()).replace(/\s+/g, ' ').trim();
         const mediaToUpload = mediaUriOverride || pendingMedia;
         const mediaType = mediaTypeOverride || (pendingMedia ? 'image' : null);
 
@@ -606,6 +681,13 @@ export default function ChatDetailScreen() {
                 await AsyncStorage.setItem(`deletedMsgs_${conversationId}`, JSON.stringify(list));
                 deletedIdsRef.current = list;
             }
+            if (currentUserId) {
+                const { data: existing } = await supabase.from('messages').select('deleted_for').eq('id', msgId).maybeSingle();
+                const remoteDeletedFor: string[] = existing?.deleted_for || [];
+                if (!remoteDeletedFor.includes(currentUserId)) {
+                    await supabase.from('messages').update({ deleted_for: [...remoteDeletedFor, currentUserId] }).eq('id', msgId);
+                }
+            }
             setMessages(prev => prev.filter(m => m.id !== msgId));
         } catch (e) {
             console.error('Delete for me error:', e);
@@ -672,6 +754,7 @@ export default function ChatDetailScreen() {
         const prevMsg = index < messages.length - 1 ? messages[index + 1] : null;
         const showAvatar = !prevMsg || prevMsg.sender_id !== item.sender_id;
         const repliedMsg = item.replying_to_id ? messages.find(m => m.id === item.replying_to_id) : null;
+        const msgLike = messageLikes[item.id] || { count: 0, mine: false };
         const defaultAvatar = 'https://www.gravatar.com/avatar/00000000000000000000000000000000?d=mp&f=y';
 
         return (
@@ -691,6 +774,14 @@ export default function ChatDetailScreen() {
                         activeOpacity={0.9} 
                         style={[styles.bubble, isMe ? styles.myBubble : styles.theirBubble, item.is_deleted && { backgroundColor: Colors.cardAlt, borderWidth: 1, borderColor: Colors.border }]}
                         onLongPress={() => handleLongPressMessage(item)}
+                        onPress={() => {
+                            const now = Date.now();
+                            const last = lastTapRef.current[item.id] || 0;
+                            if (now - last < 260) {
+                                toggleMessageLike(item.id);
+                            }
+                            lastTapRef.current[item.id] = now;
+                        }}
                     >
                         {item.is_deleted ? (
                             <Text style={[styles.msgText, { fontStyle: 'italic', color: Colors.textMuted }]}>Este mensaje fue eliminado</Text>
@@ -731,6 +822,12 @@ export default function ChatDetailScreen() {
                             </>
                         )}
                         <Text style={[styles.msgTime, isMe && styles.myMsgTime, item.is_deleted && { color: Colors.textMuted }]}>{formatMessageTime(item.created_at)}</Text>
+                        {msgLike.count > 0 && (
+                            <TouchableOpacity onPress={() => toggleMessageLike(item.id)} style={{ marginTop: 4, flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start' }}>
+                                <Ionicons name={msgLike.mine ? 'heart' : 'heart-outline'} size={12} color={msgLike.mine ? '#F43F5E' : (isMe ? 'rgba(255,255,255,0.9)' : Colors.textMuted)} />
+                                <Text style={{ fontSize: 10, color: isMe ? 'rgba(255,255,255,0.95)' : Colors.textMuted, fontFamily: Fonts.medium }}>{msgLike.count}</Text>
+                            </TouchableOpacity>
+                        )}
                     </TouchableOpacity>
 
                     {isMe && (

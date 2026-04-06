@@ -102,9 +102,9 @@ export default function AddItemScreen() {
             let cur = { ...asset };
             if (contentType === 'image') {
                 try {
-                    // Optimize image: 1080px is plenty for mobile, 0.7 quality saves ~40% size vs 0.8
-                    const r = await ImageManipulator.manipulateAsync(asset.uri, [{ resize: { width: 1080 } }], { 
-                        compress: 0.7, 
+                    // Balanced optimization: keep quality high enough while reducing transfer size.
+                    const r = await ImageManipulator.manipulateAsync(asset.uri, [{ resize: { width: 1440 } }], { 
+                        compress: 0.75, 
                         format: ImageManipulator.SaveFormat.WEBP 
                     });
                     cur = { ...cur, uri: r.uri, width: r.width, height: r.height };
@@ -127,7 +127,7 @@ export default function AddItemScreen() {
             mediaTypes: contentType === 'image' ? ImagePicker.MediaTypeOptions.Images : ImagePicker.MediaTypeOptions.Videos,
             allowsMultipleSelection: true, 
             selectionLimit: 20, 
-            quality: 0.7, // Reduced from 0.8 to save bandwidth
+            quality: 0.75,
             videoMaxDuration: 60, 
             videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720,
             videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium, 
@@ -143,7 +143,7 @@ export default function AddItemScreen() {
             if (permission.status !== 'granted') { Alert.alert('Permiso requerido', 'Necesitamos acceso a tu cámara.'); return; }
             const result = await ImagePicker.launchCameraAsync({
                 mediaTypes: contentType === 'image' ? ImagePicker.MediaTypeOptions.Images : ImagePicker.MediaTypeOptions.Videos,
-                quality: 0.8, videoMaxDuration: 60,
+                quality: 0.75, videoMaxDuration: 60,
                 videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720,
                 videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
             });
@@ -174,7 +174,28 @@ export default function AddItemScreen() {
             const p = await Audio.requestPermissionsAsync();
             if (p.status !== 'granted') return;
             await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-            const { recording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+            const { recording } = await Audio.Recording.createAsync({
+                android: {
+                    extension: '.m4a',
+                    outputFormat: Audio.AndroidOutputFormat.MPEG_4,
+                    audioEncoder: Audio.AndroidAudioEncoder.AAC,
+                    sampleRate: 32000,
+                    numberOfChannels: 1,
+                    bitRate: 64000,
+                },
+                ios: {
+                    extension: '.m4a',
+                    outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
+                    audioQuality: Audio.IOSAudioQuality.MEDIUM,
+                    sampleRate: 32000,
+                    numberOfChannels: 1,
+                    bitRate: 64000,
+                    linearPCMBitDepth: 16,
+                    linearPCMIsBigEndian: false,
+                    linearPCMIsFloat: false,
+                },
+                web: {},
+            });
             setRecording(recording); setIsRecording(true);
         } catch (err) { console.error(err); }
     };
@@ -235,7 +256,7 @@ export default function AddItemScreen() {
 
             const entries = successfulUploads.map((res: any) => {
                 const mi = res.originalMedia || {};
-                let contentStr = text || null;
+                let contentStr = text ? text.replace(/\s+/g, ' ').trim() : null;
                 if (res.type === 'video' || res.type === 'audio') {
                     const dur = mi.duration || res.duration;
                     const min = Math.floor(dur / 60000);
@@ -247,7 +268,7 @@ export default function AddItemScreen() {
                     capsule_id: capsuleId, owner_id: user.id,
                     media_url: res.mediaUrl || '', thumbnail_url: res.thumbUrl || '',
                     media_type: res.type, content: contentStr,
-                    caption: caption ? `${caption} !!b:${batchId}` : `!!b:${batchId}`,
+                    caption: caption ? `${caption.replace(/\s+/g, ' ').trim()} !!b:${batchId}` : `!!b:${batchId}`,
                 };
             });
 

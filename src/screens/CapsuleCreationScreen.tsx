@@ -1413,7 +1413,7 @@ export default function CapsuleCreationScreen() {
                                         style={[s.chainCard, selectedChainId === chain.id && { borderColor: accent, backgroundColor: accent + '0C' }]}
                                     >
                                         <View style={s.chainIcon}>
-                                            <Image source={{ uri: chain.thumbnail_url || chain.image_url }} style={{ width: '100%', height: '100%', borderRadius: 10 }} resizeMode="cover" />
+                                            <Image source={{ uri: optimizeAssetUrl(chain.thumbnail_url || chain.image_url, 180) }} style={{ width: '100%', height: '100%', borderRadius: 10 }} resizeMode="cover" />
                                         </View>
                                         <Text style={[s.chainLabel, selectedChainId === chain.id && { color: accent }]} numberOfLines={1}>{chain.name}</Text>
                                     </TouchableOpacity>
@@ -2087,3 +2087,7 @@ const s = StyleSheet.create({
     capAngelInfoBox: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 14, paddingHorizontal: 6 },
     capAngelInfoText: { fontSize: 11, fontFamily: Fonts.medium, color: L.textMuted, flex: 1 },
 });
+const optimizeAssetUrl = (uri?: string, width = 180) => {
+    if (!uri || !uri.includes('/storage/v1/object/public/')) return uri;
+    return `${uri}${uri.includes('?') ? '&' : '?'}width=${width}&quality=72&format=webp`;
+};
