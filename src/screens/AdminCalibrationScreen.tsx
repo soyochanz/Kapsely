@@ -44,7 +44,7 @@ export default function AdminCalibrationScreen() {
 
     const [showAddModel, setShowAddModel] = useState(false);
     const [newModel, setNewModel] = useState({ 
-        id: '', label: '', image: '', thumbnail_url: '', image_open: '', 
+        id: '', label: '', image: '', thumbnail_url: '', image_open: '', image_cover: '', 
         category: 'Vibe', tint: '#a269ff', is_active: true, is_event: false,
         event_start: '', event_end: '', event_title: '', event_description: ''
     });
@@ -104,7 +104,7 @@ export default function AdminCalibrationScreen() {
 
 
     const [showAddChain, setShowAddChain] = useState(false);
-    const [newChain, setNewChain] = useState({ id: '', name: '', image_url: '', is_active: true });
+    const [newChain, setNewChain] = useState({ id: '', name: '', image_url: '', thumbnail_url: '', is_active: true });
 
     const [stickers, setStickers] = useState<any[]>([]);
     const [showAddSticker, setShowAddSticker] = useState(false);
@@ -354,15 +354,13 @@ export default function AdminCalibrationScreen() {
         }
 
         const modelToSave: any = { ...newModel };
-        // Remove thumbnail_url if it's not in DB
-        delete modelToSave.thumbnail_url;
-
         // Clean up empty strings to prevent Postgres type errors
         if (!modelToSave.event_start) modelToSave.event_start = null;
         if (!modelToSave.event_end) modelToSave.event_end = null;
         if (!modelToSave.event_title) modelToSave.event_title = null;
         if (!modelToSave.event_description) modelToSave.event_description = null;
         if (!modelToSave.image_open) modelToSave.image_open = null;
+        if (!modelToSave.image_cover) modelToSave.image_cover = null;
 
         const success = await timerConfigManager.saveModel(modelToSave);
         if (success) {
@@ -371,7 +369,7 @@ export default function AdminCalibrationScreen() {
             setSelectedModel(modelToSave);
             setShowAddModel(false);
             setNewModel({ 
-                id: '', label: '', image: '', thumbnail_url: '', image_open: '', 
+                id: '', label: '', image: '', thumbnail_url: '', image_open: '', image_cover: '', 
                 category: 'Vibe', tint: '#a269ff', is_active: true, is_event: false,
                 event_start: '', event_end: '', event_title: '', event_description: ''
             });
@@ -390,7 +388,7 @@ export default function AdminCalibrationScreen() {
         if (success) {
             setSelectedChainId(newChain.id);
             setShowAddChain(false);
-            setNewChain({ id: '', name: '', image_url: '', is_active: true });
+            setNewChain({ id: '', name: '', image_url: '', thumbnail_url: '', is_active: true });
         }
     };
 
@@ -740,7 +738,7 @@ export default function AdminCalibrationScreen() {
                                         activeOpacity={0.7}
                                         onPress={() => setSelectedChainId(c.id)}
                                     >
-                                        <Image source={{ uri: c.image_url }} style={styles.chainImg} resizeMode="cover" />
+                                        <Image source={{ uri: c.thumbnail_url || c.image_url }} style={styles.chainImg} resizeMode="cover" />
                                         <Text style={styles.chainLabel} numberOfLines={1}>{c.name}</Text>
                                     </TouchableOpacity>
                                 ))}
@@ -841,7 +839,7 @@ export default function AdminCalibrationScreen() {
                                 </View>
                                 <TouchableOpacity style={styles.addModelBtn} onPress={() => {
                                     setNewModel({ 
-                                        id: '', label: '', image: '', thumbnail_url: '', image_open: '', 
+                                        id: '', label: '', image: '', thumbnail_url: '', image_open: '', image_cover: '', 
                                         category: 'Vibe', tint: '#a269ff', is_active: true, is_event: false,
                                         event_start: '', event_end: '', event_title: '', event_description: ''
                                     });
@@ -871,7 +869,7 @@ export default function AdminCalibrationScreen() {
                             <View>
                                 {filteredModels.map((m: any) => (
                                     <View key={m.id} style={styles.modelLibraryCard}>
-                                        <Image source={{ uri: m.image }} style={styles.modelLibraryThumb} />
+                                        <Image source={{ uri: m.image_cover || m.image }} style={styles.modelLibraryThumb} />
                                         <View style={{ flex: 1, gap: 2 }}>
                                             <Text style={styles.modelLibraryLabel}>{m.label || m.id}</Text>
                                             <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -890,6 +888,7 @@ export default function AdminCalibrationScreen() {
                                                 onPress={() => {
                                                     setNewModel({ 
                                                         ...m, 
+                                                        thumbnail_url: m.thumbnail_url || '',
                                                         event_start: m.event_start || '', 
                                                         event_end: m.event_end || '', 
                                                         event_title: m.event_title || '', 
@@ -976,7 +975,18 @@ export default function AdminCalibrationScreen() {
                                         <Ionicons name="camera" size={20} color="#fff" />
                                     </TouchableOpacity>
                                 </View>
-
+                                <View style={[styles.assetInputRow, { marginTop: 10 }]}>
+                                    <TextInput
+                                        placeholder="Cover Image URL (WebP)"
+                                        placeholderTextColor="#999"
+                                        value={newModel.image_cover}
+                                        onChangeText={t => setNewModel(p => ({ ...p, image_cover: t }))}
+                                        style={[styles.input, { flex: 1, marginBottom: 0 }]}
+                                    />
+                                    <TouchableOpacity style={styles.uploadSmallBtn} onPress={() => pickAndUploadImage(url => setNewModel(p => ({ ...p, image_cover: url })))}>
+                                        <Ionicons name="camera" size={20} color="#fff" />
+                                    </TouchableOpacity>
+                                </View>
                             </View>
 
                             <View style={styles.inputSection}>
@@ -1108,7 +1118,18 @@ export default function AdminCalibrationScreen() {
                                 <Ionicons name="camera" size={20} color="#fff" />
                             </TouchableOpacity>
                         </View>
-
+                        <View style={[styles.assetInputRow, { marginTop: 10 }]}>
+                            <TextInput
+                                placeholder="Thumbnail URL (Square, Optional)"
+                                placeholderTextColor="#999"
+                                value={newChain.thumbnail_url}
+                                onChangeText={t => setNewChain(p => ({ ...p, thumbnail_url: t }))}
+                                style={[styles.input, { flex: 1, marginBottom: 0 }]}
+                            />
+                            <TouchableOpacity style={styles.uploadSmallBtn} onPress={() => pickAndUploadImage(url => setNewChain(p => ({ ...p, thumbnail_url: url })))}>
+                                <Ionicons name="camera" size={20} color="#fff" />
+                            </TouchableOpacity>
+                        </View>
                         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 4, marginTop: 4 }}>
                             <Text style={{ fontSize: 14, fontFamily: Fonts.medium, color: Colors.textPrimary }}>Available in Creation Screen</Text>
                             <Switch value={newChain.is_active} onValueChange={v => setNewChain(p => ({ ...p, is_active: v }))} trackColor={{ true: Colors.primary }} />

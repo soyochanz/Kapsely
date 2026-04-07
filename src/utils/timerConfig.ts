@@ -29,6 +29,7 @@ export interface ChainItem {
     id: string;
     name: string;
     image_url: string;
+    thumbnail_url?: string;
     is_active: boolean;
 }
 
@@ -181,11 +182,7 @@ class TimerConfigManager {
 
     async saveModel(model: any) {
         try {
-            const modelToSave = { ...model };
-            delete modelToSave.thumbnail_url;
-            delete modelToSave.image_cover; // User wants no cover support
-
-            const { error } = await supabase.from('models').upsert(modelToSave, { onConflict: 'id' });
+            const { error } = await supabase.from('models').upsert(model, { onConflict: 'id' });
             if (error) throw error;
             await this.refresh();
             return true;
@@ -209,10 +206,7 @@ class TimerConfigManager {
 
     async addChainToLibrary(chain: any) {
         try {
-            const chainToSave = { ...chain };
-            delete chainToSave.thumbnail_url; // Remove if not in DB column
-
-            const { error } = await supabase.from('chains').upsert(chainToSave, { onConflict: 'id' });
+            const { error } = await supabase.from('chains').upsert(chain, { onConflict: 'id' });
             if (error) throw error;
             await this.refresh();
             return true;

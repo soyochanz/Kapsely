@@ -68,15 +68,7 @@
     "follow_capsule": "Sync",
     "synced": "Synced",
     "unsync": "Unsync",
-    "created_by": "created by",
-    "feed": {
-        "search_placeholder": "Search capsules...",
-        "new_flash": "New Flash",
-        "following": "Following",
-        "explore": "Explore",
-        "flash_posted": "Flash published!",
-        "flash_error": "Could not publish flash"
-    }
+    "created_by": "created by"
   },
   "profile": {
     "settings": "Settings",
@@ -392,14 +384,14 @@
     "following": "Following",
     "reveal_msg": "A memory has surfaced!",
     "opening_msg": "Preparing your sealed memory capsules...",
-    "add_to_flash": "Add to Flash",
+    "add_to_story": "Add to Story",
     "no_activity": "No recent activity",
     "opens_today": "Opens Today",
     "all": "All",
     "no_capsules_yet": "No capsules yet",
     "created": "Created",
-    "flash_cooldown_active": "You declined to share this sealed memory. You cannot post a flash for 48 hours.",
-    "share_error": "Could not share flash."
+    "story_cooldown_active": "You declined to share this sealed memory. You cannot post a story for 48 hours.",
+    "share_error": "Could not share story."
   },
   "detail": {
     "no_items": "There is no content yet.",
@@ -430,12 +422,13 @@
     "post": "Post",
     "options": "Capsule Options",
     "view_qr": "View QR Code",
-    "share_instagram": "Share to Instagram Flash",
+    "share_instagram": "Share to Instagram Story",
     "delete_perm": "Delete Capsule Permanently",
     "invite_friend": "Invite a friend",
     "invited": "Invited",
     "delete_confirm_title": "Are you sure?",
     "delete_confirm_msg": "This cannot be undone.",
+    "opening_soon": "Opening in {{timer}}s...",
     "opening_now": "capsule is opening now!",
     "followed_capsule": "synced your capsule \"{{title}}\"",
     "liked_your_capsule": "liked your capsule",
@@ -449,8 +442,8 @@
     "no_permission": "This capsule might be private, deleted, or you don't have permission to view it.",
     "delete_capsule_title": "Delete Capsule",
     "delete_capsule_msg": "Are you sure? This memory and all its content will be gone forever.",
-    "privacy_content": "Kapsely (we, us, or our) is committed to protecting your privacy...",
-    "terms_content": "By using the Kapsely application, you agree to comply with the following terms...",
+    "privacy_content": "Kapsely (we, us, or our) is committed to protecting your privacy. This Privacy Policy describes how we collect, use, and share your personal information.\n\n1. Information We Collect: We collect information you provide directly to us, such as your name, email address, and any content you upload to our time capsules.\n\n2. How We Use Your Information: We use your information to provide and improve our services, communicate with you, and ensure the security of our platform.\n\n3. Information Sharing: We do not share your personal information with third parties except as necessary to provide our services or comply with the law.\n\n4. Your Rights: You have the right to access, correct, or delete your personal information at any time.",
+    "terms_content": "By using the Kapsely application, you agree to comply with the following terms and conditions:\n\n1. Use of the App: You must use Kapsely only for lawful purposes and in accordance with these Terms.\n\n2. User Content: You are responsible for any content you upload to Kapsely. You must not upload content that is illegal, offensive, or infringes on the rights of others.\n\n3. Intellectual Property: All content and technology in Kapsely are the property of the Company or its licensors.\n\n4. Limitation of Liability: Kapsely shall not be liable for any indirect, incidental, or consequential damages arising from the use of the app.\n\n5. Changes to Terms: We reserve the right to modify these terms at any time.",
     "capsule_qr": "Capsule QR",
     "scan_qr_hint": "Scan this QR to open the capsule.",
     "awaiting_others": "Awaiting others ({{current}}/{{total}})",
@@ -463,8 +456,8 @@
     "report_content": "Report Content",
     "report_message": "Report Message",
     "report_reason": "Why are you reporting this?",
-    "report_submitted": "Report submitted...",
-    "block_confirm": "Are you sure you want to block this user?",
+    "report_submitted": "Report submitted. Thank you for helping us keep Kapsely safe.",
+    "block_confirm": "Are you sure you want to block this user? They will no longer be able to interact with you.",
     "blocked_success": "User blocked.",
     "unblocked_success": "User unblocked.",
     "report_types": {
@@ -476,7 +469,7 @@
     "share": {
       "not_found": "Capsule not found.",
       "opens_on": "Opens on",
-      "instagram_story": "Share Flash",
+      "instagram_story": "Share Story",
       "create_hint": "Create your capsule",
       "scan_hint": "Scan to unseal 🔍",
       "save_image": "Save Image",
