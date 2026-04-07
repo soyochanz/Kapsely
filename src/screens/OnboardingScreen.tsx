@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTranslation } from 'react-i18next';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { storage } from '../lib/storage';
 import { useNavigation } from '@react-navigation/native';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
 
@@ -88,9 +88,9 @@ export default function OnboardingScreen() {
         outputRange: [0, -15],
     });
 
-    const handleFinish = async () => {
+    const handleFinish = () => {
         try {
-            await AsyncStorage.setItem('@has_seen_onboarding', 'true');
+            storage.set('@has_seen_onboarding', true);
             navigation.replace('Main');
         } catch (e) {
             navigation.replace('Main');

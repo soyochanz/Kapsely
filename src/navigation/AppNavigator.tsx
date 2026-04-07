@@ -20,7 +20,7 @@ import OnboardingScreen from '../screens/OnboardingScreen';
 import UserListScreen from '../screens/UsersListScreen';
 import PersonalizeProfileScreen from '../screens/PersonalizeProfileScreen';
 import AdminCalibrationScreen from '../screens/AdminCalibrationScreen';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { storage } from '../lib/storage';
 import { View, StyleSheet, ActivityIndicator } from 'react-native';
 import { Colors } from '../theme';
 import { navigationRef } from '../../App';
@@ -82,23 +82,9 @@ function TabNavigator() {
 }
 
 export default function AppNavigator() {
-    const [hasSeenOnboarding, setHasSeenOnboarding] = React.useState<boolean | null>(null);
-
-    React.useEffect(() => {
-        const checkOnboarding = async () => {
-            const seen = await AsyncStorage.getItem('@has_seen_onboarding');
-            setHasSeenOnboarding(seen === 'true');
-        };
-        checkOnboarding();
-    }, []);
-
-    if (hasSeenOnboarding === null) {
-        return (
-            <View style={{ flex: 1, backgroundColor: Colors.background, justifyContent: 'center', alignItems: 'center' }}>
-                <ActivityIndicator size="large" color={Colors.primary} />
-            </View>
-        );
-    }
+    // MMKV is synchronous, so we can set the initial state directly!
+    // No more loading spinner needed for this.
+    const hasSeenOnboarding = storage.getBoolean('@has_seen_onboarding') ?? false;
 
     return (
         <View style={{ flex: 1 }}>
