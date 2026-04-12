@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import * as ExpoLocation from 'expo-location';
 import {
     View, Text, StyleSheet, TouchableOpacity, TextInput,
     ActivityIndicator, SafeAreaView, ScrollView, Alert,
@@ -19,6 +20,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
 import Slider from '@react-native-community/slider';
 import { optimizeImageForUpload, optimizeThumbnailForUpload } from '../utils/mediaOptimization';
+import { locationService } from '../utils/location';
 
 const { width } = Dimensions.get('window');
 
@@ -91,6 +93,61 @@ export default function AddItemScreen() {
     const [trimEnd, setTrimEnd] = useState(0);
     const [trimSeekingValue, setTrimSeekingValue] = useState<number | null>(null);
     const [aestheticAlert, setAestheticAlert] = useState<any>(null);
+    const [currentLocation, setCurrentLocation] = useState<{ latitude: number, longitude: number, altitude: number | null, locationName: string } | null>(null);
+    const [suggestedLocation, setSuggestedLocation] = useState<any>(null);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [isSearchingLocation, setIsSearchingLocation] = useState(false);
+    const [locationModalVisible, setLocationModalVisible] = useState(false);
+    const [locationSuggestions, setLocationSuggestions] = useState<any[]>([]);
+    const [includeLocation, setIncludeLocation] = useState(true);
+
+    useEffect(() => {
+        const fetchLocation = async () => {
+            const loc = await locationService.getCurrentLocation();
+            if (loc) setCurrentLocation(loc);
+        };
+        fetchLocation();
+    }, []);
+
+    useEffect(() => {
+        if (!searchQuery.trim() || searchQuery.length < 3) {
+            setLocationSuggestions([]);
+            return;
+        }
+
+        const delay = setTimeout(async () => {
+            setIsSearchingLocation(true);
+            try {
+                // Using geocodeAsync to get potential coordinates for the query
+                // Note: Expo Location geocodeAsync usually returns an array of matching coordinates
+                const results = await ExpoLocation.geocodeAsync(searchQuery);
+                if (results && results.length > 0) {
+                    const uniqueNames = new Set();
+                    const suggestions = [];
+                    
+                    // Take top 5 results and get city names
+                    for (const res of results.slice(0, 5)) {
+                        const [addr] = await ExpoLocation.reverseGeocodeAsync({
+                            latitude: res.latitude,
+                            longitude: res.longitude
+                        });
+                        const name = addr?.city || addr?.subregion || addr?.region || searchQuery;
+                        if (name && !uniqueNames.has(name)) {
+                            uniqueNames.add(name);
+                            suggestions.push({ ...res, locationName: name });
+                        }
+                    }
+                    setLocationSuggestions(suggestions);
+                }
+            } catch (e) {
+                console.log('Search error:', e);
+            } finally {
+                setIsSearchingLocation(false);
+            }
+        }, 800);
+
+        return () => clearTimeout(delay);
+    }, [searchQuery]);
 
     useEffect(() => {
         return () => { if (recording) recording.stopAndUnloadAsync(); };
@@ -101,6 +158,16 @@ export default function AddItemScreen() {
         const processed: any[] = [];
         for (const asset of assets) {
             let cur = { ...asset };
+            
+            // Extract location from EXIF
+            if (asset.exif && !suggestedLocation) {
+                const suggested = await locationService.getLocationFromExif(asset.exif);
+                if (suggested) {
+                    setSuggestedLocation(suggested);
+                    // Standard: ask or auto-suggest later
+                }
+            }
+
             if (contentType === 'image') {
                 try {
                     const optimizedUri = await optimizeImageForUpload(asset.uri);
@@ -123,32 +190,58 @@ export default function AddItemScreen() {
     };
 
     const pickMedia = async () => {
-        const result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: contentType === 'image' ? ImagePicker.MediaTypeOptions.Images : ImagePicker.MediaTypeOptions.Videos,
-            allowsMultipleSelection: true, 
-            selectionLimit: 20, 
-            quality: 1, 
-            videoMaxDuration: 60, 
-            videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720,
-            videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium, 
-            base64: false,
-        });
-        if (!result.canceled && result.assets?.length > 0) await processAssets(result.assets);
-        else if (mediaList.length === 0) navigation.goBack();
+        try {
+            const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+            if (permission.status !== 'granted') {
+                Alert.alert('Permiso requerido', 'Necesitamos acceso a tu galería para añadir recuerdos.');
+                return;
+            }
+
+            const result = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: contentType === 'image' ? 'images' : 'videos',
+                allowsMultipleSelection: true,
+                selectionLimit: 20,
+                quality: 1,
+                videoMaxDuration: 60,
+                videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720,
+                videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
+                base64: false,
+                exif: true,
+            });
+
+            if (!result.canceled && result.assets?.length > 0) {
+                await processAssets(result.assets);
+            }
+        } catch (e) {
+            console.error('Pick media error:', e);
+            Alert.alert('Error', 'No se pudo abrir la galería.');
+        }
     };
 
     const captureMedia = async () => {
         try {
             const permission = await ImagePicker.requestCameraPermissionsAsync();
-            if (permission.status !== 'granted') { Alert.alert('Permiso requerido', 'Necesitamos acceso a tu cámara.'); return; }
+            if (permission.status !== 'granted') {
+                Alert.alert('Permiso requerido', 'Necesitamos acceso a tu cámara para capturar recuerdos.');
+                return;
+            }
+
             const result = await ImagePicker.launchCameraAsync({
-                mediaTypes: contentType === 'image' ? ImagePicker.MediaTypeOptions.Images : ImagePicker.MediaTypeOptions.Videos,
-                quality: 1, videoMaxDuration: 60,
+                mediaTypes: contentType === 'image' ? 'images' : 'videos',
+                quality: 1,
+                videoMaxDuration: 60,
                 videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720,
                 videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
+                exif: true,
             });
-            if (!result.canceled && result.assets?.length > 0) await processAssets(result.assets);
-        } catch (e) { Alert.alert('Error', 'No se pudo abrir la cámara.'); }
+
+            if (!result.canceled && result.assets?.length > 0) {
+                await processAssets(result.assets);
+            }
+        } catch (e) {
+            console.error('Capture media error:', e);
+            Alert.alert('Error', 'No se pudo abrir la cámara.');
+        }
     };
 
     const [lastSource, setLastSource] = useState<'camera' | 'gallery' | null>(null);
@@ -173,7 +266,12 @@ export default function AddItemScreen() {
         try {
             const p = await Audio.requestPermissionsAsync();
             if (p.status !== 'granted') return;
-            await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+            await Audio.setAudioModeAsync({
+                allowsRecordingIOS: true,
+                playsInSilentModeIOS: true,
+                playThroughEarpieceAndroid: false,
+                staysActiveInBackground: true,
+            });
             const { recording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
             setRecording(recording); setIsRecording(true);
         } catch (err) { console.error(err); }
@@ -248,6 +346,10 @@ export default function AddItemScreen() {
                     media_url: res.mediaUrl || '', thumbnail_url: res.thumbUrl || '',
                     media_type: res.type, content: contentStr,
                     caption: caption ? `${caption} !!b:${batchId}` : `!!b:${batchId}`,
+                    latitude: includeLocation ? currentLocation?.latitude : null,
+                    longitude: includeLocation ? currentLocation?.longitude : null,
+                    location_name: includeLocation ? currentLocation?.locationName : null,
+                    altitude: includeLocation ? (currentLocation as any)?.altitude : null,
                 };
             });
 
@@ -444,6 +546,30 @@ export default function AddItemScreen() {
                         )}
                     </View>
                 )}
+
+                {/* ════════ LOCATION SELECTOR ════════ */}
+                <TouchableOpacity 
+                    style={s.locationCard} 
+                    activeOpacity={0.8} 
+                    onPress={() => setLocationModalVisible(true)}
+                >
+                    <View style={s.locationInfo}>
+                        <View style={[s.locationIconWrap, { backgroundColor: includeLocation ? P.p50 : P.gray100 }]}>
+                            <Ionicons 
+                                name="location" 
+                                size={20} 
+                                color={includeLocation ? P.p600 : P.gray400} 
+                            />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                            <Text style={s.locationTitle}>Ubicación del contenido</Text>
+                            <Text style={s.locationSub} numberOfLines={1}>
+                                {includeLocation && currentLocation ? currentLocation.locationName : 'Configurar ubicación…'}
+                            </Text>
+                        </View>
+                        <Ionicons name="chevron-forward" size={18} color={P.gray300} />
+                    </View>
+                </TouchableOpacity>
 
                 {/* ════════ IMAGE / VIDEO ════════ */}
                 {(contentType === 'image' || contentType === 'video') && (
@@ -698,6 +824,128 @@ export default function AddItemScreen() {
                     </View>
                 </View>
             </Modal>
+
+            {/* ── Location Selector Modal ── */}
+            <Modal visible={locationModalVisible} transparent animationType="slide">
+                <View style={s.modalOverlay}>
+                    <BlurView intensity={90} tint="light" style={StyleSheet.absoluteFill} />
+                    <View style={s.locationSheet}>
+                        <View style={s.sheetHandle} />
+                        <View style={s.sheetHeader}>
+                            <Text style={s.sheetTitle}>Ubicación</Text>
+                            <TouchableOpacity onPress={() => setLocationModalVisible(false)}>
+                                <Ionicons name="close-circle" size={28} color={P.gray300} />
+                            </TouchableOpacity>
+                        </View>
+
+                        <View style={s.searchWrap}>
+                            <Ionicons name="search" size={20} color={P.gray400} />
+                            <TextInput
+                                style={s.searchField}
+                                placeholder="Buscar ciudad…"
+                                value={searchQuery}
+                                onChangeText={setSearchQuery}
+                                autoCorrect={false}
+                            />
+                            {isSearchingLocation && <ActivityIndicator size="small" color={P.p600} />}
+                        </View>
+
+                        <ScrollView style={s.optionsScroll} keyboardShouldPersistTaps="handled">
+                            {/* Autocomplete Results */}
+                            {locationSuggestions.length > 0 && (
+                                <View style={s.suggestionsBlock}>
+                                    <Text style={s.sectionTitleText}>Sugerencias</Text>
+                                    {locationSuggestions.map((item, idx) => (
+                                        <TouchableOpacity 
+                                            key={idx} 
+                                            style={s.optionItem}
+                                            onPress={() => {
+                                                setCurrentLocation({
+                                                    latitude: item.latitude,
+                                                    longitude: item.longitude,
+                                                    altitude: null,
+                                                    locationName: item.locationName
+                                                });
+                                                setIncludeLocation(true);
+                                                setSearchQuery('');
+                                                setLocationSuggestions([]);
+                                                setLocationModalVisible(false);
+                                            }}
+                                        >
+                                            <View style={[s.optionIcon, { backgroundColor: P.p50 }]}>
+                                                <Ionicons name="location-outline" size={20} color={P.p600} />
+                                            </View>
+                                            <View>
+                                                <Text style={s.optionLabel}>{item.locationName}</Text>
+                                                <Text style={s.optionSub}>Toca para seleccionar</Text>
+                                            </View>
+                                        </TouchableOpacity>
+                                    ))}
+                                    <View style={s.divider} />
+                                </View>
+                            )}
+
+                            {/* Current Location */}
+                            <TouchableOpacity 
+                                style={s.optionItem}
+                                onPress={async () => {
+                                    const loc = await locationService.getCurrentLocation();
+                                    if (loc) {
+                                        setCurrentLocation(loc);
+                                        setIncludeLocation(true);
+                                        setLocationModalVisible(false);
+                                    }
+                                }}
+                            >
+                                <View style={[s.optionIcon, { backgroundColor: '#EFF6FF' }]}>
+                                    <Ionicons name="navigate" size={20} color="#3B82F6" />
+                                </View>
+                                <View>
+                                    <Text style={s.optionLabel}>Ubicación actual</Text>
+                                    <Text style={s.optionSub}>Detectar donde estás ahora</Text>
+                                </View>
+                            </TouchableOpacity>
+
+                            {/* Suggested Location (from EXIF) */}
+                            {suggestedLocation && (
+                                <TouchableOpacity 
+                                    style={s.optionItem}
+                                    onPress={() => {
+                                        setCurrentLocation(suggestedLocation);
+                                        setIncludeLocation(true);
+                                        setLocationModalVisible(false);
+                                    }}
+                                >
+                                    <View style={[s.optionIcon, { backgroundColor: '#F0FDF4' }]}>
+                                        <Ionicons name="image" size={20} color="#22C55E" />
+                                    </View>
+                                    <View>
+                                        <Text style={s.optionLabel}>Lugar de la foto</Text>
+                                        <Text style={s.optionSub} numberOfLines={1}>{suggestedLocation.locationName}</Text>
+                                    </View>
+                                </TouchableOpacity>
+                            )}
+
+                            {/* Clear Location */}
+                            <TouchableOpacity 
+                                style={s.optionItem}
+                                onPress={() => {
+                                    setIncludeLocation(false);
+                                    setLocationModalVisible(false);
+                                }}
+                            >
+                                <View style={[s.optionIcon, { backgroundColor: P.gray100 }]}>
+                                    <Ionicons name="location-outline" size={20} color={P.gray500} />
+                                </View>
+                                <View>
+                                    <Text style={s.optionLabel}>Sin ubicación</Text>
+                                    <Text style={s.optionSub}>No mostrar etiquetas de lugar</Text>
+                                </View>
+                            </TouchableOpacity>
+                        </ScrollView>
+                    </View>
+                </View>
+            </Modal>
         </View>
     );
 }
@@ -777,6 +1025,38 @@ const s = StyleSheet.create({
     micBtnGrad: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     micStatus: { fontSize: 18, fontWeight: '700', color: P.gray900, marginTop: 22 },
     micHint: { fontSize: 13, color: P.gray400, marginBottom: 10 },
+
+    // Location Modal
+    modalOverlay: { flex: 1, justifyContent: 'flex-end' },
+    locationSheet: {
+        backgroundColor: P.white,
+        borderTopLeftRadius: 32, borderTopRightRadius: 32,
+        paddingHorizontal: 20, paddingBottom: 40,
+        height: '75%', ...shadow.medium,
+    },
+    sheetHandle: {
+        width: 40, height: 5, backgroundColor: P.gray200,
+        borderRadius: 3, alignSelf: 'center', marginVertical: 12,
+    },
+    sheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+    sheetTitle: { fontSize: 20, fontWeight: '800', color: P.gray900 },
+    searchWrap: {
+        flexDirection: 'row', alignItems: 'center', gap: 10,
+        backgroundColor: P.gray100, borderRadius: R.md,
+        paddingHorizontal: 15, height: 54, marginBottom: 20,
+    },
+    searchField: { flex: 1, fontSize: 16, color: P.gray900, fontWeight: '600' },
+    optionsScroll: { flex: 1 },
+    optionItem: {
+        flexDirection: 'row', alignItems: 'center', gap: 16,
+        paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: P.gray50,
+    },
+    optionIcon: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+    optionLabel: { fontSize: 16, fontWeight: '700', color: P.gray900, marginBottom: 2 },
+    optionSub: { fontSize: 13, color: P.gray500, fontWeight: '500' },
+    suggestionsBlock: { marginBottom: 10 },
+    sectionTitleText: { fontSize: 12, fontWeight: '800', color: P.gray400, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10, marginLeft: 5 },
+    divider: { height: 1, backgroundColor: P.gray100, marginVertical: 15, marginHorizontal: 10 },
     retryRow: {
         flexDirection: 'row', alignItems: 'center', gap: 6,
         paddingHorizontal: 16, paddingVertical: 9,
@@ -959,4 +1239,57 @@ const s = StyleSheet.create({
     alertBtn: { width: '100%', borderRadius: R.full, overflow: 'hidden' },
     alertBtnGrad: { paddingVertical: 15, alignItems: 'center' },
     alertBtnText: { color: P.white, fontSize: 15, fontWeight: '700' },
+
+    // ── LOCATION TOGGLE
+    locationCard: {
+        marginTop: 20,
+        backgroundColor: P.white,
+        borderRadius: R.md,
+        padding: 16,
+        borderWidth: 1.5,
+        borderColor: P.gray200,
+        ...shadow.soft,
+    },
+    locationInfo: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    locationIconWrap: {
+        width: 40,
+        height: 40,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    locationTitle: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: P.gray900,
+    },
+    locationSub: {
+        fontSize: 12,
+        color: P.gray400,
+        marginTop: 2,
+    },
+    toggleBase: {
+        width: 48,
+        height: 26,
+        borderRadius: 13,
+        backgroundColor: P.gray200,
+        padding: 2,
+        justifyContent: 'center',
+    },
+    toggleActive: {
+        backgroundColor: P.p600,
+    },
+    toggleCircle: {
+        width: 22,
+        height: 22,
+        borderRadius: 11,
+        backgroundColor: P.white,
+    },
+    toggleCircleActive: {
+        alignSelf: 'flex-end',
+    },
 });

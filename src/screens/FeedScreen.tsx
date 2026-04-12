@@ -430,6 +430,7 @@ export default function FeedScreen() {
             .from('capsule_items')
             .select(`
                 id, media_url, media_type, thumbnail_url, content, caption, created_at, owner_id, capsule_id,
+                latitude, longitude, altitude, location_name,
                 profiles:owner_id(username, display_name, avatar_url, is_verified),
                 capsules:capsule_id!inner(
                     id, title, is_public, type, status, opens_at,
@@ -635,9 +636,17 @@ export default function FeedScreen() {
                 }
             } catch (e) { }
 
-            const { data } = await supabase.from('capsules')
-                .select('*, profiles:owner_id(username, display_name, avatar_url)')
-                .or(`owner_id.eq.${currentUserId},and(is_public.eq.true,status.eq.opened)`)
+            const participantIds = Array.from(participantCapsules);
+            let query = supabase.from('capsules')
+                .select('*, profiles:owner_id(username, display_name, avatar_url)');
+            
+            const conditions = [`owner_id.eq.${currentUserId}`];
+            if (participantIds.length > 0) {
+                conditions.push(`id.in.(${participantIds.join(',')})`);
+            }
+            
+            const { data } = await query
+                .or(conditions.join(','))
                 .order('created_at', { ascending: false });
             if (data && data.length > 0) {
                 setUserCapsules(data);

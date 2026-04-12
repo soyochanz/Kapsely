@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, TouchableOpacity, StyleSheet, Platform, Animated, Alert } from 'react-native';
+import { View, TouchableOpacity, StyleSheet, Platform, Animated, Alert, Text, Image, ScrollView, Modal, ActivityIndicator } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -18,16 +18,19 @@ const TAB_CONFIG = [
     { name: 'Profile', icon: 'person-outline' as const, iconActive: 'person' as const },
 ];
 
-// Purple accent — used for active state everywhere
 const PURPLE = '#7c3aed';
-const PURPLE_LIGHT = '#a855f7';
+const PURPLE_LIGHT = '#a78bfa';
+
+import { multiAccountService, SavedAccount } from '../utils/multiAccount';
+import QuickLoginModal from './QuickLoginModal';
 
 export const TAB_BAR_HEIGHT = 50;
 
 // ─── Single tab ───────────────────────────────────────────────────────────────
-function TabItem({ route, index, state, navigation, cfg, hasBadge }: {
+function TabItem({ route, index, state, navigation, cfg, hasBadge, onProfileLongPress }: {
     route: any; index: number; state: any; navigation: any;
     cfg: typeof TAB_CONFIG[0]; hasBadge?: boolean;
+    onProfileLongPress?: () => void;
 }) {
     const { t } = useTranslation();
     const isFocused = state.index === index;
@@ -56,17 +59,8 @@ function TabItem({ route, index, state, navigation, cfg, hasBadge }: {
     };
 
     const onLongPress = () => {
-        if (cfg.name === 'Profile') {
-            Alert.alert(
-                t('common.logout'),
-                t('common.logoutConfirm'),
-                [
-                    { text: t('common.cancel'), style: 'cancel' },
-                    { text: t('common.logout'), style: 'destructive', onPress: async () => {
-                        await supabase.auth.signOut();
-                    }}
-                ]
-            );
+        if (cfg.name === 'Profile' && onProfileLongPress) {
+            onProfileLongPress();
         }
     };
 
@@ -138,14 +132,20 @@ function CenterTab({ navigation, sealedCount, fetchSealedCount }: { navigation: 
 
 // ─── Main TabBar ──────────────────────────────────────────────────────────────
 export default function TabBar(props: any) {
+    const { t } = useTranslation();
     const { state, navigation } = props;
     const insets = useSafeAreaInsets();
     const [unreadCount, setUnreadCount] = React.useState(0);
     const [sealedCount, setSealedCount] = React.useState<number | null>(null);
+    const [accounts, setAccounts] = React.useState<SavedAccount[]>([]);
+    const [showAccountSwitcher, setShowAccountSwitcher] = React.useState(false);
+    const [showAddAccount, setShowAddAccount] = React.useState(false);
+    const [currentUserId, setCurrentUserId] = React.useState<string | null>(null);
 
     const fetchSealedCount = React.useCallback(async () => {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session?.user) return;
+        setCurrentUserId(session.user.id);
         const { count } = await supabase
             .from('capsules')
             .select('*', { count: 'exact', head: true })
@@ -153,6 +153,17 @@ export default function TabBar(props: any) {
             .eq('status', 'sealed');
         setSealedCount(count || 0);
     }, []);
+
+    const loadAccounts = React.useCallback(async () => {
+        await multiAccountService.saveCurrentAccount();
+        const accs = await multiAccountService.getAccounts();
+        setAccounts(accs);
+    }, []);
+
+    const onProfileLongPress = React.useCallback(() => {
+        loadAccounts();
+        setShowAccountSwitcher(true);
+    }, [loadAccounts]);
 
 
     const fetchUnread = React.useCallback(async () => {
@@ -225,10 +236,89 @@ export default function TabBar(props: any) {
                             navigation={navigation}
                             cfg={cfg}
                             hasBadge={cfg.name === 'Notifications' && unreadCount > 0}
+                            onProfileLongPress={onProfileLongPress}
                         />
                     );
                 })}
             </View>
+
+            {/* Account Switcher Modal */}
+            <Modal 
+                visible={showAccountSwitcher} 
+                transparent 
+                animationType="slide"
+                onRequestClose={() => setShowAccountSwitcher(false)}
+            >
+                <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+                    <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setShowAccountSwitcher(false)} />
+                    
+                    <View style={{ backgroundColor: Colors.surface, borderTopLeftRadius: 30, borderTopRightRadius: 30, padding: 20, paddingBottom: 40, elevation: 10, shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.1, shadowRadius: 10 }}>
+                        <View style={{ width: 40, height: 4, backgroundColor: '#E0E0E0', borderRadius: 2, alignSelf: 'center', marginBottom: 20 }} />
+                        <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 20, textAlign: 'center', color: Colors.textPrimary }}>{t('profile.switch_profile', 'Cambiar perfil')}</Text>
+                        
+                        <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 400 }}>
+                            {accounts.length === 0 ? (
+                                <ActivityIndicator size="small" color={PURPLE} style={{ marginVertical: 20 }} />
+                            ) : (
+                                accounts.map(acc => (
+                                    <TouchableOpacity 
+                                        key={acc.id}
+                                        style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: Colors.border + '33' }}
+                                        onPress={async () => {
+                                            await multiAccountService.saveCurrentAccount();
+                                            await multiAccountService.switchAccount(acc.id);
+                                            setShowAccountSwitcher(false);
+                                            navigation.navigate('Profile');
+                                        }}
+                                    >
+                                        <View style={[
+                                            { width: 44, height: 44, borderRadius: 22, padding: 2, backgroundColor: Colors.surface, elevation: 2 },
+                                            acc.id === currentUserId && { backgroundColor: PURPLE }
+                                        ]}>
+                                            <Image 
+                                                source={{ uri: acc.avatar_url || 'https://via.placeholder.com/150' }} 
+                                                style={{ width: '100%', height: '100%', borderRadius: 20, borderWidth: 1, borderColor: '#fff' }} 
+                                            />
+                                        </View>
+                                        <View style={{ flex: 1, marginLeft: 12 }}>
+                                            <Text style={{ fontSize: 16, fontWeight: acc.id === currentUserId ? '700' : '500', color: Colors.textPrimary }}>@{acc.username}</Text>
+                                            <Text style={{ fontSize: 12, color: Colors.textMuted }}>{acc.email}</Text>
+                                        </View>
+                                        {acc.id === currentUserId && (
+                                            <Ionicons name="checkmark-circle" size={24} color={PURPLE} />
+                                        )}
+                                    </TouchableOpacity>
+                                ))
+                            )}
+                            
+                            <TouchableOpacity 
+                                style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 15, marginTop: 10 }}
+                                onPress={async () => {
+                                    setShowAccountSwitcher(false);
+                                    // Give it a tiny delay to let the switcher modal close
+                                    setTimeout(() => setShowAddAccount(true), 300);
+                                }}
+                            >
+                                <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: PURPLE + '15', alignItems: 'center', justifyContent: 'center', borderStyle: 'dashed', borderWidth: 1, borderColor: PURPLE }}>
+                                    <Ionicons name="add" size={24} color={PURPLE} />
+                                </View>
+                                <Text style={{ marginLeft: 12, fontSize: 16, color: PURPLE, fontWeight: '600' }}>{t('profile.add_account')}</Text>
+                            </TouchableOpacity>
+                        </ScrollView>
+                    </View>
+                </View>
+            </Modal>
+
+            <QuickLoginModal 
+                visible={showAddAccount}
+                onClose={() => setShowAddAccount(false)}
+                onSuccess={() => {
+                    setShowAddAccount(false);
+                    loadAccounts();
+                    // Optional: refresh current screen
+                    navigation.navigate('Profile');
+                }}
+            />
         </View>
     );
 }

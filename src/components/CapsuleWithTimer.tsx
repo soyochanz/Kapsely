@@ -53,18 +53,17 @@ const CapsuleWithTimer = React.memo(({
     const config = configOverride || timerConfigManager.getConfig(modelKey);
     const chainConfig = chainConfigOverride || (chainId ? timerConfigManager.getChainConfig(modelKey, chainId) : null);
 
-    const swingAnim = useRef(new Animated.Value(0)).current;
+    const swingAnim = useRef(new Animated.Value(-1)).current;
     const glintAnim = useRef(new Animated.Value(-1.5)).current;
 
     useEffect(() => {
         if (disableAnimations) return;
 
-        // Pendulum animation
-        swingAnim.setValue(0);
+        // Pendulum animation: Smooth left-to-right-to-left cycle
         Animated.loop(
             Animated.sequence([
-                Animated.timing(swingAnim, { toValue: 1, duration: 3000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-                Animated.timing(swingAnim, { toValue: -1, duration: 3000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+                Animated.timing(swingAnim, { toValue: 1, duration: 6000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+                Animated.timing(swingAnim, { toValue: -1, duration: 6000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
             ])
         ).start();
 

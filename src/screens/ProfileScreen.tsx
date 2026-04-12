@@ -2,12 +2,13 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
     View, Text, StyleSheet, ScrollView, TouchableOpacity,
     StatusBar, Dimensions, ActivityIndicator, Modal, RefreshControl,
-    Linking, Alert, Pressable, Animated, Easing, Platform, Switch
+    Linking, Alert, Pressable, Animated, Easing, Platform, Switch, TextInput
 } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
 
 
 import { Ionicons } from '@expo/vector-icons';
+import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -27,6 +28,7 @@ import { timerConfigManager } from '../utils/timerConfig';
 import { sendPushNotification } from '../utils/pushNotifications';
 import StoryViewer from '../components/StoryViewer';
 import { safetyService } from '../utils/safety';
+import { multiAccountService, SavedAccount } from '../utils/multiAccount';
 
 const { width } = Dimensions.get('window');
 
@@ -176,6 +178,94 @@ export default function ProfileScreen() {
     const [showTerms, setShowTerms] = useState(false);
     const [showPushSettings, setShowPushSettings] = useState(false);
     const [showSupportModal, setShowSupportModal] = useState(false);
+    const [showAccountPanel, setShowAccountPanel] = useState(false);
+    const [accounts, setAccounts] = useState<any[]>([]);
+    const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+    const [deleteConfirmPass, setDeleteConfirmPass] = useState('');
+    const [showDeleteModal, setShowDeleteModal] = useState(false);
+    const [showPasswordChangeModal, setShowPasswordChangeModal] = useState(false);
+    const [newPassword, setNewPassword] = useState('');
+    const [confirmNewPassword, setConfirmNewPassword] = useState('');
+    const [oldPassword, setOldPassword] = useState('');
+    const [savedAccounts, setSavedAccounts] = useState<SavedAccount[]>([]);
+
+    useEffect(() => {
+        if (showAccountPanel) {
+            multiAccountService.getAccounts().then(setSavedAccounts);
+        }
+    }, [showAccountPanel]);
+
+    const handleSwitchAccount = async (accountId: string) => {
+        try {
+            await multiAccountService.saveCurrentAccount();
+            await multiAccountService.switchAccount(accountId);
+            setShowAccountPanel(false);
+            onRefresh();
+        } catch (e: any) {
+            Alert.alert('Error switching', e.message);
+        }
+    };
+
+    const handleDeleteAccount = async () => {
+        if (!deleteConfirmPass) return;
+        setIsDeletingAccount(true);
+        try {
+            const { error: authErr } = await supabase.auth.signInWithPassword({
+                email: profile?.email || '',
+                password: deleteConfirmPass,
+            });
+            if (authErr) throw new Error(t('profile.wrong_password'));
+
+            const { error: delErr } = await supabase.rpc('delete_user_permanently', { user_id_to_delete: currentUserId });
+            
+            if (delErr) {
+               await supabase.from('capsules').delete().eq('owner_id', currentUserId);
+               await supabase.from('profiles').delete().eq('id', currentUserId);
+            }
+
+            await multiAccountService.logoutCurrentAndRemove();
+            setShowDeleteModal(false);
+            Alert.alert(t('common.ready'), t('profile.account_deleted_success'));
+        } catch (e: any) {
+            Alert.alert('Error', e.message);
+        } finally {
+            setIsDeletingAccount(false);
+        }
+    };
+
+    const handleChangePassword = async () => {
+        if (!oldPassword) {
+            Alert.alert('Error', 'Por favor, introduce tu contraseña actual');
+            return;
+        }
+        if (newPassword !== confirmNewPassword) {
+            Alert.alert('Error', 'Las contraseñas no coinciden');
+            return;
+        }
+        if (newPassword.length < 6) {
+            Alert.alert('Error', 'La contraseña debe tener al menos 6 caracteres');
+            return;
+        }
+
+        try {
+            // Verify old password
+            const { error: authErr } = await supabase.auth.signInWithPassword({
+                email: profile?.email || '',
+                password: oldPassword,
+            });
+            if (authErr) throw new Error(t('profile.wrong_password'));
+
+            const { error } = await supabase.auth.updateUser({ password: newPassword });
+            if (error) throw error;
+            Alert.alert('Éxito', 'Contraseña actualizada correctamente');
+            setShowPasswordChangeModal(false);
+            setNewPassword('');
+            setConfirmNewPassword('');
+            setOldPassword('');
+        } catch (e: any) {
+            Alert.alert('Error', e.message);
+        }
+    };
 
     const [pushEnabled, setPushEnabled] = useState(true);
     const [pushComments, setPushComments] = useState(true);
@@ -416,6 +506,7 @@ export default function ProfileScreen() {
             }
         }
     };
+
 
     const handleRequestVerification = async () => {
         if (!currentUserId || profile?.verification_status === 'pending' || profile?.is_verified) return;
@@ -842,28 +933,21 @@ export default function ProfileScreen() {
                         <Text style={s.sheetTitle}>{t('profile.settings')}</Text>
 
                         {[
+                            { icon: 'person-circle-outline', color: Colors.primary, label: 'Panel de cuenta', onPress: () => { setShowSettings(false); setShowAccountPanel(true); } },
                             { icon: 'sparkles-outline', color: Colors.primary, label: t('profile.personalizeProfile'), onPress: () => { setShowSettings(false); navigation.navigate('PersonalizeProfile'); } },
-                            { icon: 'person-outline', color: Colors.textSecondary, label: t('profile.editProfile'), onPress: () => { setShowSettings(false); setShowEdit(true); } },
                             { icon: 'language-outline', color: Colors.textSecondary, label: t('profile.language'), value: i18n.language === 'es' ? 'Español' : 'English', onPress: () => { setShowSettings(false); setShowLanguageSettings(true); } },
                             { icon: 'notifications-outline', color: Colors.textSecondary, label: t('profile.push_notifications', 'Notificaciones Push'), onPress: () => { setShowSettings(false); setShowPushSettings(true); } },
                             { icon: 'help-buoy-outline', color: Colors.textSecondary, label: t('profile.support', 'Ayuda y Soporte'), onPress: () => { setShowSettings(false); setShowSupportModal(true); } },
-                            { icon: 'lock-closed-outline', color: Colors.textSecondary, label: t('profile.security', 'Seguridad'), onPress: () => Alert.alert(t('profile.security', 'Seguridad'), t('profile.securityComingSoon')) },
-                            {
-                                icon: 'checkmark-circle-outline', color: Colors.primary,
-                                label: profile?.is_verified ? t('profile.verifiedAccount') : profile?.verification_status === 'pending' ? t('profile.verificationPending') : t('profile.requestVerification'),
-                                disabled: profile?.verification_status === 'pending' || profile?.is_verified,
-                                onPress: handleRequestVerification
-                            },
                             { icon: 'shield-checkmark-outline', color: Colors.textSecondary, label: t('profile.privacyPolicy'), onPress: () => { setShowSettings(false); setShowPrivacy(true); } },
                             { icon: 'document-text-outline', color: Colors.textSecondary, label: t('profile.termsOfUse'), onPress: () => { setShowSettings(false); setShowTerms(true); } },
                             ...(profile?.is_admin ? [{ icon: 'construct-outline', color: Colors.eventCap, label: 'Admin: Calibration Tool', onPress: () => { setShowSettings(false); navigation.navigate('AdminCalibration'); } }] : []),
                         ].map((item, i) => (
                             <TouchableOpacity
                                 key={i}
-                                style={[s.sheetItem, item.disabled && { opacity: 0.45 }]}
+                                style={[s.sheetItem, (item as any).disabled && { opacity: 0.45 }]}
                                 activeOpacity={0.7}
                                 onPress={item.onPress}
-                                disabled={item.disabled}
+                                disabled={(item as any).disabled}
                             >
                                 <View style={[s.sheetItemIcon, { backgroundColor: (item.color || Colors.textSecondary) + '12' }]}>
                                     <Ionicons name={item.icon as any} size={17} color={item.color || Colors.textSecondary} />
@@ -884,6 +968,179 @@ export default function ProfileScreen() {
                         <Text style={s.appVersion}>kapsely v{Constants.expoConfig?.version || '1.0.0'}</Text>
                     </Pressable>
                 </Pressable>
+            </Modal>
+
+            {/* Account Panel Modal */}
+            <Modal
+                visible={showAccountPanel}
+                transparent
+                animationType="slide"
+            >
+                <View style={s.overlay}>
+                    <TouchableOpacity 
+                        style={StyleSheet.absoluteFill} 
+                        activeOpacity={1} 
+                        onPress={() => setShowAccountPanel(false)}
+                    >
+                        <BlurView intensity={20} style={StyleSheet.absoluteFill} />
+                    </TouchableOpacity>
+
+                    <Animated.View style={[s.sheet, { backgroundColor: Colors.surface + 'F0', borderRadius: 30, paddingHorizontal: 20 }]}>
+                        <View style={s.sheetHandle} />
+                        <View style={s.sheetNav}>
+                            <TouchableOpacity onPress={() => setShowAccountPanel(false)} style={s.sheetNavBack}>
+                                <Ionicons name="close" size={24} color={Colors.textPrimary} />
+                            </TouchableOpacity>
+                            <Text style={[s.sheetNavTitle, { fontWeight: '700' }]}>{t('profile.account_panel')}</Text>
+                        </View>
+                        
+                        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+                            <Text style={[s.pushSectionLabel, { marginBottom: 15, fontSize: 13, opacity: 0.6 }]}>{t('profile.profiles')}</Text>
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 25 }}>
+                                {savedAccounts.map(acc => (
+                                    <TouchableOpacity 
+                                        key={acc.id} 
+                                        onPress={() => {
+                                            setShowAccountPanel(false);
+                                            handleSwitchAccount(acc.id);
+                                        }}
+                                        style={{ alignItems: 'center', marginRight: 20 }}
+                                    >
+                                        <View style={[
+                                            { width: 70, height: 70, borderRadius: 35, padding: 3, backgroundColor: Colors.surface, elevation: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 8 },
+                                            acc.id === currentUserId && { backgroundColor: Colors.primary }
+                                        ]}>
+                                            <Image 
+                                                source={{ uri: acc.avatar_url || 'https://via.placeholder.com/150' }} 
+                                                style={{ width: '100%', height: '100%', borderRadius: 32, borderWidth: 2, borderColor: '#fff' }} 
+                                            />
+                                            {acc.id === currentUserId && (
+                                                <View style={{ position: 'absolute', bottom: 0, right: 0, backgroundColor: Colors.success, borderRadius: 10, width: 20, height: 20, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#fff' }}>
+                                                    <Ionicons name="checkmark" size={12} color="#fff" />
+                                                </View>
+                                            )}
+                                        </View>
+                                        <Text style={[s.accUsername, { marginTop: 8, fontWeight: acc.id === currentUserId ? '700' : '400' }]} numberOfLines={1}>@{acc.username}</Text>
+                                    </TouchableOpacity>
+                                ))}
+                                <TouchableOpacity 
+                                    onPress={async () => { 
+                                        await multiAccountService.saveCurrentAccount();
+                                        await supabase.auth.signOut();
+                                        setShowAccountPanel(false); 
+                                    }}
+                                    style={{ alignItems: 'center' }}
+                                >
+                                    <View style={{ width: 70, height: 70, borderRadius: 35, backgroundColor: Colors.primary + '15', alignItems: 'center', justifyContent: 'center', borderStyle: 'dashed', borderWidth: 1, borderColor: Colors.primary }}>
+                                        <Ionicons name="add" size={30} color={Colors.primary} />
+                                    </View>
+                                    <Text style={[s.accUsername, { marginTop: 8, color: Colors.primary }]}>{t('profile.add_account')}</Text>
+                                </TouchableOpacity>
+                            </ScrollView>
+
+                            <Text style={[s.pushSectionLabel, { marginBottom: 10, fontSize: 13, opacity: 0.6 }]}>{t('profile.security_and_account')}</Text>
+                            
+                            <View style={{ backgroundColor: Colors.surface, borderRadius: 20, overflow: 'hidden', padding: 5 }}>
+                                <TouchableOpacity 
+                                    style={s.sheetItem} 
+                                    activeOpacity={0.7} 
+                                    onPress={() => {
+                                        setShowAccountPanel(false);
+                                        setTimeout(() => setShowPasswordChangeModal(true), 300);
+                                    }}
+                                >
+                                    <View style={[s.sheetItemIcon, { backgroundColor: Colors.primary + '15' }]}>
+                                        <Ionicons name="finger-print" size={18} color={Colors.primary} />
+                                    </View>
+                                    <Text style={s.sheetItemText}>{t('profile.change_password')}</Text>
+                                    <Ionicons name="chevron-forward" size={16} color={Colors.textMuted} />
+                                </TouchableOpacity>
+
+                                <View style={{ height: 1, backgroundColor: Colors.border, marginHorizontal: 50, opacity: 0.3 }} />
+
+                                <TouchableOpacity 
+                                    style={s.sheetItem} 
+                                    activeOpacity={0.7} 
+                                    onPress={() => {
+                                        setShowAccountPanel(false);
+                                        setTimeout(() => setShowDeleteModal(true), 300);
+                                    }}
+                                >
+                                    <View style={[s.sheetItemIcon, { backgroundColor: Colors.error + '15' }]}>
+                                        <Ionicons name="trash" size={18} color={Colors.error} />
+                                    </View>
+                                    <Text style={[s.sheetItemText, { color: Colors.error }]}>{t('profile.delete_account_final_btn')}</Text>
+                                    <Ionicons name="chevron-forward" size={16} color={Colors.textMuted} />
+                                </TouchableOpacity>
+                            </View>
+                        </ScrollView>
+                    </Animated.View>
+                </View>
+            </Modal>
+
+            {/* Password Change Modal */}
+            <Modal visible={showPasswordChangeModal} transparent animationType="fade">
+                <View style={s.overlay}>
+                    <View style={[s.sheet, { paddingBottom: 20 }]}>
+                        <Text style={s.sheetTitle}>{t('profile.change_password')}</Text>
+                        <TextInput
+                            secureTextEntry
+                            placeholder={t('profile.old_password', 'Contraseña actual')}
+                            style={[s.sheetItem, { borderBottomWidth: 1, paddingHorizontal: 10 }]}
+                            value={oldPassword}
+                            onChangeText={setOldPassword}
+                        />
+                        <TextInput
+                            secureTextEntry
+                            placeholder={t('profile.new_password')}
+                            style={[s.sheetItem, { borderBottomWidth: 1, paddingHorizontal: 10, marginTop: 10 }]}
+                            value={newPassword}
+                            onChangeText={setNewPassword}
+                        />
+                        <TextInput
+                            secureTextEntry
+                            placeholder={t('profile.confirm_new_password')}
+                            style={[s.sheetItem, { borderBottomWidth: 1, paddingHorizontal: 10, marginTop: 10 }]}
+                            value={confirmNewPassword}
+                            onChangeText={setConfirmNewPassword}
+                        />
+                        <TouchableOpacity style={[s.primaryBtn, { backgroundColor: Colors.primary, marginTop: 20 }]} onPress={handleChangePassword}>
+                            <Text style={s.primaryBtnText}>{t('profile.update_password')}</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={s.cancelBtn} onPress={() => setShowPasswordChangeModal(false)}>
+                            <Text style={s.cancelBtnText}>{t('common.cancel')}</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* Account Deletion Modal */}
+            <Modal visible={showDeleteModal} transparent animationType="fade">
+                <View style={s.overlay}>
+                    <View style={[s.sheet, { paddingBottom: 20 }]}>
+                        <Text style={[s.sheetTitle, { color: Colors.error }]}>{t('profile.deleteAccount')}</Text>
+                        <Text style={{ fontSize: 14, color: Colors.textSecondary, marginBottom: 20 }}>
+                            {t('profile.delete_account_desc')}
+                        </Text>
+                        <TextInput
+                            secureTextEntry
+                            placeholder={t('profile.confirm_new_password')}
+                            style={[s.sheetItem, { borderBottomWidth: 1, paddingHorizontal: 10 }]}
+                            value={deleteConfirmPass}
+                            onChangeText={setDeleteConfirmPass}
+                        />
+                        <TouchableOpacity 
+                            style={[s.primaryBtn, { backgroundColor: Colors.error, marginTop: 20 }]} 
+                            onPress={handleDeleteAccount}
+                            disabled={isDeletingAccount || !deleteConfirmPass}
+                        >
+                            {isDeletingAccount ? <ActivityIndicator color="#fff" /> : <Text style={s.primaryBtnText}>{t('profile.delete_account_final_btn')}</Text>}
+                        </TouchableOpacity>
+                        <TouchableOpacity style={s.cancelBtn} onPress={() => setShowDeleteModal(false)}>
+                            <Text style={s.cancelBtnText}>{t('common.cancel')}</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
             </Modal>
 
             {/* Support Ticket Modal */}

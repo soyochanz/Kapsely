@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { 
-    View, Text, StyleSheet, TouchableOpacity, 
+import {
+    View, Text, StyleSheet, TouchableOpacity,
     TextInput, Modal, ScrollView, Dimensions, Pressable,
     PanResponder, Animated, Platform
 } from 'react-native';
@@ -9,73 +9,308 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors, Fonts } from '../theme';
 import { BlurView } from 'expo-blur';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import GiphyPicker from './GiphyPicker';
+import { locationService } from '../utils/location';
 
 const { width, height } = Dimensions.get('window');
 
+// ── Zona de borrado ────────────────────────────────────────────────────────────
+// Tamaño del área de impacto para detectar si el item está "sobre" la X
+const TRASH_HIT_SIZE = 70;
+// Posición fija desde el fondo del canvas (px desde abajo)
+const TRASH_BOTTOM_OFFSET = 60;
+
 const FILTERS = [
     { id: 'none', label: 'Original', color: 'transparent' },
-    { id: 'vintage', label: 'Vintage', color: 'rgba(230, 190, 120, 0.25)' },
-    { id: 'warm', label: 'Warm', color: 'rgba(255, 150, 50, 0.18)' },
-    { id: 'cool', label: 'Cool', color: 'rgba(0, 150, 255, 0.18)' },
-    { id: 'dark', label: 'Dark', color: 'rgba(0, 0, 0, 0.4)' },
-    { id: 'noir', label: 'B&W', color: 'rgba(0, 0, 0, 0.3)', grayscale: true },
+    { id: 'vintage', label: 'Vintage', color: 'rgba(230,190,120,0.25)' },
+    { id: 'warm', label: 'Warm', color: 'rgba(255,150,50,0.18)' },
+    { id: 'cool', label: 'Cool', color: 'rgba(0,150,255,0.18)' },
+    { id: 'dark', label: 'Dark', color: 'rgba(0,0,0,0.4)' },
+    { id: 'noir', label: 'B&W', color: 'rgba(0,0,0,0.3)', grayscale: true },
 ];
 
-export default function StoryEditor({ item, onCancel, onConfirm }: { item: any, onCancel: () => void, onConfirm: (metadata: any) => void }) {
+// ── Fuentes con nombres originales ────────────────────────────────────────────
+// "fontFamily" apunta a las familias que tengas cargadas en tu proyecto.
+// Ajusta los valores de fontFamily a los que uses; los "label" son los
+// nombres creativos que verá el usuario.
+const TEXT_STYLES = [
+    { id: 'neon', label: '⚡ Spark', fontFamily: Fonts.bold, italic: false },
+    { id: 'ghost', label: '👻 Ghost', fontFamily: Fonts.regular, italic: true },
+    { id: 'titan', label: '🗿 Titan', fontFamily: Fonts.bold, italic: false },
+    { id: 'velvet', label: '🌹 Velvet', fontFamily: Fonts.medium, italic: true },
+    { id: 'pixel', label: '🕹 Pixel', fontFamily: Fonts.semiBold, italic: false },
+    { id: 'aurora', label: '🌌 Aurora', fontFamily: Fonts.light ?? Fonts.regular, italic: true },
+    { id: 'brute', label: '🔩 Brute', fontFamily: Fonts.bold, italic: false },
+];
+
+const TEXT_BG_OPTIONS = [
+    { id: 'none', label: 'None', value: 'transparent' },
+    { id: 'dark', label: 'Dark', value: 'rgba(0,0,0,0.55)' },
+    { id: 'white', label: 'White', value: 'rgba(255,255,255,0.75)' },
+    { id: 'blur', label: 'Blur', value: 'rgba(30,20,60,0.6)' },
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Calcula si las coordenadas absolutas de pantalla (moveX, moveY) están
+// sobre la zona de borrado, dado el layout del canvas.
+// ─────────────────────────────────────────────────────────────────────────────
+function isOverTrashZone(
+    moveX: number, moveY: number,
+    canvasLayout: { x: number; y: number; width: number; height: number }
+) {
+    // Centro horizontal de pantalla
+    const trashCX = canvasLayout.x + canvasLayout.width / 2;
+    // Fondo del canvas menos el offset
+    const trashCY = canvasLayout.y + canvasLayout.height - TRASH_BOTTOM_OFFSET - TRASH_HIT_SIZE / 2;
+
+    return (
+        Math.abs(moveX - trashCX) < TRASH_HIT_SIZE &&
+        Math.abs(moveY - trashCY) < TRASH_HIT_SIZE
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DraggableItem — usa las coordenadas absolutas de moveX/moveY para comparar
+// contra la zona de borrado, eliminando el offset acumulado del layout.
+// ─────────────────────────────────────────────────────────────────────────────
+const DraggableItem = ({
+    item, onDelete, onDragStateChange,
+    initialX = 0, initialY = 0,
+    imgContainerLayout, children
+}: any) => {
+    const pan = useRef(new Animated.ValueXY()).current;
+    const [isDragging, setIsDragging] = useState(false);
+    const initialDist = useRef(0);
+    const initialScale = useRef(1);
+    const initialAngle = useRef(0);
+    const initialRot = useRef(0);
+
+    const panResponder = useRef(
+        PanResponder.create({
+            onStartShouldSetPanResponder: () => true,
+            onMoveShouldSetPanResponder: () => true,
+
+            onPanResponderGrant: () => {
+                pan.setOffset({ x: (pan.x as any)._value, y: (pan.y as any)._value });
+                pan.setValue({ x: 0, y: 0 });
+            },
+
+            onPanResponderMove: (e, gestureState) => {
+                const touches = e.nativeEvent.touches;
+
+                if (touches.length === 2) {
+                    // ── Pinch + rotate ──────────────────────────────────────
+                    const dist = Math.sqrt(
+                        Math.pow(touches[1].pageX - touches[0].pageX, 2) +
+                        Math.pow(touches[1].pageY - touches[0].pageY, 2)
+                    );
+                    const angle = Math.atan2(
+                        touches[1].pageY - touches[0].pageY,
+                        touches[1].pageX - touches[0].pageX
+                    ) * 180 / Math.PI;
+
+                    if (!initialDist.current) {
+                        initialDist.current = dist;
+                        initialScale.current = (item.scale as any)?._value ?? 1;
+                        initialAngle.current = angle;
+                        initialRot.current = (item.rotation as any)?._value ?? 0;
+                    } else {
+                        item.scale.setValue(
+                            Math.max(0.3, Math.min(initialScale.current * (dist / initialDist.current), 5))
+                        );
+                        item.rotation.setValue(initialRot.current + (angle - initialAngle.current));
+                    }
+                } else {
+                    // ── Drag ────────────────────────────────────────────────
+                    pan.x.setValue(gestureState.dx);
+                    pan.y.setValue(gestureState.dy);
+
+                    if (!isDragging) setIsDragging(true);
+
+                    // ✅ Pasamos moveX/moveY absolutos; el cálculo se hace
+                    //    en isOverTrashZone con el layout del canvas
+                    onDragStateChange?.(true, {
+                        x: gestureState.moveX,
+                        y: gestureState.moveY,
+                    });
+                }
+            },
+
+            onPanResponderRelease: (e, gestureState) => {
+                setIsDragging(false);
+                initialDist.current = 0;
+                initialAngle.current = 0;
+
+                // ✅ Usamos las coordenadas absolutas finales del dedo
+                const over = isOverTrashZone(
+                    gestureState.moveX,
+                    gestureState.moveY,
+                    imgContainerLayout
+                );
+
+                onDragStateChange?.(false, { x: 0, y: 0 });
+
+                if (over) {
+                    onDelete?.(item.id);
+                } else {
+                    pan.flattenOffset();
+                    // Guarda posición relativa para persistencia
+                    item.x = (initialX + (pan.x as any)._value) / width;
+                    item.y = (initialY + (pan.y as any)._value) / height;
+                }
+            },
+
+            onPanResponderTerminate: () => {
+                setIsDragging(false);
+                initialDist.current = 0;
+                onDragStateChange?.(false, { x: 0, y: 0 });
+                pan.flattenOffset();
+            },
+        })
+    ).current;
+
+    return (
+        <Animated.View
+            {...panResponder.panHandlers}
+            style={[
+                st.draggable,
+                {
+                    left: initialX,
+                    top: initialY,
+                    transform: [
+                        { translateX: pan.x },
+                        { translateY: pan.y },
+                        { scale: item.scale || 1 },
+                        {
+                            rotate: (item.rotation || new Animated.Value(0)).interpolate({
+                                inputRange: [-360, 360],
+                                outputRange: ['-360deg', '360deg'],
+                            }),
+                        },
+                    ],
+                    opacity: isDragging ? 0.75 : 1,
+                    zIndex: isDragging ? 999 : 1,
+                },
+            ]}
+        >
+            {children}
+        </Animated.View>
+    );
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+export default function StoryEditor({
+    item, onCancel, onConfirm
+}: {
+    item: any;
+    onCancel: () => void;
+    onConfirm: (metadata: any) => void;
+}) {
+    const insets = useSafeAreaInsets();
+
     const [filter, setFilter] = useState('none');
     const [texts, setTexts] = useState<any[]>([]);
+    const [stickers, setStickers] = useState<any[]>([]);
+
+    const [draggingAny, setDraggingAny] = useState(false);
+    const [isOverTrash, setIsOverTrash] = useState(false);
+
     const [selectedTextId, setSelectedTextId] = useState<string | null>(null);
+    const [selectedStickerId, setSelectedStickerId] = useState<string | null>(null);
+
     const [currentText, setCurrentText] = useState('');
     const [textColor, setTextColor] = useState('#ffffff');
-    const [textBg, setTextBg] = useState('rgba(0,0,0,0.5)');
-    const [fontSize, setFontSize] = useState(24);
+    const [textBgId, setTextBgId] = useState('dark');
+    const [fontSize, setFontSize] = useState(26);
+    const [textStyleId, setTextStyleId] = useState('titan');
 
     const [location, setLocation] = useState<any>(null);
     const [locationModalVisible, setLocationModalVisible] = useState(false);
     const [tempLocation, setTempLocation] = useState('');
+    const [giphyVisible, setGiphyVisible] = useState(false);
 
-    const [imgContainerLayout, setImgContainerLayout] = useState({ width: 0, height: 0 });
+    // ✅ Layout del canvas (coordenadas absolutas en pantalla)
+    const [canvasLayout, setCanvasLayout] = useState({ x: 0, y: 0, width, height: height * 0.78 });
 
+    const handleDragStateChange = (isDragging: boolean, coords: { x: number; y: number }) => {
+        setDraggingAny(isDragging);
+        if (isDragging) {
+            setIsOverTrash(isOverTrashZone(coords.x, coords.y, canvasLayout));
+        } else {
+            setIsOverTrash(false);
+        }
+    };
+
+    // ── Text ──────────────────────────────────────────────────────────────────
     const handleAddText = () => {
         const id = Date.now().toString();
         const newText = {
             id,
-            text: 'Tap to edit',
-            x: 0.5,
-            y: 0.4,
+            text: 'Escribe algo...',
+            x: 0.5, y: 0.4,
             color: '#ffffff',
-            bg: 'rgba(0,0,0,0.5)',
-            fontSize: 24,
-            pan: new Animated.ValueXY({ x: 0, y: 0 })
+            bgId: 'dark',
+            fontSize: 26,
+            styleId: 'titan',
+            scale: new Animated.Value(1),
+            rotation: new Animated.Value(0),
         };
-        setTexts([...texts, newText]);
+        setTexts(prev => [...prev, newText]);
         setSelectedTextId(id);
-        setCurrentText('Tap to edit');
+        setSelectedStickerId(null);
+        setCurrentText(newText.text);
+        setTextColor(newText.color);
+        setTextBgId(newText.bgId);
+        setTextStyleId(newText.styleId);
+        setFontSize(newText.fontSize);
     };
 
     const handleConfirmText = () => {
         if (!currentText.trim()) {
-            setTexts(texts.filter(t => t.id !== selectedTextId));
+            setTexts(prev => prev.filter(t => t.id !== selectedTextId));
         } else {
-            setTexts(texts.map(t => t.id === selectedTextId ? {
-                ...t,
-                text: currentText.trim(),
-                color: textColor,
-                bg: textBg,
-                fontSize
-            } : t));
+            setTexts(prev => prev.map(t =>
+                t.id === selectedTextId
+                    ? { ...t, text: currentText.trim(), color: textColor, bgId: textBgId, fontSize, styleId: textStyleId }
+                    : t
+            ));
         }
         setSelectedTextId(null);
         setCurrentText('');
     };
 
+    const openTextEdit = (t: any) => {
+        setSelectedTextId(t.id);
+        setSelectedStickerId(null);
+        setCurrentText(t.text);
+        setTextColor(t.color);
+        setTextBgId(t.bgId ?? 'dark');
+        setTextStyleId(t.styleId ?? 'titan');
+        setFontSize(t.fontSize ?? 26);
+    };
+
+    // ── Stickers ──────────────────────────────────────────────────────────────
+    const handleAddSticker = (giphy: any) => {
+        const id = Date.now().toString();
+        setStickers(prev => [...prev, {
+            id, url: giphy.images.fixed_width.url,
+            x: 0.5, y: 0.5,
+            scale: new Animated.Value(1),
+            rotation: new Animated.Value(0),
+        }]);
+        setGiphyVisible(false);
+    };
+
+    // ── Location ──────────────────────────────────────────────────────────────
     const handleConfirmLocation = () => {
         if (tempLocation.trim()) {
             setLocation({
+                id: 'loc',
                 text: tempLocation.trim(),
-                x: 0.5,
-                y: 0.2,
-                pan: new Animated.ValueXY({ x: 0, y: 0 })
+                x: 0.5, y: 0.2,
+                scale: new Animated.Value(1),
+                rotation: new Animated.Value(0),
             });
         } else {
             setLocation(null);
@@ -83,146 +318,45 @@ export default function StoryEditor({ item, onCancel, onConfirm }: { item: any, 
         setLocationModalVisible(false);
     };
 
+    // ── Confirm ───────────────────────────────────────────────────────────────
     const handleConfirm = () => {
         const metadata = {
             filter,
-            texts: texts.map(t => {
-                const panX = (t.pan.x as any)._value || 0;
-                const panY = (t.pan.y as any)._value || 0;
-                return {
-                    id: t.id,
-                    text: t.text,
-                    color: t.color,
-                    bg: t.bg,
-                    fontSize: t.fontSize,
-                    x: t.x + (panX / imgContainerLayout.width),
-                    y: t.y + (panY / imgContainerLayout.height)
-                };
-            }),
+            texts: texts.map(t => ({
+                id: t.id, text: t.text, color: t.color, bgId: t.bgId,
+                fontSize: t.fontSize, styleId: t.styleId,
+                scale: t.scale?._value ?? 1, rotation: t.rotation?._value ?? 0,
+                x: t.x || 0.5, y: t.y || 0.4,
+            })),
+            stickers: stickers.map(s => ({
+                id: s.id, url: s.url,
+                scale: s.scale?._value ?? 1, rotation: s.rotation?._value ?? 0,
+                x: s.x || 0.5, y: s.y || 0.5,
+            })),
             location: location ? {
                 text: location.text,
-                x: location.x + ((location.pan.x as any)._value / imgContainerLayout.width),
-                y: location.y + ((location.pan.y as any)._value / imgContainerLayout.height)
-            } : null
+                scale: location.scale?._value ?? 1, rotation: location.rotation?._value ?? 0,
+                x: location.x || 0.5, y: location.y || 0.2,
+            } : null,
         };
         onConfirm(metadata);
     };
 
-    // ─── Sub-components ────────────────────────────────────────────────────────
-    
-    const DraggableText = ({ item }: { item: any }) => {
-        const lastOffset = useRef({ x: 0, y: 0 });
-        const panResponder = useRef(
-            PanResponder.create({
-                onStartShouldSetPanResponder: () => true,
-                onMoveShouldSetPanResponder: () => true,
-                onPanResponderGrant: () => {
-                    item.pan.setOffset({ x: lastOffset.current.x, y: lastOffset.current.y });
-                    item.pan.setValue({ x: 0, y: 0 });
-                },
-                onPanResponderMove: Animated.event([null, { dx: item.pan.x, dy: item.pan.y }], { useNativeDriver: false }),
-                onPanResponderRelease: () => {
-                    item.pan.flattenOffset();
-                    lastOffset.current = { x: (item.pan.x as any)._value, y: (item.pan.y as any)._value };
-                },
-            })
-        ).current;
-
-        return (
-            <Animated.View
-                {...panResponder.panHandlers}
-                style={[
-                    st.draggable,
-                    {
-                        top: item.y * imgContainerLayout.height,
-                        left: item.x * imgContainerLayout.width,
-                        transform: [
-                            { translateX: item.pan.x },
-                            { translateY: item.pan.y },
-                            { translateX: -50 } 
-                        ]
-                    }
-                ]}
-            >
-                <TouchableOpacity 
-                    activeOpacity={0.9} 
-                    onLongPress={() => {
-                        setSelectedTextId(item.id);
-                        setCurrentText(item.text);
-                        setTextColor(item.color);
-                        setTextBg(item.bg);
-                        setFontSize(item.fontSize);
-                    }}
-                >
-                    <View style={[st.textBubble, { backgroundColor: item.bg }]}>
-                        <Text style={[st.draggableText, { color: item.color, fontSize: item.fontSize }]}>
-                            {item.text}
-                        </Text>
-                    </View>
-                </TouchableOpacity>
-            </Animated.View>
-        );
-    };
-
-    const DraggableLocation = ({ item }: { item: any }) => {
-        const lastOffset = useRef({ x: 0, y: 0 });
-        const panResponder = useRef(
-            PanResponder.create({
-                onStartShouldSetPanResponder: () => true,
-                onMoveShouldSetPanResponder: () => true,
-                onPanResponderGrant: () => {
-                    item.pan.setOffset({ x: lastOffset.current.x, y: lastOffset.current.y });
-                    item.pan.setValue({ x: 0, y: 0 });
-                },
-                onPanResponderMove: Animated.event([null, { dx: item.pan.x, dy: item.pan.y }], { useNativeDriver: false }),
-                onPanResponderRelease: () => {
-                    item.pan.flattenOffset();
-                    lastOffset.current = { x: (item.pan.x as any)._value, y: (item.pan.y as any)._value };
-                },
-            })
-        ).current;
-
-        return (
-            <Animated.View
-                {...panResponder.panHandlers}
-                style={[
-                    st.draggable,
-                    {
-                        top: item.y * imgContainerLayout.height,
-                        left: item.x * imgContainerLayout.width,
-                        transform: [
-                            { translateX: item.pan.x },
-                            { translateY: item.pan.y },
-                            { translateX: -60 }
-                        ]
-                    }
-                ]}
-            >
-                <TouchableOpacity 
-                    activeOpacity={0.9} 
-                    onLongPress={() => {
-                        setTempLocation(item.text);
-                        setLocationModalVisible(true);
-                    }}
-                >
-                    <LinearGradient
-                        colors={[Colors.primary, Colors.primaryDark]}
-                        start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-                        style={st.locationPill}
-                    >
-                        <Ionicons name="location" size={14} color="#fff" />
-                        <Text style={st.locationText}>{item.text}</Text>
-                    </LinearGradient>
-                </TouchableOpacity>
-            </Animated.View>
-        );
-    };
+    const currentFilter = FILTERS.find(f => f.id === filter);
+    const currentBg = TEXT_BG_OPTIONS.find(b => b.id === textBgId)?.value ?? 'rgba(0,0,0,0.55)';
+    const currentFontDef = TEXT_STYLES.find(s => s.id === textStyleId);
 
     return (
         <View style={st.container}>
-            <View 
-                style={st.canvas} 
-                onLayout={e => setImgContainerLayout({ width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height })}
+            {/* ── Canvas ──────────────────────────────────────────────────── */}
+            <View
+                style={st.canvas}
+                onLayout={e => {
+                    e.target.measure((_x, _y, w, h, pageX, pageY) => {
+                        // measure() nos da coordenadas absolutas en pantalla ✅
+                        setCanvasLayout({ x: pageX, y: pageY, width: w, height: h });
+                    });
+                }}
             >
                 <Image
                     source={{ uri: item.media_url }}
@@ -231,30 +365,119 @@ export default function StoryEditor({ item, onCancel, onConfirm }: { item: any, 
                     cachePolicy="memory-disk"
                 />
 
-                {/* Filter overlays */}
-                {filter !== 'none' && (
-                    <View style={[StyleSheet.absoluteFill, {
-                        backgroundColor: 
-                            filter === 'vintage' ? 'rgba(230,190,120,0.25)' :
-                            filter === 'warm' ? 'rgba(255,150,50,0.18)' :
-                            filter === 'cool' ? 'rgba(0,150,255,0.18)' :
-                            filter === 'dark' ? 'rgba(0,0,0,0.4)' : 'transparent',
-                        pointerEvents: 'none'
-                    } as any]} />
+                {/* Filter overlay */}
+                {filter !== 'none' && currentFilter && (
+                    <View
+                        style={[StyleSheet.absoluteFill, {
+                            backgroundColor: currentFilter.color,
+                        } as any]}
+                        pointerEvents="none"
+                    />
                 )}
 
-                {/* Stickers / Overlays */}
-                {texts.map(t => <DraggableText key={t.id} item={t} />)}
-                {location && <DraggableLocation item={location} />}
+                {/* Texts */}
+                {texts.map(t => {
+                    const fd = TEXT_STYLES.find(s => s.id === t.styleId);
+                    const bgVal = TEXT_BG_OPTIONS.find(b => b.id === t.bgId)?.value ?? 'rgba(0,0,0,0.55)';
+                    return (
+                        <DraggableItem
+                            key={t.id}
+                            item={t}
+                            imgContainerLayout={canvasLayout}
+                            onDragStateChange={handleDragStateChange}
+                            onDelete={(id: string) => setTexts(prev => prev.filter(x => x.id !== id))}
+                            initialX={(t.x || 0.5) * width}
+                            initialY={(t.y || 0.4) * (canvasLayout.height || height * 0.78)}
+                        >
+                            <TouchableOpacity activeOpacity={0.9} onPress={() => openTextEdit(t)}>
+                                <View style={[
+                                    st.textBubble,
+                                    bgVal !== 'transparent' && { backgroundColor: bgVal },
+                                ]}>
+                                    <Text style={[
+                                        st.draggableText,
+                                        {
+                                            color: t.color,
+                                            fontSize: t.fontSize,
+                                            fontFamily: fd?.fontFamily || Fonts.bold,
+                                            fontStyle: fd?.italic ? 'italic' : 'normal',
+                                        },
+                                    ]}>
+                                        {t.text}
+                                    </Text>
+                                </View>
+                            </TouchableOpacity>
+                        </DraggableItem>
+                    );
+                })}
+
+                {/* Stickers */}
+                {stickers.map(s => (
+                    <DraggableItem
+                        key={s.id}
+                        item={s}
+                        imgContainerLayout={canvasLayout}
+                        onDragStateChange={handleDragStateChange}
+                        onDelete={(id: string) => setStickers(prev => prev.filter(x => x.id !== id))}
+                        initialX={(s.x || 0.5) * width}
+                        initialY={(s.y || 0.5) * (canvasLayout.height || height * 0.78)}
+                    >
+                        <TouchableOpacity activeOpacity={0.9}>
+                            <Image source={{ uri: s.url }} style={{ width: 120, height: 120 }} contentFit="contain" />
+                        </TouchableOpacity>
+                    </DraggableItem>
+                ))}
+
+                {/* Location */}
+                {location && (
+                    <DraggableItem
+                        item={location}
+                        imgContainerLayout={canvasLayout}
+                        onDragStateChange={handleDragStateChange}
+                        onDelete={() => setLocation(null)}
+                        initialX={(location.x || 0.5) * width}
+                        initialY={(location.y || 0.2) * (canvasLayout.height || height * 0.78)}
+                    >
+                        <TouchableOpacity
+                            activeOpacity={0.9}
+                            onPress={() => { setTempLocation(location.text); setLocationModalVisible(true); }}
+                        >
+                            <LinearGradient
+                                colors={[Colors.primary, Colors.primaryDark]}
+                                start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                                style={st.locationPill}
+                            >
+                                <Ionicons name="location" size={14} color="#fff" />
+                                <Text style={st.locationText}>{location.text}</Text>
+                            </LinearGradient>
+                        </TouchableOpacity>
+                    </DraggableItem>
+                )}
+
+                {/* ✅ Delete zone — posición fija, tamaño generoso */}
+                {draggingAny && (
+                    <View style={[
+                        st.deleteZone,
+                        isOverTrash && st.deleteZoneActive,
+                        { bottom: TRASH_BOTTOM_OFFSET },
+                    ]}>
+                        <LinearGradient
+                            colors={isOverTrash ? ['#ff4b2b', '#ff416c'] : ['rgba(0,0,0,0.55)', 'rgba(0,0,0,0.75)']}
+                            style={st.deleteGrad}
+                        >
+                            <Ionicons name="close" size={isOverTrash ? 44 : 34} color="#fff" />
+                        </LinearGradient>
+                    </View>
+                )}
             </View>
 
-            {/* Toolbar */}
+            {/* ── Toolbar ─────────────────────────────────────────────────── */}
             <View style={st.toolbar}>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={st.toolsContent}>
-                    <TouchableOpacity style={st.toolBtn} onPress={() => setFilter(prev => {
-                        const idx = FILTERS.findIndex(f => f.id === prev);
-                        return FILTERS[(idx + 1) % FILTERS.length].id;
-                    })}>
+                    <TouchableOpacity style={st.toolBtn} onPress={() => {
+                        const idx = FILTERS.findIndex(f => f.id === filter);
+                        setFilter(FILTERS[(idx + 1) % FILTERS.length].id);
+                    }}>
                         <Ionicons name="color-filter-outline" size={20} color="#fff" />
                         <Text style={st.toolLabel}>Filter</Text>
                         <Text style={st.toolValue}>{filter}</Text>
@@ -265,7 +488,15 @@ export default function StoryEditor({ item, onCancel, onConfirm }: { item: any, 
                         <Text style={st.toolLabel}>Text</Text>
                     </TouchableOpacity>
 
-                    <TouchableOpacity style={st.toolBtn} onPress={() => { setTempLocation(location?.text || ''); setLocationModalVisible(true); }}>
+                    <TouchableOpacity style={st.toolBtn} onPress={() => setGiphyVisible(true)}>
+                        <Ionicons name="happy-outline" size={20} color="#fff" />
+                        <Text style={st.toolLabel}>Stickers</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity style={st.toolBtn} onPress={() => {
+                        setTempLocation(location?.text || '');
+                        setLocationModalVisible(true);
+                    }}>
                         <Ionicons name="location-outline" size={20} color="#fff" />
                         <Text style={st.toolLabel}>Location</Text>
                     </TouchableOpacity>
@@ -283,55 +514,116 @@ export default function StoryEditor({ item, onCancel, onConfirm }: { item: any, 
                 </View>
             </View>
 
-            {/* Text Editor Modal */}
-            <Modal visible={!!selectedTextId} transparent animationType="fade">
-                <BlurView intensity={90} tint="dark" style={st.modalRoot}>
-                    <View style={st.modalHeader}>
-                        <View style={{ flex: 1 }} />
-                        <TouchableOpacity onPress={handleConfirmText}>
-                            <Text style={st.modalDone}>Done</Text>
-                        </TouchableOpacity>
+            {/* ── Text Edit Modal ──────────────────────────────────────────── */}
+            <Modal visible={!!selectedTextId} animationType="fade" transparent>
+                <BlurView intensity={80} style={st.modalRoot} tint="dark">
+
+                    {/* Top controls */}
+                    <View style={[st.topTools, { top: insets.top + 12 }]}>
+                        {/* Header row */}
+                        <View style={st.modalHeader}>
+                            <TouchableOpacity onPress={handleConfirmText} style={st.modalNav}>
+                                <Ionicons name="close" size={28} color="#fff" />
+                            </TouchableOpacity>
+                            <TouchableOpacity onPress={handleConfirmText} style={[st.modalNav, { width: 60 }]}>
+                                <Text style={st.modalDone}>Listo</Text>
+                            </TouchableOpacity>
+                        </View>
+
+                        {/* Color picker */}
+                        <View style={st.sectionRow}>
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingHorizontal: 20 }}>
+                                {['#ffffff', '#000000', '#ff4d4d', '#ffb300', '#00f2ff', '#a66eff', '#10b981', '#f472b6', '#fb923c'].map(c => (
+                                    <TouchableOpacity
+                                        key={c}
+                                        style={[st.colorCircle, { backgroundColor: c }, textColor === c && st.colorCircleActive]}
+                                        onPress={() => setTextColor(c)}
+                                    />
+                                ))}
+                            </ScrollView>
+                        </View>
+
+                        {/* Background picker */}
+                        <View style={st.sectionRow}>
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingHorizontal: 20 }}>
+                                {TEXT_BG_OPTIONS.map(b => (
+                                    <TouchableOpacity
+                                        key={b.id}
+                                        style={[st.bgPill, { backgroundColor: b.value === 'transparent' ? 'rgba(255,255,255,0.08)' : b.value }, textBgId === b.id && st.bgPillActive]}
+                                        onPress={() => setTextBgId(b.id)}
+                                    >
+                                        <Text style={[st.bgPillText, textBgId === b.id && { color: '#fff' }]}>{b.label}</Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </ScrollView>
+                        </View>
+
+                        {/* Font / style picker — nombres originales */}
+                        <View style={st.sectionRow}>
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingHorizontal: 20 }}>
+                                {TEXT_STYLES.map(s => (
+                                    <TouchableOpacity
+                                        key={s.id}
+                                        onPress={() => setTextStyleId(s.id)}
+                                        style={[st.stylePill, textStyleId === s.id && st.stylePillActive]}
+                                    >
+                                        <Text style={[
+                                            st.stylePillText,
+                                            {
+                                                fontFamily: s.fontFamily,
+                                                fontStyle: s.italic ? 'italic' : 'normal',
+                                            },
+                                            textStyleId === s.id && st.stylePillTextActive,
+                                        ]}>
+                                            {s.label}
+                                        </Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </ScrollView>
+                        </View>
+
+                        {/* Font size row */}
+                        <View style={[st.sectionRow, { paddingHorizontal: 20, alignItems: 'center', gap: 12 }]}>
+                            <TouchableOpacity onPress={() => setFontSize(p => Math.max(14, p - 2))} style={st.sizeBtn}>
+                                <Ionicons name="remove" size={18} color="#fff" />
+                            </TouchableOpacity>
+                            <Text style={st.sizeLabel}>{fontSize}px</Text>
+                            <TouchableOpacity onPress={() => setFontSize(p => Math.min(64, p + 2))} style={st.sizeBtn}>
+                                <Ionicons name="add" size={18} color="#fff" />
+                            </TouchableOpacity>
+                        </View>
                     </View>
-                    
+
+                    {/* Live preview while typing */}
+                    <View style={st.previewWrap} pointerEvents="none">
+                        <View style={[
+                            st.textBubble,
+                            currentBg !== 'transparent' && { backgroundColor: currentBg },
+                        ]}>
+                            <Text style={{
+                                color: textColor,
+                                fontSize: fontSize,
+                                fontFamily: currentFontDef?.fontFamily || Fonts.bold,
+                                fontStyle: currentFontDef?.italic ? 'italic' : 'normal',
+                                textAlign: 'center',
+                            }}>
+                                {currentText || ' '}
+                            </Text>
+                        </View>
+                    </View>
+
                     <TextInput
                         autoFocus
                         multiline
-                        style={[st.mainInput, { color: textColor, fontSize }]}
+                        style={[st.mainInput, { color: textColor, fontSize, fontFamily: currentFontDef?.fontFamily || Fonts.bold }]}
                         value={currentText}
                         onChangeText={setCurrentText}
+                        selectionColor={textColor}
                     />
-
-                    <View style={st.modalTools}>
-                        <View style={st.colorRow}>
-                            {['#ffffff', '#000000', '#FF3B30', '#4CD964', '#007AFF', '#FFCC00', '#5856D6'].map(c => (
-                                <TouchableOpacity
-                                    key={c}
-                                    style={[st.colorDot, { backgroundColor: c }, textColor === c && st.colorActive]}
-                                    onPress={() => setTextColor(c)}
-                                />
-                            ))}
-                        </View>
-                        <View style={st.bgRow}>
-                            {[
-                                'transparent',
-                                'rgba(0,0,0,0.5)',
-                                'rgba(255,255,255,0.8)',
-                                Colors.primary
-                            ].map(b => (
-                                <TouchableOpacity
-                                    key={b}
-                                    style={[st.bgOption, { backgroundColor: b === 'transparent' ? 'rgba(255,255,255,0.1)' : b }, textBg === b && st.bgActive]}
-                                    onPress={() => setTextBg(b)}
-                                >
-                                    {b === 'transparent' && <Ionicons name="close" size={14} color="#fff" />}
-                                </TouchableOpacity>
-                            ))}
-                        </View>
-                    </View>
                 </BlurView>
             </Modal>
 
-            {/* Location Modal */}
+            {/* ── Location Modal ───────────────────────────────────────────── */}
             <Modal visible={locationModalVisible} transparent animationType="fade">
                 <BlurView intensity={90} tint="dark" style={st.modalRoot}>
                     <View style={st.modalHeader}>
@@ -350,7 +642,7 @@ export default function StoryEditor({ item, onCancel, onConfirm }: { item: any, 
                         </View>
                         <TextInput
                             autoFocus
-                            placeholder="Where was this taken?"
+                            placeholder="En qué ciudad estás?"
                             placeholderTextColor="rgba(255,255,255,0.4)"
                             style={st.locationInput}
                             value={tempLocation}
@@ -359,39 +651,84 @@ export default function StoryEditor({ item, onCancel, onConfirm }: { item: any, 
                         />
                     </View>
 
-                    <View style={st.locationHint}>
-                        <Ionicons name="information-circle-outline" size={14} color="rgba(255,255,255,0.5)" />
-                        <Text style={st.locationHintText}>Type a city, landmark or venue name</Text>
-                    </View>
+                    <TouchableOpacity
+                        style={st.currentLocBtn}
+                        onPress={async () => {
+                            const loc = await locationService.getCurrentLocation();
+                            if (loc) {
+                                setLocation({
+                                    id: 'loc',
+                                    text: loc.locationName,
+                                    x: 0.5, y: 0.2,
+                                    scale: new Animated.Value(1),
+                                    rotation: new Animated.Value(0),
+                                });
+                                setLocationModalVisible(false);
+                            }
+                        }}
+                    >
+                        <Ionicons name="navigate" size={18} color="#fff" />
+                        <Text style={st.currentLocText}>Ubicación actual</Text>
+                    </TouchableOpacity>
                 </BlurView>
             </Modal>
+
+            <GiphyPicker
+                visible={giphyVisible}
+                onClose={() => setGiphyVisible(false)}
+                onSelect={handleAddSticker}
+            />
         </View>
     );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
 const st = StyleSheet.create({
-    container: { flex: 1, backgroundColor: '#000' },
-    canvas: { flex: 1, position: 'relative', overflow: 'hidden' },
+    container: { flex: 1, backgroundColor: '#000', ...StyleSheet.absoluteFillObject },
+    canvas: { flex: 1, position: 'relative', overflow: 'hidden', backgroundColor: '#000' },
     preview: { width: '100%', height: '100%' },
-    
-    draggable: { position: 'absolute', minWidth: 100, alignItems: 'center' },
-    textBubble: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12 },
-    draggableText: { fontFamily: Fonts.bold, textAlign: 'center' },
+
+    draggable: { position: 'absolute', alignItems: 'center' },
+
+    textBubble: {
+        paddingHorizontal: 14,
+        paddingVertical: 8,
+        borderRadius: 14,
+    },
+    draggableText: { textAlign: 'center' },
 
     locationPill: {
         flexDirection: 'row', alignItems: 'center', gap: 6,
         paddingHorizontal: 14, paddingVertical: 10, borderRadius: 25,
-        shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 4 },
-        elevation: 6
+        shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 10,
+        shadowOffset: { width: 0, height: 4 }, elevation: 6,
     },
     locationText: { color: '#fff', fontFamily: Fonts.bold, fontSize: 15 },
 
-    toolbar: { backgroundColor: 'rgba(0,0,0,0.85)', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: 10 },
+    // ── Delete zone ────────────────────────────────────────────────────────
+    deleteZone: {
+        position: 'absolute',
+        alignSelf: 'center',
+        width: TRASH_HIT_SIZE * 1.4,
+        height: TRASH_HIT_SIZE * 1.4,
+        borderRadius: TRASH_HIT_SIZE * 0.7,
+        overflow: 'hidden',
+        borderWidth: 2,
+        borderColor: 'rgba(255,255,255,0.25)',
+    },
+    deleteZoneActive: {
+        borderColor: '#fff',
+        transform: [{ scale: 1.25 }],
+    },
+    deleteGrad: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+
+    // ── Toolbar ────────────────────────────────────────────────────────────
+    toolbar: { backgroundColor: 'rgba(0,0,0,0.88)', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: 10 },
     toolsContent: { padding: 20, gap: 15 },
     toolBtn: { alignItems: 'center', gap: 4, width: 70 },
     toolLabel: { color: 'rgba(255,255,255,0.6)', fontSize: 11, fontFamily: Fonts.medium },
     toolValue: { color: Colors.primary, fontSize: 10, fontFamily: Fonts.bold, textTransform: 'capitalize' },
-    
+
     actions: { flexDirection: 'row', paddingHorizontal: 20, paddingBottom: 20, gap: 12 },
     cancelBtn: { flex: 1, height: 50, borderRadius: 15, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' },
     cancelText: { color: '#fff', fontFamily: Fonts.semiBold },
@@ -399,31 +736,41 @@ const st = StyleSheet.create({
     confirmGrad: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     confirmText: { color: '#fff', fontFamily: Fonts.bold, fontSize: 15 },
 
-    modalRoot: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
-    modalHeader: {
-        position: 'absolute', top: 60, width: '100%',
-        flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20
-    },
+    // ── Modal ──────────────────────────────────────────────────────────────
+    modalRoot: { flex: 1, padding: 20, justifyContent: 'center' },
+    topTools: { position: 'absolute', left: 0, right: 0, gap: 14 },
+    sectionRow: { flexDirection: 'row' },
+    modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20 },
     modalNav: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
     modalTitle: { color: '#fff', fontSize: 18, fontFamily: Fonts.bold },
     modalDone: { color: Colors.primary, fontSize: 17, fontFamily: Fonts.bold },
-    
-    mainInput: { width: '100%', textAlign: 'center', fontFamily: Fonts.bold, minHeight: 100 },
-    modalTools: { position: 'absolute', bottom: 60, width: '100%', alignItems: 'center', gap: 20 },
-    colorRow: { flexDirection: 'row', gap: 12 },
-    colorDot: { width: 30, height: 30, borderRadius: 15, borderWidth: 2, borderColor: 'rgba(255,255,255,0.3)' },
-    colorActive: { borderColor: '#fff', transform: [{ scale: 1.2 }] },
-    bgRow: { flexDirection: 'row', gap: 15 },
-    bgOption: { width: 40, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
-    bgActive: { borderColor: '#fff', borderWidth: 2 },
 
+    colorCircle: { width: 34, height: 34, borderRadius: 17, borderWidth: 2, borderColor: 'rgba(255,255,255,0.25)' },
+    colorCircleActive: { borderColor: '#fff', transform: [{ scale: 1.15 }] },
+
+    bgPill: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
+    bgPillActive: { borderColor: '#fff' },
+    bgPillText: { color: 'rgba(255,255,255,0.6)', fontSize: 12, fontFamily: Fonts.semiBold },
+
+    stylePill: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+    stylePillActive: { backgroundColor: '#fff', borderColor: '#fff' },
+    stylePillText: { color: '#fff', fontSize: 13 },
+    stylePillTextActive: { color: '#000' },
+
+    sizeBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' },
+    sizeLabel: { color: '#fff', fontSize: 13, fontFamily: Fonts.semiBold, minWidth: 48, textAlign: 'center' },
+
+    previewWrap: { alignItems: 'center', marginTop: 20 },
+    mainInput: { width: '100%', textAlign: 'center', paddingHorizontal: 20, opacity: 0 },
+
+    // ── Location ───────────────────────────────────────────────────────────
     locationInputWrap: {
         width: '100%', flexDirection: 'row', alignItems: 'center',
         backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 20,
-        paddingHorizontal: 18, height: 64, gap: 14
+        paddingHorizontal: 18, height: 64, gap: 14,
     },
     locationIconBox: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' },
     locationInput: { flex: 1, color: '#fff', fontSize: 18, fontFamily: Fonts.semiBold },
-    locationHint: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 15 },
-    locationHintText: { color: 'rgba(255,255,255,0.5)', fontSize: 13, fontFamily: Fonts.regular },
+    currentLocBtn: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: 'rgba(255,255,255,0.15)', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 20, alignSelf: 'center', marginTop: 20 },
+    currentLocText: { color: '#fff', fontFamily: Fonts.bold, fontSize: 14 },
 });

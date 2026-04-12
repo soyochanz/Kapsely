@@ -25,6 +25,7 @@ import { safetyService, ReportType } from '../utils/safety';
 import { useWebDragScroll } from '../utils/useWebDragScroll';
 // ✅ FloatingEmojis is now a self-contained component that handles its own subscription
 import FloatingEmojis from '../components/FloatingEmojis';
+import AestheticLocation from '../components/AestheticLocation';
 
 const { width, height } = Dimensions.get('window');
 const GRID_COLS = 3;
@@ -215,6 +216,8 @@ const ds = StyleSheet.create({
     audioPlayBtn: { width: 88, height: 88, borderRadius: 44, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.35)' },
     viewerCaption: { position: 'absolute', bottom: 80, left: 20, right: 20, backgroundColor: 'rgba(0,0,0,0.55)', padding: 12, borderRadius: 14 },
     viewerCaptionText: { color: '#fff', fontSize: 14, fontFamily: Fonts.regular, textAlign: 'center' },
+    itemDateTag: { position: 'absolute', top: 6, left: 6, backgroundColor: 'rgba(0,0,0,0.32)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, zIndex: 12 },
+    itemDateText: { fontSize: 8.5, fontFamily: Fonts.bold, color: '#fff', opacity: 0.95 },
 });
 
 // Epic opening styles (separate object to keep ds clean)
@@ -222,15 +225,21 @@ const eo = StyleSheet.create({
     container: { ...StyleSheet.absoluteFillObject },
     center: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, paddingTop: 60 },
     glowRing: {
-        position: 'absolute', width: 320, height: 320, borderRadius: 160,
-        borderWidth: 1.5, alignSelf: 'center',
-        top: height / 2 - 160,
+        position: 'absolute', width: 340, height: 340, borderRadius: 170,
+        borderWidth: 2, alignSelf: 'center',
+        top: height / 2 - 170,
     },
     glowRing2: {
-        position: 'absolute', width: 460, height: 460, borderRadius: 230,
+        position: 'absolute', width: 480, height: 480, borderRadius: 240,
+        borderWidth: 1.5, alignSelf: 'center',
+        top: height / 2 - 240,
+        opacity: 0.45,
+    },
+    glowRing3: {
+        position: 'absolute', width: 620, height: 620, borderRadius: 310,
         borderWidth: 1, alignSelf: 'center',
-        top: height / 2 - 230,
-        opacity: 0.35,
+        top: height / 2 - 310,
+        opacity: 0.2,
     },
     lockWrap: { width: 88, height: 88, borderRadius: 28, overflow: 'hidden', marginBottom: 24 },
     lockGrad: { flex: 1, alignItems: 'center', justifyContent: 'center' },
@@ -280,14 +289,26 @@ const AudioController = React.memo(({ uri, onFinish }: { uri: string | null; onF
                 soundRef.current = null;
             }
             if (uri) {
-                const { sound } = await Audio.Sound.createAsync(
-                    { uri },
-                    { shouldPlay: true },
-                    (status: any) => {
-                        if (status.didJustFinish) onFinish();
-                    }
-                );
-                soundRef.current = sound;
+                try {
+                    // Force playback through speakers and ensure it's not in recording mode
+                    await Audio.setAudioModeAsync({
+                        allowsRecordingIOS: false,
+                        playsInSilentModeIOS: true,
+                        playThroughEarpieceAndroid: false,
+                        staysActiveInBackground: false,
+                    });
+
+                    const { sound } = await Audio.Sound.createAsync(
+                        { uri },
+                        { shouldPlay: true, volume: 1.0 },
+                        (status: any) => {
+                            if (status.didJustFinish) onFinish();
+                        }
+                    );
+                    soundRef.current = sound;
+                } catch (e) {
+                    console.error("Playback error", e);
+                }
             }
         };
         loadAndPlay();
@@ -366,6 +387,28 @@ const EpicOpening = React.memo(({ tint, capsuleTitle, countdown, onComplete }: E
         }))
     ).current;
 
+    // Sounds
+    const tickSound = useRef<Audio.Sound | null>(null);
+    const revealSound = useRef<Audio.Sound | null>(null);
+
+    useEffect(() => {
+        const loadSounds = async () => {
+            try {
+                const { sound: tS } = await Audio.Sound.createAsync({ uri: 'https://assets.mixkit.co/sfx/preview/mixkit-button-countdown-2972.mp3' });
+                const { sound: rS } = await Audio.Sound.createAsync({ uri: 'https://assets.mixkit.co/sfx/preview/mixkit-epic-reveal-2661.mp3' });
+                tickSound.current = tS;
+                revealSound.current = rS;
+            } catch (e) {
+                console.warn("Failed to load sounds", e);
+            }
+        };
+        loadSounds();
+        return () => {
+            tickSound.current?.unloadAsync();
+            revealSound.current?.unloadAsync();
+        };
+    }, []);
+
     // Entrance
     useEffect(() => {
         Animated.parallel([
@@ -388,8 +431,12 @@ const EpicOpening = React.memo(({ tint, capsuleTitle, countdown, onComplete }: E
         ).start();
     }, []);
 
-    // Countdown pulse
+    // Countdown pulse + Sound
     useEffect(() => {
+        if (countdown > 0) {
+            tickSound.current?.replayAsync().catch(() => {});
+        }
+
         Animated.sequence([
             Animated.timing(countAnim, { toValue: 1.3, duration: 100, useNativeDriver: true }),
             Animated.timing(countAnim, { toValue: 1, duration: 300, easing: Easing.out(Easing.back(1.5)), useNativeDriver: true }),
@@ -397,6 +444,8 @@ const EpicOpening = React.memo(({ tint, capsuleTitle, countdown, onComplete }: E
 
         // At 0 → trigger explosion + reveal
         if (countdown === 0) {
+            revealSound.current?.playAsync().catch(() => {});
+            
             const pAnims = particles.map(p =>
                 Animated.timing(p.anim, { toValue: 1, duration: 1000, easing: Easing.out(Easing.quad), useNativeDriver: true })
             );
@@ -427,8 +476,9 @@ const EpicOpening = React.memo(({ tint, capsuleTitle, countdown, onComplete }: E
             </Animated.View>
 
             {/* ── Ambient purple radial glow ── */}
-            <View style={[eo.glowRing, { borderColor: tint + '50' }]} />
-            <View style={[eo.glowRing2, { borderColor: D.rose + '30' }]} />
+            <Animated.View style={[eo.glowRing, { borderColor: tint, opacity: ring1Anim, transform: [{ scale: ring1Anim }] }]} />
+            <Animated.View style={[eo.glowRing2, { borderColor: D.rose, opacity: ring2Anim, transform: [{ scale: ring2Anim }] }]} />
+            <Animated.View style={[eo.glowRing3, { borderColor: tint, opacity: 0.1, transform: [{ scale: ring1Anim.interpolate({ inputRange: [0.6, 1], outputRange: [1, 1.2] }) }] }]} />
 
             {/* ── Soft purple orbs ── */}
             <Animated.View pointerEvents="none" style={[
@@ -681,7 +731,7 @@ function CapsuleDetailScreen() {
     useEffect(() => {
         if (!capsuleId) return;
         loadData();
-        
+
         // Ensure data is refreshed when screen comes into focus (fixes sync state issues)
         const unsubFocus = navigation.addListener('focus', loadData);
 
@@ -743,6 +793,7 @@ function CapsuleDetailScreen() {
         const [itemsRes, likesRes, commentsRes, myLikeRes, invitesRes, fCountRes, myFollowRes] = await Promise.all([
             supabase.from('capsule_items').select(`
                 id, capsule_id, owner_id, media_url, thumbnail_url, media_type, content, caption, created_at,
+                latitude, longitude, altitude, location_name,
                 profiles:owner_id(avatar_url, id, display_name, username)
             `).eq('capsule_id', capsuleId).order('created_at', { ascending: true }),
             supabase.from('likes').select('id', { count: 'exact', head: true }).eq('capsule_id', capsuleId),
@@ -1002,7 +1053,7 @@ function CapsuleDetailScreen() {
         return (
             <ScrollView ref={filterScrollRef} horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }} contentContainerStyle={{ paddingRight: 20, gap: 8 }}>
                 {(['all', 'image', 'video', 'note', 'audio'] as const).map(type => {
-                    const icons = { all: 'apps-outline', image: 'image-outline', video: 'videocam-outline', note: 'document-text-outline', audio: 'mic-outline' } as const;
+                    const icons = { all: 'apps-outline', image: 'image-outline', video: 'videocam-outline', note: 'reader-outline', audio: 'mic-outline' } as const;
                     const isActive = filterType === type;
                     return (
                         <TouchableOpacity key={type} style={[ds.filterChip, isActive && { backgroundColor: tint, borderColor: tint }]} onPress={() => setFilterType(type)}>
@@ -1157,24 +1208,24 @@ function CapsuleDetailScreen() {
                                                                     ) : pi.media_type === 'note' ? (
                                                                         <View style={[StyleSheet.absoluteFill, { backgroundColor: '#FFF9E0' }]}>
                                                                             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', opacity: 0.1 }}>
-                                                                                <Ionicons name="document-text" size={((width - 44) / 2.4) * 0.5} color="#000" />
+                                                                                <Ionicons name="reader-outline" size={((width - 44) / 2.4) * 0.5} color="#000" />
                                                                             </View>
                                                                             <View style={[ds.noteTape, { top: 4, transform: [{ rotate: '-6deg' }], width: '40%', opacity: 0.3 }]} />
                                                                         </View>
                                                                     ) : (pi.media_url || pi.thumbnail_url) && (pi.media_type === 'image' || pi.media_type === 'video') && (
-                                                                        <Image 
-                                                                            source={{ uri: pi.thumbnail_url || pi.media_url }} 
-                                                                            style={StyleSheet.absoluteFill} 
-                                                                            blurRadius={15} 
+                                                                        <Image
+                                                                            source={{ uri: pi.thumbnail_url || pi.media_url }}
+                                                                            style={StyleSheet.absoluteFill}
+                                                                            blurRadius={15}
                                                                             cachePolicy="memory-disk"
                                                                         />
                                                                     )}
                                                                     {Platform.OS === 'ios' ? (
                                                                         (pi.media_type === 'image' || pi.media_type === 'video') && (
-                                                                            <BlurView 
-                                                                                intensity={32} 
-                                                                                tint="extraLight" 
-                                                                                style={StyleSheet.absoluteFill} 
+                                                                            <BlurView
+                                                                                intensity={32}
+                                                                                tint="extraLight"
+                                                                                style={StyleSheet.absoluteFill}
                                                                             />
                                                                         )
                                                                     ) : (
@@ -1189,6 +1240,9 @@ function CapsuleDetailScreen() {
                                                                         </View>
                                                                     )}
                                                                     <Ionicons name="lock-closed" size={20} color={tint + '50'} />
+                                                                    <View style={ds.itemDateTag}>
+                                                                        <Text style={ds.itemDateText}>{new Date(pi.created_at).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: '2-digit' })}</Text>
+                                                                    </View>
                                                                 </View>
                                                             ) : (
                                                                 <TouchableOpacity
@@ -1210,7 +1264,7 @@ function CapsuleDetailScreen() {
                                                                                 <Ionicons name={playingAudio === pi.media_url ? 'pause-circle' : 'mic-circle'} size={38} color="#fff" />
                                                                             </View>
                                                                             <View style={ds.audioPreviewFooter}>
-                                                                                <Text style={ds.audioPreviewLabel}>{playingAudio === pi.media_url ? (t('detail.playing') || 'Playing') : (t('detail.voice_note') || 'Voice note')}</Text>
+                                                                                <Text style={ds.audioPreviewLabel}>{playingAudio === pi.media_url ? (t('detail.playing') || 'Reproduciendo...') : ''}</Text>
                                                                                 <Ionicons name="pulse" size={14} color="#fff" />
                                                                             </View>
                                                                         </LinearGradient>
@@ -1218,7 +1272,7 @@ function CapsuleDetailScreen() {
                                                                         <View style={ds.notePreview}>
                                                                             <View style={ds.noteTape} />
                                                                             <View style={ds.notePreviewIcon}>
-                                                                                <Ionicons name="document-text" size={16} color="#B49D4F" />
+                                                                                <Ionicons name="create-outline" size={16} color="#B49D4F" />
                                                                             </View>
                                                                             <Text style={ds.notePreviewText} numberOfLines={4}>{pi.content}</Text>
                                                                         </View>
@@ -1227,6 +1281,14 @@ function CapsuleDetailScreen() {
                                                                     )}
                                                                     {pi.media_type === 'video' && (
                                                                         <View style={ds.playBadge}><Ionicons name="play" size={10} color="#fff" /></View>
+                                                                    )}
+                                                                    <View style={ds.itemDateTag}>
+                                                                        <Text style={ds.itemDateText}>{new Date(pi.created_at).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: '2-digit' })}</Text>
+                                                                    </View>
+                                                                    {pi.location_name && (
+                                                                        <View style={{ position: 'absolute', bottom: 6, right: 6 }}>
+                                                                            <AestheticLocation name={pi.location_name} compact dark />
+                                                                        </View>
                                                                     )}
                                                                 </TouchableOpacity>
                                                             )}
@@ -1244,6 +1306,7 @@ function CapsuleDetailScreen() {
                                 </View>
                             );
                         }
+                        // Dentro del renderItem del SectionList, donde item === 'chat':
                         if (item === 'chat' && showChat) {
                             return (
                                 <LiveChat
@@ -1253,6 +1316,10 @@ function CapsuleDetailScreen() {
                                     hideInput
                                     isOwner={isOwner}
                                     isNested
+                                    // ✅ FIX: Deshabilita el scroll del SectionList padre mientras el usuario
+                                    // interactúa con el chat, para que los gestos no sean "robados"
+                                    onInteractionStart={() => setScrollEnabled(false)}
+                                    onInteractionEnd={() => setScrollEnabled(true)}
                                 />
                             );
                         }
@@ -1468,9 +1535,14 @@ function CapsuleDetailScreen() {
                                     {vi.caption && vi.caption.replace(/!!b:[^\s]+/g, '').trim() ? (
                                         <Text style={ds.viewerCaptionText}>{vi.caption.replace(/!!b:[^\s]+/g, '').trim()}</Text>
                                     ) : null}
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 4, gap: 4, opacity: 0.7 }}>
-                                        <Ionicons name="calendar-outline" size={10} color="#fff" />
-                                        <Text style={[ds.viewerCaptionText, { fontSize: 10, fontFamily: Fonts.bold }]}>{formatDetailedDate(vi.created_at)}</Text>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 4, gap: 10, opacity: 0.9 }}>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                            <Ionicons name="calendar-outline" size={10} color="#fff" />
+                                            <Text style={[ds.viewerCaptionText, { fontSize: 10, fontFamily: Fonts.bold }]}>{formatDetailedDate(vi.created_at)}</Text>
+                                        </View>
+                                        {vi.location_name && (
+                                            <AestheticLocation name={vi.location_name} compact dark />
+                                        )}
                                     </View>
                                 </View>
                             </View>
@@ -1568,16 +1640,16 @@ const CapsuleHero = React.memo(({
                             </View>
                             <View style={{ flex: 1 }}>
                                 <Text style={[ds.countdownLabel, { color: tint }]}>
-                                    {isOpening 
-                                        ? t('detail.opening_in') 
+                                    {isOpening
+                                        ? t('detail.opening_in')
                                         : (canBeOpened ? (t('detail.unsealing_soon') || 'Abriendo pronto...') : (t('detail.unseals_in') || 'Se abre en'))}
                                 </Text>
 
                                 <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
                                     {!canBeOpened || isOpening ? (
-                                        <LiveTimer 
-                                            date={isOpening ? capsule.opening_at : capsule.opens_at} 
-                                            style={[ds.countdownTimer, { color: D.text, minWidth: 80 }]} 
+                                        <LiveTimer
+                                            date={isOpening ? capsule.opening_at : capsule.opens_at}
+                                            style={[ds.countdownTimer, { color: D.text, minWidth: 80 }]}
                                         />
                                     ) : (
                                         <Text style={[ds.countdownTimer, { color: tint }]}>READY! ✨</Text>

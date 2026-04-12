@@ -312,7 +312,7 @@ const typeCardS = StyleSheet.create({
 
 // ─── Model Picker Modal ───────────────────────────────────────────────────────
 function ModelPickerModal({
-    visible, onClose, models, selectedModel, onSelect, accent, selectedType, activeEvent,
+    visible, onClose, models, selectedModel, onSelect, accent, selectedType, activeEvent, drops
 }: {
     visible: boolean;
     onClose: () => void;
@@ -322,6 +322,7 @@ function ModelPickerModal({
     accent: string;
     selectedType: string | null;
     activeEvent: any;
+    drops: any[];
 }) {
     const insets = useSafeAreaInsets();
     const slideAnim = useRef(new Animated.Value(height)).current;
@@ -346,9 +347,35 @@ function ModelPickerModal({
 
     const filteredModels = models.filter(m => {
         if (m.is_active === false) return false;
+        
+        // If it's an event capsule, only show event models
         if (selectedType === 'eventcap') return m.is_event;
+        
+        // For other types, show non-event models
         return !m.is_event;
     });
+
+    const groupedModels = useMemo(() => {
+        const groups: Record<string, any[]> = { 'Regular': [] };
+        
+        filteredModels.forEach(m => {
+            const drop = m.drop_id ? drops.find(d => d.id === m.drop_id) : null;
+            if (drop) {
+                // Check if drop is active (current date within range)
+                const now = new Date();
+                const isDropActive = now >= new Date(drop.start_date) && now <= new Date(drop.end_date);
+                
+                if (isDropActive) {
+                    if (!groups[drop.name]) groups[drop.name] = [];
+                    groups[drop.name].push(m);
+                }
+            } else {
+                groups['Regular'].push(m);
+            }
+        });
+        
+        return groups;
+    }, [filteredModels, drops]);
 
     return (
         <Modal visible={visible} transparent animationType="none" statusBarTranslucent>
@@ -377,32 +404,51 @@ function ModelPickerModal({
                 </View>
                 <ScrollView
                     showsVerticalScrollIndicator={false}
-                    contentContainerStyle={modalS.grid}
+                    contentContainerStyle={{ paddingBottom: 20 }}
                 >
-                    {filteredModels.map((model) => {
-                        const isActive = selectedModel === model.id;
+                    {Object.entries(groupedModels).map(([groupName, groupModels]) => {
+                        if (groupModels.length === 0) return null;
+                        
                         return (
-                            <TouchableOpacity
-                                key={model.id}
-                                onPress={() => { onSelect(model.id); onClose(); }}
-                                activeOpacity={0.8}
-                                style={[modalS.modelCard, isActive && { borderColor: accent, backgroundColor: accent + '08' }]}
-                            >
-                                {isActive && (
-                                    <LinearGradient colors={[accent, accent + 'CC']} style={modalS.selectedBadge}>
-                                        <Ionicons name="checkmark" size={10} color="#fff" />
-                                    </LinearGradient>
-                                )}
-                                <View style={modalS.modelImgWrap}>
-                                    <Image source={{ uri: model.image }} style={modalS.modelImg} resizeMode="contain" />
+                            <View key={groupName} style={modalS.groupSection}>
+                                <View style={modalS.groupHeader}>
+                                    <Text style={modalS.groupTitle}>{groupName}</Text>
+                                    {groupName !== 'Regular' && (
+                                        <View style={[modalS.dropLabel, { backgroundColor: accent + '15' }]}>
+                                            <Ionicons name="flash" size={10} color={accent} />
+                                            <Text style={[modalS.dropLabelText, { color: accent }]}>ACTIVE DROP</Text>
+                                        </View>
+                                    )}
                                 </View>
-                                <Text style={[modalS.modelLabel, isActive && { color: accent }]} numberOfLines={2}>{model.label}</Text>
-                                {model.is_event && (
-                                    <View style={modalS.eventBadge}>
-                                        <Text style={modalS.eventBadgeText}>EVENT</Text>
-                                    </View>
-                                )}
-                            </TouchableOpacity>
+                                <View style={modalS.grid}>
+                                    {groupModels.map((model) => {
+                                        const isActive = selectedModel === model.id;
+                                        return (
+                                            <TouchableOpacity
+                                                key={model.id}
+                                                onPress={() => { onSelect(model.id); onClose(); }}
+                                                activeOpacity={0.8}
+                                                style={[modalS.modelCard, isActive && { borderColor: accent, backgroundColor: accent + '08' }]}
+                                            >
+                                                {isActive && (
+                                                    <LinearGradient colors={[accent, accent + 'CC']} style={modalS.selectedBadge}>
+                                                        <Ionicons name="checkmark" size={10} color="#fff" />
+                                                    </LinearGradient>
+                                                )}
+                                                <View style={modalS.modelImgWrap}>
+                                                    <Image source={{ uri: model.image }} style={modalS.modelImg} resizeMode="contain" />
+                                                </View>
+                                                <Text style={[modalS.modelLabel, isActive && { color: accent }]} numberOfLines={2}>{model.label}</Text>
+                                                {model.is_event && (
+                                                    <View style={modalS.eventBadge}>
+                                                        <Text style={modalS.eventBadgeText}>EVENT</Text>
+                                                    </View>
+                                                )}
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </View>
+                            </View>
                         );
                     })}
                 </ScrollView>
@@ -464,6 +510,11 @@ const modalS = StyleSheet.create({
     modelLabel: { fontSize: 11, fontFamily: Fonts.semiBold, color: L.textSec, textAlign: 'center', lineHeight: 15 },
     eventBadge: { backgroundColor: '#B87A1A20', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 8 },
     eventBadgeText: { fontSize: 8, fontFamily: Fonts.bold, color: '#B87A1A', letterSpacing: 1 },
+    groupSection: { marginBottom: 20 },
+    groupHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 22, marginBottom: 10 },
+    groupTitle: { fontSize: 13, fontFamily: Fonts.bold, color: L.textSec, textTransform: 'uppercase', letterSpacing: 1 },
+    dropLabel: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
+    dropLabelText: { fontSize: 9, fontFamily: Fonts.bold },
 });
 
 // ─── Seal Animation ───────────────────────────────────────────────────────────
@@ -828,6 +879,16 @@ export default function CapsuleCreationScreen() {
     const [hasLegacyCap, setHasLegacyCap] = useState(false);
     const [activeInstaCapCount, setActiveInstaCapCount] = useState(0);
     const [loadingLimits, setLoadingLimits] = useState(true);
+    const [allModels, setAllModels] = useState<any[]>(timerConfigManager.models.length > 0 ? timerConfigManager.models : MODELS);
+    const [drops, setDrops] = useState<any[]>([]);
+    
+    useEffect(() => {
+        const unsubscribe = timerConfigManager.subscribe(() => {
+            setAllModels([...timerConfigManager.models]);
+            setDrops(timerConfigManager.getDrops());
+        });
+        return unsubscribe;
+    }, []);
     const [showModelPicker, setShowModelPicker] = useState(false);
 
     const [title, setTitle] = useState('');

@@ -32,6 +32,15 @@ export interface ChainItem {
     is_active: boolean;
 }
 
+export interface Drop {
+    id: string;
+    name: string;
+    start_date: string;
+    end_date: string;
+    is_active: boolean;
+    created_at?: string;
+}
+
 export const DEFAULT_CONFIGS: Record<string, ModelTimerConfig> = {
     basicred_kap: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#ff4757', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
     base_kap: { x: 0.35, y: 0.42, w: 0.3, h: 0.1, color: '#ffffff', fontId: 'monospace', format: 'standard', curvature: 0, themeColor: '#a269ff', faceX: 0.5, faceY: 0.54, faceScale: 1, showFace: true },
@@ -53,6 +62,7 @@ class TimerConfigManager {
     private configs: Record<string, ModelTimerConfig> = { ...DEFAULT_CONFIGS };
     private chainConfigs: Record<string, ModelChainConfig[]> = {};
     private chainLibrary: ChainItem[] = [];
+    private drops: Drop[] = [];
     private listeners: (() => void)[] = [];
     private initialized = false;
     public models: any[] = [];
@@ -65,6 +75,7 @@ class TimerConfigManager {
         this.getConfig = this.getConfig.bind(this);
         this.getChainConfigs = this.getChainConfigs.bind(this);
         this.getChainConfig = this.getChainConfig.bind(this);
+        this.getDrops = this.getDrops.bind(this);
     }
 
     async init() {
@@ -101,12 +112,17 @@ class TimerConfigManager {
             const { data: chainLib } = await supabase.from('chains').select('*');
             if (chainLib) this.chainLibrary = chainLib;
 
+            // Load drops
+            const { data: dropData } = await supabase.from('drops').select('*').order('start_date', { ascending: false });
+            if (dropData) this.drops = dropData;
+
             // Listen for global real-time changes
             supabase.channel('model_configs_channel')
                 .on('postgres_changes', { event: '*', schema: 'public', table: 'models' }, () => this.refresh())
                 .on('postgres_changes', { event: '*', schema: 'public', table: 'model_configs' }, () => this.refresh())
                 .on('postgres_changes', { event: '*', schema: 'public', table: 'model_chain_configs' }, () => this.refresh())
                 .on('postgres_changes', { event: '*', schema: 'public', table: 'chains' }, () => this.refresh())
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'drops' }, () => this.refresh())
                 .subscribe();
 
             this.initialized = true;
@@ -159,6 +175,14 @@ class TimerConfigManager {
 
     getChainLibrary(): ChainItem[] {
         return this.chainLibrary;
+    }
+
+    getDrops(): Drop[] {
+        return this.drops;
+    }
+
+    getDrop(dropId: string): Drop | undefined {
+        return this.drops.find(d => d.id === dropId);
     }
 
     subscribe(callback: () => void) {
@@ -215,6 +239,30 @@ class TimerConfigManager {
             return true;
         } catch (e) {
             console.error('Failed to add chain', e);
+            return false;
+        }
+    }
+
+    async saveDrop(drop: Partial<Drop>) {
+        try {
+            const { error } = await supabase.from('drops').upsert(drop, { onConflict: 'id' });
+            if (error) throw error;
+            await this.refresh();
+            return true;
+        } catch (e) {
+            console.error('Failed to save drop', e);
+            return false;
+        }
+    }
+
+    async deleteDrop(dropId: string) {
+        try {
+            const { error } = await supabase.from('drops').delete().eq('id', dropId);
+            if (error) throw error;
+            await this.refresh();
+            return true;
+        } catch (e) {
+            console.error('Failed to delete drop', e);
             return false;
         }
     }

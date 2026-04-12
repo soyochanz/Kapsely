@@ -38,16 +38,34 @@ export default function AdminCalibrationScreen() {
     const insets = useSafeAreaInsets();
     const [selectedModel, setSelectedModel] = useState<any>(MODELS[0]);
     const [allModels, setAllModels] = useState<any[]>(timerConfigManager.models.length > 0 ? timerConfigManager.models : MODELS);
-    const [activeTab, setActiveTab] = useState<'timer' | 'chain' | 'stickers' | 'models'>('timer');
+    const [activeTab, setActiveTab] = useState<'timer' | 'chain' | 'stickers' | 'models' | 'drops'>('timer');
     const [selectedChainId, setSelectedChainId] = useState<string | null>(null);
     const [isDragging, setIsDragging] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
 
     const [showAddModel, setShowAddModel] = useState(false);
-    const [newModel, setNewModel] = useState({ 
+    interface ModelState {
+        id: string;
+        label: string;
+        image: string;
+        image_open: string;
+        category: string;
+        tint: string;
+        is_active: boolean;
+        is_event: boolean;
+        event_start: string;
+        event_end: string;
+        event_title: string;
+        event_description: string;
+        drop_id: string | null;
+        thumbnail_url?: string;
+    }
+
+    const [newModel, setNewModel] = useState<ModelState>({ 
         id: '', label: '', image: '', image_open: '',
         category: 'Vibe', tint: '#a269ff', is_active: true, is_event: false,
-        event_start: '', event_end: '', event_title: '', event_description: ''
+        event_start: '', event_end: '', event_title: '', event_description: '',
+        drop_id: null
     });
     const [datePickerMode, setDatePickerMode] = useState<'start' | 'end' | null>(null);
 
@@ -103,6 +121,31 @@ export default function AdminCalibrationScreen() {
         }
     };
 
+    const handleDropDatePicker = (mode: 'start' | 'end') => {
+        if (Platform.OS === 'android') {
+            let date = new Date();
+            const currentVal = (newDrop as any)[mode === 'start' ? 'start_date' : 'end_date'];
+            if (currentVal) date = new Date(currentVal);
+
+            if (typeof DateTimePickerAndroid !== 'undefined' && DateTimePickerAndroid.open) {
+                DateTimePickerAndroid.open({
+                    value: date,
+                    onChange: (event, selectedDate) => {
+                        if (event.type === 'set' && selectedDate) {
+                            setNewDrop(p => ({
+                                ...p,
+                                [mode === 'start' ? 'start_date' : 'end_date']: selectedDate.toISOString()
+                            }));
+                        }
+                    },
+                    mode: 'date',
+                });
+            }
+        } else {
+            setDatePickerMode(mode as any);
+        }
+    };
+
 
     const [showAddChain, setShowAddChain] = useState(false);
     const [newChain, setNewChain] = useState({ id: '', name: '', image_url: '', thumbnail_url: '', is_active: true });
@@ -111,6 +154,12 @@ export default function AdminCalibrationScreen() {
     const [showAddSticker, setShowAddSticker] = useState(false);
     const [newSticker, setNewSticker] = useState({ name: '', image_url: '', is_active: true });
     const [addingSticker, setAddingSticker] = useState(false);
+
+    const [drops, setDrops] = useState<any[]>([]);
+    const [showAddDrop, setShowAddDrop] = useState(false);
+    const [newDrop, setNewDrop] = useState({ 
+        id: '', name: '', start_date: '', end_date: '', is_active: true 
+    });
 
     // Per-model configurations initialized from manager
     const [configs, setConfigs] = useState<Record<string, ModelTimerConfig>>(() => {
@@ -145,9 +194,13 @@ export default function AdminCalibrationScreen() {
     };
 
     useEffect(() => {
-        const unsubscribe = timerConfigManager.subscribe(syncConfigs);
+        const unsubscribe = timerConfigManager.subscribe(() => {
+            syncConfigs();
+            setDrops(timerConfigManager.getDrops());
+        });
         syncConfigs();
         loadStickers();
+        setDrops(timerConfigManager.getDrops());
         return unsubscribe;
     }, []);
 
@@ -362,7 +415,8 @@ export default function AdminCalibrationScreen() {
             setNewModel({ 
                 id: '', label: '', image: '', image_open: '',
                 category: 'Vibe', tint: '#a269ff', is_active: true, is_event: false,
-                event_start: '', event_end: '', event_title: '', event_description: ''
+                event_start: '', event_end: '', event_title: '', event_description: '',
+                drop_id: null
             });
             Alert.alert('Success', 'Model added successfully');
         } else {
@@ -416,6 +470,28 @@ export default function AdminCalibrationScreen() {
         } finally {
             setAddingSticker(false);
         }
+    };
+
+    const handleAddDrop = async () => {
+        if (!newDrop.name || !newDrop.start_date || !newDrop.end_date) {
+            Alert.alert('Error', 'Please provide name and dates');
+            return;
+        }
+        const success = await timerConfigManager.saveDrop(newDrop);
+        if (success) {
+            setShowAddDrop(false);
+            setNewDrop({ id: '', name: '', start_date: '', end_date: '', is_active: true });
+            Alert.alert('Success', 'Drop created!');
+        }
+    };
+
+    const handleDeleteDrop = async (id: string) => {
+        Alert.alert('Delete Drop', 'Are you sure?', [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Delete', style: 'destructive', onPress: async () => {
+                await timerConfigManager.deleteDrop(id);
+            }}
+        ]);
     };
 
     const panResponder = useRef(
@@ -507,6 +583,14 @@ export default function AdminCalibrationScreen() {
                     >
                         <Ionicons name="cube" size={20} color={activeTab === 'models' ? Colors.primary : Colors.textMuted} />
                         <Text style={[styles.topTabText, activeTab === 'models' && styles.activeTopTabText]}>Library</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[styles.topTab, activeTab === 'drops' && styles.activeTopTab]}
+                        activeOpacity={0.7}
+                        onPress={() => setActiveTab('drops')}
+                    >
+                        <Ionicons name="flash" size={20} color={activeTab === 'drops' ? Colors.primary : Colors.textMuted} />
+                        <Text style={[styles.topTabText, activeTab === 'drops' && styles.activeTopTabText]}>Drops</Text>
                     </TouchableOpacity>
                 </View>
 
@@ -824,6 +908,42 @@ export default function AdminCalibrationScreen() {
                                 ))}
                             </View>
                         </View>
+                    ) : activeTab === 'drops' ? (
+                        <View style={styles.dropSection}>
+                            <View style={styles.sectionHeaderInner}>
+                                <View>
+                                    <Text style={styles.sectionLabelTitle}>Drops Management</Text>
+                                    <Text style={styles.sectionSub}>Create and manage design drops</Text>
+                                </View>
+                                <TouchableOpacity style={styles.addModelBtn} activeOpacity={0.7} onPress={() => setShowAddDrop(true)}>
+                                    <LinearGradient colors={[Colors.primary, Colors.primaryDark || Colors.primary]} style={styles.addModelIcon}>
+                                        <Ionicons name="add" size={18} color="#fff" />
+                                    </LinearGradient>
+                                    <Text style={styles.addModelBtnText}>New Drop</Text>
+                                </TouchableOpacity>
+                            </View>
+                            
+                            <View style={styles.dropList}>
+                                {drops.map(d => (
+                                    <View key={d.id} style={styles.dropCard}>
+                                        <View style={styles.dropCardInfo}>
+                                            <Text style={styles.dropCardName}>{d.name}</Text>
+                                            <Text style={styles.dropCardDates}>
+                                                {new Date(d.start_date).toLocaleDateString()} - {new Date(d.end_date).toLocaleDateString()}
+                                            </Text>
+                                            <View style={[styles.statusPill, { backgroundColor: d.is_active ? '#e6fce6' : '#ffeeee' }]}>
+                                                <Text style={[styles.statusPillText, { color: d.is_active ? '#2d8a2d' : '#8a2d2d' }]}>
+                                                    {d.is_active ? 'Active' : 'Inactive'}
+                                                </Text>
+                                            </View>
+                                        </View>
+                                        <TouchableOpacity onPress={() => handleDeleteDrop(d.id)} style={styles.deleteDropBtn}>
+                                            <Ionicons name="trash-outline" size={20} color="#ff5252" />
+                                        </TouchableOpacity>
+                                    </View>
+                                ))}
+                            </View>
+                        </View>
                     ) : (
                         <View style={styles.stickerSection}>
                             <View style={styles.sectionHeaderInner}>
@@ -835,7 +955,8 @@ export default function AdminCalibrationScreen() {
                                     setNewModel({ 
                                         id: '', label: '', image: '', image_open: '',
                                         category: 'Vibe', tint: '#a269ff', is_active: true, is_event: false,
-                                        event_start: '', event_end: '', event_title: '', event_description: ''
+                                        event_start: '', event_end: '', event_title: '', event_description: '',
+                                        drop_id: null
                                     });
                                     setShowAddModel(true);
                                 }}>
@@ -886,7 +1007,8 @@ export default function AdminCalibrationScreen() {
                                                         event_start: m.event_start || '', 
                                                         event_end: m.event_end || '', 
                                                         event_title: m.event_title || '', 
-                                                        event_description: m.event_description || ''
+                                                        event_description: m.event_description || '',
+                                                        drop_id: m.drop_id || null
                                                     });
                                                     setShowAddModel(true);
                                                 }}
@@ -941,6 +1063,29 @@ export default function AdminCalibrationScreen() {
                                     onChangeText={t => setNewModel(p => ({ ...p, label: t }))}
                                     style={styles.input}
                                 />
+                            </View>
+
+                            <View style={styles.inputSection}>
+                                <Text style={styles.innerLabel}>Drop Association</Text>
+                                <Text style={styles.switchSub}>Designs in a drop only appear during its active dates.</Text>
+                                <View style={styles.dropPicker}>
+                                    <TouchableOpacity 
+                                        style={[styles.dropOption, !newModel.drop_id && styles.activeDropOption]}
+                                        onPress={() => setNewModel(p => ({ ...p, drop_id: null }))}
+                                    >
+                                        <Text style={[styles.dropOptionText, !newModel.drop_id && styles.activeDropOptionText]}>None</Text>
+                                    </TouchableOpacity>
+                                    {drops.map(d => (
+                                        <TouchableOpacity 
+                                            key={d.id}
+                                            style={[styles.dropOption, newModel.drop_id === d.id && styles.activeDropOption]}
+                                            onPress={() => setNewModel(p => ({ ...p, drop_id: d.id }))}
+                                        >
+                                            <Text style={[styles.dropOptionText, newModel.drop_id === d.id && styles.activeDropOptionText]}>{d.name}</Text>
+                                            {newModel.drop_id === d.id && <Ionicons name="checkmark" size={12} color="#fff" />}
+                                        </TouchableOpacity>
+                                    ))}
+                                </View>
                             </View>
 
                             <View style={styles.inputSection}>
@@ -1154,6 +1299,63 @@ export default function AdminCalibrationScreen() {
                     </View>
                 </View>
             </Modal>
+
+            <Modal visible={showAddDrop} transparent animationType="slide">
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>Create New Drop</Text>
+                        <TextInput
+                            placeholder="Drop Name (e.g. Halloween Drop)"
+                            placeholderTextColor="#999"
+                            value={newDrop.name}
+                            onChangeText={t => setNewDrop(p => ({ ...p, name: t }))}
+                            style={styles.input}
+                        />
+                        <View style={styles.grid}>
+                            <View style={styles.col}>
+                                <Text style={styles.miniLabel}>Start Date</Text>
+                                <TouchableOpacity 
+                                    style={styles.datePickerBtn} 
+                                    onPress={() => {
+                                        setDatePickerMode('start' as any);
+                                        // Specific handler for drop start date
+                                        handleDropDatePicker('start');
+                                    }}
+                                >
+                                    <Ionicons name="calendar-outline" size={16} color={Colors.textMuted} />
+                                    <Text style={styles.dateText}>
+                                        {newDrop.start_date ? new Date(newDrop.start_date).toLocaleDateString() : 'Set Date'}
+                                    </Text>
+                                </TouchableOpacity>
+                            </View>
+                            <View style={styles.col}>
+                                <Text style={styles.miniLabel}>End Date</Text>
+                                <TouchableOpacity 
+                                    style={styles.datePickerBtn} 
+                                    onPress={() => {
+                                        setDatePickerMode('end' as any);
+                                        handleDropDatePicker('end');
+                                    }}
+                                >
+                                    <Ionicons name="calendar-outline" size={16} color={Colors.textMuted} />
+                                    <Text style={styles.dateText}>
+                                        {newDrop.end_date ? new Date(newDrop.end_date).toLocaleDateString() : 'Set Date'}
+                                    </Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+
+                        <View style={styles.modalActions}>
+                            <TouchableOpacity style={styles.cancelBtn} onPress={() => setShowAddDrop(false)}>
+                                <Text style={styles.cancelBtnText}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.confirmBtn} onPress={handleAddDrop}>
+                                <Text style={styles.confirmBtnText}>Create Drop</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
         </View>
     );
 }
@@ -1282,4 +1484,32 @@ const styles = StyleSheet.create({
         fontSize: 11,
         fontFamily: Fonts.bold,
     },
+    // Drops styles
+    dropSection: { gap: 15 },
+    dropList: { gap: 12, marginTop: 10 },
+    dropCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 16,
+        backgroundColor: '#fff',
+        borderRadius: 20,
+        borderWidth: 1,
+        borderColor: '#eee',
+        gap: 12
+    },
+    dropCardInfo: { flex: 1, gap: 4 },
+    dropCardName: { fontSize: 16, fontFamily: Fonts.bold, color: Colors.textPrimary },
+    dropCardDates: { fontSize: 12, color: Colors.textMuted, fontFamily: Fonts.medium },
+    statusPill: { alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, marginTop: 2 },
+    statusPillText: { fontSize: 10, fontFamily: Fonts.bold },
+    deleteDropBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+    
+    // Model picker for Drops
+    dropPicker: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
+    dropOption: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, backgroundColor: '#f0f0f0', borderWidth: 1, borderColor: 'transparent' },
+    activeDropOption: { backgroundColor: Colors.primary, borderColor: Colors.primary },
+    dropOptionText: { fontSize: 12, fontFamily: Fonts.medium, color: Colors.textSecondary },
+    activeDropOptionText: { color: '#fff', fontFamily: Fonts.bold },
+    inputLabel: { fontSize: 13, fontFamily: Fonts.bold, color: Colors.textPrimary, marginBottom: 5 },
+    inputWrap: { marginBottom: 15 },
 });

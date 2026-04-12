@@ -45,11 +45,12 @@ export default function EditProfileScreen({ onClose }: Props) {
     const [saving, setSaving] = useState(false);
 
     const [displayName, setDisplayName] = useState('');
+    const [username, setUsername] = useState('');
     const [bio, setBio] = useState('');
     const [favoriteColor, setFavoriteColor] = useState('#a269ff');
     const [favoriteMovie, setFavoriteMovie] = useState('');
-    const favoriteSongInit = '';
-    const [favoriteSong, setFavoriteSong] = useState(favoriteSongInit);
+    const [songTitle, setSongTitle] = useState('');
+    const [songAuthor, setSongAuthor] = useState('');
     const [avatarUri, setAvatarUri] = useState<string | null>(null);
     const [uploading, setUploading] = useState(false);
 
@@ -57,7 +58,9 @@ export default function EditProfileScreen({ onClose }: Props) {
     const [userId, setUserId] = useState<string | null>(null);
     const [initialAvatarUrl, setInitialAvatarUrl] = useState<string | null>(null);
     const [initialDisplayName, setInitialDisplayName] = useState('');
+    const [initialUsername, setInitialUsername] = useState('');
     const [displayNameHistory, setDisplayNameHistory] = useState<string[]>([]);
+    const [usernameHistory, setUsernameHistory] = useState<string[]>([]);
 
 
 
@@ -69,21 +72,27 @@ export default function EditProfileScreen({ onClose }: Props) {
             setUserId(user.id);
             const { data } = await supabase
                 .from('profiles')
-                .select('username, display_name, avatar_url, bio, favorite_color, favorite_movie, favorite_song, birthdate, display_name_history')
-
+                .select('username, display_name, avatar_url, bio, favorite_color, favorite_movie, favorite_song, birthdate, display_name_history, username_history')
                 .eq('id', user.id)
                 .single();
 
             if (data) {
                 setDisplayName(data.display_name ?? '');
+                setUsername(data.username ?? '');
                 setBio(data.bio ?? '');
                 setFavoriteColor(data.favorite_color ?? '#a269ff');
                 setFavoriteMovie(data.favorite_movie ?? '');
-                setFavoriteSong(data.favorite_song ?? '');
+                if (data.favorite_song) {
+                    const parts = data.favorite_song.split(' - ');
+                    setSongTitle(parts[0] || '');
+                    setSongAuthor(parts[1] || '');
+                }
                 setAvatarUri(data.avatar_url ?? null);
                 setInitialAvatarUrl(data.avatar_url ?? null);
                 setInitialDisplayName(data.display_name ?? '');
+                setInitialUsername(data.username ?? '');
                 setDisplayNameHistory(data.display_name_history ?? []);
+                setUsernameHistory(data.username_history ?? []);
             }
             setLoading(false);
             
@@ -99,7 +108,7 @@ export default function EditProfileScreen({ onClose }: Props) {
         if (!perm.granted) { Alert.alert('Permission required', 'Allow photo access to set an avatar.'); return; }
 
         const result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            mediaTypes: 'images',
             allowsEditing: true,   // built-in crop/adjust
             quality: 0.85,
         });
@@ -188,33 +197,54 @@ export default function EditProfileScreen({ onClose }: Props) {
             }
 
             const nameChanged = displayName.trim() !== initialDisplayName.trim();
-            let newHistory = [...displayNameHistory];
+            const usernameChanged = username.trim().toLowerCase() !== initialUsername.trim().toLowerCase();
+            
+            let newNameHistory = [...displayNameHistory];
+            let newUsernameHistory = [...usernameHistory];
 
             if (nameChanged) {
                 const fifteenDaysAgo = new Date();
                 fifteenDaysAgo.setDate(fifteenDaysAgo.getDate() - 15);
-
                 const recentChanges = displayNameHistory.filter(ts => new Date(ts) > fifteenDaysAgo);
                 
                 if (recentChanges.length >= 2) {
-                    Alert.alert(
-                        'Limit Reached', 
-                        'You can only change your display name twice every 15 days. Please try again later.'
-                    );
-                    setSaving(false);
-                    return;
+                    Alert.alert('Límite alcanzado', 'Solo puedes cambiar tu nombre visible dos veces cada 15 días.');
+                    setSaving(false); return;
                 }
-                newHistory.push(new Date().toISOString());
+                newNameHistory.push(new Date().toISOString());
+            }
+
+            if (usernameChanged) {
+                const oneMonthAgo = new Date();
+                oneMonthAgo.setDate(oneMonthAgo.getDate() - 30);
+                const recentUserChanges = usernameHistory.filter(ts => new Date(ts) > oneMonthAgo);
+                
+                if (recentUserChanges.length >= 2) {
+                    Alert.alert('Límite alcanzado', 'Solo puedes cambiar tu nombre de usuario (@) dos veces al mes.');
+                    setSaving(false); return;
+                }
+
+                // Check if username is taken
+                const { data: existing } = await supabase.from('profiles').select('id').eq('username', username.trim().toLowerCase()).single();
+                if (existing && existing.id !== userId) {
+                    Alert.alert('Error', 'Este nombre de usuario ya está en uso.');
+                    setSaving(false); return;
+                }
+                newUsernameHistory.push(new Date().toISOString());
             }
 
             const { error } = await supabase.from('profiles').update({
                 display_name: displayName.trim(),
+                username: username.trim().toLowerCase(),
                 bio,
                 favorite_color: favoriteColor,
                 favorite_movie: favoriteMovie.trim() || null,
-                favorite_song: favoriteSong.trim() || null,
+                favorite_song: (songTitle.trim() || songAuthor.trim()) 
+                    ? `${songTitle.trim()}${songAuthor.trim() ? ` - ${songAuthor.trim()}` : ''}` 
+                    : null,
                 avatar_url: finalAvatarUrl,
-                display_name_history: newHistory,
+                display_name_history: newNameHistory,
+                username_history: newUsernameHistory,
                 updated_at: new Date().toISOString(),
             }).eq('id', userId);
 
@@ -372,6 +402,10 @@ export default function EditProfileScreen({ onClose }: Props) {
                     <TextInput style={styles.input} value={displayName} onChangeText={setDisplayName}
                         placeholder={t('profile.yourVisibleName')} placeholderTextColor={Colors.textMuted} />
 
+                    <Text style={styles.sectionLabel}>Nombre de usuario (@)</Text>
+                    <TextInput style={styles.input} value={username} onChangeText={(val) => setUsername(val.replace(/\s/g, '').toLowerCase())}
+                        placeholder="usuario" placeholderTextColor={Colors.textMuted} autoCapitalize="none" />
+
                     <Text style={styles.sectionLabel}>{t('profile.bio')}</Text>
                     <TextInput style={[styles.input, styles.textArea]} value={bio} onChangeText={setBio}
                         placeholder={t('profile.writeSomethingAboutYou')} placeholderTextColor={Colors.textMuted}
@@ -401,10 +435,26 @@ export default function EditProfileScreen({ onClose }: Props) {
                     <Text style={styles.charLimit}>{favoriteMovie.length}/30</Text>
 
                     <Text style={styles.sectionLabel}>{t('profile.favoriteSong')}</Text>
-                    <TextInput style={styles.input} value={favoriteSong} onChangeText={setFavoriteSong}
-                        placeholder={t('profile.songPlaceholder')} placeholderTextColor={Colors.textMuted}
-                        maxLength={30} />
-                    <Text style={styles.charLimit}>{favoriteSong.length}/30</Text>
+                    <View style={styles.songInputContainer}>
+                        <TextInput 
+                            style={[styles.input, { flex: 1, marginBottom: 0 }]} 
+                            value={songTitle} 
+                            onChangeText={setSongTitle}
+                            placeholder={t('profile.songPlaceholder') || 'Canción'} 
+                            placeholderTextColor={Colors.textMuted}
+                            maxLength={30} 
+                        />
+                        <Text style={styles.songSeparator}>-</Text>
+                        <TextInput 
+                            style={[styles.input, { flex: 1, marginBottom: 0 }]} 
+                            value={songAuthor} 
+                            onChangeText={setSongAuthor}
+                            placeholder={t('profile.authorPlaceholder') || 'Autor'} 
+                            placeholderTextColor={Colors.textMuted}
+                            maxLength={30} 
+                        />
+                    </View>
+                    <Text style={styles.charLimit}>{songTitle.length + songAuthor.length}/60</Text>
                 </View>
 
 
@@ -541,6 +591,16 @@ const styles = StyleSheet.create({
         fontFamily: Fonts.regular
     },
     textArea: { minHeight: 80, textAlignVertical: 'top' },
+    songInputContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    songSeparator: {
+        color: Colors.textMuted,
+        fontSize: 16,
+        fontFamily: Fonts.bold,
+    },
 
     // Color
     colorRow: {

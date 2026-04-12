@@ -9,6 +9,7 @@ import { useIsFocused, useNavigation, useRoute } from '@react-navigation/native'
 import { Colors, Fonts, Spacing, BorderRadius } from '../theme';
 import { supabase } from '../lib/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useTranslation } from 'react-i18next';
 import { sendPushNotification } from '../utils/pushNotifications';
 import * as ImagePicker from 'expo-image-picker';
 import { Audio, Video } from 'expo-av';
@@ -97,6 +98,7 @@ export default function ChatDetailScreen() {
     const [isRecordingAudio, setIsRecordingAudio] = useState(false);
     const [myUserProfile, setMyUserProfile] = useState<any>(null);
     const [pendingMedia, setPendingMedia] = useState<string | null>(null);
+    const { t } = useTranslation();
     const [isUploading, setIsUploading] = useState(false);
     const [recording, setRecording] = useState<Audio.Recording | null>(null);
     const [viewerVisible, setViewerVisible] = useState(false);
@@ -358,7 +360,7 @@ export default function ChatDetailScreen() {
     const handleCamera = async () => {
         const { status } = await ImagePicker.requestCameraPermissionsAsync();
         if (status !== 'granted') return;
-        const result = await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, quality: 0.85, videoMaxDuration: 600 });
+        const result = await ImagePicker.launchCameraAsync({ mediaTypes: 'all', quality: 0.85, videoMaxDuration: 600 });
         if (!result.canceled && result.assets[0]) {
             setPendingMedia(result.assets[0].uri);
             await sendMessage(
@@ -373,7 +375,7 @@ export default function ChatDetailScreen() {
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (status !== 'granted') return;
         try {
-            const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, quality: 0.85, videoMaxDuration: 600 });
+            const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: 'all', quality: 0.85, videoMaxDuration: 600 });
             if (!result.canceled && result.assets[0]) {
                 setPendingMedia(result.assets[0].uri);
                 await sendMessage(
@@ -580,7 +582,7 @@ export default function ChatDetailScreen() {
     const changeGroupAvatar = async () => {
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (status !== 'granted') return;
-        const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.8, allowsEditing: true, aspect: [1, 1] });
+        const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: 'images', quality: 0.8, allowsEditing: true, aspect: [1, 1] as [number, number] });
         if (result.canceled || !result.assets[0]) return;
         try {
             const uri = result.assets[0].uri;
@@ -616,9 +618,9 @@ export default function ChatDetailScreen() {
 
     const deleteMessageEveryone = async (msgId: string) => {
         try {
-            const { error } = await supabase.from('messages').delete().eq('id', msgId);
+            const { error } = await supabase.from('messages').update({ content: '!!DELETED_FOR_ALL!!', is_deleted: true }).eq('id', msgId);
             if (error) throw error;
-            setMessages(prev => prev.filter(m => m.id !== msgId));
+            setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: '!!DELETED_FOR_ALL!!', is_deleted: true } : m));
         } catch (e) {
             console.error('Delete everyone error:', e);
             Alert.alert('Error', 'No se pudo eliminar el mensaje.');
@@ -629,24 +631,24 @@ export default function ChatDetailScreen() {
         const isMe = item.sender_id === currentUserId;
         if (item.is_deleted) return;
 
-        Alert.alert('Opciones de Mensaje', '¿Qué deseas hacer?', [
-            { text: 'Responder 💬', onPress: () => setReplyingTo(item) },
+        Alert.alert(t?.('chat.options') || 'Opciones', t?.('chat.choose_action') || '¿Qué deseas hacer?', [
+            { text: `💬 ${t?.('chat.reply') || 'Responder'}`, onPress: () => setReplyingTo(item) },
             { 
-                text: 'Eliminar 🗑️', 
+                text: `🗑️ ${t?.('chat.delete') || 'Eliminar'}`, 
                 style: 'destructive', 
                 onPress: () => {
                     if (isMe) {
-                        Alert.alert('Eliminar', '¿Eliminar para quién?', [
-                            { text: 'Para todos', style: 'destructive', onPress: () => deleteMessageEveryone(item.id) },
-                            { text: 'Para mí', style: 'destructive', onPress: () => deleteMessageForMe(item.id) },
-                            { text: 'Cancelar', style: 'cancel' }
+                        Alert.alert(t?.('chat.delete') || 'Eliminar', t?.('chat.delete_for_whom') || '¿Eliminar para quién?', [
+                            { text: t?.('chat.for_everyone') || 'Para todos', style: 'destructive', onPress: () => deleteMessageEveryone(item.id) },
+                            { text: t?.('chat.for_me') || 'Para mí', style: 'destructive', onPress: () => deleteMessageForMe(item.id) },
+                            { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' }
                         ]);
                     } else {
                         deleteMessageForMe(item.id);
                     }
                 } 
             },
-            { text: 'Cancelar', style: 'cancel' }
+            { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' }
         ]);
     };
 
@@ -670,6 +672,16 @@ export default function ChatDetailScreen() {
         const repliedMsg = item.replying_to_id ? messages.find(m => m.id === item.replying_to_id) : null;
         const defaultAvatar = 'https://www.gravatar.com/avatar/00000000000000000000000000000000?d=mp&f=y';
 
+        const isDeleted = item.is_deleted || item.content === '!!DELETED_FOR_ALL!!';
+        
+        // "Para mí solo se me borrará a mí y no pondrá nada"
+        // Message is hidden entirely if it's in our deleted list (this is handled by the initial filter, 
+        // but we add a safety check here too)
+        if (deletedIdsRef.current.includes(item.id)) return null;
+
+        // "Para todos saldrá un mensaje de mensaje ha sido eliminado"
+        // If it was deleted for all, we show the placeholder.
+
         return (
             <View style={[styles.msgWrapper, isMe ? styles.myMsg : styles.theirMsg]}>
                 <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 6 }}>
@@ -685,11 +697,11 @@ export default function ChatDetailScreen() {
 
                     <TouchableOpacity 
                         activeOpacity={0.9} 
-                        style={[styles.bubble, isMe ? styles.myBubble : styles.theirBubble, item.is_deleted && { backgroundColor: Colors.cardAlt, borderWidth: 1, borderColor: Colors.border }]}
+                        style={[styles.bubble, isMe ? styles.myBubble : styles.theirBubble, isDeleted && { backgroundColor: Colors.cardAlt, borderWidth: 1, borderColor: Colors.border, borderStyle: 'dashed' }]}
                         onLongPress={() => handleLongPressMessage(item)}
                     >
-                        {item.is_deleted ? (
-                            <Text style={[styles.msgText, { fontStyle: 'italic', color: Colors.textMuted }]}>Este mensaje fue eliminado</Text>
+                        {isDeleted ? (
+                            <Text style={[styles.msgText, { fontStyle: 'italic', color: Colors.textMuted, fontSize: 13 }]}>Este mensaje fue eliminado</Text>
                         ) : (
                             <>
                                 {repliedMsg && (
@@ -726,7 +738,7 @@ export default function ChatDetailScreen() {
                                 )}
                             </>
                         )}
-                        <Text style={[styles.msgTime, isMe && styles.myMsgTime, item.is_deleted && { color: Colors.textMuted }]}>{formatMessageTime(item.created_at)}</Text>
+                        <Text style={[styles.msgTime, isMe && styles.myMsgTime, isDeleted && { color: Colors.textMuted }]}>{formatMessageTime(item.created_at)}</Text>
                     </TouchableOpacity>
 
                     {isMe && (
@@ -779,10 +791,18 @@ export default function ChatDetailScreen() {
                     </View>
                 </TouchableOpacity>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                    <TouchableOpacity onPress={() => Alert.alert('Kapsely', 'Llamada de audio no disponible en modo Demo.')} style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.background, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: Colors.border }}>
+                    <TouchableOpacity 
+                        activeOpacity={0.7} 
+                        onPress={() => Alert.alert('Llamada', `Iniciando llamada con ${otherUser?.display_name || 'usuario'}... (Función en desarrollo)`)}
+                        style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.surface, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: Colors.border }}
+                    >
                          <Ionicons name="call-outline" size={18} color={Colors.primary} />
                     </TouchableOpacity>
-                    <TouchableOpacity onPress={() => Alert.alert('Kapsely', 'Llamada de video no disponible en modo Demo.')} style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.background, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: Colors.border }}>
+                    <TouchableOpacity 
+                        activeOpacity={0.7} 
+                        onPress={() => Alert.alert('Videollamada', `Iniciando videollamada con ${otherUser?.display_name || 'usuario'}... (Función en desarrollo)`)}
+                        style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.surface, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: Colors.border }}
+                    >
                          <Ionicons name="videocam-outline" size={18} color={Colors.primary} />
                     </TouchableOpacity>
                 </View>

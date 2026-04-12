@@ -119,7 +119,8 @@
     "favoriteColor": "Color Favorito",
     "favoriteMovieSeries": "🎬 Viendo ahora",
     "moviePlaceholder": "ej. Interstellar",
-    "songPlaceholder": "ej. Bohemian Rhapsody – Queen",
+    "songPlaceholder": "ej. Bohemian Rhapsody",
+    "authorPlaceholder": "ej. Queen",
     "setYourBirthday": "Establece tu cumpleaños",
     "birthdate": "Fecha de nacimiento",
     "logout_confirm": "¿Estás seguro de que quieres cerrar sesión?",
@@ -153,7 +154,20 @@
       "use_capangel": "Delegar en un CapAngel",
       "search_capangel": "Buscar un CapAngel...",
       "no_capangel": "Sin CapAngel asignado"
-    }
+    },
+    "account_panel": "Panel de cuenta",
+    "switch_profile": "Cambiar perfil",
+    "profiles": "PERFILES",
+    "add_account": "Agregar cuenta",
+    "change_password": "Cambiar contraseña",
+    "update_password": "Actualizar contraseña",
+    "new_password": "Nueva contraseña",
+    "confirm_new_password": "Confirmar nueva contraseña",
+    "security_and_account": "SEGURIDAD Y CUENTA",
+    "delete_account_final_btn": "Eliminar cuenta definitivamente",
+    "wrong_password": "Contraseña incorrecta",
+    "account_deleted_success": "Tu cuenta y datos han sido eliminados correctamente.",
+    "delete_account_desc": "Esta acción es permanente. Se eliminarán todas tus cápsulas, comentarios y perfil. Por favor, introduce tu contraseña para confirmar."
   },
   "create": {
     "title": "Crear Cápsula",

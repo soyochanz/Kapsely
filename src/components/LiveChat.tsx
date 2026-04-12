@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback, useImperativeHandle } from 'react';
 import {
     View, Text, StyleSheet, TextInput, TouchableOpacity,
-    FlatList, Alert, Platform, ActivityIndicator, Animated,
-    PanResponder, GestureResponderEvent, PanResponderGestureState
+    ScrollView, Alert, Platform, ActivityIndicator, Animated,
+    TouchableWithoutFeedback, Keyboard
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
@@ -12,15 +12,9 @@ import { Fonts, Shadow, Colors } from '../theme';
 import { safetyService } from '../utils/safety';
 import { LinearGradient } from 'expo-linear-gradient';
 import VerifiedBadge from './VerifiedBadge';
-import { useWebDragScroll } from '../utils/useWebDragScroll';
 
-
-
-
-// ─── Shared channel name ──────────────────────────────────────────────────────
 export const EMOJI_CHANNEL = (capsuleId: string) => `capsule-emoji-${capsuleId}`;
 
-// App palette
 const P = {
     bg: '#FFFFFF',
     surface: '#F8F6FF',
@@ -34,7 +28,6 @@ const P = {
     purpleLight: '#9B7DE0',
     rose: '#C06090',
 };
-
 
 interface ChatMessage {
     id: string;
@@ -61,8 +54,6 @@ interface LiveChatProps {
     onInteractionEnd?: () => void;
 }
 
-
-// ── Pulsing live dot ──────────────────────────────────────────────────────────
 const PulseDot = React.memo(({ color }: { color: string }) => {
     const pulseAnim = useRef(new Animated.Value(0.4)).current;
     useEffect(() => {
@@ -76,12 +67,10 @@ const PulseDot = React.memo(({ color }: { color: string }) => {
     return <Animated.View style={[st.liveIndicator, { backgroundColor: color, opacity: pulseAnim }]} />;
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
 const LiveChat = React.forwardRef<LiveChatRef, LiveChatProps>(
     ({ capsuleId, tint, hideInput, isOwner: ownerProp, isNested, onInteractionStart, onInteractionEnd }, ref) => {
 
         const { t } = useTranslation();
-
 
         const [messages, setMessages] = useState<ChatMessage[]>([]);
         const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
@@ -95,16 +84,11 @@ const LiveChat = React.forwardRef<LiveChatRef, LiveChatProps>(
         const [showScrollBottom, setShowScrollBottom] = useState(false);
         const [uniqueUsersCount, setUniqueUsersCount] = useState(0);
 
-
-
-        const flatListRef = useRef<FlatList>(null);
-        const localEmojiTriggerRef = useRef<((emoji: string) => void) | null>(null);
-        useWebDragScroll(flatListRef);
+        // ✅ ScrollView ref instead of FlatList
+        const scrollViewRef = useRef<ScrollView>(null);
 
         const userIdRef = useRef<string | null>(null);
         const blockedRef = useRef<string[]>([]);
-
-        // Channel refs for stability
         const emojiChannelRef = useRef<any>(null);
 
         useEffect(() => { if (ownerProp !== undefined) setIsOwner(ownerProp); }, [ownerProp]);
@@ -116,8 +100,9 @@ const LiveChat = React.forwardRef<LiveChatRef, LiveChatProps>(
             loadMessages();
             checkStatus();
 
-            // Set up stable emoji channel for broadcasting
             emojiChannelRef.current = supabase.channel(EMOJI_CHANNEL(capsuleId)).subscribe();
+
+            const profileCache = new Map<string, any>();
 
             const msgChannel = supabase
                 .channel(`capsule-chat-${capsuleId}`)
@@ -141,16 +126,31 @@ const LiveChat = React.forwardRef<LiveChatRef, LiveChatProps>(
                                     }
                                 }
 
-                                supabase.from('profiles').select('username, avatar_url, is_verified').eq('id', newMsg.user_id).single().then(({ data }) => {
-                                    setMessages(curr => {
-                                        if (curr.some(m => m.id === newMsg.id)) {
-                                            return curr.map(m => m.id === newMsg.id ? { ...m, profiles: data ?? undefined } : m);
+                                const cached = profileCache.get(newMsg.user_id);
+                                if (cached) {
+                                    setTimeout(() => {
+                                        setMessages(curr => curr.map(m => m.id === newMsg.id ? { ...m, profiles: cached } : m));
+                                    }, 0);
+                                } else {
+                                    supabase.from('profiles').select('username, avatar_url, is_verified').eq('id', newMsg.user_id).single().then(({ data }) => {
+                                        if (data) {
+                                            profileCache.set(newMsg.user_id, data);
+                                            setMessages(curr => {
+                                                if (curr.some(m => m.id === newMsg.id)) {
+                                                    return curr.map(m => m.id === newMsg.id ? { ...m, profiles: data } : m);
+                                                }
+                                                return [...curr, { ...newMsg, profiles: data }];
+                                            });
                                         }
-                                        return [{ ...newMsg, profiles: data ?? undefined }, ...curr];
                                     });
-                                });
-                                return prev;
+                                }
+                                // ✅ Nuevos mensajes van al FINAL (no invertido como FlatList)
+                                return [...prev, { ...newMsg }];
                             });
+
+                            // ✅ Auto-scroll al fondo cuando llega mensaje nuevo
+                            setTimeout(() => scrollToBottom(), 100);
+
                         } else if (payload.eventType === 'DELETE') {
                             setMessages(prev => prev.filter(m => m.id !== payload.old.id));
                         } else if (payload.eventType === 'UPDATE') {
@@ -167,13 +167,10 @@ const LiveChat = React.forwardRef<LiveChatRef, LiveChatProps>(
         }, [capsuleId]);
 
         useEffect(() => {
-            // Count unique users across ALL loaded messages
             const users = new Set(messages.map(m => m.user_id));
             if (userId && !users.has(userId)) users.add(userId);
             setUniqueUsersCount(users.size);
         }, [messages, userId]);
-
-
 
         const initUser = async () => {
             const { data: { user } } = await supabase.auth.getUser();
@@ -208,36 +205,39 @@ const LiveChat = React.forwardRef<LiveChatRef, LiveChatProps>(
                 .from('capsule_chat')
                 .select('*, profiles:user_id(username, avatar_url, is_verified)')
                 .eq('capsule_id', capsuleId)
-                .order('created_at', { ascending: false })
+                // ✅ ascending: true para ScrollView normal (más nuevo abajo)
+                .order('created_at', { ascending: true })
                 .limit(40);
             if (data) {
                 setMessages(data.filter(m => !blocked.includes(m.user_id)));
                 setHasMore(data.length === 40);
-                
-                // Get total unique participants from DB
+
                 const { data: countData } = await supabase.rpc('get_capsule_chat_participant_count', { p_capsule_id: capsuleId });
                 if (countData !== null) setUniqueUsersCount(countData);
                 else {
-                     const users = new Set(data.map(m => m.user_id));
-                     setUniqueUsersCount(users.size);
+                    const users = new Set(data.map(m => m.user_id));
+                    setUniqueUsersCount(users.size);
                 }
-            }
 
+                // ✅ Scroll al fondo tras cargar mensajes iniciales
+                setTimeout(() => scrollToBottom(), 150);
+            }
         };
 
         const loadMore = async () => {
             if (loadingMore || !hasMore || messages.length === 0) return;
             setLoadingMore(true);
-            const lastMsg = messages[messages.length - 1];
+            const firstMsg = messages[0];
             const { data } = await supabase
                 .from('capsule_chat')
                 .select('*, profiles:user_id(username, avatar_url, is_verified)')
                 .eq('capsule_id', capsuleId)
-                .lt('created_at', lastMsg.created_at)
-                .order('created_at', { ascending: false })
+                // ✅ Cargar mensajes ANTERIORES al primero visible
+                .lt('created_at', firstMsg.created_at)
+                .order('created_at', { ascending: true })
                 .limit(40);
             if (data && data.length > 0) {
-                setMessages(prev => [...prev, ...data.filter(m => !blockedRef.current.includes(m.user_id))]);
+                setMessages(prev => [...data.filter(m => !blockedRef.current.includes(m.user_id)), ...prev]);
                 setHasMore(data.length === 40);
             } else {
                 setHasMore(false);
@@ -256,7 +256,8 @@ const LiveChat = React.forwardRef<LiveChatRef, LiveChatProps>(
                 id: tempId, user_id: userIdRef.current, message: text,
                 created_at: new Date().toISOString(), profiles: myProfile ?? undefined,
             };
-            setMessages(prev => [optimistic, ...prev]);
+            // ✅ Mensajes nuevos van al final
+            setMessages(prev => [...prev, optimistic]);
             scrollToBottom();
 
             try {
@@ -283,7 +284,7 @@ const LiveChat = React.forwardRef<LiveChatRef, LiveChatProps>(
         };
 
         const scrollToBottom = () => {
-            setTimeout(() => flatListRef.current?.scrollToOffset({ offset: 0, animated: true }), 100);
+            scrollViewRef.current?.scrollToEnd({ animated: true });
             setShowScrollBottom(false);
         };
 
@@ -292,39 +293,72 @@ const LiveChat = React.forwardRef<LiveChatRef, LiveChatProps>(
             sendReaction: (emoji: string) => sendReaction(emoji),
         }));
 
-        const handleMessageOptions = (msg: ChatMessage) => {
+        const handleMessageOptions = useCallback((msg: ChatMessage) => {
             const isMe = msg.user_id === userId;
             const options: any[] = [];
             if (isMe) {
-                options.push({ text: t('common.delete'), style: 'destructive', onPress: async () => {
-                    const { error } = await supabase.from('capsule_chat').delete().eq('id', msg.id);
-                    if (!error) setMessages(prev => prev.filter(m => m.id !== msg.id));
-                }});
+                options.push({
+                    text: t('common.delete'), style: 'destructive', onPress: async () => {
+                        const { error } = await supabase.from('capsule_chat').update({ message: '!!DELETED_FOR_ALL!!' }).eq('id', msg.id);
+                        if (!error) setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, message: '!!DELETED_FOR_ALL!!' } : m));
+                    }
+                });
             } else {
                 options.push({ text: t('common.report'), onPress: () => { } });
-                if (isOwner) options.push({ text: t('detail.block_user'), style: 'destructive', onPress: async () => {
-                    await supabase.from('capsule_chat_bans').insert({ capsule_id: capsuleId, target_user_id: msg.user_id, banned_by: userId });
-                    await supabase.from('capsule_chat').delete().eq('capsule_id', capsuleId).eq('user_id', msg.user_id);
-                    setMessages(prev => prev.filter(m => m.user_id !== msg.user_id));
-                }});
+                if (isOwner) options.push({
+                    text: t('detail.block_user'), style: 'destructive', onPress: async () => {
+                        await supabase.from('capsule_chat_bans').insert({ capsule_id: capsuleId, target_user_id: msg.user_id, banned_by: userId });
+                        await supabase.from('capsule_chat').delete().eq('capsule_id', capsuleId).eq('user_id', msg.user_id);
+                        setMessages(prev => prev.filter(m => m.user_id !== msg.user_id));
+                    }
+                });
             }
             options.push({ text: t('common.cancel'), style: 'cancel' });
             Alert.alert(t('detail.options'), '', options);
-        };
+        }, [userId, isOwner, capsuleId, t]);
 
         const onScroll = (e: any) => {
-            const offset = e.nativeEvent.contentOffset.y;
-            if (offset > 200) setShowScrollBottom(true);
-            else if (offset < 40) setShowScrollBottom(false);
+            const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+            const distanceFromBottom = contentSize.height - layoutMeasurement.height - contentOffset.y;
+
+            // ✅ Lógica invertida: mostrar botón si NO está cerca del fondo
+            if (distanceFromBottom > 200) setShowScrollBottom(true);
+            else setShowScrollBottom(false);
+
+            // ✅ Cargar más mensajes al llegar al tope superior
+            if (contentOffset.y < 40 && hasMore && !loadingMore) {
+                loadMore();
+            }
         };
 
-        const renderItem = useCallback(({ item }: { item: ChatMessage }) => {
+        const renderMessage = useCallback((item: ChatMessage) => {
             const isSystem = item.message.startsWith('!!system:');
             const cleanMsg = isSystem ? item.message.replace('!!system:', '') : item.message;
             const isMe = item.user_id === userId;
 
+            if (item.message === '!!DELETED_FOR_ALL!!') {
+                if (isMe) return null;
+                return (
+                    <View key={item.id} style={st.msgContainer}>
+                        <Image
+                            source={{ uri: item.profiles?.avatar_url || 'https://via.placeholder.com/150' }}
+                            style={[st.msgAvatar, { opacity: 0.5 }]}
+                            cachePolicy="memory-disk"
+                        />
+                        <View style={st.msgBody}>
+                            <View style={[st.msgBubble, { backgroundColor: P.surface, borderColor: P.border, borderStyle: 'dashed' }]}>
+                                <Text style={[st.msgText, { color: P.textMuted, fontStyle: 'italic', fontSize: 13 }]}>
+                                    Mensaje eliminado
+                                </Text>
+                            </View>
+                        </View>
+                    </View>
+                );
+            }
+
             return (
                 <TouchableOpacity
+                    key={item.id}
                     activeOpacity={0.7}
                     onLongPress={() => handleMessageOptions(item)}
                     style={st.msgContainer}
@@ -336,12 +370,11 @@ const LiveChat = React.forwardRef<LiveChatRef, LiveChatProps>(
                     />
                     <View style={st.msgBody}>
                         <View style={st.msgMeta}>
-                             <Text style={[st.msgUsername, { color: isMe ? tint : P.purpleLight }]}>
+                            <Text style={[st.msgUsername, { color: isMe ? tint : P.purpleLight }]}>
                                 {item.profiles?.username || 'user'}
                             </Text>
                             {item.profiles?.is_verified && <VerifiedBadge size={10} style={{ marginLeft: 2, marginTop: 1 }} />}
                             <Text style={st.msgTime}>{new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
-
                         </View>
                         <View style={[st.msgBubble, isMe && { backgroundColor: tint + '22', borderColor: tint + '40' }]}>
                             <Text style={[st.msgText, isSystem && st.systemText]}>{cleanMsg}</Text>
@@ -349,95 +382,86 @@ const LiveChat = React.forwardRef<LiveChatRef, LiveChatProps>(
                     </View>
                 </TouchableOpacity>
             );
-        }, [tint, userId]);
+        }, [tint, userId, handleMessageOptions]);
 
         return (
-            <View style={[st.root, isNested && st.nestedRoot]}>
-                {/* Header */}
-                <View style={st.headerOuter}>
-                    <View style={st.header}>
-                        <View style={st.headerLeft}>
-                            <PulseDot color={tint} />
-                            <Text style={[st.headerTitle, { color: tint }]}>CHAT EN VIVO</Text>
+            <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+                <View style={[st.root, isNested && st.nestedRoot]}>
+                    {/* Header */}
+                    <View style={st.headerOuter}>
+                        <View style={st.header}>
+                            <View style={st.headerLeft}>
+                                <PulseDot color={tint} />
+                                <Text style={[st.headerTitle, { color: tint }]}>CHAT EN VIVO</Text>
+                            </View>
+                            <View />
                         </View>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                            <TouchableOpacity style={st.callBtn} onPress={() => Alert.alert('Kapsely', 'Llamada de audio no disponible en modo Demo.')}>
-                                <Ionicons name="call-outline" size={13} color={tint} />
+                        <View style={[st.headerLine, { backgroundColor: tint + '15' }]} />
+                    </View>
+
+                    {/* ✅ ScrollView normal en lugar de FlatList — elimina el warning de VirtualizedLists anidados */}
+                    <View
+                        style={{ flex: 1, minHeight: 0 }}
+                        onTouchStart={() => onInteractionStart?.()}
+                        onTouchEnd={() => onInteractionEnd?.()}
+                        onTouchCancel={() => onInteractionEnd?.()}
+                    >
+                        <ScrollView
+                            ref={scrollViewRef}
+                            style={st.flatList}
+                            contentContainerStyle={st.listContent}
+                            onScroll={onScroll}
+                            scrollEventThrottle={16}
+                            showsVerticalScrollIndicator={false}
+                            keyboardShouldPersistTaps="handled"
+                        >
+                            {/* Indicador de carga de mensajes anteriores */}
+                            {loadingMore && (
+                                <ActivityIndicator size="small" color={tint} style={{ marginVertical: 10 }} />
+                            )}
+
+                            {/* ✅ Render directo con map — sin VirtualizedList */}
+                            {messages.map(msg => renderMessage(msg))}
+                        </ScrollView>
+
+                        {showScrollBottom && (
+                            <TouchableOpacity style={[st.scrollBottomBtn, { backgroundColor: tint }]} onPress={scrollToBottom}>
+                                <Ionicons name="arrow-down" size={16} color="#fff" />
+                                <Text style={st.scrollBottomText}>Recientes</Text>
                             </TouchableOpacity>
-                            <TouchableOpacity style={st.callBtn} onPress={() => Alert.alert('Kapsely', 'Llamada de video no disponible en modo Demo.')}>
-                                <Ionicons name="videocam-outline" size={13} color={tint} />
-                            </TouchableOpacity>
-                            <View style={[st.viewerBadge, { borderColor: tint + '25', backgroundColor: tint + '08' }]}>
-                                <Ionicons name="people" size={10} color={tint} />
-                                <Text style={[st.viewerCount, { color: tint }]}>{uniqueUsersCount}</Text>
+                        )}
+                    </View>
+
+                    {!hideInput && (
+                        <View style={st.inputSection}>
+                            <View style={st.emojiBar}>
+                                {REACTION_EMOJIS.map(e => (
+                                    <TouchableOpacity key={e} onPress={() => sendReaction(e)} style={[st.emojiTick, { backgroundColor: tint + '18' }]}>
+                                        <Text style={{ fontSize: 20 }}>{e}</Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+                            <View style={st.inputWrapper}>
+                                <TextInput
+                                    style={[st.input, { borderColor: input ? tint + '60' : P.border }]}
+                                    placeholder="Di algo..."
+                                    placeholderTextColor={P.textMuted}
+                                    value={input}
+                                    onChangeText={setInput}
+                                    onSubmitEditing={() => sendInternalMessage()}
+                                    returnKeyType="send"
+                                    selectionColor={tint}
+                                />
+                                <TouchableOpacity onPress={() => sendInternalMessage()} style={[st.sendBtn]}>
+                                    <LinearGradient colors={[tint, P.rose]} style={st.sendBtnGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+                                        <Ionicons name="send" size={15} color="#fff" />
+                                    </LinearGradient>
+                                </TouchableOpacity>
                             </View>
                         </View>
-                    </View>
-                    <View style={[st.headerLine, { backgroundColor: tint + '15' }]} />
-                </View>
-
-
-
-                {/* Messages */}
-                <View 
-                    style={{ flex: 1, minHeight: 0 }}
-                >
-                    <FlatList
-                        ref={flatListRef}
-                        scrollEnabled={false}
-                        data={messages}
-                        renderItem={renderItem}
-                        keyExtractor={item => item.id}
-                        inverted
-                        contentContainerStyle={st.listContent}
-                        onEndReached={loadMore}
-                        onEndReachedThreshold={0.4}
-                        onScroll={onScroll}
-                        scrollEventThrottle={16}
-                        showsVerticalScrollIndicator={false}
-                        ListFooterComponent={loadingMore ? <ActivityIndicator size="small" color={tint} style={{ marginVertical: 10 }} /> : null}
-                        style={st.flatList}
-                        nestedScrollEnabled
-                    />
-
-
-                    {showScrollBottom && (
-                        <TouchableOpacity style={[st.scrollBottomBtn, { backgroundColor: tint }]} onPress={scrollToBottom}>
-                            <Ionicons name="arrow-down" size={16} color="#fff" />
-                            <Text style={st.scrollBottomText}>Recientes</Text>
-                        </TouchableOpacity>
                     )}
                 </View>
-
-                {!hideInput && (
-                    <View style={st.inputSection}>
-                        <View style={st.emojiBar}>
-                            {REACTION_EMOJIS.map(e => (
-                                <TouchableOpacity key={e} onPress={() => sendReaction(e)} style={[st.emojiTick, { backgroundColor: tint + '18' }]}>
-                                    <Text style={{ fontSize: 20 }}>{e}</Text>
-                                </TouchableOpacity>
-                            ))}
-                        </View>
-                        <View style={st.inputWrapper}>
-                            <TextInput
-                                style={[st.input, { borderColor: input ? tint + '60' : P.border }]}
-                                placeholder="Di algo..."
-                                placeholderTextColor={P.textMuted}
-                                value={input}
-                                onChangeText={setInput}
-                                onSubmitEditing={() => sendInternalMessage()}
-                                returnKeyType="send"
-                                selectionColor={tint}
-                            />
-                            <TouchableOpacity onPress={() => sendInternalMessage()} style={[st.sendBtn]}>
-                                <LinearGradient colors={[tint, P.rose]} style={st.sendBtnGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-                                    <Ionicons name="send" size={15} color="#fff" />
-                                </LinearGradient>
-                            </TouchableOpacity>
-                        </View>
-                    </View>
-                )}
-            </View>
+            </TouchableWithoutFeedback>
         );
     }
 );
@@ -467,7 +491,6 @@ const st = StyleSheet.create({
         zIndex: 10,
         ...Shadow.subtle,
     },
-
     headerLine: {
         height: 1.5,
         width: '100%',
@@ -490,7 +513,6 @@ const st = StyleSheet.create({
         letterSpacing: 2.2,
         paddingTop: 1,
     },
-
     liveIndicator: {
         width: 8,
         height: 8,
@@ -505,7 +527,6 @@ const st = StyleSheet.create({
         borderRadius: 14,
         borderWidth: 1.2,
     },
-
     viewerCount: {
         fontSize: 11,
         fontFamily: Fonts.bold,
@@ -520,14 +541,13 @@ const st = StyleSheet.create({
         borderWidth: 1,
         borderColor: 'rgba(124,92,191,0.12)',
     },
-
-
     flatList: {
         flex: 1,
     },
     listContent: {
         paddingHorizontal: 14,
         paddingVertical: 10,
+        flexGrow: 1,
     },
     msgContainer: {
         flexDirection: 'row',
@@ -582,7 +602,6 @@ const st = StyleSheet.create({
         fontStyle: 'italic',
         fontSize: 13,
     },
-
     scrollBottomBtn: {
         position: 'absolute',
         bottom: 12,
