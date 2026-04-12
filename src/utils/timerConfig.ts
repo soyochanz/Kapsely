@@ -29,7 +29,6 @@ export interface ChainItem {
     id: string;
     name: string;
     image_url: string;
-    thumbnail_url?: string;
     is_active: boolean;
 }
 
@@ -128,7 +127,11 @@ class TimerConfigManager {
 
     getModelThumbnail(modelId: string): string {
         const model = this.getModel(modelId);
-        return model?.thumbnail_url || model?.image || '';
+        // We use suffixes in storage instead of a separate DB column
+        if (model?.image) {
+            return model.image.replace('.webp', '_thumb.webp');
+        }
+        return model?.image || '';
     }
 
     getModelImage(modelId: string): string {

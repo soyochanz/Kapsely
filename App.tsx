@@ -18,7 +18,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Platform } from 'react-native';
 import { registerForPushNotificationsAsync, savePushToken, setupNotificationHandlers, setupResponseListener, clearBadgeCount } from './src/utils/pushNotifications';
 
-import { storage, migrateKeys } from './src/lib/storage';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import './src/i18n/config';
 
 SplashScreen.preventAutoHideAsync();
@@ -34,9 +34,6 @@ export default function App() {
   useEffect(() => {
     async function startup() {
       try {
-        // Migrate important keys from AsyncStorage if they exist
-        await migrateKeys(['@has_seen_onboarding', 'keep_connected']);
-
         // Init timer configs
         await timerConfigManager.init();
 
@@ -51,8 +48,8 @@ export default function App() {
         }
 
         // Check if user wants to stay connected
-        // Using storage utility (MMKV is sync, so we don't strictly need await here)
-        const shouldKeep = storage.getBoolean('keep_connected') ?? true;
+        const keepKey = await AsyncStorage.getItem('keep_connected');
+        const shouldKeep = keepKey === null ? true : JSON.parse(keepKey);
 
         if (s) {
           if (!shouldKeep) {

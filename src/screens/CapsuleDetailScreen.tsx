@@ -6,8 +6,7 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
-import { Video, ResizeMode } from 'expo-av';
+import { Audio, Video, ResizeMode } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -238,7 +237,9 @@ const eo = StyleSheet.create({
     capsuleTitle: {
         fontSize: 28, fontFamily: Fonts.bold, color: '#fff', textAlign: 'center',
         marginBottom: 6, letterSpacing: -0.5,
-        textShadowColor: 'rgba(0,0,0,0.6)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 10,
+        textShadowColor: 'rgba(0,0,0,0.6)',
+        textShadowOffset: { width: 0, height: 2 },
+        textShadowRadius: 10,
     },
     openingLabel: {
         fontSize: 11, fontFamily: Fonts.bold, color: 'rgba(255,255,255,0.5)',
@@ -257,7 +258,9 @@ const eo = StyleSheet.create({
     sparkleCircle: { width: 130, height: 130, borderRadius: 65, borderWidth: 2, alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
     openNowText: {
         fontSize: 38, fontFamily: Fonts.bold, letterSpacing: 4,
-        textShadowColor: 'rgba(0,0,0,0.4)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 10,
+        textShadowColor: 'rgba(0,0,0,0.4)',
+        textShadowOffset: { width: 0, height: 2 },
+        textShadowRadius: 10,
     },
     hintText: {
         fontSize: 13, color: 'rgba(255,255,255,0.35)', textAlign: 'center',
@@ -268,10 +271,33 @@ const eo = StyleSheet.create({
 
 // ─── Audio controller (memoized to avoid re-mount on parent re-renders) ───────
 const AudioController = React.memo(({ uri, onFinish }: { uri: string | null; onFinish: () => void }) => {
-    const player = useAudioPlayer(uri ? { uri } : null);
-    const status = useAudioPlayerStatus(player);
-    useEffect(() => { if (uri && player) player.play(); else if (!uri && player) player.pause(); }, [uri]);
-    useEffect(() => { if (status.didJustFinish) onFinish(); }, [status.didJustFinish]);
+    const soundRef = useRef<Audio.Sound | null>(null);
+
+    useEffect(() => {
+        const loadAndPlay = async () => {
+            if (soundRef.current) {
+                await soundRef.current.unloadAsync();
+                soundRef.current = null;
+            }
+            if (uri) {
+                const { sound } = await Audio.Sound.createAsync(
+                    { uri },
+                    { shouldPlay: true },
+                    (status: any) => {
+                        if (status.didJustFinish) onFinish();
+                    }
+                );
+                soundRef.current = sound;
+            }
+        };
+        loadAndPlay();
+        return () => {
+            if (soundRef.current) {
+                soundRef.current.unloadAsync();
+            }
+        };
+    }, [uri]);
+
     return null;
 });
 
