@@ -64,7 +64,7 @@ export default function SearchScreen() {
             onPress={() => (navigation as any).navigate('UserProfile', { targetUserId: item.id })}
         >
             <Image
-                source={{ uri: item.avatar_url }}
+                source={{ uri: Colors.getAvatarUrl(item.avatar_url, item.display_name || item.username) }}
                 style={styles.avatar}
                 contentFit="cover"
                 cachePolicy="memory-disk"

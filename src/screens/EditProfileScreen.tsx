@@ -36,9 +36,10 @@ import { useNavigation } from '@react-navigation/native';
 
 interface Props {
     onClose?: () => void;
+    initialData?: any;
 }
 
-export default function EditProfileScreen({ onClose }: Props) {
+export default function EditProfileScreen({ onClose, initialData }: Props) {
     const { t } = useTranslation();
     const navigation = useNavigation();
     const [loading, setLoading] = useState(true);
@@ -67,12 +68,38 @@ export default function EditProfileScreen({ onClose }: Props) {
     // ── Load current profile ──────────────────────────────────────────────────
     useEffect(() => {
         (async () => {
-            const { data: { user } } = await supabase.auth.getUser();
-            if (!user) return;
+            if (initialData) {
+                setDisplayName(initialData.display_name ?? '');
+                setUsername(initialData.username ?? '');
+                setBio(initialData.bio ?? '');
+                setFavoriteColor(initialData.favorite_color ?? '#a269ff');
+                setFavoriteMovie(initialData.favorite_movie ?? '');
+                if (initialData.favorite_song) {
+                    const parts = initialData.favorite_song.split(' - ');
+                    setSongTitle(parts[0] || '');
+                    setSongAuthor(parts[1] || '');
+                }
+                setAvatarUri(initialData.avatar_url ?? null);
+                setInitialAvatarUrl(initialData.avatar_url ?? null);
+                setInitialDisplayName(initialData.display_name ?? '');
+                setInitialUsername(initialData.username ?? '');
+                setDisplayNameHistory(initialData.display_name_history ?? []);
+                setUsernameHistory(initialData.username_history ?? []);
+                setUserId(initialData.id);
+                setLoading(false);
+                return;
+            }
+
+            const { data: { session } } = await supabase.auth.getSession();
+            const user = session?.user;
+            if (!user) {
+                setLoading(false);
+                return;
+            }
             setUserId(user.id);
             const { data } = await supabase
                 .from('profiles')
-                .select('username, display_name, avatar_url, bio, favorite_color, favorite_movie, favorite_song, birthdate, display_name_history, username_history')
+                .select('id, username, display_name, avatar_url, bio, favorite_color, favorite_movie, favorite_song, birthdate, display_name_history, username_history')
                 .eq('id', user.id)
                 .single();
 
@@ -95,10 +122,8 @@ export default function EditProfileScreen({ onClose }: Props) {
                 setUsernameHistory(data.username_history ?? []);
             }
             setLoading(false);
-            
-
         })();
-    }, []);
+    }, [initialData]);
 
 
 

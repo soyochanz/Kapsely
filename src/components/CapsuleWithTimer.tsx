@@ -24,6 +24,7 @@ interface CapsuleWithTimerProps {
     darkerShadow?: boolean; // Use more intense shadow
     lightweight?: boolean; // Mode for off-screen or secondary cards
     disableAnimations?: boolean; // Stop pendulum/glint to save CPU
+    isMinimal?: boolean; // Minimal mode for thumbnails
 }
 
 const CapsuleWithTimer = React.memo(({
@@ -41,6 +42,7 @@ const CapsuleWithTimer = React.memo(({
     chainConfigOverride,
     lightweight,
     disableAnimations,
+    isMinimal,
 }: CapsuleWithTimerProps) => {
     const [configVersion, setConfigVersion] = useState(0);
     
@@ -57,7 +59,7 @@ const CapsuleWithTimer = React.memo(({
     const glintAnim = useRef(new Animated.Value(-1.5)).current;
 
     useEffect(() => {
-        if (disableAnimations) return;
+        if (disableAnimations || isMinimal) return;
 
         // Pendulum animation: Smooth left-to-right-to-left cycle
         Animated.loop(
@@ -140,7 +142,7 @@ const CapsuleWithTimer = React.memo(({
     return (
         <View style={containerStyle} onLayout={onLayout}>
             {/* Particles - Hide if lightweight or explicitly requested */}
-            {width > 0 && !hideParticles && !lightweight && <Particles activeTint={activeTint} capsuleType={capsuleType} />}
+            {width > 0 && !hideParticles && !lightweight && !isMinimal && <Particles activeTint={activeTint} capsuleType={capsuleType} />}
 
             {/* Shadow: behind everything via zIndex */}
             {width > 0 && (
@@ -174,11 +176,12 @@ const CapsuleWithTimer = React.memo(({
                         configOverride={config}
                         style={{ fontSize: baseFontSize }}
                         hideLabel={isOpened}
+                        isOpened={isOpened}
                         lightweight={lightweight}
                     />
 
                     {/* Screen Glint Reflection overlay - Skip for performance if lightweight */}
-                    {!lightweight && !disableAnimations && (
+                    {!lightweight && !disableAnimations && !isMinimal && (
                         <Animated.View style={{
                             position: 'absolute',
                             top: 0, left: 0, right: 0, bottom: 0,

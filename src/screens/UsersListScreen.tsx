@@ -2,12 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Image, SafeAreaView, StatusBar, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Spacing, BorderRadius } from '../theme';
 import { supabase } from '../lib/supabase';
 import VerifiedBadge from '../components/VerifiedBadge';
 
 export default function UserListScreen() {
     const navigation = useNavigation<any>();
+    const { t } = useTranslation();
     const route = useRoute<any>();
     const { userId, type } = route.params; // type is 'followers' or 'following'
 
@@ -46,13 +48,10 @@ export default function UserListScreen() {
             activeOpacity={0.7}
             onPress={() => navigation.push('UserProfile', { targetUserId: item.id })}
         >
-            {item.avatar_url ? (
-                <Image source={{ uri: item.avatar_url }} style={styles.avatar} />
-            ) : (
-                <View style={[styles.avatar, styles.placeholder]}>
-                    <Ionicons name="person" size={20} color={Colors.textMuted} />
-                </View>
-            )}
+            <Image 
+                source={{ uri: Colors.getAvatarUrl(item.avatar_url, item.display_name || item.username) }} 
+                style={styles.avatar} 
+            />
             <View style={styles.userInfo}>
                 <View style={styles.nameRow}>
                     <Text style={styles.displayName}>{item.display_name || 'user'}</Text>
@@ -73,7 +72,7 @@ export default function UserListScreen() {
                 <TouchableOpacity activeOpacity={0.7} onPress={() => navigation.goBack()} style={styles.backBtn}>
                     <Ionicons name="chevron-back" size={24} color={Colors.textPrimary} />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>{type === 'followers' ? 'Followers' : 'Following'}</Text>
+                <Text style={styles.headerTitle}>{type === 'followers' ? t('common.followers') : t('common.following')}</Text>
                 <View style={{ width: 40 }} />
             </View>
 
@@ -90,7 +89,7 @@ export default function UserListScreen() {
                     ListEmptyComponent={
                         <View style={styles.empty}>
                             <Ionicons name="people-outline" size={48} color={Colors.textMuted} />
-                            <Text style={styles.emptyText}>No users found</Text>
+                            <Text style={styles.emptyText}>{t('search.no_users_found', { query: '' }).replace('""', '')}</Text>
                         </View>
                     }
                 />

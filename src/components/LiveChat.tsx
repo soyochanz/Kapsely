@@ -293,6 +293,21 @@ const LiveChat = React.forwardRef<LiveChatRef, LiveChatProps>(
             sendReaction: (emoji: string) => sendReaction(emoji),
         }));
 
+        const handleReportMessage = useCallback(async (msg: ChatMessage) => {
+            if (!userId) return;
+            Alert.alert(t('detail.report_message'), t('detail.report_reason'), [
+                { text: t('detail.report_types.inappropriate'), onPress: async () => {
+                    await safetyService.report({ reporterId: userId, targetId: msg.id, targetType: 'capsule_chat', reason: 'inappropriate' });
+                    Alert.alert(t('common.ready'), t('detail.report_submitted'));
+                }},
+                { text: t('detail.report_types.spam'), onPress: async () => {
+                    await safetyService.report({ reporterId: userId, targetId: msg.id, targetType: 'capsule_chat', reason: 'spam' });
+                    Alert.alert(t('common.ready'), t('detail.report_submitted'));
+                }},
+                { text: t('common.cancel'), style: 'cancel' }
+            ]);
+        }, [userId, t]);
+
         const handleMessageOptions = useCallback((msg: ChatMessage) => {
             const isMe = msg.user_id === userId;
             const options: any[] = [];
@@ -304,7 +319,7 @@ const LiveChat = React.forwardRef<LiveChatRef, LiveChatProps>(
                     }
                 });
             } else {
-                options.push({ text: t('common.report'), onPress: () => { } });
+                options.push({ text: t('common.report'), onPress: () => handleReportMessage(msg) });
                 if (isOwner) options.push({
                     text: t('detail.block_user'), style: 'destructive', onPress: async () => {
                         await supabase.from('capsule_chat_bans').insert({ capsule_id: capsuleId, target_user_id: msg.user_id, banned_by: userId });
@@ -314,8 +329,8 @@ const LiveChat = React.forwardRef<LiveChatRef, LiveChatProps>(
                 });
             }
             options.push({ text: t('common.cancel'), style: 'cancel' });
-            Alert.alert(t('detail.options'), '', options);
-        }, [userId, isOwner, capsuleId, t]);
+            Alert.alert(t('detail.message_options'), '', options);
+        }, [userId, isOwner, capsuleId, t, handleReportMessage]);
 
         const onScroll = (e: any) => {
             const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;

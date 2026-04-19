@@ -45,10 +45,13 @@ export default function CapsuleSelectorScreen() {
             .in('status', ['sealed', 'opened'])
             .order('created_at', { ascending: false });
 
-        const filteredOwnAndLegacy = (ownCaps || []).filter(cap =>
-            (cap.owner_id === user.id || cap.invite_status === 'accepted') &&
-            (cap.status === 'sealed' || (cap.status === 'opened' && cap.duration_days === 0))
-        );
+        const now = new Date().getTime();
+        const filteredOwnAndLegacy = (ownCaps || []).filter(cap => {
+            const isAccepted = cap.owner_id === user.id || cap.invite_status === 'accepted';
+            const isBornOpen = cap.status === 'opened' && cap.duration_days === 0;
+            const isSealedAndNotReady = cap.status === 'sealed' && new Date(cap.opens_at).getTime() > now;
+            return isAccepted && (isBornOpen || isSealedAndNotReady);
+        });
 
         const { data: inviteEntries } = await supabase
             .from('capsule_invites')
@@ -60,10 +63,9 @@ export default function CapsuleSelectorScreen() {
         if (inviteEntries) {
             inviteEntries.forEach((entry: any) => {
                 const invitedCap = entry.capsules;
-                const isAcceptable = invitedCap && (
-                    invitedCap.status === 'sealed' || 
-                    (invitedCap.status === 'opened' && invitedCap.duration_days === 0)
-                );
+                const isBornOpen = invitedCap?.status === 'opened' && invitedCap?.duration_days === 0;
+                const isSealedAndNotReady = invitedCap?.status === 'sealed' && new Date(invitedCap?.opens_at).getTime() > now;
+                const isAcceptable = invitedCap && (isBornOpen || isSealedAndNotReady);
                 if (isAcceptable && !allCaps.some(c => c.id === invitedCap.id)) {
                     allCaps.push(invitedCap);
                 }

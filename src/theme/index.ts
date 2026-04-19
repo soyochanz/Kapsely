@@ -44,6 +44,13 @@ export const Colors = {
     // Branding / Dividers
     shadow: 'rgba(166, 110, 255, 0.12)',
     divider: 'rgba(166, 110, 255, 0.08)',
+
+    // Helpers
+    getAvatarUrl: (url?: string | null, name?: string | null) => {
+        if (url) return url;
+        const seed = name || 'U';
+        return `https://ui-avatars.com/api/?background=a66eff&color=fff&name=${encodeURIComponent(seed)}&size=256`;
+    }
 };
 
 export const Gradients = {

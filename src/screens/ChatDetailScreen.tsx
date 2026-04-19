@@ -80,6 +80,75 @@ const AudioMessageBubble = ({ uri, isMe }: { uri: string, isMe: boolean }) => {
     );
 };
 
+const ChatCapsuleCard = ({ capsuleId, isMe }: { capsuleId: string, isMe: boolean }) => {
+    const [capsule, setCapsule] = useState<any>(null);
+    const [loading, setLoading] = useState(true);
+    const navigation = useNavigation<any>();
+
+    useEffect(() => {
+        const fetchCapsule = async () => {
+            const { data } = await supabase
+                .from('capsules')
+                .select('*, profiles:owner_id(display_name, username, avatar_url)')
+                .eq('id', capsuleId)
+                .single();
+            
+            if (data) {
+                // Fetch collage items
+                const { data: collage } = await supabase
+                    .from('capsule_items')
+                    .select('*')
+                    .eq('capsule_id', capsuleId)
+                    .order('created_at', { ascending: false })
+                    .limit(4);
+                
+                setCapsule({ ...data, collage_items: collage || [] });
+            }
+            setLoading(false);
+        };
+        fetchCapsule();
+    }, [capsuleId]);
+
+    if (loading) return <ActivityIndicator size="small" color={isMe ? "#fff" : Colors.primary} style={{ padding: 20 }} />;
+    if (!capsule) return <Text style={{ color: Colors.textMuted, fontSize: 12, padding: 10 }}>Capsule not found</Text>;
+
+    const isOpened = capsule.status === 'opened';
+    const collage = capsule.collage_items || [];
+
+    return (
+        <TouchableOpacity 
+            activeOpacity={0.9} 
+            onPress={() => navigation.navigate('CapsuleDetail', { capsuleId: capsule.id })}
+            style={{ width: 220, backgroundColor: isMe ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)', borderRadius: 16, overflow: 'hidden', marginBottom: 4 }}
+        >
+            <View style={{ height: 100, flexDirection: 'row' }}>
+                {collage.length > 0 ? (
+                    <View style={{ flex: 1, flexDirection: 'row', flexWrap: 'wrap' }}>
+                        {collage.slice(0, 4).map((item: any, i: number) => (
+                            <Image 
+                                key={item.id || i}
+                                source={{ uri: item.media_url }} 
+                                style={{ width: collage.length === 1 ? '100%' : '50%', height: collage.length <= 2 ? '100%' : '50%' }}
+                                blurRadius={!isOpened ? 20 : 0}
+                            />
+                        ))}
+                    </View>
+                ) : (
+                    <View style={{ flex: 1, backgroundColor: Colors.cardAlt, alignItems: 'center', justifyContent: 'center' }}>
+                        <Ionicons name="cube-outline" size={32} color={Colors.textMuted} />
+                    </View>
+                )}
+            </View>
+            <View style={{ padding: 10 }}>
+                <Text style={{ color: isMe ? '#fff' : Colors.textPrimary, fontFamily: Fonts.bold, fontSize: 14 }} numberOfLines={1}>{capsule.title}</Text>
+                <Text style={{ color: isMe ? 'rgba(255,255,255,0.7)' : Colors.textSecondary, fontSize: 11, marginTop: 2 }}>
+                    {isOpened ? '✨ Opened' : `🔒 Opens ${new Date(capsule.opens_at).toLocaleDateString()}`}
+                </Text>
+            </View>
+        </TouchableOpacity>
+    );
+};
+
 export default function ChatDetailScreen() {
     const [loading, setLoading] = useState(true);
     const [messages, setMessages] = useState<any[]>([]);
@@ -114,6 +183,14 @@ export default function ChatDetailScreen() {
     const currentUserIdRef = useRef<string | null>(null);
     const deletedIdsRef = useRef<string[]>([]);
     const latestMessageAtRef = useRef<string | null>(null);
+    const chatDeletionTimeRef = useRef<string | null>(null);
+    const [capsuleSelectorVisible, setCapsuleSelectorVisible] = useState(false);
+    const [capsuleSearchQuery, setCapsuleSearchQuery] = useState('');
+    const [capsuleSearchResults, setCapsuleSearchResults] = useState<any[]>([]);
+    const [capsuleSearching, setCapsuleSearching] = useState(false);
+    const [selectedCapsuleUser, setSelectedCapsuleUser] = useState<any>(null);
+    const [userCapsules, setUserCapsules] = useState<any[]>([]);
+    const [loadingCapsules, setLoadingCapsules] = useState(false);
     const isFocused = useIsFocused();
 
     useEffect(() => {
@@ -184,10 +261,28 @@ export default function ChatDetailScreen() {
             }
         }
 
-        const { data: msgs } = await supabase
+        // Fetch chat deletion timestamp for this user
+        const deletedKey = `deleted_chats_${user.id}`;
+        const existingDeleted = await AsyncStorage.getItem(deletedKey);
+        let deletionTime: string | null = null;
+        if (existingDeleted) {
+            try {
+                const parsed = JSON.parse(existingDeleted);
+                if (parsed[conversationId]) deletionTime = parsed[conversationId];
+            } catch (e) {}
+        }
+        chatDeletionTimeRef.current = deletionTime;
+
+        let query = supabase
             .from('messages')
             .select('*')
-            .eq('conversation_id', conversationId)
+            .eq('conversation_id', conversationId);
+        
+        if (deletionTime) {
+            query = query.gt('created_at', deletionTime);
+        }
+
+        const { data: msgs } = await query
             .order('created_at', { ascending: false })
             .limit(PAGE_SIZE);
 
@@ -234,10 +329,16 @@ export default function ChatDetailScreen() {
         const nextPage = page + 1;
         
         try {
-            const { data: msgs } = await supabase
+            let query = supabase
                 .from('messages')
                 .select('*')
-                .eq('conversation_id', conversationId)
+                .eq('conversation_id', conversationId);
+            
+            if (chatDeletionTimeRef.current) {
+                query = query.gt('created_at', chatDeletionTimeRef.current);
+            }
+
+            const { data: msgs } = await query
                 .order('created_at', { ascending: false })
                 .range(nextPage * PAGE_SIZE, (nextPage + 1) * PAGE_SIZE - 1);
 
@@ -279,6 +380,11 @@ export default function ChatDetailScreen() {
                         if (payload.eventType === 'INSERT') {
                             if (newMsg.sender_id === myId) return;
                             if (deletedIdsRef.current.includes(newMsg.id)) return;
+                            
+                            // Respect the chat deletion timestamp
+                            if (chatDeletionTimeRef.current && new Date(newMsg.created_at) <= new Date(chatDeletionTimeRef.current)) {
+                                return;
+                            }
 
                             setMessages(prev => {
                                 if (prev.some(m => m.id === newMsg.id)) return prev;
@@ -337,7 +443,11 @@ export default function ChatDetailScreen() {
             const { data } = await q;
             if (!data?.length) return;
 
-            const newMsgs = data.filter((m: any) => !deletedIdsRef.current.includes(m.id));
+            const newMsgs = data.filter((m: any) => {
+                const notDeleted = !deletedIdsRef.current.includes(m.id);
+                const afterChatDelete = !chatDeletionTimeRef.current || new Date(m.created_at) > new Date(chatDeletionTimeRef.current);
+                return notDeleted && afterChatDelete;
+            });
             if (!newMsgs.length) return;
 
             setMessages(prev => {
@@ -360,7 +470,7 @@ export default function ChatDetailScreen() {
     const handleCamera = async () => {
         const { status } = await ImagePicker.requestCameraPermissionsAsync();
         if (status !== 'granted') return;
-        const result = await ImagePicker.launchCameraAsync({ mediaTypes: 'all', quality: 0.85, videoMaxDuration: 600 });
+        const result = await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, quality: 0.85, videoMaxDuration: 600 });
         if (!result.canceled && result.assets[0]) {
             setPendingMedia(result.assets[0].uri);
             await sendMessage(
@@ -375,7 +485,7 @@ export default function ChatDetailScreen() {
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (status !== 'granted') return;
         try {
-            const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: 'all', quality: 0.85, videoMaxDuration: 600 });
+            const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, quality: 0.85, videoMaxDuration: 600 });
             if (!result.canceled && result.assets[0]) {
                 setPendingMedia(result.assets[0].uri);
                 await sendMessage(
@@ -627,6 +737,40 @@ export default function ChatDetailScreen() {
         }
     };
 
+    const searchCapsuleUsers = async (query: string) => {
+        setCapsuleSearchQuery(query);
+        if (query.length < 2) { setCapsuleSearchResults([]); return; }
+        setCapsuleSearching(true);
+        const { data } = await supabase
+            .from('profiles')
+            .select('id, username, display_name, avatar_url')
+            .ilike('username', `%${query}%`)
+            .limit(5);
+        setCapsuleSearchResults(data || []);
+        setCapsuleSearching(false);
+    };
+
+    const loadUserCapsules = async (user: any) => {
+        setSelectedCapsuleUser(user);
+        setLoadingCapsules(true);
+        const { data } = await supabase
+            .from('capsules')
+            .select('*')
+            .eq('owner_id', user.id)
+            .eq('is_public', true)
+            .order('created_at', { ascending: false });
+        setUserCapsules(data || []);
+        setLoadingCapsules(false);
+    };
+
+    const sendCapsule = async (capsule: any) => {
+        setCapsuleSelectorVisible(false);
+        setSelectedCapsuleUser(null);
+        setCapsuleSearchQuery('');
+        setCapsuleSearchResults([]);
+        await sendMessage(capsule.id, undefined, 'capsule');
+    };
+
     const handleLongPressMessage = (item: any) => {
         const isMe = item.sender_id === currentUserId;
         if (item.is_deleted) return;
@@ -688,7 +832,7 @@ export default function ChatDetailScreen() {
                     {!isMe && (
                         <View style={styles.bubbleAvatarSlot}>
                             {showAvatar ? (
-                                <Image source={{ uri: otherUser?.avatar_url || defaultAvatar }} style={styles.bubbleAvatar} />
+                                <Image source={{ uri: Colors.getAvatarUrl(otherUser?.avatar_url, otherUser?.display_name || otherUser?.username) }} style={styles.bubbleAvatar} />
                             ) : (
                                 <View style={styles.bubbleAvatarSpacer} />
                             )}
@@ -733,7 +877,10 @@ export default function ChatDetailScreen() {
                                 {item.media_type === 'audio' && (item.mediaUrl || item.media_url) && (
                                     <AudioMessageBubble uri={item.mediaUrl || item.media_url} isMe={isMe} />
                                 )}
-                                {(!item.media_type || item.media_type === 'text' || item.content?.trim()) && (
+                                {item.media_type === 'capsule' && item.content && (
+                                    <ChatCapsuleCard capsuleId={item.content} isMe={isMe} />
+                                )}
+                                {(!item.media_type || item.media_type === 'text' || (item.content?.trim() && item.media_type !== 'capsule')) && (
                                     <Text style={[styles.msgText, isMe && styles.myMsgText]}>{item.content}</Text>
                                 )}
                             </>
@@ -744,7 +891,7 @@ export default function ChatDetailScreen() {
                     {isMe && (
                         <View style={styles.bubbleAvatarSlotOwn}>
                             {showAvatar ? (
-                                <Image source={{ uri: myUserProfile?.avatar_url || defaultAvatar }} style={styles.bubbleAvatar} />
+                                <Image source={{ uri: Colors.getAvatarUrl(myUserProfile?.avatar_url, myUserProfile?.display_name || myUserProfile?.username) }} style={styles.bubbleAvatar} />
                             ) : (
                                 <View style={styles.bubbleAvatarSpacer} />
                             )}
@@ -783,29 +930,14 @@ export default function ChatDetailScreen() {
                             </View>
                         )
                     ) : (
-                        <Image source={{ uri: otherUser?.avatar_url || 'https://via.placeholder.com/150' }} style={styles.headerAvatar} />
+                        <Image source={{ uri: Colors.getAvatarUrl(otherUser?.avatar_url, otherUser?.display_name || otherUser?.username) }} style={styles.headerAvatar} />
                     )}
                     <View>
                         <Text style={styles.headerTitle}>{conversation?.is_group ? (conversation.name || 'Chat Grupal') : (otherUser?.display_name || otherUser?.username || 'Mensajes')}</Text>
                         {conversation?.is_group && <Text style={{ fontSize: 11, color: Colors.textSecondary, fontFamily: Fonts.regular }}>{groupParticipants.length + 1} participantes · Toca para editar</Text>}
                     </View>
                 </TouchableOpacity>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                    <TouchableOpacity 
-                        activeOpacity={0.7} 
-                        onPress={() => Alert.alert('Llamada', `Iniciando llamada con ${otherUser?.display_name || 'usuario'}... (Función en desarrollo)`)}
-                        style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.surface, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: Colors.border }}
-                    >
-                         <Ionicons name="call-outline" size={18} color={Colors.primary} />
-                    </TouchableOpacity>
-                    <TouchableOpacity 
-                        activeOpacity={0.7} 
-                        onPress={() => Alert.alert('Videollamada', `Iniciando videollamada con ${otherUser?.display_name || 'usuario'}... (Función en desarrollo)`)}
-                        style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.surface, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: Colors.border }}
-                    >
-                         <Ionicons name="videocam-outline" size={18} color={Colors.primary} />
-                    </TouchableOpacity>
-                </View>
+                <View style={{ width: 40 }} />
             </View>
 
             <KeyboardAvoidingView 
@@ -852,6 +984,11 @@ export default function ChatDetailScreen() {
                     {!isRecordingAudio && (
                         <TouchableOpacity style={{ marginRight: 12, padding: 4 }} activeOpacity={0.7} onPress={handleCamera}>
                             <Ionicons name="camera-outline" size={22} color={Colors.textSecondary} />
+                        </TouchableOpacity>
+                    )}
+                    {!isRecordingAudio && (
+                        <TouchableOpacity style={{ marginRight: 12, padding: 4 }} activeOpacity={0.7} onPress={() => setCapsuleSelectorVisible(true)}>
+                            <Ionicons name="cube-outline" size={22} color={Colors.primary} />
                         </TouchableOpacity>
                     )}
 
@@ -901,6 +1038,100 @@ export default function ChatDetailScreen() {
                     )}
                 </View>
             </KeyboardAvoidingView>
+
+            {/* Capsule Selector Modal */}
+            <Modal visible={capsuleSelectorVisible} transparent animationType="slide">
+                <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+                    <View style={{ backgroundColor: Colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, height: '80%', padding: 20 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+                            <Text style={{ fontSize: 18, fontFamily: Fonts.bold }}>Compartir Cápsula</Text>
+                            <TouchableOpacity onPress={() => { setCapsuleSelectorVisible(false); setSelectedCapsuleUser(null); }}>
+                                <Ionicons name="close" size={24} color={Colors.textPrimary} />
+                            </TouchableOpacity>
+                        </View>
+
+                        {selectedCapsuleUser ? (
+                            <View style={{ flex: 1 }}>
+                                <TouchableOpacity 
+                                    onPress={() => setSelectedCapsuleUser(null)}
+                                    style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}
+                                >
+                                    <Ionicons name="arrow-back" size={20} color={Colors.primary} />
+                                    <Image source={{ uri: Colors.getAvatarUrl(selectedCapsuleUser?.avatar_url, selectedCapsuleUser?.display_name || selectedCapsuleUser?.username) }} style={{ width: 24, height: 24, borderRadius: 12 }} />
+                                    <Text style={{ fontFamily: Fonts.bold }}>Cápsulas de {selectedCapsuleUser?.display_name || selectedCapsuleUser?.username}</Text>
+                                </TouchableOpacity>
+
+                                {loadingCapsules ? <ActivityIndicator color={Colors.primary} /> : (
+                                    <FlatList
+                                        data={userCapsules}
+                                        keyExtractor={c => c.id}
+                                        renderItem={({ item }) => (
+                                            <TouchableOpacity 
+                                                onPress={() => sendCapsule(item)}
+                                                style={{ flexDirection: 'row', alignItems: 'center', padding: 12, backgroundColor: Colors.cardAlt, borderRadius: 12, marginBottom: 8, gap: 12 }}
+                                            >
+                                                <Ionicons name="cube" size={24} color={Colors.primary} />
+                                                <View style={{ flex: 1 }}>
+                                                    <Text style={{ fontFamily: Fonts.bold }}>{item.title}</Text>
+                                                    <Text style={{ fontSize: 12, color: Colors.textMuted }}>{item.status === 'opened' ? 'Abierta' : 'Sellada'}</Text>
+                                                </View>
+                                                <Ionicons name="send-outline" size={18} color={Colors.primary} />
+                                            </TouchableOpacity>
+                                        )}
+                                        ListEmptyComponent={<Text style={{ textAlign: 'center', color: Colors.textMuted, marginTop: 20 }}>No hay cápsulas públicas disponibles.</Text>}
+                                    />
+                                )}
+                            </View>
+                        ) : (
+                            <View style={{ flex: 1 }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.cardAlt, paddingHorizontal: 12, borderRadius: 12, marginBottom: 16 }}>
+                                    <Ionicons name="search" size={18} color={Colors.textMuted} />
+                                    <TextInput 
+                                        style={{ flex: 1, padding: 12, fontFamily: Fonts.regular }}
+                                        placeholder="Buscar usuario..."
+                                        value={capsuleSearchQuery}
+                                        onChangeText={searchCapsuleUsers}
+                                    />
+                                </View>
+
+                                <FlatList
+                                    data={capsuleSearchResults}
+                                    keyExtractor={u => u.id}
+                                    renderItem={({ item }) => (
+                                        <TouchableOpacity 
+                                            onPress={() => loadUserCapsules(item)}
+                                            style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: Colors.border }}
+                                        >
+                                            <Image source={{ uri: Colors.getAvatarUrl(item.avatar_url, item.display_name || item.username) }} style={{ width: 40, height: 40, borderRadius: 20 }} />
+                                            <View>
+                                                <Text style={{ fontFamily: Fonts.bold }}>{item.display_name || item.username}</Text>
+                                                <Text style={{ fontSize: 12, color: Colors.textMuted }}>@{item.username}</Text>
+                                            </View>
+                                        </TouchableOpacity>
+                                    )}
+                                    ListEmptyComponent={
+                                        capsuleSearchQuery.length < 2 ? (
+                                            <TouchableOpacity 
+                                                onPress={async () => {
+                                                    const { data: { user } } = await supabase.auth.getUser();
+                                                    if (user) {
+                                                        const { data: prof } = await supabase.from('profiles').select('*').eq('id', user.id).single();
+                                                        if (prof) loadUserCapsules(prof);
+                                                    }
+                                                }}
+                                                style={{ alignItems: 'center', padding: 20, backgroundColor: Colors.primary + '10', borderRadius: 16 }}
+                                            >
+                                                <Ionicons name="person-outline" size={24} color={Colors.primary} />
+                                                <Text style={{ color: Colors.primary, fontFamily: Fonts.bold, marginTop: 8 }}>Mis Cápsulas</Text>
+                                            </TouchableOpacity>
+                                        ) : null
+                                    }
+                                />
+                            </View>
+                        )}
+                    </View>
+                </View>
+            </Modal>
 
             {/* Fullscreen View */}
             <Modal visible={viewerVisible} transparent animationType="fade" onRequestClose={() => setViewerVisible(false)}>

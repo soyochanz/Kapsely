@@ -10,6 +10,7 @@ interface LiveTimerProps {
     style?: any;
     configOverride?: ModelTimerConfig; // Higher priority for tool preview
     hideLabel?: boolean; // New prop to hide text (e.g. when opened)
+    isOpened?: boolean; // New prop to hide label if already opened
 }
 
 const FONT_MAP: Record<string, string> = {
@@ -20,7 +21,7 @@ const FONT_MAP: Record<string, string> = {
 };
 
 const LiveTimer = React.memo(({
-    date, modelId, style, configOverride, hideLabel, lightweight
+    date, modelId, style, configOverride, hideLabel, lightweight, isOpened
 }: LiveTimerProps & { lightweight?: boolean }) => {
     const [label, setLabel] = useState('');
     const [savedConfig, setSavedConfig] = useState<ModelTimerConfig | null>(null);
@@ -54,7 +55,7 @@ const LiveTimer = React.memo(({
 
             let newLabel = '';
             if (diff <= 0) {
-                newLabel = t('common.ready') ?? 'Ready!';
+                newLabel = t('detail.ready');
             } else {
                 const activeFormat = config?.format ?? 'standard';
                 const totalHours = diff / (1000 * 60 * 60);
@@ -103,12 +104,12 @@ const LiveTimer = React.memo(({
     }, [date, config, t, lightweight]);
 
     const renderContent = () => {
-        const isReadyString = label === 'Ready!' || label === '¡Lista!' || label === 'Ready';
+        const isReadyString = label === 'READY!' || label === 'Ready!' || label === '¡Lista!' || label === 'Ready';
         if (!config || config.curvature === 0 || isReadyString) {
             return (
                 <Text style={[
-                    style,
                     config && { color: config.color, fontFamily: FONT_MAP[config.fontId] || 'monospace' },
+                    style,
                 ]}>
                     {label}
                 </Text>
@@ -127,12 +128,12 @@ const LiveTimer = React.memo(({
                 <Text
                     key={i}
                     style={[
-                        style,
                         {
                             color: config.color,
                             fontFamily: FONT_MAP[config.fontId] || 'monospace',
                             transform: [{ rotate: `${angle}rad` }, { translateY: translateY }],
-                        }
+                        },
+                        style,
                     ]}
                 >
                     {char}
@@ -141,7 +142,7 @@ const LiveTimer = React.memo(({
         });
     };
 
-    if (hideLabel) return null;
+    if (hideLabel || isOpened) return null;
 
     return (
         <View style={styles.curvedContainer}>

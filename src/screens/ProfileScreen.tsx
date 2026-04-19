@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
     View, Text, StyleSheet, ScrollView, TouchableOpacity,
     StatusBar, Dimensions, ActivityIndicator, Modal, RefreshControl,
-    Linking, Alert, Pressable, Animated, Easing, Platform, Switch, TextInput
+    Linking, Alert, Pressable, Animated, Easing, Platform, Switch, TextInput,
+    InteractionManager, DeviceEventEmitter
 } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
 
@@ -16,8 +17,10 @@ import Constants from 'expo-constants';
 import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
 import { supabase } from '../lib/supabase';
-import EditProfileScreen from './EditProfileScreen';
+import { ProfileCapsuleCell } from '../components/profile/ProfileCapsuleCell';
+import { ProfileHeader } from '../components/profile/ProfileHeader';
 import { Image } from 'expo-image';
+import EditProfileScreen from './EditProfileScreen';
 import { MODEL_IMAGES, MODEL_TINTS, MODEL_IMAGES_OPEN } from '../constants/models';
 
 import LiveTimer from '../components/LiveTimer';
@@ -48,111 +51,6 @@ const STICKER_POSITIONS = [
     { top: 120, left: 35, size: 65, rotation: '-8deg' },
     { top: 115, right: 40, size: 85, rotation: '18deg' },
 ];
-
-// ─── Capsule Cell ─────────────────────────────────────────────────────────────
-const ProfileCapsuleCell = React.memo(({
-    cap, navigation, isOwnProfile, isSealed, cfg,
-    coverUrl, itemsCount, likesCount, commentsCount,
-    setPickerCapsuleId, themeColor, capsuleMediaMap, t
-}: any) => {
-    const [modelImg, setModelImg] = useState(() =>
-        isSealed
-            ? (timerConfigManager.getModelImage(cap.model) || MODEL_IMAGES[cap.model] || (MODEL_IMAGES as any).basicred_kap)
-            : (timerConfigManager.getModelImageOpen(cap.model) || MODEL_IMAGES_OPEN[cap.model] || MODEL_IMAGES[cap.model] || (MODEL_IMAGES as any).basicred_kap)
-    );
-
-    useEffect(() => {
-        const update = () => {
-            setModelImg(isSealed
-                ? (timerConfigManager.getModelImage(cap.model) || MODEL_IMAGES[cap.model] || (MODEL_IMAGES as any).basicred_kap)
-                : (timerConfigManager.getModelImageOpen(cap.model) || MODEL_IMAGES_OPEN[cap.model] || MODEL_IMAGES[cap.model] || (MODEL_IMAGES as any).basicred_kap)
-            );
-        };
-        return timerConfigManager.subscribe(update);
-    }, [cap.model, isSealed]);
-
-    const isToday = React.useMemo(() => {
-        if (!cap.opens_at || !isSealed) return false;
-        const d = new Date(cap.opens_at);
-        const now = new Date();
-        return d.toDateString() === now.toDateString();
-    }, [cap.opens_at, isSealed]);
-
-    return (
-        <TouchableOpacity
-            style={[s.capsuleCell, !cap.isAccessible && { opacity: 0.85 }, isToday && { borderWidth: 2, borderColor: '#A855F7' }]}
-            activeOpacity={0.8}
-            onPress={() => {
-                if (!cap.isAccessible) {
-                    Alert.alert(t('profile.private_capsule'), t('profile.private_capsule_msg'));
-                    return;
-                }
-                navigation.navigate('CapsuleDetail', { capsuleId: cap.id });
-            }}
-        >
-            {/* Visual area */}
-            <View style={s.capsuleVisual}>
-                {isSealed ? (
-                    <CapsuleWithTimer
-                        modelKey={cap.model}
-                        source={{ uri: modelImg }}
-                        date={cap.opens_at}
-                        chainId={cap.chain_id}
-                        capsuleType={cap.type}
-                        style={s.capsuleModelImg}
-                        hideParticles
-                        lightweight={true}
-                        disableAnimations={true}
-                    />
-
-                ) : coverUrl ? (
-                    <Image source={{ uri: coverUrl }} style={s.capsuleCoverImg} contentFit="cover" transition={200} />
-                ) : (
-
-                    <CapsuleWithTimer
-                        modelKey={cap.model}
-                        source={{ uri: modelImg }}
-                        date={cap.opens_at}
-                        chainId={cap.chain_id}
-                        capsuleType={cap.type}
-                        style={s.capsuleModelImg}
-                        hideTimer hideParticles
-                        lightweight={true}
-                        disableAnimations={true}
-                    />
-                )}
-
-                {/* Type dot */}
-                <View style={[s.capsuleTypeDot, { backgroundColor: cfg.color }]}>
-                    <Ionicons name={cfg.icon as any} size={7} color="#fff" />
-                </View>
-
-                {/* Shared badge */}
-                {cap.is_shared && (
-                    <View style={s.capsuleSharedDot}>
-                        <Ionicons name="people" size={7} color="#fff" />
-                    </View>
-                )}
-
-                {/* Sealed lock overlay */}
-                {isSealed && (
-                    <View style={s.capsuleLockOverlay}>
-                        <Ionicons name="lock-closed" size={8} color="rgba(255,255,255,0.85)" />
-                    </View>
-                )}
-            </View>
-
-            {/* Meta */}
-            <View style={s.capsuleMeta}>
-                <Text style={s.capsuleTitle} numberOfLines={1}>{cap.title}</Text>
-                {isSealed
-                    ? <LiveTimer date={cap.opens_at} modelId={cap.model} style={s.capsuleTimer} lightweight={true} />
-                    : <Text style={s.capsuleOpenedTag}>{t('common.opened').toUpperCase()}</Text>
-                }
-            </View>
-        </TouchableOpacity>
-    );
-});
 
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 export default function ProfileScreen() {
@@ -325,15 +223,19 @@ export default function ProfileScreen() {
     const [loadingMore, setLoadingMore] = useState(false);
 
     const loadData = async (isNewPage = false) => {
-        const { data: { session } } = await supabase.auth.getSession();
-        const user = session?.user;
-        if (!user) return;
-        const myId = user.id;
-        setCurrentUserId(myId);
-        const idToLoad = targetUserId || myId;
-        setProfileId(idToLoad);
-        const own = idToLoad === myId;
-        setIsOwnProfileState(own);
+        try {
+            const { data: { session } } = await supabase.auth.getSession();
+            const user = session?.user;
+            if (!user) {
+                setLoading(false);
+                return;
+            }
+            const myId = user.id;
+            setCurrentUserId(myId);
+            const idToLoad = targetUserId || myId;
+            setProfileId(idToLoad);
+            const own = idToLoad === myId;
+            setIsOwnProfileState(own);
 
         const PAGE_SIZE = 12;
         const currentPage = isNewPage ? page + 1 : 0;
@@ -343,12 +245,9 @@ export default function ProfileScreen() {
         if (isNewPage) setLoadingMore(true);
         else if (!refreshing) setLoading(true);
 
-        const [profileRes, followersCountRes, followingCountRes, followCheckRes, capsRes, storiesRes, readsRes, myInvitesRes] = await Promise.all([
-            // Profile Info
-            supabase.from('profiles').select('*').eq('id', idToLoad).maybeSingle(),
-            // Separate Counts (still parallelized)
-            supabase.from('follows').select('*', { count: 'exact', head: true }).eq('following_id', idToLoad),
-            supabase.from('follows').select('*', { count: 'exact', head: true }).eq('follower_id', idToLoad),
+        const [profileRes, followCheckRes, capsRes, storiesRes, readsRes, myInvitesRes, collabCapsRes] = await Promise.all([
+            // Consolidate Profile Info with counts
+            supabase.from('profiles').select('*, followers:follows!following_id(count), following:follows!follower_id(count)').eq('id', idToLoad).maybeSingle(),
             // Follow check for current user
             myId !== idToLoad 
               ? supabase.from('follows').select('id').eq('follower_id', myId).eq('following_id', idToLoad).maybeSingle()
@@ -362,12 +261,22 @@ export default function ProfileScreen() {
             `).eq('owner_id', idToLoad).eq('is_story', true).gt('expires_at', new Date().toISOString()).order('created_at', { ascending: false }),
 
             supabase.from('story_reads').select('story_id').eq('user_id', myId),
-            supabase.from('capsule_invites').select('capsule_id').eq('user_id', myId).eq('status', 'accepted')
+            supabase.from('capsule_invites').select('capsule_id').eq('user_id', myId).eq('status', 'accepted'),
+            
+            // Add fetch for capsules where user is collaborator (accepted invite)
+            supabase.from('capsule_invites')
+                .select('capsule_id, capsules(*)')
+                .eq('user_id', idToLoad)
+                .eq('status', 'accepted')
+                .range(rangeStart, rangeEnd)
         ]);
 
-        if (profileRes.data) setProfile(profileRes.data);
-        setFollowersCount(followersCountRes.count || 0);
-        setFollowingCount(followingCountRes.count || 0);
+        if (profileRes.data) {
+            const p = profileRes.data as any;
+            setProfile(p);
+            setFollowersCount(p.followers?.[0]?.count || 0);
+            setFollowingCount(p.following?.[0]?.count || 0);
+        }
         setIsFollowing(!!followCheckRes?.data);
 
         const storiesData = storiesRes.data || [];
@@ -378,23 +287,39 @@ export default function ProfileScreen() {
         } else setUserStories(null);
 
         const myAcceptedCaps = new Set((myInvitesRes.data || []).map((i: any) => i.capsule_id));
-        if (profileRes.data) setProfile(profileRes.data);
 
-        if (capsRes.data) {
-            const all = capsRes.data || [];
-            const viewable = all.map((c: any) => ({
+        if (capsRes.data || collabCapsRes.data) {
+            const owned = capsRes.data || [];
+            const collaborated = (collabCapsRes.data || []).map((inv: any) => inv.capsules).filter(Boolean);
+            
+            // Merge and deduplicate
+            const combined = [...owned];
+            collaborated.forEach((c: any) => {
+                if (!combined.some(o => o.id === c.id)) combined.push(c);
+            });
+
+            const viewable = combined.map((c: any) => ({
                 ...c,
+                is_shared: c.is_shared || combined.some(o => o.id === c.id && collaborated.some(col => col.id === c.id)),
                 isAccessible: own || c.is_public || c.owner_id === user.id || myAcceptedCaps.has(c.id) || (c.invited_user_id === myId && c.invite_status === 'accepted')
             }));
-            const filtered = viewable; // Removed filter for 'eventcap'
+            
+            // Initialize coverMap with existing cover_url values
+            const initialCovers: Record<string, string> = {};
+            viewable.forEach((c: any) => { if (c.cover_url) initialCovers[c.id] = c.cover_url; });
+            setCoverMap(prev => ({ ...prev, ...initialCovers }));
+
+            const filtered = viewable;
             let opened = filtered.filter((c: any) => c.status === 'opened');
             const sealed = filtered.filter((c: any) => c.status === 'sealed');
+            
             if (own) {
                 const nowMs = Date.now();
                 const toDelete = opened.filter((c: any) => {
                     const itemCount = c.capsule_items_count_val !== undefined ? c.capsule_items_count_val : (c.capsule_items_count || 0);
                     const isActuallyOpenCap = c.type === 'opencap' || (c.status === 'opened' && c.duration_days === 0);
-                    return itemCount === 0 && !isActuallyOpenCap && (nowMs - new Date(c.opens_at).getTime()) > 86400000;
+                    // Only auto-delete caps if I OWN them
+                    return c.owner_id === user.id && itemCount === 0 && !isActuallyOpenCap && (nowMs - new Date(c.opens_at).getTime()) > 86400000;
                 });
                 if (toDelete.length > 0) {
                     opened = opened.filter((c: any) => !toDelete.includes(c));
@@ -406,7 +331,7 @@ export default function ProfileScreen() {
             }
             setOpenedCaps(prev => isNewPage ? [...prev, ...opened] : opened);
             setSealedCaps(prev => isNewPage ? [...prev, ...sealed] : sealed);
-            setHasMore(all.length >= PAGE_SIZE);
+            setHasMore((capsRes.data?.length || 0) >= PAGE_SIZE || (collabCapsRes.data?.length || 0) >= PAGE_SIZE);
             if (isNewPage) setPage(currentPage);
             else setPage(0);
 
@@ -419,25 +344,67 @@ export default function ProfileScreen() {
                 });
                 setCapsuleMediaMap(prev => isNewPage ? { ...prev, ...mediaMap } : mediaMap);
                 const defaultCovers: Record<string, string> = {};
-                Object.entries(mediaMap).forEach(([capId, items]) => { if ((items as any[])[0]?.media_url) defaultCovers[capId] = (items as any[])[0].media_url; });
-                setCoverMap(prev => ({ ...defaultCovers, ...prev }));
+                Object.entries(mediaMap).forEach(([capId, items]) => { 
+                    // Only set as default if no cover_url was already set in initialCovers
+                    if (!initialCovers[capId] && (items as any[])[0]?.media_url) {
+                        defaultCovers[capId] = (items as any[])[0].media_url; 
+                    }
+                });
+                setCoverMap(prev => ({ ...prev, ...defaultCovers }));
             }
         }
 
-        setLoading(false);
-        setRefreshing(false);
-        setLoadingMore(false);
-
-        const { data: stks } = await supabase.from('profile_stickers').select('*, stickers(*)').eq('user_id', idToLoad);
-        if (stks) setProfileStickers(stks);
+            const { data: stks } = await supabase.from('profile_stickers').select('*, stickers(*)').eq('user_id', idToLoad);
+            if (stks) setProfileStickers(stks);
+        } catch (error) {
+            console.error('[ProfileScreen] Error loading data:', error);
+        } finally {
+            setLoading(false);
+            setRefreshing(false);
+            setLoadingMore(false);
+        }
     };
 
     useEffect(() => {
-        const channel = supabase.channel('profile_capsules').on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'capsules' }, () => loadData()).subscribe();
-        return () => { supabase.removeChannel(channel); };
-    }, [targetUserId]);
+        const sub = DeviceEventEmitter.addListener('CAPSULE_UPDATED', (payload: any) => {
+            if (payload.id && payload.cover_url) {
+                setCoverMap(prev => ({ ...prev, [payload.id]: payload.cover_url }));
+            }
+            if (payload.id) {
+                const updateFn = (prev: any[]) => prev.map(c => 
+                    c.id === payload.id ? { ...c, ...payload } : c
+                );
+                setOpenedCaps(updateFn);
+                setSealedCaps(updateFn);
+            }
+            loadData();
+        });
+        return () => sub.remove();
+    }, [targetUserId, currentUserId]);
 
-    useFocusEffect(useCallback(() => { loadData(); }, [targetUserId]));
+    useEffect(() => {
+        const idToLoad = targetUserId || currentUserId;
+        if (!idToLoad) return;
+
+        const channel = supabase.channel(`profile-${idToLoad}`)
+            .on('postgres_changes', 
+                { event: 'UPDATE', schema: 'public', table: 'capsules', filter: `owner_id=eq.${idToLoad}` }, 
+                () => loadData()
+            )
+            .subscribe();
+        return () => { supabase.removeChannel(channel); };
+    }, [targetUserId, currentUserId]);
+
+    useFocusEffect(useCallback(() => {
+        if (Platform.OS === 'web') {
+            loadData();
+        } else {
+            const task = InteractionManager.runAfterInteractions(() => {
+                loadData();
+            });
+            return () => task.cancel();
+        }
+    }, [targetUserId, currentUserId]));
 
     const onRefresh = () => { setRefreshing(true); loadData(); };
 
@@ -490,19 +457,27 @@ export default function ProfileScreen() {
             setFollowersCount(p => p - 1);
             setIsFollowing(false);
         } else {
-            await supabase.from('follows').insert({ follower_id: currentUserId, following_id: targetUserId });
-            setFollowersCount(p => p + 1);
-            setIsFollowing(true);
-            
-            // Notification with anti-spam check
-            const { data: existing } = await supabase.from('notifications')
-                .select('id').eq('user_id', targetUserId).eq('sender_id', currentUserId).eq('type', 'follow').maybeSingle();
-            
-            if (existing) {
-                await supabase.from('notifications').update({ created_at: new Date().toISOString(), is_read: false }).eq('id', existing.id);
-            } else {
-                await supabase.from('notifications').insert({ user_id: targetUserId, sender_id: currentUserId, type: 'follow', message: t('common.started_following_you') });
-                sendPushNotification(targetUserId, "Nuevo Seguidor 👥", "¡Alguien ha empezado a seguirte en Kapsely!", { screen: 'UserProfile', params: { targetUserId: currentUserId } });
+            try {
+                await supabase.from('follows').insert({ follower_id: currentUserId, following_id: targetUserId });
+                setFollowersCount(p => p + 1);
+                setIsFollowing(true);
+                
+                // Notification with anti-spam check
+                const { data: existing } = await supabase.from('notifications')
+                    .select('id').eq('user_id', targetUserId).eq('sender_id', currentUserId).eq('type', 'follow').maybeSingle();
+                
+                if (existing) {
+                    await supabase.from('notifications').update({ created_at: new Date().toISOString(), is_read: false }).eq('id', existing.id);
+                } else {
+                    await supabase.from('notifications').insert({ user_id: targetUserId, sender_id: currentUserId, type: 'follow', message: t('common.started_following_you') });
+                    sendPushNotification(targetUserId, t('notifications.new_follower_title'), t('notifications.new_follower_msg'), { screen: 'UserProfile', params: { targetUserId: currentUserId } });
+                }
+            } catch (err: any) {
+                if (err?.code === '23505') {
+                    setIsFollowing(true);
+                    return;
+                }
+                console.error('Follow error:', err);
             }
         }
     };
@@ -542,13 +517,6 @@ export default function ProfileScreen() {
         if (conversationId) navigation.navigate('ChatDetail', { conversationId });
     };
 
-    if (loading) {
-        return (
-            <View style={[s.root, s.centered]}>
-                <ActivityIndicator size="large" color={Colors.primary} />
-            </View>
-        );
-    }
 
     const accentColor = profile?.favorite_color || Colors.primary;
     const joinYear = profile?.created_at ? new Date(profile.created_at).getFullYear() : '—';
@@ -561,6 +529,45 @@ export default function ProfileScreen() {
         if (b.type === 'legacycap' && a.type !== 'legacycap') return 1;
         return 0;
     });
+    const renderHeader = useCallback(() => (
+        <ProfileHeader
+            profile={profile}
+            accentColor={accentColor}
+            profileStickers={profileStickers}
+            userStories={userStories}
+            followersCount={followersCount}
+            followingCount={followingCount}
+            capsulesCount={openedCaps.length + sealedCaps.length}
+            isOwnProfile={isOwnProfile}
+            isFollowing={isFollowing}
+            onFollowToggle={handleFollowToggle}
+            onNavigateToConversation={navigateToConversation}
+            onShowEdit={() => setShowEdit(true)}
+            onShowSettings={() => setShowSettings(true)}
+            onShowUserOptions={() => setShowUserOptions(true)}
+            onShowStories={() => setActiveStoryViewer(true)}
+            onBack={() => navigation.goBack()}
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
+            insets={insets}
+            t={t}
+            i18n={i18n}
+            joinYear={joinYear}
+            profileId={profileId || ''}
+            navigation={navigation}
+        />
+    ), [
+        profile, accentColor, profileStickers, userStories, followersCount, followingCount,
+        openedCaps.length, sealedCaps.length, isOwnProfile, isFollowing, activeTab, insets, t, i18n, joinYear, profileId, navigation
+    ]);
+
+    if (loading) {
+        return (
+            <View style={[s.root, s.centered]}>
+                <ActivityIndicator size="large" color={Colors.primary} />
+            </View>
+        );
+    }
 
     return (
         <View style={s.root}>
@@ -581,283 +588,55 @@ export default function ProfileScreen() {
 
             {/* Edit Modal */}
             <Modal visible={showEdit} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowEdit(false)}>
-                <EditProfileScreen onClose={() => { setShowEdit(false); loadData(); }} />
+                <EditProfileScreen 
+                    onClose={() => { setShowEdit(false); loadData(); }} 
+                    initialData={profile}
+                />
             </Modal>
 
-            <ScrollView
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={s.scrollContent}
+            <FlashList
+                data={sortedTabData}
+                keyExtractor={item => item.id}
+                numColumns={3}
+                // @ts-ignore
+                estimatedItemSize={160}
+                contentContainerStyle={[s.gridContent, { paddingBottom: 100 }]}
+                ListHeaderComponent={renderHeader}
+                renderItem={({ item }) => (
+                    <View style={s.gridCell}>
+                        <ProfileCapsuleCell
+                            cap={item}
+                            navigation={navigation}
+                            isOwnProfile={isOwnProfile}
+                            isSealed={item.status === 'sealed'}
+                            cfg={TYPE_CONFIG(t)[item.type] || TYPE_CONFIG(t).instacap}
+                            coverUrl={coverMap[item.id]}
+                            itemsCount={item.capsule_items_count_val ?? (item.capsule_items_count || 0)}
+                            likesCount={item.likes_count_val ?? (item.likes_count || 0)}
+                            commentsCount={item.comments_count_val ?? (item.comments_count || 0)}
+                            setPickerCapsuleId={setPickerCapsuleId}
+                            themeColor={accentColor}
+                            capsuleMediaMap={capsuleMediaMap}
+                            t={t}
+                        />
+                    </View>
+                )}
+                ListEmptyComponent={
+                    <View style={s.emptyState}>
+                        <View style={s.emptyIconWrap}>
+                            <Ionicons name="cube-outline" size={28} color={Colors.textMuted} />
+                        </View>
+                        <Text style={s.emptyTitle}>{t('profile.noCapsulesFound')}</Text>
+                        <Text style={s.emptySub}>
+                            {activeTab === 'sealed' ? t('profile.noSealedYet') : t('profile.noOpenedYet')}
+                        </Text>
+                    </View>
+                }
+                onEndReached={() => { if (!loadingMore && hasMore) loadData(true); }}
+                onEndReachedThreshold={0.5}
+                ListFooterComponent={loadingMore ? <ActivityIndicator size="small" color={accentColor} style={{ padding: 20 }} /> : null}
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
-            >
-
-                {/* ── HERO BANNER ─────────────────────────────────────── */}
-                <View style={s.bannerWrap}>
-                    <LinearGradient
-                        colors={[`${accentColor}CC`, `${accentColor}88`, Colors.background]}
-                        start={{ x: 0.2, y: 0 }} end={{ x: 0.8, y: 1 }}
-                        style={s.banner}
-                    />
-                    {/* Soft bokeh orbs */}
-                    <View style={[s.orb, s.orb1, { backgroundColor: accentColor + '30' }]} />
-                    <View style={[s.orb, s.orb2, { backgroundColor: accentColor + '18' }]} />
-
-                    {/* Stickers */}
-                    <View style={[StyleSheet.absoluteFill, { overflow: 'visible', pointerEvents: 'none' }]}>
-                        {profileStickers.map((ps: any) => {
-                            const posConfig = STICKER_POSITIONS[ps.position - 1] || STICKER_POSITIONS[0];
-                            const { size: defSize, rotation: defRot, ...pos } = posConfig;
-
-                            const isDynamic = ps.x !== undefined && ps.y !== undefined && ps.x !== null;
-                            const size = isDynamic ? (ps.size || 70) : (defSize || 70);
-                            const rotation = isDynamic ? `${ps.rotation || 0}deg` : `${defRot || 0}deg`;
-
-                            const style = isDynamic ? {
-                                position: 'absolute' as 'absolute',
-                                left: (ps.x / (width - 40)) * width,
-                                top: ps.y,
-                                width: size, height: size,
-                                marginLeft: -(size / 2),
-                                marginTop: -(size / 2),
-                                transform: [{ rotate: rotation }],
-                                opacity: 0.9,
-                            } : [s.bannerSticker, pos, { width: size, height: size, transform: [{ rotate: rotation }], opacity: 0.8 }];
-
-                            return ps.stickers?.image_url && (
-                                <Image key={ps.id} source={{ uri: ps.stickers.image_url }}
-                                    style={style}
-                                    contentFit="contain"
-                                    transition={300}
-                                />
-
-                            );
-                        })}
-                    </View>
-
-                    {/* Header buttons */}
-                    <View style={[s.bannerBtns, { paddingTop: insets.top + (Platform.OS === 'ios' ? 10 : 20) }]}>
-                        {targetUserId && (
-                            <TouchableOpacity onPress={() => navigation.goBack()} style={s.glassBtn} activeOpacity={0.7}>
-                                <Ionicons name="chevron-back" size={20} color="#fff" />
-                            </TouchableOpacity>
-                        )}
-                        <View style={{ flex: 1 }} />
-                        <TouchableOpacity
-                            style={s.glassBtn} activeOpacity={0.7}
-                            onPress={() => isOwnProfile ? setShowSettings(true) : setShowUserOptions(true)}
-                        >
-                            <Ionicons name={isOwnProfile ? "settings-outline" : "ellipsis-horizontal"} size={20} color="#fff" />
-                        </TouchableOpacity>
-                    </View>
-                </View>
-
-                {/* ── PROFILE HEADER CARD ──────────────────────────────── */}
-                <View style={s.headerCard}>
-                    {/* Avatar + stats row */}
-                    <View style={s.avatarRow}>
-                        {/* Avatar with story ring */}
-                        <TouchableOpacity
-                            style={s.avatarWrap}
-                            activeOpacity={0.9}
-                            disabled={!userStories}
-                            onPress={() => setActiveStoryViewer(true)}
-                        >
-                            {userStories ? (
-                                userStories.all_read ? (
-                                    <View style={[s.storyRing, { borderColor: accentColor + '55' }]}>
-                                        {profile?.avatar_url
-                                            ? <Image source={{ uri: profile.avatar_url }} style={s.avatar} />
-                                            : <View style={s.avatarFallback}><Ionicons name="person" size={28} color={Colors.primary} /></View>
-                                        }
-                                    </View>
-                                ) : (
-                                    <LinearGradient colors={[accentColor, Colors.accent || '#F72585']} style={s.storyRing}>
-                                        {profile?.avatar_url
-                                            ? <Image source={{ uri: profile.avatar_url }} style={s.avatar} />
-                                            : <View style={s.avatarFallback}><Ionicons name="person" size={28} color={Colors.primary} /></View>
-                                        }
-                                    </LinearGradient>
-                                )
-                            ) : (
-                                <View style={[s.storyRing, { borderColor: Colors.border }]}>
-                                    {profile?.avatar_url
-                                        ? <Image 
-                                            source={{ uri: profile.avatar_url }} 
-                                            style={s.avatar} 
-                                            contentFit="cover" 
-                                            cachePolicy="memory-disk"
-                                            transition={200} 
-                                        />
-                                        : <View style={s.avatarFallback}><Ionicons name="person" size={28} color={Colors.primary} /></View>
-                                    }
-
-
-                                </View>
-                            )}
-                        </TouchableOpacity>
-
-                        {/* Stats */}
-                        <View style={s.statsRow}>
-                            {[
-                                { label: t('profile.followersCount'), value: followersCount, onPress: () => navigation.push('UserList', { userId: profileId, type: 'followers' }) },
-                                { label: t('profile.followingCount'), value: followingCount, onPress: () => navigation.push('UserList', { userId: profileId, type: 'following' }) },
-                                { label: t('profile.totalCapsules'), value: openedCaps.length + sealedCaps.length, onPress: undefined },
-                            ].map(stat => (
-                                <TouchableOpacity key={stat.label} style={s.stat} activeOpacity={stat.onPress ? 0.7 : 1} onPress={stat.onPress}>
-                                    <Text style={s.statValue}>{stat.value}</Text>
-                                    <Text style={s.statLabel}>{stat.label}</Text>
-                                </TouchableOpacity>
-                            ))}
-                        </View>
-                    </View>
-
-                    {/* Name + bio */}
-                    <View style={s.nameSection}>
-                        <View style={s.nameRow}>
-                            <Text style={s.displayName}>{profile?.display_name ?? '—'}</Text>
-                            {profile?.is_verified && <VerifiedBadge size={17} style={{ marginLeft: 4 }} />}
-                        </View>
-                        <Text style={s.username}>@{profile?.username ?? '—'}</Text>
-                        {profile?.bio && <Text style={s.bio}>{profile.bio}</Text>}
-
-                        {/* Join date chip */}
-                        <View style={s.metaRow}>
-                            <View style={s.metaChip}>
-                                {profile?.birthdate
-                                    ? <Text style={{ fontSize: 12 }}>🎂</Text>
-                                    : <Ionicons name="calendar-outline" size={12} color={Colors.textMuted} />
-                                }
-                                <Text style={s.metaChipText}>
-                                    {profile?.birthdate
-                                        ? new Date(profile.birthdate).toLocaleDateString(i18n.language === 'es' ? 'es-ES' : 'en-US', { day: 'numeric', month: 'long' })
-                                        : `${t('profile.since')} ${joinYear}`}
-                                </Text>
-                            </View>
-                        </View>
-                    </View>
-
-                    {/* Favorites */}
-                    {(profile?.favorite_movie || profile?.favorite_song) && (
-                        <View style={s.favRow}>
-                            {profile?.favorite_movie && (
-                                <View style={s.favChip}>
-                                    <Ionicons name="film-outline" size={18} color={accentColor} />
-                                    <View style={{ flex: 1 }}>
-                                        <Text style={s.favLabel}>{t('profile.favoriteMovie')}</Text>
-                                        <Text style={s.favValue}>{profile.favorite_movie}</Text>
-                                    </View>
-                                </View>
-                            )}
-                            {profile?.favorite_song && (
-                                <View style={s.favChip}>
-                                    <Ionicons name="musical-notes-outline" size={18} color="#0EA5E9" />
-                                    <View style={{ flex: 1 }}>
-                                        <Text style={s.favLabel}>{t('profile.favoriteSong')}</Text>
-                                        <Text style={s.favValue}>{profile.favorite_song}</Text>
-                                    </View>
-                                </View>
-                            )}
-                        </View>
-                    )}
-
-                    {/* Action buttons */}
-                    <View style={s.actionsRow}>
-                        {isOwnProfile ? (
-                            <>
-                                <TouchableOpacity style={[s.primaryBtn, { backgroundColor: accentColor }]} onPress={() => setShowEdit(true)} activeOpacity={0.85}>
-                                    <Ionicons name="pencil" size={15} color="#fff" />
-                                    <Text style={s.primaryBtnText}>{t('profile.editProfile')}</Text>
-                                </TouchableOpacity>
-                            </>
-                        ) : (
-                            <>
-                                <TouchableOpacity
-                                    style={[s.primaryBtn, { backgroundColor: isFollowing ? Colors.surface : accentColor, borderWidth: isFollowing ? 1.5 : 0, borderColor: accentColor + '55' }]}
-                                    onPress={handleFollowToggle} activeOpacity={0.85}
-                                >
-                                    <Ionicons name={isFollowing ? "person-remove-outline" : "person-add-outline"} size={15} color={isFollowing ? accentColor : '#fff'} />
-                                    <Text style={[s.primaryBtnText, isFollowing && { color: accentColor }]}>
-                                        {isFollowing ? t('profile.followingBtn') : t('profile.followBtn')}
-                                    </Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity style={s.iconBtn} activeOpacity={0.7} onPress={navigateToConversation}>
-                                    <Ionicons name="chatbubble-outline" size={19} color={Colors.textSecondary} />
-                                </TouchableOpacity>
-                            </>
-                        )}
-                    </View>
-                </View>
-
-
-
-                {/* ── TAB BAR ──────────────────────────────────────────── */}
-                <View style={s.tabBarWrap}>
-                    {(['all', 'opened', 'sealed'] as ProfileTab[]).map(tab => {
-                        const isActive = activeTab === tab;
-                        const labels: Record<ProfileTab, string> = { all: t('profile.allCapsules'), opened: t('profile.openedCapsules'), sealed: t('profile.sealedCapsules') };
-                        return (
-                            <TouchableOpacity
-                                key={tab}
-                                style={[s.tabItem, isActive && { borderBottomColor: accentColor, borderBottomWidth: 2 }]}
-                                onPress={() => setActiveTab(tab)}
-                                activeOpacity={0.75}
-                            >
-                                <Text style={[s.tabText, isActive && { color: accentColor, fontFamily: Fonts.bold }]}>
-                                    {labels[tab]}
-                                </Text>
-                            </TouchableOpacity>
-                        );
-                    })}
-                </View>
-
-                {/* ── CAPSULE GRID ─────────────────────────────────────── */}
-                <View style={s.gridWrap}>
-                    <FlashList
-                        data={sortedTabData}
-                        keyExtractor={item => item.id}
-                        numColumns={3}
-                        // @ts-ignore
-                        estimatedItemSize={160}
-                        scrollEnabled={false}
-
-                        contentContainerStyle={s.gridContent}
-                        renderItem={({ item }) => (
-
-                            <View style={s.gridCell}>
-                                <ProfileCapsuleCell
-                                    cap={item}
-                                    navigation={navigation}
-                                    isOwnProfile={isOwnProfile}
-                                    isSealed={item.status === 'sealed'}
-                                    cfg={TYPE_CONFIG(t)[item.type] || TYPE_CONFIG(t).instacap}
-                                    coverUrl={coverMap[item.id]}
-                                    itemsCount={item.capsule_items_count_val ?? (item.capsule_items_count || 0)}
-                                    likesCount={item.likes_count_val ?? (item.likes_count || 0)}
-                                    commentsCount={item.comments_count_val ?? (item.comments_count || 0)}
-                                    setPickerCapsuleId={setPickerCapsuleId}
-                                    themeColor={accentColor}
-                                    capsuleMediaMap={capsuleMediaMap}
-                                    t={t}
-                                />
-                            </View>
-                        )}
-                        ListEmptyComponent={
-                            <View style={s.emptyState}>
-                                <View style={s.emptyIconWrap}>
-                                    <Ionicons name="cube-outline" size={28} color={Colors.textMuted} />
-                                </View>
-                                <Text style={s.emptyTitle}>{t('profile.noCapsulesFound')}</Text>
-                                <Text style={s.emptySub}>
-                                    {activeTab === 'sealed' ? t('profile.noSealedYet') : t('profile.noOpenedYet')}
-                                </Text>
-                            </View>
-                        }
-                        onEndReached={() => { if (!loadingMore && hasMore) loadData(true); }}
-                        onEndReachedThreshold={0.5}
-                        ListFooterComponent={loadingMore ? <ActivityIndicator size="small" color={accentColor} style={{ padding: 20 }} /> : null}
-                    />
-                </View>
-
-            </ScrollView>
+            />
 
             {/* ── MODALS ───────────────────────────────────────────────── */}
 
@@ -903,7 +682,21 @@ export default function ProfileScreen() {
                                         key={item.id}
                                         style={[s.pickerThumb, isSel && { borderColor: accentColor }]}
                                         activeOpacity={0.7}
-                                        onPress={() => { setCoverMap(p => ({ ...p, [pickerCapsuleId!]: item.media_url })); setPickerCapsuleId(null); }}
+                                        onPress={async () => { 
+                                            const mediaUrl = item.media_url;
+                                            setCoverMap(p => ({ ...p, [pickerCapsuleId!]: mediaUrl })); 
+                                            setPickerCapsuleId(null); 
+                                            
+                                            // Persist to DB
+                                            try {
+                                                const { error } = await supabase.from('capsules').update({ cover_url: mediaUrl }).eq('id', pickerCapsuleId);
+                                                if (error) throw error;
+                                                DeviceEventEmitter.emit('CAPSULE_UPDATED', { id: pickerCapsuleId, cover_url: mediaUrl });
+                                                Alert.alert(t('common.ready'), t('profile.cover_updated'));
+                                            } catch (err: any) {
+                                                Alert.alert('Error', err.message);
+                                            }
+                                        }}
                                     >
                                         <Image source={{ uri: item.media_url }} style={s.pickerThumbImg} contentFit="cover" transition={200} />
 
@@ -1425,6 +1218,7 @@ const s = StyleSheet.create({
     capsuleTitle: { fontSize: 11, fontFamily: Fonts.bold, color: Colors.textPrimary, marginBottom: 2 },
     capsuleTimer: { fontSize: 8.5, fontFamily: Fonts.semiBold, color: Colors.primary },
     capsuleOpenedTag: { fontSize: 8.5, fontFamily: Fonts.bold, color: Colors.textMuted, letterSpacing: 0.5 },
+    accUsername: { fontSize: 14, fontFamily: Fonts.medium, color: Colors.textMuted },
 
 
     // Empty state

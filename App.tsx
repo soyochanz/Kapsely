@@ -48,7 +48,12 @@ export default function App() {
         const { data: { session: s }, error } = await supabase.auth.getSession();
         
         if (error) {
-          console.error('Auth check error:', error);
+          console.warn('Auth check error:', error.message);
+          // If the session is invalid/expired (common on web after clearing storage),
+          // sign out to clear the corrupted session and let the user log in again.
+          if (error.message?.includes('Refresh Token') || error.message?.includes('Invalid')) {
+            await supabase.auth.signOut();
+          }
         }
 
         // Check if user wants to stay connected
@@ -85,7 +90,9 @@ export default function App() {
     // Listen for auth state changes (login / logout / token refresh)
     const { data: listener } = supabase.auth.onAuthStateChange((event, s) => {
       setSession(s);
-      if (event === 'SIGNED_IN' && s?.user) {
+      // Register push token whenever a user is present, 
+      // ensuring it works during account switching
+      if (s?.user) {
         handlePushRegistration(s.user.id);
       }
     });
@@ -132,7 +139,7 @@ export default function App() {
 
   const onLayoutRootView = undefined;
 
-  if (!fontsLoaded || !authChecked) {
+  if (!authChecked || (!fontsLoaded && Platform.OS !== 'web')) {
     return (
       <View style={styles.loading}>
         <ActivityIndicator color={Colors.primary} size="large" />
@@ -163,7 +170,7 @@ export default function App() {
         <StatusBar style="dark" backgroundColor={Colors.background} />
         <NavigationContainer ref={navigationRef} theme={navTheme}>
           <View style={{ flex: 1 }}>
-            {session ? <AppNavigator /> : <AuthNavigator />}
+            {session ? <AppNavigator key={session.user.id} /> : <AuthNavigator />}
           </View>
         </NavigationContainer>
       </View>

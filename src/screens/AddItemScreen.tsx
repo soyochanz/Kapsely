@@ -3,7 +3,7 @@ import * as ExpoLocation from 'expo-location';
 import {
     View, Text, StyleSheet, TouchableOpacity, TextInput,
     ActivityIndicator, SafeAreaView, ScrollView, Alert,
-    Platform, Modal, StatusBar, Dimensions
+    Platform, Modal, StatusBar, Dimensions, KeyboardAvoidingView
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -457,244 +457,250 @@ export default function AddItemScreen() {
             {/* ── Thin accent line below header ── */}
             <View style={s.headerRule} />
 
-            <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            <KeyboardAvoidingView 
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+                style={{ flex: 1 }}
+                keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+            >
+                <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
 
-                {/* ════════ NOTE ════════ */}
-                {contentType === 'note' && (
-                    <View style={s.noteWrapper}>
-                        <View style={s.noteTopRow}>
-                            <View style={s.noteIconWrap}>
-                                <Ionicons name="create" size={16} color={P.p600} />
+                    {/* ════════ NOTE ════════ */}
+                    {contentType === 'note' && (
+                        <View style={s.noteWrapper}>
+                            <View style={s.noteTopRow}>
+                                <View style={s.noteIconWrap}>
+                                    <Ionicons name="create" size={16} color={P.p600} />
+                                </View>
+                                <Text style={s.noteSectionLabel}>Tu nota</Text>
                             </View>
-                            <Text style={s.noteSectionLabel}>Tu nota</Text>
-                        </View>
 
-                        <View style={s.noteField}>
-                            <TextInput
-                                style={s.noteInput}
-                                placeholder="Escribe algo que quieras recordar..."
-                                placeholderTextColor={P.gray300}
-                                multiline
-                                value={text}
-                                onChangeText={setText}
-                                autoFocus
-                                autoCorrect={false}
-                                spellCheck={false}
-                            />
-                            <View style={s.noteFooter}>
-                                <View style={s.noteFooterDot} />
-                                <Text style={s.noteCharCount}>{text.length} caracteres</Text>
-                            </View>
-                        </View>
-                    </View>
-                )}
-
-                {/* ════════ AUDIO ════════ */}
-                {contentType === 'audio' && (
-                    <View style={s.audioCard}>
-                        {/* waveform decoration */}
-                        <View style={s.waveRow}>
-                            {[6, 14, 10, 22, 16, 28, 20, 34, 18, 26, 12, 20, 8, 16, 24, 12].map((h, i) => (
-                                <View
-                                    key={i}
-                                    style={[
-                                        s.wave,
-                                        { height: h },
-                                        isRecording
-                                            ? { backgroundColor: P.p500, opacity: 0.5 + (i % 4) * 0.12 }
-                                            : recordedUri
-                                                ? { backgroundColor: P.green, opacity: 0.6 }
-                                                : { backgroundColor: P.p200 },
-                                    ]}
+                            <View style={s.noteField}>
+                                <TextInput
+                                    style={s.noteInput}
+                                    placeholder="Escribe algo que quieras recordar..."
+                                    placeholderTextColor={P.gray300}
+                                    multiline
+                                    value={text}
+                                    onChangeText={setText}
+                                    autoFocus
+                                    autoCorrect={false}
+                                    spellCheck={false}
                                 />
-                            ))}
+                                <View style={s.noteFooter}>
+                                    <View style={s.noteFooterDot} />
+                                    <Text style={s.noteCharCount}>{text.length} caracteres</Text>
+                                </View>
+                            </View>
                         </View>
+                    )}
 
-                        <TouchableOpacity
-                            style={s.micBtnOuter}
-                            activeOpacity={0.9}
-                            onPress={isRecording ? stopRecording : startRecording}
-                        >
-                            <LinearGradient
-                                colors={
-                                    isRecording ? [P.red, '#DC2626'] :
-                                        recordedUri ? [P.green, '#059669'] :
-                                            [P.p500, P.p800]
-                                }
-                                style={s.micBtnGrad}
-                                start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                    {/* ════════ AUDIO ════════ */}
+                    {contentType === 'audio' && (
+                        <View style={s.audioCard}>
+                            {/* waveform decoration */}
+                            <View style={s.waveRow}>
+                                {[6, 14, 10, 22, 16, 28, 20, 34, 18, 26, 12, 20, 8, 16, 24, 12].map((h, i) => (
+                                    <View
+                                        key={i}
+                                        style={[
+                                            s.wave,
+                                            { height: h },
+                                            isRecording
+                                                ? { backgroundColor: P.p500, opacity: 0.5 + (i % 4) * 0.12 }
+                                                : recordedUri
+                                                    ? { backgroundColor: P.green, opacity: 0.6 }
+                                                    : { backgroundColor: P.p200 },
+                                        ]}
+                                    />
+                                ))}
+                            </View>
+
+                            <TouchableOpacity
+                                style={s.micBtnOuter}
+                                activeOpacity={0.9}
+                                onPress={isRecording ? stopRecording : startRecording}
                             >
-                                <Ionicons
-                                    name={isRecording ? 'square' : recordedUri ? 'checkmark' : 'mic'}
-                                    size={34} color={P.white}
-                                />
-                            </LinearGradient>
-                        </TouchableOpacity>
-
-                        <Text style={s.micStatus}>
-                            {isRecording ? 'Grabando…' : recordedUri ? '¡Listo!' : 'Toca para grabar'}
-                        </Text>
-                        <Text style={s.micHint}>
-                            {isRecording ? 'Toca de nuevo para detener' : recordedUri ? 'Nota de voz guardada' : 'Nota de voz'}
-                        </Text>
-
-                        {recordedUri && (
-                            <TouchableOpacity style={s.retryRow} activeOpacity={0.7} onPress={() => setRecordedUri(null)}>
-                                <Ionicons name="refresh-circle-outline" size={16} color={P.red} />
-                                <Text style={s.retryLabel}>Grabar de nuevo</Text>
+                                <LinearGradient
+                                    colors={
+                                        isRecording ? [P.red, '#DC2626'] :
+                                            recordedUri ? [P.green, '#059669'] :
+                                                [P.p500, P.p800]
+                                    }
+                                    style={s.micBtnGrad}
+                                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                                >
+                                    <Ionicons
+                                        name={isRecording ? 'square' : recordedUri ? 'checkmark' : 'mic'}
+                                        size={34} color={P.white}
+                                    />
+                                </LinearGradient>
                             </TouchableOpacity>
-                        )}
-                    </View>
-                )}
 
-                {/* ════════ LOCATION SELECTOR ════════ */}
-                <TouchableOpacity 
-                    style={s.locationCard} 
-                    activeOpacity={0.8} 
-                    onPress={() => setLocationModalVisible(true)}
-                >
-                    <View style={s.locationInfo}>
-                        <View style={[s.locationIconWrap, { backgroundColor: includeLocation ? P.p50 : P.gray100 }]}>
-                            <Ionicons 
-                                name="location" 
-                                size={20} 
-                                color={includeLocation ? P.p600 : P.gray400} 
-                            />
-                        </View>
-                        <View style={{ flex: 1 }}>
-                            <Text style={s.locationTitle}>Ubicación del contenido</Text>
-                            <Text style={s.locationSub} numberOfLines={1}>
-                                {includeLocation && currentLocation ? currentLocation.locationName : 'Configurar ubicación…'}
+                            <Text style={s.micStatus}>
+                                {isRecording ? 'Grabando…' : recordedUri ? '¡Listo!' : 'Toca para grabar'}
                             </Text>
+                            <Text style={s.micHint}>
+                                {isRecording ? 'Toca de nuevo para detener' : recordedUri ? 'Nota de voz guardada' : 'Nota de voz'}
+                            </Text>
+
+                            {recordedUri && (
+                                <TouchableOpacity style={s.retryRow} activeOpacity={0.7} onPress={() => setRecordedUri(null)}>
+                                    <Ionicons name="refresh-circle-outline" size={16} color={P.red} />
+                                    <Text style={s.retryLabel}>Grabar de nuevo</Text>
+                                </TouchableOpacity>
+                            )}
                         </View>
-                        <Ionicons name="chevron-forward" size={18} color={P.gray300} />
-                    </View>
-                </TouchableOpacity>
+                    )}
 
-                {/* ════════ IMAGE / VIDEO ════════ */}
-                {(contentType === 'image' || contentType === 'video') && (
-                    <>
-                        {mediaList.length === 0 ? (
-                            /* ── Empty picker ── */
-                            <View style={s.emptyWrap}>
-                                <View style={s.emptyIcon}>
-                                    <LinearGradient colors={[P.p50, P.p100]} style={s.emptyIconGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-                                        <Ionicons
-                                            name={contentType === 'image' ? 'images-outline' : 'film-outline'}
-                                            size={40} color={P.p600}
-                                        />
-                                    </LinearGradient>
-                                </View>
-
-                                <Text style={s.emptyTitle}>
-                                    {contentType === 'image' ? 'Añade tus fotos' : 'Añade tu video'}
+                    {/* ════════ LOCATION SELECTOR ════════ */}
+                    <TouchableOpacity 
+                        style={s.locationCard} 
+                        activeOpacity={0.8} 
+                        onPress={() => setLocationModalVisible(true)}
+                    >
+                        <View style={s.locationInfo}>
+                            <View style={[s.locationIconWrap, { backgroundColor: includeLocation ? P.p50 : P.gray100 }]}>
+                                <Ionicons 
+                                    name="location" 
+                                    size={20} 
+                                    color={includeLocation ? P.p600 : P.gray400} 
+                                />
+                            </View>
+                            <View style={{ flex: 1 }}>
+                                <Text style={s.locationTitle}>Ubicación del contenido</Text>
+                                <Text style={s.locationSub} numberOfLines={1}>
+                                    {includeLocation && currentLocation ? currentLocation.locationName : 'Configurar ubicación…'}
                                 </Text>
-                                <Text style={s.emptySub}>
-                                    {contentType === 'image'
-                                        ? 'Captura un momento o elige desde la galería'
-                                        : 'Máximo 1 minuto · HD listo para guardar'}
-                                </Text>
+                            </View>
+                            <Ionicons name="chevron-forward" size={18} color={P.gray300} />
+                        </View>
+                    </TouchableOpacity>
 
-                                <View style={s.pickerRow}>
-                                    {/* Camera */}
-                                    <TouchableOpacity style={s.pickerCardPrimary} activeOpacity={0.85} onPress={captureMediaWithTrack}>
-                                        <LinearGradient colors={[P.p500, P.p800]} style={s.pickerCardGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-                                            <View style={s.pickerIconCircle}>
-                                                <Ionicons name="camera" size={28} color={P.white} />
-                                            </View>
-                                            <Text style={s.pickerLabelPrimary}>Cámara</Text>
-                                            <Text style={s.pickerSubPrimary}>Captura ahora</Text>
+                    {/* ════════ IMAGE / VIDEO ════════ */}
+                    {(contentType === 'image' || contentType === 'video') && (
+                        <>
+                            {mediaList.length === 0 ? (
+                                /* ── Empty picker ── */
+                                <View style={s.emptyWrap}>
+                                    <View style={s.emptyIcon}>
+                                        <LinearGradient colors={[P.p50, P.p100]} style={s.emptyIconGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+                                            <Ionicons
+                                                name={contentType === 'image' ? 'images-outline' : 'film-outline'}
+                                                size={40} color={P.p600}
+                                            />
                                         </LinearGradient>
-                                    </TouchableOpacity>
-
-                                    {/* Gallery */}
-                                    <TouchableOpacity style={s.pickerCardSecondary} activeOpacity={0.85} onPress={pickMediaWithTrack}>
-                                        <View style={s.pickerIconCircleGhost}>
-                                            <Ionicons name="images-outline" size={28} color={P.p600} />
-                                        </View>
-                                        <Text style={s.pickerLabelSecondary}>Galería</Text>
-                                        <Text style={s.pickerSubSecondary}>Tus fotos</Text>
-                                    </TouchableOpacity>
-                                </View>
-                            </View>
-                        ) : (
-                            /* ── Media strip ── */
-                            <>
-                                <View style={s.stripHeader}>
-                                    <View style={s.countChip}>
-                                        <View style={s.countDot} />
-                                        <Text style={s.countText}>
-                                            {mediaList.length} {contentType === 'image' ? 'foto' : 'video'}{mediaList.length !== 1 ? 's' : ''}
-                                        </Text>
                                     </View>
-                                    <TouchableOpacity style={s.addMoreBtn} onPress={handleAddMore} activeOpacity={0.7}>
-                                        <Ionicons name="add" size={15} color={P.p600} />
-                                        <Text style={s.addMoreText}>Añadir más</Text>
-                                    </TouchableOpacity>
-                                </View>
 
-                                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.strip}>
-                                    {mediaList.map((item, index) => {
-                                        const progress = uploadProgress[item.uri] || 0;
-                                        return (
-                                            <View key={index} style={s.mediaCard}>
-                                                <Image source={{ uri: item.thumbnailUri || item.uri }} style={s.mediaThumb} contentFit="cover" transition={200} />
+                                    <Text style={s.emptyTitle}>
+                                        {contentType === 'image' ? 'Añade tus fotos' : 'Añade tu video'}
+                                    </Text>
+                                    <Text style={s.emptySub}>
+                                        {contentType === 'image'
+                                            ? 'Captura un momento o elige desde la galería'
+                                            : 'Máximo 1 minuto · HD listo para guardar'}
+                                    </Text>
 
-                                                <LinearGradient
-                                                    colors={['transparent', 'rgba(24,24,27,0.65)']}
-                                                    style={StyleSheet.absoluteFill}
-                                                    start={{ x: 0, y: 0.45 }} end={{ x: 0, y: 1 }}
-                                                />
+                                    <View style={s.pickerRow}>
+                                        {/* Camera */}
+                                        <TouchableOpacity style={s.pickerCardPrimary} activeOpacity={0.85} onPress={captureMediaWithTrack}>
+                                            <LinearGradient colors={[P.p500, P.p800]} style={s.pickerCardGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+                                                <View style={s.pickerIconCircle}>
+                                                    <Ionicons name="camera" size={28} color={P.white} />
+                                                </View>
+                                                <Text style={s.pickerLabelPrimary}>Cámara</Text>
+                                                <Text style={s.pickerSubPrimary}>Captura ahora</Text>
+                                            </LinearGradient>
+                                        </TouchableOpacity>
 
-                                                {loading && progress < 100 && (
-                                                    <View style={s.progressWrap}>
-                                                        <View style={s.progressTrack}>
-                                                            <View style={[s.progressFill, { width: `${progress}%` as any }]} />
-                                                        </View>
-                                                    </View>
-                                                )}
-
-                                                {contentType === 'video' && (
-                                                    <TouchableOpacity style={s.playCircle} activeOpacity={0.7} onPress={() => setPreviewVideo(item.uri)}>
-                                                        <Ionicons name="play" size={18} color={P.white} />
-                                                    </TouchableOpacity>
-                                                )}
-                                                {contentType === 'video' && (
-                                                    <TouchableOpacity style={s.trimChip} activeOpacity={0.8} onPress={() => openTrimModal(index)}>
-                                                        <Ionicons name="cut-outline" size={11} color={P.white} />
-                                                        <Text style={s.trimChipText}>Cortar</Text>
-                                                    </TouchableOpacity>
-                                                )}
-
-                                                <TouchableOpacity style={s.removeBtn} activeOpacity={0.7} onPress={() => removeMedia(index)}>
-                                                    <Ionicons name="close" size={13} color={P.white} />
-                                                </TouchableOpacity>
+                                        {/* Gallery */}
+                                        <TouchableOpacity style={s.pickerCardSecondary} activeOpacity={0.85} onPress={pickMediaWithTrack}>
+                                            <View style={s.pickerIconCircleGhost}>
+                                                <Ionicons name="images-outline" size={28} color={P.p600} />
                                             </View>
-                                        );
-                                    })}
-                                </ScrollView>
-                            </>
-                        )}
+                                            <Text style={s.pickerLabelSecondary}>Galería</Text>
+                                            <Text style={s.pickerSubSecondary}>Tus fotos</Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                </View>
+                            ) : (
+                                /* ── Media strip ── */
+                                <>
+                                    <View style={s.stripHeader}>
+                                        <View style={s.countChip}>
+                                            <View style={s.countDot} />
+                                            <Text style={s.countText}>
+                                                {mediaList.length} {contentType === 'image' ? 'foto' : 'video'}{mediaList.length !== 1 ? 's' : ''}
+                                            </Text>
+                                        </View>
+                                        <TouchableOpacity style={s.addMoreBtn} onPress={handleAddMore} activeOpacity={0.7}>
+                                            <Ionicons name="add" size={15} color={P.p600} />
+                                            <Text style={s.addMoreText}>Añadir más</Text>
+                                        </TouchableOpacity>
+                                    </View>
 
-                        {/* Caption */}
-                        <View style={s.captionRow}>
-                            <View style={s.captionIconWrap}>
-                                <Ionicons name="chatbubble-ellipses-outline" size={16} color={P.p500} />
+                                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.strip}>
+                                        {mediaList.map((item, index) => {
+                                            const progress = uploadProgress[item.uri] || 0;
+                                            return (
+                                                <View key={index} style={s.mediaCard}>
+                                                    <Image source={{ uri: item.thumbnailUri || item.uri }} style={s.mediaThumb} contentFit="cover" transition={200} />
+
+                                                    <LinearGradient
+                                                        colors={['transparent', 'rgba(24,24,27,0.65)']}
+                                                        style={StyleSheet.absoluteFill}
+                                                        start={{ x: 0, y: 0.45 }} end={{ x: 0, y: 1 }}
+                                                    />
+
+                                                    {loading && progress < 100 && (
+                                                        <View style={s.progressWrap}>
+                                                            <View style={s.progressTrack}>
+                                                                <View style={[s.progressFill, { width: `${progress}%` as any }]} />
+                                                            </View>
+                                                        </View>
+                                                    )}
+
+                                                    {contentType === 'video' && (
+                                                        <TouchableOpacity style={s.playCircle} activeOpacity={0.7} onPress={() => setPreviewVideo(item.uri)}>
+                                                            <Ionicons name="play" size={18} color={P.white} />
+                                                        </TouchableOpacity>
+                                                    )}
+                                                    {contentType === 'video' && (
+                                                        <TouchableOpacity style={s.trimChip} activeOpacity={0.8} onPress={() => openTrimModal(index)}>
+                                                            <Ionicons name="cut-outline" size={11} color={P.white} />
+                                                            <Text style={s.trimChipText}>Cortar</Text>
+                                                        </TouchableOpacity>
+                                                    )}
+
+                                                    <TouchableOpacity style={s.removeBtn} activeOpacity={0.7} onPress={() => removeMedia(index)}>
+                                                        <Ionicons name="close" size={13} color={P.white} />
+                                                    </TouchableOpacity>
+                                                </View>
+                                            );
+                                        })}
+                                    </ScrollView>
+                                </>
+                            )}
+
+                            {/* Caption */}
+                            <View style={s.captionRow}>
+                                <View style={s.captionIconWrap}>
+                                    <Ionicons name="chatbubble-ellipses-outline" size={16} color={P.p500} />
+                                </View>
+                                <TextInput
+                                    style={s.captionInput}
+                                    placeholder="Añade un pie de foto…"
+                                    placeholderTextColor={P.gray300}
+                                    value={caption}
+                                    onChangeText={setCaption}
+                                    multiline={false}
+                                    autoCorrect={false}
+                                    spellCheck={false}
+                                />
                             </View>
-                            <TextInput
-                                style={s.captionInput}
-                                placeholder="Añade un pie de foto…"
-                                placeholderTextColor={P.gray300}
-                                value={caption}
-                                onChangeText={setCaption}
-                                multiline={false}
-                                autoCorrect={false}
-                                spellCheck={false}
-                            />
-                        </View>
-                    </>
-                )}
-            </ScrollView>
+                        </>
+                    )}
+                </ScrollView>
+            </KeyboardAvoidingView>
 
             {/* ── Video Preview Modal ── */}
             <Modal visible={!!previewVideo} transparent animationType="fade">

@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-    View, Text, StyleSheet, FlatList, TouchableOpacity, Image, ActivityIndicator,
+    View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator,
     StatusBar, Modal, TextInput, Alert, Platform, ScrollView
 } from 'react-native';
+import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -68,7 +69,7 @@ export default function ChatListScreen() {
 
         const [partsRes, lastMsgsRes, convsRes] = await Promise.all([
             supabase.from('conversation_participants').select('conversation_id, user_id').in('conversation_id', convIds).neq('user_id', uid),
-            supabase.from('messages').select('conversation_id, content, created_at, sender_id, is_read').in('conversation_id', convIds).order('created_at', { ascending: false }),
+            supabase.from('messages').select('conversation_id, content, created_at, sender_id, is_read, media_type').in('conversation_id', convIds).order('created_at', { ascending: false }),
             supabase.from('conversations').select('id, last_message_at, is_group, name, avatar_url').in('id', convIds)
         ]);
 
@@ -95,9 +96,14 @@ export default function ChatListScreen() {
             const lastMsg = latestMsgMap[cId];
             const delTime = deletedStamps[cId];
 
-            // If deleted, keep it hidden until user explicitly starts a conversation again
-            if (delTime) {
-                return null;
+            // If deleted, keep it hidden until a new message arrives (Instagram-like)
+            const lastMsgTimeStr = lastMsg?.created_at || conv?.last_message_at;
+            if (delTime && lastMsgTimeStr) {
+                const lastMsgTime = new Date(lastMsgTimeStr).getTime();
+                const deletionTime = new Date(delTime).getTime();
+                if (lastMsgTime <= deletionTime) {
+                    return null;
+                }
             }
 
             const otherUserId = otherUserIdMap[cId];
@@ -423,13 +429,12 @@ export default function ChatListScreen() {
                                     onPress={() => startChat(item)}
                                     disabled={!!startingChatId}
                                 >
-                                    {item.avatar_url ? (
-                                        <Image source={{ uri: item.avatar_url }} style={styles.userAvatar} />
-                                    ) : (
-                                        <View style={styles.userAvatarPlaceholder}>
-                                            <Ionicons name="person" size={20} color={Colors.textMuted} />
-                                        </View>
-                                    )}
+                                    <Image 
+                                        source={{ uri: Colors.getAvatarUrl(item.avatar_url, item.display_name || item.username) }} 
+                                        style={styles.userAvatar} 
+                                        contentFit="cover"
+                                        cachePolicy="memory-disk"
+                                    />
                                     <View style={{ flex: 1 }}>
                                         <Text style={styles.userName}>{item.display_name || item.username}</Text>
                                         <Text style={styles.userHandle}>@{item.username}</Text>
@@ -500,11 +505,12 @@ export default function ChatListScreen() {
                                     onPress={() => toggleGroupUser(u)}
                                     activeOpacity={0.7}
                                 >
-                                    {u.avatar_url
-                                        ? <Image source={{ uri: u.avatar_url }} style={styles.chipAvatar} />
-                                        : <View style={[styles.chipAvatar, { backgroundColor: Colors.cardAlt, alignItems: 'center', justifyContent: 'center' }]}>
-                                            <Ionicons name="person" size={12} color={Colors.textMuted} />
-                                        </View>}
+                                    <Image 
+                                        source={{ uri: Colors.getAvatarUrl(u.avatar_url, u.display_name || u.username) }} 
+                                        style={styles.chipAvatar} 
+                                        contentFit="cover"
+                                        cachePolicy="memory-disk"
+                                    />
                                     <Text style={styles.chipName} numberOfLines={1}>{u.display_name || u.username}</Text>
                                     <Ionicons name="close-circle" size={14} color={Colors.textMuted} />
                                 </TouchableOpacity>
@@ -538,13 +544,12 @@ export default function ChatListScreen() {
                                         activeOpacity={0.7}
                                         onPress={() => toggleGroupUser(item)}
                                     >
-                                        {item.avatar_url ? (
-                                            <Image source={{ uri: item.avatar_url }} style={styles.userAvatar} />
-                                        ) : (
-                                            <View style={styles.userAvatarPlaceholder}>
-                                                <Ionicons name="person" size={20} color={Colors.textMuted} />
-                                            </View>
-                                        )}
+                                        <Image 
+                                            source={{ uri: Colors.getAvatarUrl(item.avatar_url, item.display_name || item.username) }} 
+                                            style={styles.userAvatar} 
+                                            contentFit="cover"
+                                            cachePolicy="memory-disk"
+                                        />
                                         <View style={{ flex: 1 }}>
                                             <Text style={styles.userName}>{item.display_name || item.username}</Text>
                                             <Text style={styles.userHandle}>@{item.username}</Text>

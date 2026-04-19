@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
     View, Text, StyleSheet, ScrollView, TouchableOpacity,
-    StatusBar, Modal, Pressable, Platform, Alert,
-    Dimensions, Animated, Easing, ActivityIndicator
+    StatusBar, Modal, Platform, Alert,
+    Dimensions, Animated, Easing, ActivityIndicator, InteractionManager,
+    DeviceEventEmitter
 } from 'react-native';
 import { Image } from 'expo-image';
 
@@ -13,11 +14,22 @@ import { useNavigation, useIsFocused } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useTranslation } from 'react-i18next';
-import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
-// Import tracking transparency conditionally to avoid crashes on non-iOS platforms (Web/Android)
+import { Colors, Fonts, Shadow } from '../theme';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { supabase } from '../lib/supabase';
+import { safetyService } from '../utils/safety';
+import { useWebDragScroll } from '../utils/useWebDragScroll';
+import { feedScrollBus } from '../utils/feedScrollBus';
+import StoryViewer from '../components/StoryViewer';
+import InteractiveTour from '../components/InteractiveTour';
+import { sendPushNotification } from '../utils/pushNotifications';
+import { MODEL_IMAGES, MODEL_TINTS } from '../constants/models';
+import { timerConfigManager } from '../utils/timerConfig';
+
+type TutorialStep = 'IDLE' | 'WELCOME' | 'PRESS_PLUS' | 'SELECT_TYPE' | 'POST_YOURCAP' | 'FINISHED';
+
 let requestTrackingPermissionsAsync: any = async () => ({ status: 'granted' });
 let getTrackingPermissionsAsync: any = async () => ({ status: 'granted' });
-
 if (Platform.OS === 'ios') {
     try {
         const Tracking = require('expo-tracking-transparency');
@@ -27,228 +39,172 @@ if (Platform.OS === 'ios') {
         console.warn('Tracking transparency not available');
     }
 }
-import CapsuleCard from '../components/CapsuleCard';
-import { supabase } from '../lib/supabase';
-import { MODEL_IMAGES } from '../constants/models';
-import { timerConfigManager } from '../utils/timerConfig';
-import InteractiveTour, { TutorialStep } from '../components/InteractiveTour';
-import StoryViewer from '../components/StoryViewer';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import StoryEditor from '../components/StoryEditor';
-import { safetyService } from '../utils/safety';
-import { useWebDragScroll } from '../utils/useWebDragScroll';
-import TimelineActivity from '../components/TimelineActivity';
-import { feedScrollBus } from '../utils/feedScrollBus';
 
-type CapsuleType = 'instacap' | 'eventcap' | 'legacycap' | 'opencap';
+import { FlashPicker } from '../components/FlashPicker';
+import { StoryBubble } from '../components/feed/StoryBubble';
+import { FilterChip } from '../components/feed/FilterChip';
+import CapsuleCard from '../components/CapsuleCard';
+
 type FeedTab = 'following' | 'explore';
 type FilterType = 'all' | 'closed' | 'open';
 
 const { width, height } = Dimensions.get('window');
 
-// Cache de 5 minutos
 const FEED_CACHE_TTL = 5 * 60 * 1000;
-// Impression batch: report seen capsules to DB every N seconds
 const IMPRESSION_FLUSH_MS = 8000;
-// Age threshold: don't show content older than this in DAYS
-const MAX_CONTENT_AGE_DAYS = 45;
-const MAX_CONTENT_AGE_HOURS = MAX_CONTENT_AGE_DAYS * 24;
+const PAGE_SIZE = 15;
 
-// ─── Filter config ────────────────────────────────────────────────────────────
 const FILTER_KEYS: FilterType[] = ['all', 'closed', 'open'];
-
-const FILTER_META: Record<FilterType, { icon: string; label: (t: any) => string; color?: string }> = {
+const FILTER_META: Record<FilterType, { icon: string; label: (t: any) => string }> = {
     all: { icon: 'apps-outline', label: t => t('feed.all') },
     closed: { icon: 'lock-closed-outline', label: () => 'Closed' },
     open: { icon: 'book-outline', label: () => 'Open' },
 };
 
-// ─── Story bubble ─────────────────────────────────────────────────────────────
-const StoryBubble = React.memo(({ user, isOwn, onPress }: {
-    user: any; isOwn?: boolean; onPress: () => void;
-}) => {
-    const scaleAnim = useRef(new Animated.Value(1)).current;
-
-    const handlePress = () => {
-        Animated.sequence([
-            Animated.timing(scaleAnim, { toValue: 0.92, duration: 70, useNativeDriver: true }),
-            Animated.spring(scaleAnim, { toValue: 1, friction: 5, tension: 120, useNativeDriver: true }),
-        ]).start();
-        onPress();
-    };
-
-    const avatarUri = user?.avatar_url || 'https://via.placeholder.com/150';
-    const label = isOwn ? 'Flash' : (user?.display_name || user?.username || 'user');
-    const hasUnread = !user?.all_read;
-
-    return (
-        <Animated.View style={[st.wrap, { transform: [{ scale: scaleAnim }] }]}>
-            <TouchableOpacity activeOpacity={1} onPress={handlePress} style={st.inner}>
-                {isOwn && !user ? (
-                    <View style={st.addWrap}>
-                        <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={st.addRing}>
-                            <Ionicons name="add" size={22} color="#fff" />
-                        </LinearGradient>
-                    </View>
-                ) : (
-                    hasUnread && !isOwn ? (
-                        <LinearGradient
-                            colors={[Colors.primary, Colors.primaryDark, '#00f2ff']}
-                            style={st.ring}
-                            start={{ x: 0, y: 1 }} end={{ x: 1, y: 0 }}
-                        >
-                            <View style={st.avatarWrap}>
-                                <Image
-                                    source={{ uri: avatarUri }}
-                                    style={st.avatar}
-                                    cachePolicy="memory-disk"
-                                    transition={200}
-                                />
-                            </View>
-                        </LinearGradient>
-                    ) : (
-                        <View style={[st.ring, st.ringRead, isOwn && { borderColor: Colors.primary + '80', borderStyle: 'dashed' }]}>
-                            <View style={st.avatarWrap}>
-                                <Image
-                                    source={{ uri: avatarUri }}
-                                    style={st.avatar}
-                                    cachePolicy="memory-disk"
-                                    transition={200}
-                                />
-                            </View>
-                        </View>
-                    )
-                )}
-                <Text
-                    style={[st.label, isOwn && { color: Colors.primary, fontFamily: Fonts.bold }, !hasUnread && !isOwn && { color: Colors.textMuted }]}
-                    numberOfLines={1}
-                >
-                    {label}
-                </Text>
-            </TouchableOpacity>
-        </Animated.View>
-    );
-});
-
-const st = StyleSheet.create({
-    wrap: { alignItems: 'center', marginRight: 14 },
-    inner: { alignItems: 'center', gap: 5 },
-    ring: { width: 66, height: 66, borderRadius: 33, alignItems: 'center', justifyContent: 'center', padding: 2.5 },
-    ringRead: { borderWidth: 2, borderColor: Colors.border, backgroundColor: 'transparent' },
-    avatarWrap: { width: 60, height: 60, borderRadius: 30, backgroundColor: Colors.background, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
-    avatar: { width: 58, height: 58, borderRadius: 29 },
-    addWrap: { width: 66, height: 66, alignItems: 'center', justifyContent: 'center' },
-    addRing: {
-        width: 62, height: 62, borderRadius: 31, alignItems: 'center', justifyContent: 'center',
-        ...Platform.select({
-            ios: { shadowColor: Colors.primary, shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 3 } },
-            android: { elevation: 4 },
-            web: { boxShadow: `0px 3px 10px ${Colors.primary}4D` }
-        }),
-    },
-    label: { fontSize: 11, fontFamily: Fonts.medium, color: Colors.textSecondary, textAlign: 'center', maxWidth: 66 },
-});
-
-// ─── Filter chip ──────────────────────────────────────────────────────────────
-const FilterChip = React.memo(({ filterKey, isActive, onPress, t, pulseAnim }: any) => {
-    const meta = FILTER_META[filterKey as FilterType];
-    const isToday = filterKey === 'today';
-    const accentColor = meta.color || Colors.primary;
-    const [localMinutes, setLocalMinutes] = useState(1440);
-
+// ─── Skeleton ─────────────────────────────────────────────────────────────────
+const SkeletonPulse = React.memo(({ style }: { style?: any }) => {
+    const anim = useRef(new Animated.Value(0.4)).current;
     useEffect(() => {
-        if (!isToday || !isActive) return;
-        const interval = setInterval(() => setLocalMinutes(m => m > 0 ? m - 1 : 1440), 60000); // UI tick per minute
-        return () => clearInterval(interval);
-    }, [isToday, isActive]);
-
-    const fmtTimer = (mins: number) => {
-        const h = Math.floor(mins / 60);
-        const m = mins % 60;
-        return `${h < 10 ? '0' : ''}${h}:${m < 10 ? '0' : ''}${m}`;
-    };
-
-    return (
-        <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={() => onPress(filterKey)}
-            style={[fc.chip, isActive && fc.chipActive, !isActive && isToday && { backgroundColor: '#FF416C08', borderColor: '#FF416C30' }]}
-        >
-            {isActive && (
-                <LinearGradient
-                    colors={isToday ? ['#FF416C', '#FF4B2B'] : [Colors.primary, Colors.primaryDark]}
-                    style={StyleSheet.absoluteFill}
-                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-                />
-            )}
-            <Ionicons
-                name={(isActive ? meta.icon.replace('-outline', '') : meta.icon) as any}
-                size={13}
-                color={isActive ? '#fff' : isToday ? accentColor : Colors.textSecondary}
-            />
-            <Text style={[fc.label, isActive && fc.labelActive, !isActive && isToday && { color: accentColor }]}>
-                {meta.label(t)}
-            </Text>
-            {isToday && (
-                <View style={[fc.timerBadge, isActive && { backgroundColor: 'rgba(255,255,255,0.22)' }]}>
-                    <Text style={[fc.timerText, isActive && { color: '#fff' }]}>{fmtTimer(localMinutes)}</Text>
-                </View>
-            )}
-            {isToday && isActive && (
-                <Animated.View style={[fc.liveDot, { transform: [{ scale: pulseAnim }] }]} />
-            )}
-        </TouchableOpacity>
-    );
+        Animated.loop(
+            Animated.sequence([
+                Animated.timing(anim, { toValue: 1, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+                Animated.timing(anim, { toValue: 0.4, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+            ])
+        ).start();
+    }, []);
+    return <Animated.View style={[style, { opacity: anim }]} />;
 });
 
-const fc = StyleSheet.create({
-    chip: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 13, paddingVertical: 8, borderRadius: 30, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.surface, overflow: 'hidden' },
-    chipActive: { borderColor: 'transparent' },
-    label: { fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textSecondary },
-    labelActive: { color: '#fff', fontFamily: Fonts.bold },
-    timerBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, backgroundColor: 'rgba(255,65,108,0.12)' },
-    timerText: { fontSize: 10, fontFamily: Fonts.bold, color: '#FF416C' },
-    liveDot: {
-        width: 5, height: 5, borderRadius: 3, backgroundColor: '#fff',
-        ...Platform.select({
-            ios: { shadowColor: '#fff', shadowOpacity: 0.8, shadowRadius: 4, shadowOffset: { width: 0, height: 0 } },
-            web: { boxShadow: '0px 0px 4px #fff' }
-        }),
-    },
-});
-
-// ─── Skeleton placeholder mientras carga ─────────────────────────────────────
-const FeedSkeleton = React.memo(() => {
-    return (
-        <>
-            {[0, 1, 2].map(i => (
-                <View key={i} style={[sk.card, { opacity: 0.6 }]}>
-                    <View style={sk.topRow}>
-                        <View style={sk.avatar} />
-                        <View style={{ flex: 1, gap: 6 }}>
-                            <View style={[sk.line, { width: '50%' }]} />
-                            <View style={[sk.line, { width: '30%', opacity: 0.5 }]} />
-                        </View>
-                        <View style={sk.capsuleThumb} />
+const FeedSkeleton = React.memo(() => (
+    <>
+        {[0, 1, 2].map(i => (
+            <View key={i} style={sk.card}>
+                <View style={sk.topRow}>
+                    <SkeletonPulse style={sk.avatar} />
+                    <View style={{ flex: 1, gap: 7 }}>
+                        <SkeletonPulse style={[sk.line, { width: '48%' }]} />
+                        <SkeletonPulse style={[sk.line, { width: '28%', opacity: 0.6 }]} />
                     </View>
-                    <View style={sk.media} />
-                    <View style={{ padding: 12, gap: 8 }}>
-                        <View style={[sk.line, { width: '70%' }]} />
-                        <View style={[sk.line, { width: '45%', opacity: 0.5 }]} />
-                    </View>
+                    <SkeletonPulse style={sk.capsuleThumb} />
                 </View>
-            ))}
-        </>
-    );
-});
+                <SkeletonPulse style={sk.media} />
+                <View style={{ padding: 14, gap: 9 }}>
+                    <SkeletonPulse style={[sk.line, { width: '65%' }]} />
+                    <SkeletonPulse style={[sk.line, { width: '40%' }]} />
+                </View>
+            </View>
+        ))}
+    </>
+));
 
 const sk = StyleSheet.create({
-    card: { marginHorizontal: 16, marginBottom: 16, borderRadius: 20, backgroundColor: Colors.cardAlt, overflow: 'hidden' },
-    topRow: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12 },
-    avatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.border },
-    capsuleThumb: { width: 42, height: 42, borderRadius: 21, backgroundColor: Colors.border },
-    media: { width: '100%', height: 220, backgroundColor: Colors.border },
+    card: {
+        marginHorizontal: 16,
+        marginBottom: 16,
+        borderRadius: 22,
+        backgroundColor: Colors.cardAlt,
+        overflow: 'hidden',
+    },
+    topRow: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 14 },
+    avatar: { width: 38, height: 38, borderRadius: 19, backgroundColor: Colors.border },
+    capsuleThumb: { width: 44, height: 44, borderRadius: 22, backgroundColor: Colors.border },
+    media: { width: '100%', height: 230, backgroundColor: Colors.border },
     line: { height: 10, borderRadius: 5, backgroundColor: Colors.border },
+});
+
+// ─── Tab Pill ─────────────────────────────────────────────────────────────────
+// Animated pill indicator that slides between tabs
+const TabPill = React.memo(({ activeTab, onTabChange, t }: {
+    activeTab: FeedTab;
+    onTabChange: (tab: FeedTab) => void;
+    t: any;
+}) => {
+    const slideAnim = useRef(new Animated.Value(activeTab === 'following' ? 0 : 1)).current;
+
+    useEffect(() => {
+        Animated.spring(slideAnim, {
+            toValue: activeTab === 'following' ? 0 : 1,
+            useNativeDriver: false,
+            tension: 68,
+            friction: 11,
+        }).start();
+    }, [activeTab]);
+
+    const pillLeft = slideAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: ['2%', '50%'],
+    });
+
+    return (
+        <View style={tabPillStyles.container}>
+            <Animated.View style={[tabPillStyles.pill, { left: pillLeft }]} />
+            {(['following', 'explore'] as FeedTab[]).map(tab => {
+                const isActive = activeTab === tab;
+                return (
+                    <TouchableOpacity
+                        key={tab}
+                        style={tabPillStyles.tab}
+                        onPress={() => onTabChange(tab)}
+                        activeOpacity={0.75}
+                    >
+                        <Text style={[tabPillStyles.label, isActive && tabPillStyles.labelActive]}>
+                            {tab === 'following' ? t('feed.following') : t('feed.explore')}
+                        </Text>
+                    </TouchableOpacity>
+                );
+            })}
+        </View>
+    );
+});
+
+const tabPillStyles = StyleSheet.create({
+    container: {
+        flexDirection: 'row',
+        marginHorizontal: 18,
+        marginBottom: 12,
+        marginTop: 4,
+        height: 38,
+        borderRadius: 19,
+        backgroundColor: Colors.cardAlt,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        position: 'relative',
+        overflow: 'hidden',
+    },
+    pill: {
+        position: 'absolute',
+        top: 3,
+        bottom: 3,
+        width: '48%',
+        borderRadius: 16,
+        backgroundColor: Colors.primary,
+        // Soft shadow under pill
+        ...Platform.select({
+            ios: {
+                shadowColor: Colors.primary,
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.28,
+                shadowRadius: 6,
+            },
+            android: { elevation: 3 },
+        }),
+    },
+    tab: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1,
+    },
+    label: {
+        fontSize: 13,
+        fontFamily: Fonts.semiBold,
+        color: Colors.textMuted,
+        letterSpacing: 0.1,
+    },
+    labelActive: {
+        color: '#fff',
+        fontFamily: Fonts.bold,
+    },
 });
 
 // ─── Main Screen ──────────────────────────────────────────────────────────────
@@ -258,78 +214,102 @@ export default function FeedScreen() {
     const navigation = useNavigation<any>();
     const isFocused = useIsFocused();
 
-    const [activeTab, setActiveTab] = useState<FeedTab>('following');
-    const [activeFilter, setActiveFilter] = useState<FilterType>('all');
-    const [capsules, setCapsules] = useState<any[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [refreshing, setRefreshing] = useState(false);
-    const [page, setPage] = useState(0);
-    const [hasMore, setHasMore] = useState(true);
-    const [loadingMore, setLoadingMore] = useState(false);
-    const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-    const [stories, setStories] = useState<any[]>([]);
-    const [myStory, setMyStory] = useState<any>(null);
     const [showCapsulePicker, setShowCapsulePicker] = useState(false);
-    const [pickerStep, setPickerStep] = useState<'list' | 'select' | 'animation' | 'edit'>('list');
-    const [editingItem, setEditingItem] = useState<any>(null);
-    const [userCapsules, setUserCapsules] = useState<any[]>([]);
-    const [selectedPickerCapsule, setSelectedPickerCapsule] = useState<any>(null);
-    const [pickerItems, setPickerItems] = useState<any[]>([]);
-    const [randomPreviewItem, setRandomPreviewItem] = useState<any>(null);
-    const [searching, setSearching] = useState(false);
+    const [myStory, setMyStory] = useState<any>(null);
     const [feedCache, setFeedCache] = useState<Record<string, { data: any[]; ts: number }>>({});
     const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
     const [activeStory, setActiveStory] = useState<any>(null);
     const [hasUnread, setHasUnread] = useState(false);
     const [tutorialStep, setTutorialStep] = useState<TutorialStep>('IDLE');
-
-    const pulseAnim = useRef(new Animated.Value(1)).current;
-    const searchingAnim = useRef(new Animated.Value(0)).current;
-    const unblurAnim = useRef(new Animated.Value(1)).current;
-    const headerOpacity = useRef(new Animated.Value(0)).current;
-    const headerSlide = useRef(new Animated.Value(-8)).current;
-    const isFirstMount = useRef(true);
     const [showATTModal, setShowATTModal] = useState(false);
 
+    const [likedCapsules, setLikedCapsules] = useState<Set<string>>(new Set());
+    const [followingSet, setFollowingSet] = useState<Set<string>>(new Set());
+    const [participantCapsules, setParticipantCapsules] = useState<Set<string>>(new Set());
+
+    const [activeTab, setActiveTab] = useState<FeedTab>('following');
+    const [activeFilter, setActiveFilter] = useState<FilterType>('all');
+    const [capsules, setCapsules] = useState<any[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
+    const [refreshing, setRefreshing] = useState(false);
+    const [page, setPage] = useState(0);
+    const [hasMore, setHasMore] = useState(true);
+    const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+    const [stories, setStories] = useState<any[]>([]);
+
+    const pulseAnim = useRef(new Animated.Value(1)).current;
+    const headerOpacity = useRef(new Animated.Value(0)).current;
+    const headerSlide = useRef(new Animated.Value(-10)).current;
+    const logoScale = useRef(new Animated.Value(0.88)).current;
+    const isFirstMount = useRef(true);
+    const feedRequestId = useRef(0);
+
+    const flatListRef = useRef<any>(null);
+    const impressionBufferRef = useRef<Set<string>>(new Set());
+    const impressionFlushRef = useRef<NodeJS.Timeout | null>(null);
+    const storiesScrollRef = useRef<ScrollView>(null);
+    const filterScrollRef = useRef<ScrollView>(null);
+
+    const keyExtractor = useCallback((item: any) => item.id, []);
+
+    useWebDragScroll(flatListRef);
+    useWebDragScroll(storiesScrollRef);
+    useWebDragScroll(filterScrollRef);
+
+    // ─── ATT ──────────────────────────────────────────────────────────────────
     useEffect(() => {
         const checkATT = async () => {
             if (Platform.OS !== 'ios') return;
-
-            // Wait 2 seconds as requested
             await new Promise(resolve => setTimeout(resolve, 2000));
-
-            // Check if already asked
             const alreadyAsked = await AsyncStorage.getItem('att_asked');
             if (alreadyAsked) return;
-
             const { status } = await getTrackingPermissionsAsync();
-            if (status === 'undetermined') {
-                setShowATTModal(true);
-            }
+            if (status === 'undetermined') setShowATTModal(true);
         };
         checkATT();
     }, []);
 
     const handleATTContinue = async () => {
         setShowATTModal(false);
-        const { status } = await requestTrackingPermissionsAsync();
+        await requestTrackingPermissionsAsync();
         await AsyncStorage.setItem('att_asked', 'true');
-        console.log('Tracking permission status:', status);
     };
 
-    const flatListRef = useRef<any>(null);
-    const storiesScrollRef = useRef<ScrollView>(null);
-    const filterScrollRef = useRef<ScrollView>(null);
+    // ─── Entrance animations ──────────────────────────────────────────────────
+    useEffect(() => {
+        Animated.parallel([
+            Animated.timing(headerOpacity, {
+                toValue: 1,
+                duration: 420,
+                easing: Easing.out(Easing.cubic),
+                useNativeDriver: true,
+            }),
+            Animated.timing(headerSlide, {
+                toValue: 0,
+                duration: 420,
+                easing: Easing.out(Easing.cubic),
+                useNativeDriver: true,
+            }),
+            Animated.spring(logoScale, {
+                toValue: 1,
+                useNativeDriver: true,
+                tension: 72,
+                friction: 9,
+            }),
+        ]).start();
+    }, []);
 
-    // Impression tracking: buffer seen capsule IDs, flush to DB periodically
-    const impressionBufferRef = useRef<Set<string>>(new Set());
-    const impressionFlushRef = useRef<NodeJS.Timeout | null>(null);
+    useEffect(() => {
+        Animated.loop(
+            Animated.sequence([
+                Animated.timing(pulseAnim, { toValue: 1.22, duration: 750, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+                Animated.timing(pulseAnim, { toValue: 1, duration: 750, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+            ])
+        ).start();
+    }, []);
 
-    useWebDragScroll(flatListRef);
-    useWebDragScroll(storiesScrollRef);
-    useWebDragScroll(filterScrollRef);
-
-    // ─── Animations ───────────────────────────────────────────────────────────
+    // ─── Feed scroll bus ──────────────────────────────────────────────────────
     useEffect(() => {
         const unsubScroll = feedScrollBus.subscribeScroll(() => {
             flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true });
@@ -341,209 +321,30 @@ export default function FeedScreen() {
             setActiveTab('following');
             loadFeed(true, 'following');
         });
-        return () => {
-            unsubScroll();
-            unsubRefresh();
+        return () => { unsubScroll(); unsubRefresh(); };
+    }, []);
+
+    // ─── Impression flush ─────────────────────────────────────────────────────
+    useEffect(() => {
+        const flushImpressions = async () => {
+            if (!currentUserId || impressionBufferRef.current.size === 0) return;
+            const ids = Array.from(impressionBufferRef.current) as string[];
+            impressionBufferRef.current.clear();
+            try {
+                await supabase.rpc('record_feed_impressions', {
+                    p_user_id: currentUserId,
+                    p_capsule_ids: ids,
+                });
+            } catch (e) { /* best-effort */ }
         };
-    }, []);
+        impressionFlushRef.current = setInterval(flushImpressions, IMPRESSION_FLUSH_MS) as any;
+        return () => {
+            if (impressionFlushRef.current) clearInterval(impressionFlushRef.current);
+            flushImpressions();
+        };
+    }, [currentUserId]);
 
-    useEffect(() => {
-        Animated.parallel([
-            Animated.timing(headerOpacity, { toValue: 1, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-            Animated.timing(headerSlide, { toValue: 0, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-        ]).start();
-    }, []);
-
-    useEffect(() => {
-        Animated.loop(
-            Animated.sequence([
-                Animated.timing(pulseAnim, { toValue: 1.25, duration: 700, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-                Animated.timing(pulseAnim, { toValue: 1, duration: 700, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-            ])
-        ).start();
-    }, []);
-
-    const [likedCapsules, setLikedCapsules] = useState<Set<string>>(new Set());
-    const [followingSet, setFollowingSet] = useState<Set<string>>(new Set());
-    const [participantCapsules, setParticipantCapsules] = useState<Set<string>>(new Set());
-
-    // ─── Data loading ──────────────────────────────────────────────────────────
-    const feedRequestId = useRef(0);
-
-    const loadFeed = useCallback(async (forceRefresh = false, tabOverride?: FeedTab, isNewPage = false) => {
-        const currentReqId = ++feedRequestId.current;
-        const tab = tabOverride ?? activeTab;
-        const currentPage = isNewPage ? page + 1 : 0;
-        const PAGE_SIZE = 10;
-
-        if (!isNewPage && !forceRefresh) {
-            const cacheKey = `${tab}_${activeFilter}`;
-            const cached = feedCache[cacheKey];
-            if (cached && (Date.now() - cached.ts) < 300000) { // 5 min cache
-                setCapsules(cached.data);
-                setLoading(false);
-                return;
-            }
-        }
-
-        if (isNewPage) setLoadingMore(true);
-        else if (!refreshing) setLoading(true);
-
-        const { data: { session } } = await supabase.auth.getSession();
-        const user = session?.user;
-        if (!user) { setLoading(false); setRefreshing(false); setLoadingMore(false); return; }
-        setCurrentUserId(user.id);
-
-        // COMBINED INITIAL QUERIES
-        const [blocked, followsResult, likesResult, participantResult] = await Promise.all([
-            safetyService.getAllSafetyUserIds(user.id),
-            supabase.from('follows').select('following_id').eq('follower_id', user.id),
-            supabase.from('likes').select('capsule_id').eq('user_id', user.id),
-            supabase.from('capsule_invites').select('capsule_id').eq('user_id', user.id).eq('status', 'accepted'),
-        ]);
-
-        if (feedRequestId.current !== currentReqId) return;
-
-        setBlockedUserIds(blocked);
-        if (!isNewPage) loadStories(user.id, blocked);
-
-        const followingIds = (followsResult.data || []).map((f: any) => f.following_id);
-        const followingSetNew = new Set(followingIds);
-        const likedSetNew = new Set((likesResult.data || []).map((l: any) => l.capsule_id));
-        const participantSetNew = new Set((participantResult.data || []).map((p: any) => p.capsule_id));
-
-        setFollowingSet(followingSetNew);
-        setLikedCapsules(likedSetNew);
-        setParticipantCapsules(participantSetNew);
-
-        if (tab === 'following' && followingIds.length === 0) {
-            setCapsules([]);
-            setLoading(false);
-            setRefreshing(false);
-            setLoadingMore(false);
-            setHasMore(false);
-            return;
-        }
-
-        // --- Optimized Query with Pagination & Joins ---
-        let itemsQuery = supabase
-            .from('capsule_items')
-            .select(`
-                id, media_url, media_type, thumbnail_url, content, caption, created_at, owner_id, capsule_id,
-                latitude, longitude, altitude, location_name,
-                profiles:owner_id(username, display_name, avatar_url, is_verified),
-                capsules:capsule_id!inner(
-                    id, title, is_public, type, status, opens_at,
-                    created_at, model, description, chain_id, owner_id,
-                    profiles:owner_id(username, display_name, avatar_url, is_verified),
-                    likes:likes(count),
-                    comments:comments(count),
-                    postsCount:capsule_items(count)
-                )
-            `)
-            .in('media_type', ['image', 'video', 'audio', 'note'])
-            .eq('is_story', false)
-            .gt('created_at', new Date(Date.now() - MAX_CONTENT_AGE_DAYS * 24 * 60 * 60 * 1000).toISOString());
-
-        if (tab === 'following') {
-            const filters = [];
-            if (followingIds.length > 0) filters.push(`owner_id.in.(${followingIds.join(',')})`);
-            itemsQuery = itemsQuery.or(filters.join(','));
-        } else {
-            itemsQuery = itemsQuery
-                .eq('capsules.is_public', true)
-                .neq('owner_id', user.id)
-                // .neq('capsules.type', 'eventcap'); // Removed filter for 'eventcap'
-            if (followingIds.length > 0) {
-                itemsQuery = itemsQuery.not('owner_id', 'in', `(${followingIds.join(',')})`);
-            }
-        }
-
-        if (activeFilter === 'closed') itemsQuery = itemsQuery.eq('capsules.status', 'sealed');
-        else if (activeFilter === 'open') itemsQuery = itemsQuery.eq('capsules.status', 'opened');
-
-        const rpcName = tab === 'explore' ? 'get_explore_feed' : 'get_following_feed';
-        const rangeStart = currentPage * PAGE_SIZE;
-        const rangeEnd = (currentPage + 1) * PAGE_SIZE - 1;
-
-        const [rpcResult, itemsResult] = await Promise.all([
-            supabase.rpc(rpcName, {
-                req_user_id: user.id,
-                req_filter: activeFilter,
-                req_limit: PAGE_SIZE
-            }),
-            itemsQuery.order('created_at', { ascending: false }).range(rangeStart, rangeEnd),
-        ]);
-
-        if (feedRequestId.current !== currentReqId) return;
-
-        let capsData = (rpcResult.data || []) as any[];
-        const activityData = (itemsResult.data || []) as any[];
-
-        if (activityData.length < PAGE_SIZE) setHasMore(false);
-        else setHasMore(true);
-
-        // --- Deduplication & Grouping ---
-        const groupedActivity: any[] = [];
-        const activityProcessed = new Set<string>();
-
-        activityData.forEach((item: any, idx: number) => {
-            if (activityProcessed.has(item.id)) return;
-            if (blocked.includes(item.owner_id)) return;
-
-            const group = [item];
-            activityProcessed.add(item.id);
-            const batch = item.caption?.match(/!!b:(\w+)/)?.[1];
-
-            if (batch) {
-                for (let j = idx + 1; j < activityData.length; j++) {
-                    const next = activityData[j];
-                    if (activityProcessed.has(next.id)) continue;
-                    const nextBatch = next.caption?.match(/!!b:(\w+)/)?.[1];
-                    if (
-                        next.capsule_id === item.capsule_id &&
-                        nextBatch === batch
-                    ) {
-                        group.push(next);
-                        activityProcessed.add(next.id);
-                    }
-                }
-            }
-
-            const now = Date.now();
-            const itemTs = new Date(item.created_at).getTime();
-            const hoursOld = Math.max(0, (now - itemTs) / 3600000);
-            const score = Math.exp(-0.06 * hoursOld) * 100 + (group.length > 1 ? 20 : 0) + 40;
-
-            groupedActivity.push(
-                group.length > 1
-                    ? { ...item, feedType: 'activity_group', groupItems: group, count: group.length, total_score: score }
-                    : { ...item, feedType: 'activity', total_score: score }
-            );
-        });
-
-        // Merge and Sort
-        const combined = isNewPage ? groupedActivity : [...capsData.map(c => ({ ...c, feedType: 'capsule', total_score: (c.score || 0) + 20 })), ...groupedActivity];
-
-        let merged = combined.sort((a, b) => (b.total_score || 0) - (a.total_score || 0));
-
-        if (isNewPage) {
-            setCapsules(prev => [...prev, ...merged]);
-            setPage(currentPage);
-        } else {
-            setCapsules(merged);
-            setPage(0);
-            const cacheKey = `${tab}_${activeFilter}`;
-            setFeedCache(prev => ({ ...prev, [cacheKey]: { data: merged, ts: Date.now() } }));
-        }
-
-        setLoading(false);
-        setRefreshing(false);
-        setLoadingMore(false);
-    }, [activeTab, activeFilter, page, feedCache]);
-
-
-    // ─── Stories ───────────────────────────────────────────────────────────────
+    // ─── Stories ──────────────────────────────────────────────────────────────
     const loadStories = useCallback(async (userIdOverride?: string, blockedIds?: string[]) => {
         const { data: { session } } = await supabase.auth.getSession();
         const user = session?.user;
@@ -555,6 +356,7 @@ export default function FeedScreen() {
             supabase.from('capsule_items')
                 .select('*, profiles:owner_id(username, display_name, avatar_url, id), capsules:capsule_id(id, title, model)')
                 .eq('is_story', true)
+                .in('media_type', ['image', 'video'])
                 .gt('expires_at', new Date().toISOString())
                 .order('created_at', { ascending: false }),
             supabase.from('story_reads').select('story_id').eq('user_id', user.id),
@@ -568,7 +370,10 @@ export default function FeedScreen() {
         data.forEach((s: any) => {
             if (blocked.includes(s.owner_id)) return;
             let group = usersWithStories.find(u => u.owner_id === s.owner_id);
-            if (!group) { group = { ...s.profiles, owner_id: s.owner_id, stories: [] }; usersWithStories.push(group); }
+            if (!group) {
+                group = { ...s.profiles, owner_id: s.owner_id, stories: [] };
+                usersWithStories.push(group);
+            }
             group.stories.push({ ...s, is_read: readIds.has(s.id) });
         });
 
@@ -603,7 +408,110 @@ export default function FeedScreen() {
         }
     }, [currentUserId, myStory]);
 
-    // ─── Flash picker ──────────────────────────────────────────────────────────
+    // ─── loadFeed ─────────────────────────────────────────────────────────────
+    const loadFeed = useCallback(async (
+        forceRefresh = false,
+        tabOverride?: FeedTab,
+        isNewPage = false,
+    ) => {
+        try {
+            const currentReqId = ++feedRequestId.current;
+            const tab = tabOverride ?? activeTab;
+            const currentPage = isNewPage ? page + 1 : 0;
+
+            if (!isNewPage && !forceRefresh) {
+                const cacheKey = `${tab}_${activeFilter}`;
+                const cached = feedCache[cacheKey];
+                if (cached && (Date.now() - cached.ts) < FEED_CACHE_TTL) {
+                    setCapsules(cached.data);
+                    setLoading(false);
+                    return;
+                }
+            }
+
+            if (isNewPage) setLoadingMore(true);
+            else if (!refreshing) setLoading(true);
+
+            const { data: { session } } = await supabase.auth.getSession();
+            const user = session?.user;
+            if (!user) {
+                setLoading(false); setRefreshing(false); setLoadingMore(false);
+                return;
+            }
+
+            if (!currentUserId) setCurrentUserId(user.id);
+
+            const [blocked, followsResult, likesResult, participantResult] = await Promise.all([
+                safetyService.getAllSafetyUserIds(user.id),
+                supabase.from('follows').select('following_id').eq('follower_id', user.id),
+                supabase.from('likes').select('capsule_id').eq('user_id', user.id),
+                supabase.from('capsule_invites').select('capsule_id').eq('user_id', user.id).eq('status', 'accepted'),
+            ]);
+
+            if (feedRequestId.current !== currentReqId) return;
+
+            setBlockedUserIds(blocked);
+            if (!isNewPage) loadStories(user.id, blocked);
+
+            const followingIds = (followsResult.data || []).map((f: any) => f.following_id);
+            const likedSetNew = new Set((likesResult.data || []).map((l: any) => l.capsule_id));
+            const participantSetNew = new Set((participantResult.data || []).map((p: any) => p.capsule_id));
+
+            setFollowingSet(followingIds.length > 0 ? new Set(followingIds) : new Set());
+            setLikedCapsules(likedSetNew);
+            setParticipantCapsules(participantSetNew);
+
+            if (tab === 'following' && followingIds.length === 0) {
+                setCapsules([]);
+                setLoading(false); setRefreshing(false); setLoadingMore(false);
+                setHasMore(false);
+                return;
+            }
+
+            const rpcName = tab === 'explore' ? 'get_explore_feed' : 'get_following_feed';
+            const { data: rpcData, error } = await supabase.rpc(rpcName, {
+                req_user_id: user.id,
+                req_filter: activeFilter,
+                req_limit: PAGE_SIZE,
+                req_offset: currentPage * PAGE_SIZE,
+            });
+
+            if (feedRequestId.current !== currentReqId) return;
+
+            if (error) {
+                console.error(`[Feed] RPC error (${rpcName}):`, error);
+                setLoading(false); setRefreshing(false); setLoadingMore(false);
+                return;
+            }
+
+            const items: any[] = (rpcData || [])
+                .filter((c: any) => c && (!blocked || !blocked.includes(c.owner_id)))
+                .map((c: any) => ({ ...c, feedType: c.feed_type || 'capsule' }));
+
+            setHasMore(items.length >= PAGE_SIZE);
+
+            if (isNewPage) {
+                setCapsules(prev => [...prev, ...items]);
+                setPage(currentPage);
+            } else {
+                setCapsules(items);
+                setPage(0);
+                const cacheKey = `${tab}_${activeFilter}`;
+                setFeedCache(prev => ({ ...prev, [cacheKey]: { data: items, ts: Date.now() } }));
+            }
+
+            setLoading(false);
+            setRefreshing(false);
+            setLoadingMore(false);
+        } catch (err) {
+            console.error('[Feed] Uncaught error in loadFeed:', err);
+            setLoading(false);
+            setRefreshing(false);
+            setLoadingMore(false);
+        }
+    }, [activeTab, activeFilter, page, feedCache, refreshing, currentUserId, loadStories]);
+
+    // ─── Handlers ─────────────────────────────────────────────────────────────
     const handleYourCapPress = useCallback(async () => {
         if (tutorialStep === 'POST_YOURCAP') {
             setTutorialStep('FINISHED');
@@ -611,206 +519,69 @@ export default function FeedScreen() {
         }
         if (myStory) {
             setActiveStory(myStory);
-        } else {
-            if (!currentUserId) return;
-            const { data: profile } = await supabase.from('profiles')
-                .select('story_cooldown_until').eq('id', currentUserId).maybeSingle();
-            if (profile?.story_cooldown_until && new Date(profile.story_cooldown_until) > new Date()) {
-                Alert.alert(t('common.warning'), t('feed.story_cooldown_active'));
-                return;
-            }
-
-            // Check for persistent global pending pick
-            try {
-                const globalPickKey = `@flash_global_pick_${currentUserId}`;
-                const saved = await AsyncStorage.getItem(globalPickKey);
-                if (saved) {
-                    const { capsule: savedCap, item: savedItem } = JSON.parse(saved);
-                    // Verify if capsule still exists and is not opened (if it was sealed)
-                    setSelectedPickerCapsule(savedCap);
-                    setRandomPreviewItem(savedItem);
-                    setSearching(false);
-                    setPickerStep('animation');
-                    setShowCapsulePicker(true);
-                    return;
-                }
-            } catch (e) { }
-
-            const participantIds = Array.from(participantCapsules);
-            let query = supabase.from('capsules')
-                .select('*, profiles:owner_id(username, display_name, avatar_url)');
-            
-            const conditions = [`owner_id.eq.${currentUserId}`];
-            if (participantIds.length > 0) {
-                conditions.push(`id.in.(${participantIds.join(',')})`);
-            }
-            
-            const { data } = await query
-                .or(conditions.join(','))
-                .order('created_at', { ascending: false });
-            if (data && data.length > 0) {
-                setUserCapsules(data);
-                setPickerStep('list');
-                setShowCapsulePicker(true);
-            } else {
-                Alert.alert(t('common.warning'), t('feed.no_capsules_yet'));
-            }
-        }
-    }, [myStory, currentUserId, tutorialStep, t]);
-
-    const handleSelectCapsuleForPicker = useCallback(async (capsule: any) => {
-        setSelectedPickerCapsule(capsule);
-        const { data: items } = await supabase.from('capsule_items')
-            .select('*').eq('capsule_id', capsule.id).eq('media_type', 'image');
-        if (!items || items.length === 0) {
-            Alert.alert(t('common.warning'), t('create.no_media'));
             return;
         }
+        setShowCapsulePicker(true);
+    }, [myStory, tutorialStep]);
 
-        setPickerItems(items);
-
-        if (capsule.status === 'opened') {
-            setPickerStep('select');
-        } else {
-            setPickerStep('animation');
-
-            // Check if there is a previously generated flash item for this user/capsule
-            const storageKey = `@flash_selection_${currentUserId}_${capsule.id}`;
-            const savedId = await AsyncStorage.getItem(storageKey);
-            const savedItem = items.find(i => i.id === savedId);
-
-            if (savedItem) {
-                // Return preserved item directly
-                setSearching(false);
-                setRandomPreviewItem(savedItem);
-                unblurAnim.setValue(0);
-
-                // Also ensure global pick is updated to this item
-                try {
-                    const globalPickKey = `@flash_global_pick_${currentUserId}`;
-                    await AsyncStorage.setItem(globalPickKey, JSON.stringify({ capsule, item: savedItem }));
-                } catch (e) { }
-            } else {
-                setSearching(true);
-                Animated.loop(Animated.sequence([
-                    Animated.timing(searchingAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
-                    Animated.timing(searchingAnim, { toValue: 0, duration: 300, useNativeDriver: true }),
-                ])).start();
-
-                setTimeout(async () => {
-                    const random = items[Math.floor(Math.random() * items.length)];
-                    setRandomPreviewItem(random);
-
-                    // Persist selection
-                    try {
-                        await AsyncStorage.setItem(storageKey, random.id);
-                        const globalPickKey = `@flash_global_pick_${currentUserId}`;
-                        await AsyncStorage.setItem(globalPickKey, JSON.stringify({ capsule, item: random }));
-                    } catch (e) { }
-
-                    setSearching(false);
-                    searchingAnim.stopAnimation();
-                    unblurAnim.setValue(1);
-                    Animated.timing(unblurAnim, { toValue: 0, duration: 3500, useNativeDriver: true, easing: Easing.out(Easing.cubic) }).start();
-                }, 2500);
-            }
-        }
-    }, [t, currentUserId]);
-
-    const rejectRandomStory = useCallback(async () => {
-        // No penalty for rejecting/canceling before actual post confirmation
-        // Clear global pick so user can choose another capsule
-        try {
-            const globalPickKey = `@flash_global_pick_${currentUserId}`;
-            await AsyncStorage.removeItem(globalPickKey);
-        } catch (e) { }
-
-        setPickerStep('list');
-    }, [currentUserId]);
-
-    const confirmStory = useCallback(async (item: any, metadata: any = {}) => {
-        // Clear global pick upon successful post
-        try {
-            const globalPickKey = `@flash_global_pick_${currentUserId}`;
-            await AsyncStorage.removeItem(globalPickKey);
-        } catch (e) { }
-
-        const expiresAt = new Date(); expiresAt.setHours(expiresAt.getHours() + 48); // Flashes last 48h
-        const { data: cap } = await supabase.from('capsules')
-            .select('status').eq('id', item.capsule_id).single();
-        const { error } = await supabase.from('capsule_items').insert({
-            owner_id: currentUserId,
-            capsule_id: item.capsule_id,
-            media_url: item.media_url || `empty-story://${Date.now()}`,
-            media_type: item.media_type || 'image',
-            is_story: true,
-            is_mystery: cap?.status === 'sealed',
-            expires_at: expiresAt.toISOString(),
-            metadata,
-        });
-        if (!error) {
-            // Success shared story - clear persisted selection if it existed
-            try {
-                const storageKey = `@flash_selection_${currentUserId}_${item.capsule_id}`;
-                await AsyncStorage.removeItem(storageKey);
-            } catch (e) { }
-
-            setShowCapsulePicker(false);
-            setEditingItem(null);
-            setPickerStep('list');
-            loadStories();
-        } else {
-            Alert.alert(t('common.error'), t('feed.share_error'));
-        }
-    }, [currentUserId, t, loadStories]);
-
-    // ─── Init & effects ────────────────────────────────────────────────────────
+    // ─── Init ─────────────────────────────────────────────────────────────────
     useEffect(() => {
         const init = async () => {
-            const { data: { session } } = await supabase.auth.getSession();
-            const user = session?.user;
-            if (user) {
-                const { count } = await supabase.from('follows')
-                    .select('*', { count: 'exact', head: true })
-                    .eq('follower_id', user.id);
-                const tab: FeedTab = count && count > 0 ? 'following' : 'explore';
-                setActiveTab(tab);
-                setCurrentUserId(user.id);
+            try {
+                const { data: { session }, error } = await supabase.auth.getSession();
+                if (error) console.warn('[FeedScreen] getSession error:', error);
+                const user = session?.user;
+                if (user) {
+                    const { count } = await supabase.from('follows')
+                        .select('*', { count: 'exact', head: true })
+                        .eq('follower_id', user.id);
+                    setActiveTab(count && count > 0 ? 'following' : 'explore');
+                    setCurrentUserId(user.id);
+                    if (Platform.OS === 'web') {
+                        loadFeed(false, count && count > 0 ? 'following' : 'explore');
+                        loadStories(user.id);
+                        setTimeout(() => {
+                            setLoading(prev => { if (prev) console.warn('[Feed] Safety timeout'); return false; });
+                        }, 6000);
+                    }
+                } else {
+                    setLoading(false);
+                }
+            } catch (e) {
+                console.warn('[FeedScreen] init error:', e);
+                setLoading(false);
+            } finally {
                 isFirstMount.current = false;
             }
         };
         init();
     }, []);
 
-    // Flush impression buffer to DB periodically
-    useEffect(() => {
-        const flushImpressions = async () => {
-            if (!currentUserId || impressionBufferRef.current.size === 0) return;
-            const ids = Array.from(impressionBufferRef.current) as string[];
-            impressionBufferRef.current.clear();
-            try {
-                await supabase.rpc('record_feed_impressions', {
-                    p_user_id: currentUserId,
-                    p_capsule_ids: ids,
-                });
-            } catch (e) { /* best-effort */ }
-        };
-        impressionFlushRef.current = setInterval(flushImpressions, IMPRESSION_FLUSH_MS) as any;
-        return () => {
-            if (impressionFlushRef.current) clearInterval(impressionFlushRef.current);
-            // Flush on unmount too
-            flushImpressions();
-        };
-    }, [currentUserId]);
-
     useEffect(() => {
         if (!isFirstMount.current && currentUserId && isFocused) {
-            loadFeed(false, activeTab);
-            loadStories();
+            if (Platform.OS === 'web') {
+                loadFeed(false, activeTab);
+                loadStories();
+            } else {
+                InteractionManager.runAfterInteractions(() => {
+                    loadFeed(false, activeTab);
+                    loadStories();
+                });
+            }
         }
     }, [activeTab, activeFilter, currentUserId, isFocused]);
 
-    // Mensajes no leídos
+    // ─── Realtime updates ─────────────────────────────────────────────────────
+    useEffect(() => {
+        const sub = DeviceEventEmitter.addListener('CAPSULE_UPDATED', (payload: any) => {
+            if (payload.id) {
+                setCapsules(prev => prev.map(c => c.id === payload.id ? { ...c, ...payload } : c));
+            }
+            loadFeed(true);
+        });
+        return () => sub.remove();
+    }, [loadFeed]);
+
     useEffect(() => {
         const checkUnread = async () => {
             const { data: { session } } = await supabase.auth.getSession();
@@ -837,28 +608,22 @@ export default function FeedScreen() {
             const [convsRes, lastMsgsRes] = await Promise.all([
                 supabase.from('conversations').select('id, last_message_at').in('id', convIds),
                 supabase.from('messages').select('conversation_id, created_at, sender_id, is_read')
-                    .in('conversation_id', convIds)
-                    .order('created_at', { ascending: false })
+                    .in('conversation_id', convIds).order('created_at', { ascending: false }),
             ]);
 
             if (!lastMsgsRes.data?.length) { setHasUnread(false); return; }
 
             const latestMsgMap: Record<string, any> = {};
             (lastMsgsRes.data || []).forEach(m => { if (!latestMsgMap[m.conversation_id]) latestMsgMap[m.conversation_id] = m; });
-
             const convsMap: Record<string, any> = {};
             (convsRes.data || []).forEach(c => convsMap[c.id] = c);
 
             let foundUnread = false;
             for (const cId of convIds) {
-                const conv = convsMap[cId];
                 const lastMsg = latestMsgMap[cId];
-                const lastMsgAt = conv?.last_message_at;
+                const lastMsgAt = convsMap[cId]?.last_message_at;
                 const delTime = deletedStamps[cId];
-
-                // Ignore if it was deleted after or at the exact time of the last message
                 if (delTime && (!lastMsgAt || new Date(lastMsgAt).getTime() <= new Date(delTime).getTime())) continue;
-
                 if (lastMsg && lastMsg.sender_id !== user.id && !lastMsg.is_read) {
                     foundUnread = true;
                     break;
@@ -886,14 +651,11 @@ export default function FeedScreen() {
         }
     }, [loadingMore, hasMore, loading, loadFeed, activeTab]);
 
-    const keyExtractor = useCallback((item: any) => item.id, []);
-
     const handleTabChange = useCallback((tab: FeedTab) => {
         if (tab === activeTab) return;
         setActiveTab(tab);
         setPage(0);
         setHasMore(true);
-
         const cacheKey = `${tab}_${activeFilter}`;
         const cached = feedCache[cacheKey];
         if (cached && (Date.now() - cached.ts) < FEED_CACHE_TTL) {
@@ -901,8 +663,6 @@ export default function FeedScreen() {
             setLoading(false);
             return;
         }
-
-        // Evita mostrar publicaciones de la pestaña anterior durante la transición
         setCapsules([]);
         setLoading(true);
     }, [activeTab, activeFilter, feedCache]);
@@ -912,7 +672,6 @@ export default function FeedScreen() {
         setActiveFilter(filter);
         setPage(0);
         setHasMore(true);
-
         const cacheKey = `${activeTab}_${filter}`;
         const cached = feedCache[cacheKey];
         if (cached && (Date.now() - cached.ts) < FEED_CACHE_TTL) {
@@ -920,7 +679,6 @@ export default function FeedScreen() {
             setLoading(false);
             return;
         }
-
         setCapsules([]);
         setLoading(true);
     }, [activeFilter, activeTab, feedCache]);
@@ -933,10 +691,8 @@ export default function FeedScreen() {
         } else {
             await supabase.from('follows').insert({ follower_id: currentUserId, following_id: ownerId });
             setFollowingSet(prev => { const n = new Set(prev); n.add(ownerId); return n; });
-            // Notification anti-spam
             const { data: existing } = await supabase.from('notifications')
                 .select('id').eq('user_id', ownerId).eq('sender_id', currentUserId).eq('type', 'follow').maybeSingle();
-
             if (existing) {
                 await supabase.from('notifications').update({ created_at: new Date().toISOString(), is_read: false }).eq('id', existing.id);
             } else {
@@ -953,13 +709,10 @@ export default function FeedScreen() {
         } else {
             await supabase.from('likes').insert({ capsule_id: capsuleId, user_id: currentUserId });
             setLikedCapsules(prev => { const n = new Set(prev); n.add(capsuleId); return n; });
-
-            // Notification anti-spam
             const { data: capsule } = await supabase.from('capsules').select('owner_id').eq('id', capsuleId).maybeSingle();
             if (capsule && capsule.owner_id !== currentUserId) {
                 const { data: existing } = await supabase.from('notifications')
                     .select('id').eq('user_id', capsule.owner_id).eq('sender_id', currentUserId).eq('type', 'like').eq('capsule_id', capsuleId).maybeSingle();
-
                 if (existing) {
                     await supabase.from('notifications').update({ created_at: new Date().toISOString(), is_read: false }).eq('id', existing.id);
                 } else {
@@ -970,93 +723,38 @@ export default function FeedScreen() {
     }, [currentUserId]);
 
     // ─── renderItem ────────────────────────────────────────────────────────────
-    const isExplore = activeTab === 'explore';
-
     const renderItem = useCallback(({ item }: { item: any }) => {
-        // Posts de actividad (fotos/videos/audios/notas añadidas a cápsulas)
-        const capsule = item.feedType === 'activity' || item.feedType === 'activity_group'
-            ? (Array.isArray(item.capsules) ? item.capsules[0] : item.capsules)
-            : item;
-
         const isFollowed = followingSet.has(item.owner_id);
-        const isLiked = likedCapsules.has(capsule?.id);
-        const hasAccess = capsule?.is_public || capsule?.owner_id === currentUserId || item.owner_id === currentUserId || participantCapsules.has(capsule?.id);
-
-        const gridMode = activeTab === 'explore';
-
-        if (item.feedType === 'activity' || item.feedType === 'activity_group') {
-            if (gridMode) {
-                return (
-                    <View style={s.gridItemWrap}>
-                        <TimelineActivity
-                            item={item}
-                            currentUserId={currentUserId}
-                            isFollowed={isFollowed}
-                            hasAccess={hasAccess}
-                            onFollow={handleGlobalFollow}
-                            lightweight={true}
-                            gridMode={true}
-                        />
-                    </View>
-                );
-            }
-            return (
-                <TimelineActivity
-                    item={item}
-                    currentUserId={currentUserId}
-                    isFollowed={isFollowed}
-                    hasAccess={hasAccess}
-                    onFollow={handleGlobalFollow}
-                    lightweight={true}
-                />
-            );
-        }
-
-        if (!capsule) return null;
-
-        if (gridMode) {
-            return (
-                <View style={s.gridItemWrap}>
-                    <CapsuleCard
-                        capsule={capsule}
-                        userId={currentUserId}
-                        isFollowed={isFollowed}
-                        isLiked={isLiked}
-                        likeCount={capsule.likes?.[0]?.count}
-                        commentCount={capsule.comments?.[0]?.count}
-                        postsCount={capsule.postsCount?.[0]?.count}
-                        isLocked={!hasAccess}
-                        onFollow={handleGlobalFollow}
-                        onLike={handleGlobalLike}
-                        lightweight={true}
-                        hideParticles={true}
-                        gridMode={true}
-                    />
-                </View>
-            );
-        }
+        const isLiked = likedCapsules.has(item.id);
+        const hasAccess = item.is_public
+            || item.owner_id === currentUserId
+            || participantCapsules.has(item.id);
 
         return (
             <CapsuleCard
-                capsule={capsule}
+                capsule={item}
                 userId={currentUserId}
                 isFollowed={isFollowed}
                 isLiked={isLiked}
-                likeCount={capsule.likes?.[0]?.count}
-                commentCount={capsule.comments?.[0]?.count}
-                postsCount={capsule.postsCount?.[0]?.count}
+                likeCount={item.likes_count}
+                commentCount={item.comments_count}
+                postsCount={item.posts_count}
                 isLocked={!hasAccess}
                 onFollow={handleGlobalFollow}
                 onLike={handleGlobalLike}
-                lightweight={true}
-                hideParticles={true}
+                lightweight
+                hideParticles
+                onViewable={() => {
+                    impressionBufferRef.current.add(item.id);
+                }}
             />
         );
-    }, [currentUserId, followingSet, likedCapsules, participantCapsules, handleGlobalFollow, handleGlobalLike, activeTab]);
+    }, [currentUserId, followingSet, likedCapsules, participantCapsules, handleGlobalFollow, handleGlobalLike]);
 
     // ─── List Header ───────────────────────────────────────────────────────────
     const ListHeader = useMemo(() => (
         <>
+            {/* Stories strip */}
             <View style={s.storiesSection}>
                 <ScrollView
                     ref={storiesScrollRef}
@@ -1064,24 +762,26 @@ export default function FeedScreen() {
                     showsHorizontalScrollIndicator={false}
                     contentContainerStyle={s.storiesContent}
                 >
-                    <StoryBubble
-                        key="your-cap"
-                        user={myStory || null}
-                        isOwn
-                        onPress={handleYourCapPress}
-                    />
+                    <StoryBubble key="your-cap" user={myStory || null} isOwn onPress={handleYourCapPress} />
                     {stories
                         .filter(u => u.owner_id !== currentUserId)
                         .map(u => (
-                            <StoryBubble
-                                key={u.owner_id}
-                                user={u}
-                                onPress={() => setActiveStory(u)}
-                            />
+                            <StoryBubble key={u.owner_id} user={u} onPress={() => setActiveStory(u)} />
                         ))}
                 </ScrollView>
             </View>
 
+            {/* Divider with subtle fade */}
+            <View style={s.storyDividerWrap}>
+                <LinearGradient
+                    colors={['transparent', Colors.border, 'transparent']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={s.storyDivider}
+                />
+            </View>
+
+            {/* Filter chips */}
             <ScrollView
                 ref={filterScrollRef}
                 horizontal
@@ -1089,104 +789,99 @@ export default function FeedScreen() {
                 style={s.filterBar}
                 contentContainerStyle={s.filterBarContent}
             >
-                {FILTER_KEYS.map(key => (
-                    <FilterChip
-                        key={key}
-                        filterKey={key}
-                        isActive={activeFilter === key}
-                        onPress={handleFilterChange}
-                        t={t}
-                        pulseAnim={pulseAnim}
-                    />
-                ))}
+                {FILTER_KEYS.map(key => {
+                    const meta = FILTER_META[key as FilterType];
+                    return (
+                        <FilterChip
+                            key={key}
+                            filterKey={key}
+                            isActive={activeFilter === key}
+                            onPress={(k) => handleFilterChange(k as FilterType)}
+                            t={t}
+                            icon={meta.icon}
+                            label={meta.label(t)}
+                        />
+                    );
+                })}
             </ScrollView>
 
-            <View style={s.feedDivider} />
+            {/* Feed section label */}
+            <View style={s.feedLabelRow}>
+                <View style={s.feedLabelDot} />
+                <Text style={s.feedLabelText}>
+                    {activeFilter === 'all' ? t('feed.all') : activeFilter === 'open' ? 'Open Capsules' : 'Closed Capsules'}
+                </Text>
+            </View>
         </>
-    ), [stories, myStory, currentUserId, activeFilter, handleYourCapPress]);
+    ), [stories, myStory, currentUserId, activeFilter, handleYourCapPress, handleFilterChange]);
 
-    // ─── Render ────────────────────────────────────────────────────────────────
+    // ─── Header component ──────────────────────────────────────────────────────
+    const headerPaddingTop = insets.top + 8;
+
     return (
         <View style={s.root}>
-            <StatusBar barStyle="dark-content" backgroundColor={Colors.background} />
+            <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
 
-            {/* ── HEADER ──────────────────────────────────────────────── */}
+            {/* ── Header ── */}
             <Animated.View
                 style={[
                     s.header,
-                    { paddingTop: insets.top + 6 },
+                    { paddingTop: headerPaddingTop },
                     { opacity: headerOpacity, transform: [{ translateY: headerSlide }] },
                 ]}
             >
                 {Platform.OS === 'ios' ? (
-                    <BlurView intensity={85} tint="light" style={StyleSheet.absoluteFill} />
+                    <BlurView intensity={90} tint="light" style={StyleSheet.absoluteFill} />
                 ) : (
-                    <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255, 255, 255, 0.92)' }]} />
+                    <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255,255,255,0.94)' }]} />
                 )}
 
+                {/* Logo row */}
                 <View style={s.headerRow}>
-                    <View style={s.logoRow}>
+                    <Animated.View style={[s.logoRow, { transform: [{ scale: logoScale }] }]}>
                         <Image
                             source={{ uri: 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/website/Logomain.png' }}
                             style={s.logoImg}
                             contentFit="contain"
                             cachePolicy="memory-disk"
                         />
-                        <Text style={s.logoText}>kapsely</Text>
-                    </View>
+                        <View style={s.logoTextWrap}>
+                            <Text style={s.logoText}>kapsely</Text>
+                            <Text style={s.logoTagline}>your moments</Text>
+                        </View>
+                    </Animated.View>
 
                     <View style={s.headerActions}>
                         <TouchableOpacity
-                            style={[s.actionBtnSecondary, hasUnread && s.actionBtnUnread, { width: 44, height: 44, borderRadius: 14 }]}
-                            activeOpacity={0.7}
+                            style={[s.actionBtn, hasUnread && s.actionBtnUnread]}
+                            activeOpacity={0.72}
                             onPress={() => navigation.navigate('ChatList')}
                         >
                             <Ionicons
                                 name="chatbubble-ellipses"
-                                size={21}
+                                size={20}
                                 color={hasUnread ? Colors.primary : Colors.textPrimary}
                             />
-                            {hasUnread && <View style={s.unreadDot} />}
+                            {hasUnread && (
+                                <Animated.View style={[s.unreadDot, { transform: [{ scale: pulseAnim }] }]} />
+                            )}
                         </TouchableOpacity>
                     </View>
                 </View>
 
-                <View style={s.tabRow}>
-                    {(['following', 'explore'] as FeedTab[]).map(tab => {
-                        const isActive = activeTab === tab;
-                        return (
-                            <TouchableOpacity
-                                key={tab}
-                                style={[s.tab, isActive && s.tabActive]}
-                                onPress={() => handleTabChange(tab)}
-                                activeOpacity={0.7}
-                            >
-                                <Text style={[s.tabText, isActive && s.tabTextActive]}>
-                                    {tab === 'following' ? t('feed.following') : t('feed.explore')}
-                                </Text>
-                                {isActive && (
-                                    <LinearGradient
-                                        colors={[Colors.primary, Colors.primaryDark]}
-                                        style={s.tabUnderline}
-                                        start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-                                    />
-                                )}
-                            </TouchableOpacity>
-                        );
-                    })}
-                    <View style={s.tabBarLine} />
-                </View>
+                {/* Tab pill switcher */}
+                <TabPill activeTab={activeTab} onTabChange={handleTabChange} t={t} />
             </Animated.View>
 
-            {/* ── FEED ──────────────────────────────────────────────────── */}
+            {/* ── Feed List ── */}
             <FlashList
                 key={`feed-${activeTab}`}
                 ref={flatListRef}
                 data={capsules}
                 keyExtractor={keyExtractor}
-                numColumns={isExplore ? 2 : 1}
+                numColumns={1}
                 showsVerticalScrollIndicator={false}
-                contentContainerStyle={[isExplore ? s.gridListContent : s.listContent, { paddingBottom: insets.bottom + 90 }]}
+                contentContainerStyle={[s.listContent, { paddingBottom: insets.bottom + 96 }]}
                 refreshing={refreshing}
                 onRefresh={onRefresh}
                 onEndReached={handleLoadMore}
@@ -1194,33 +889,40 @@ export default function FeedScreen() {
                 ListHeaderComponent={ListHeader}
                 renderItem={renderItem}
                 // @ts-ignore
-                estimatedItemSize={isExplore ? 240 : 350}
-
-                ListFooterComponent={() => loadingMore ? (
-                    <View style={{ paddingVertical: 20 }}>
-                        <ActivityIndicator color={Colors.primary} />
-                    </View>
-                ) : null}
+                estimatedItemSize={360}
+                ListFooterComponent={() =>
+                    loadingMore ? (
+                        <View style={s.loadMoreWrap}>
+                            <ActivityIndicator color={Colors.primary} size="small" />
+                        </View>
+                    ) : null
+                }
                 ListEmptyComponent={() =>
                     loading ? (
                         <FeedSkeleton />
                     ) : (
                         <View style={s.emptyState}>
-                            <View style={[s.emptyIconWrap, { backgroundColor: Colors.primary + '10' }]}>
-                                <Ionicons name="time-outline" size={40} color={Colors.primary} />
-                            </View>
-                            <Text style={s.emptyTitle}>Nothing here yet</Text>
-                            <Text style={s.emptySub}>
-                                When people you follow add memories to their capsules, they'll appear here.
-                            </Text>
+                            <LinearGradient
+                                colors={[Colors.primary + '18', Colors.primary + '06']}
+                                style={s.emptyIconWrap}
+                            >
+                                <Ionicons name="time-outline" size={38} color={Colors.primary} />
+                            </LinearGradient>
+                            <Text style={s.emptyTitle}>{t('feed.nothing_here')}</Text>
+                            <Text style={s.emptySub}>{t('feed.nothing_here_sub')}</Text>
                             <TouchableOpacity
                                 activeOpacity={0.85}
                                 onPress={() => handleTabChange('explore')}
                                 style={s.emptyBtn}
                             >
-                                <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={s.emptyBtnGrad}>
+                                <LinearGradient
+                                    colors={[Colors.primary, Colors.primaryDark]}
+                                    style={s.emptyBtnGrad}
+                                    start={{ x: 0, y: 0 }}
+                                    end={{ x: 1, y: 0 }}
+                                >
                                     <Ionicons name="compass-outline" size={16} color="#fff" />
-                                    <Text style={s.emptyBtnText}>Explore capsules</Text>
+                                    <Text style={s.emptyBtnText}>{t('feed.explore_capsules')}</Text>
                                 </LinearGradient>
                             </TouchableOpacity>
                         </View>
@@ -1228,161 +930,15 @@ export default function FeedScreen() {
                 }
             />
 
-            {/* ── CAPSULE PICKER MODAL ──────────────────────────────────── */}
-            <Modal
+            {/* ── Modals & Overlays ── */}
+            <FlashPicker
                 visible={showCapsulePicker}
-                transparent
-                animationType="slide"
-                onRequestClose={() => { setShowCapsulePicker(false); }}
-            >
-                <View style={s.pickerOverlay}>
-                    <View style={[
-                        s.pickerSheet,
-                        (pickerStep === 'edit' || pickerStep === 'animation' || pickerStep === 'select') && { height: height * 0.85 }
-                    ]}>
-                        <View style={s.pickerHandle} />
+                onClose={() => setShowCapsulePicker(false)}
+                currentUserId={currentUserId}
+                participantCapsules={participantCapsules}
+                onStoryPublished={loadStories}
+            />
 
-                        <View style={s.pickerHeader}>
-                            {pickerStep !== 'list' && (
-                                <TouchableOpacity
-                                    onPress={() => { pickerStep === 'animation' ? rejectRandomStory() : setPickerStep('list'); }}
-                                    style={s.pickerNavBtn} activeOpacity={0.7}
-                                >
-                                    <Ionicons name="chevron-back" size={22} color={Colors.textPrimary} />
-                                </TouchableOpacity>
-                            )}
-                            <Text style={s.pickerTitle}>
-                                {pickerStep === 'list' ? 'Share as Flash' :
-                                    pickerStep === 'select' ? 'Choose Image' :
-                                        pickerStep === 'edit' ? 'Edit Flash' : 'Discovering...'}
-                            </Text>
-                            <TouchableOpacity
-                                onPress={() => { pickerStep === 'animation' ? rejectRandomStory() : setShowCapsulePicker(false); }}
-                                style={s.pickerNavBtn} activeOpacity={0.7}
-                            >
-                                <Ionicons name="close" size={22} color={Colors.textMuted} />
-                            </TouchableOpacity>
-                        </View>
-
-                        {pickerStep === 'list' && (
-                            <ScrollView>
-                                {userCapsules.map(cap => (
-                                    <TouchableOpacity
-                                        key={cap.id} style={s.pickerItem}
-                                        activeOpacity={0.8}
-                                        onPress={() => handleSelectCapsuleForPicker(cap)}
-                                    >
-                                        <View style={s.pickerModelWrap}>
-                                            <Image
-                                                source={{ uri: timerConfigManager.getModelImage(cap.model) || MODEL_IMAGES[cap.model] || (MODEL_IMAGES as any).basicred_kap }}
-                                                style={s.pickerModelImg}
-                                                contentFit="contain"
-                                                cachePolicy="memory-disk"
-                                            />
-                                        </View>
-
-                                        <View style={{ flex: 1 }}>
-                                            <Text style={s.pickerItemTitle}>{cap.title}</Text>
-                                            <Text style={[s.pickerItemStatus, { color: cap.status === 'opened' ? Colors.success : Colors.primary }]}>
-                                                {cap.status === 'opened' ? 'Opened' : 'Sealed'}
-                                            </Text>
-                                        </View>
-                                        <Ionicons name="chevron-forward" size={18} color={Colors.border} />
-                                    </TouchableOpacity>
-                                ))}
-                            </ScrollView>
-                        )}
-
-                        {pickerStep === 'select' && (
-                            <FlashList
-                                data={pickerItems}
-                                numColumns={3}
-                                keyExtractor={i => i.id}
-                                renderItem={({ item }) => (
-                                    <TouchableOpacity
-                                        style={s.pickerGridCell}
-                                        activeOpacity={0.8}
-                                        onPress={() => { setEditingItem(item); setPickerStep('edit'); }}
-                                    >
-                                        <Image
-                                            source={{ uri: item.media_url }}
-                                            style={s.pickerGridImg}
-                                            cachePolicy="memory-disk"
-                                            transition={200}
-                                        />
-                                    </TouchableOpacity>
-
-                                )}
-                                // @ts-ignore
-                                estimatedItemSize={80}
-                                contentContainerStyle={{ gap: 2 }}
-                            />
-                        )}
-
-                        {pickerStep === 'animation' && (
-                            <View style={s.animWrap}>
-                                {searching ? (
-                                    <View style={s.searchingWrap}>
-                                        <Animated.View style={{ transform: [{ scale: searchingAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.2] }) }] }}>
-                                            <Ionicons name="rocket-outline" size={60} color={Colors.primary} />
-                                        </Animated.View>
-                                        <Text style={s.animTitle}>{t('feed.reveal_msg')}</Text>
-                                        <Text style={s.animSub}>{t('feed.opening_msg')}</Text>
-                                    </View>
-                                ) : (
-                                    <View style={{ width: '100%', alignItems: 'center' }}>
-                                        <View style={s.previewImgWrap}>
-                                            <Image
-                                                source={{ uri: randomPreviewItem?.media_url }}
-                                                style={s.previewImg}
-                                                cachePolicy="memory-disk"
-                                                transition={300}
-                                            />
-
-                                            <Animated.View style={[StyleSheet.absoluteFill, { opacity: unblurAnim }]}>
-                                                {Platform.OS === 'ios' ? (
-                                                    <BlurView intensity={50} tint="dark" style={StyleSheet.absoluteFill} />
-                                                ) : (
-                                                    <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]} />
-                                                )}
-                                            </Animated.View>
-                                        </View>
-                                        <Text style={s.animTitle}>A memory has surfaced!</Text>
-                                        <View style={s.previewActions}>
-                                            <TouchableOpacity
-                                                style={s.previewCancelBtn}
-                                                activeOpacity={0.7}
-                                                onPress={rejectRandomStory}
-                                            >
-                                                <Text style={s.previewCancelText}>Choose Another</Text>
-                                            </TouchableOpacity>
-                                            <TouchableOpacity
-                                                style={s.previewConfirmBtn}
-                                                activeOpacity={0.85}
-                                                onPress={() => { setEditingItem(randomPreviewItem); setPickerStep('edit'); }}
-                                            >
-                                                <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={s.previewConfirmGrad}>
-                                                    <Text style={s.previewConfirmText}>Add to Flash</Text>
-                                                </LinearGradient>
-                                            </TouchableOpacity>
-                                        </View>
-                                    </View>
-                                )}
-                            </View>
-                        )}
-
-                        {pickerStep === 'edit' && editingItem && (
-                            <StoryEditor
-                                item={editingItem}
-                                onCancel={() => setPickerStep(selectedPickerCapsule?.status === 'opened' ? 'select' : 'animation')}
-                                onConfirm={meta => confirmStory(editingItem, meta)}
-                            />
-                        )}
-                    </View>
-                </View>
-            </Modal>
-
-            {/* Story viewer */}
             <StoryViewer
                 visible={!!activeStory}
                 userGroup={activeStory}
@@ -1401,7 +957,7 @@ export default function FeedScreen() {
 
             <InteractiveTour
                 step={tutorialStep}
-                onAction={action => { if (action === 'START') setTutorialStep('PRESS_PLUS'); }}
+                onAction={(action: string) => { if (action === 'START') setTutorialStep('PRESS_PLUS'); }}
                 onDismiss={async () => {
                     await AsyncStorage.setItem('hasSeenTutorialV2', 'true');
                     setTutorialStep('FINISHED');
@@ -1412,15 +968,23 @@ export default function FeedScreen() {
             <Modal visible={showATTModal} transparent animationType="fade">
                 <View style={attStyles.overlay}>
                     <View style={attStyles.sheet}>
-                        <View style={attStyles.iconRing}>
-                            <Ionicons name="shield-checkmark-outline" size={32} color={Colors.primary} />
-                        </View>
+                        <LinearGradient
+                            colors={[Colors.primary + '20', Colors.primary + '08']}
+                            style={attStyles.iconRing}
+                        >
+                            <Ionicons name="shield-checkmark-outline" size={30} color={Colors.primary} />
+                        </LinearGradient>
                         <Text style={attStyles.title}>Privacy Matters</Text>
                         <Text style={attStyles.desc}>
-                            We use your data to show relevant ads and improve the app experience. Your choices here help us keep Kapsely free and personalized.
+                            We use your data to show relevant content and improve the app experience. Your choices help us keep Kapsely free and personalized.
                         </Text>
                         <TouchableOpacity style={attStyles.btn} activeOpacity={0.8} onPress={handleATTContinue}>
-                            <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={attStyles.btnGrad}>
+                            <LinearGradient
+                                colors={[Colors.primary, Colors.primaryDark]}
+                                style={attStyles.btnGrad}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 0 }}
+                            >
                                 <Text style={attStyles.btnText}>Continue</Text>
                             </LinearGradient>
                         </TouchableOpacity>
@@ -1433,104 +997,264 @@ export default function FeedScreen() {
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
-    root: { flex: 1, backgroundColor: Colors.background },
+    root: {
+        flex: 1,
+        backgroundColor: Colors.background,
+    },
 
+    // ── Header ──
     header: {
         backgroundColor: 'transparent',
-        borderBottomWidth: 1, borderBottomColor: Colors.border,
-        overflow: 'hidden', zIndex: 10,
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.border,
+        overflow: 'hidden',
+        zIndex: 10,
+        // Subtle bottom shadow
+        ...Platform.select({
+            ios: {
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 1 },
+                shadowOpacity: 0.06,
+                shadowRadius: 8,
+            },
+            android: { elevation: 4 },
+        }),
     },
     headerRow: {
-        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-        paddingHorizontal: 18, paddingVertical: 10,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: 18,
+        paddingVertical: 10,
     },
-    logoRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    logoImg: { width: 28, height: 28 },
-    logoText: { fontSize: 20, fontFamily: Fonts.bold, color: Colors.textPrimary, letterSpacing: -0.5 },
-    headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    actionBtnPrimary: {
-        width: 34, height: 34, borderRadius: 11,
-        alignItems: 'center', justifyContent: 'center',
-        shadowColor: Colors.primary, shadowOpacity: 0.28,
-        shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 4,
+
+    // ── Logo ──
+    logoRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
     },
-    actionBtnSecondary: {
-        width: 38, height: 38, borderRadius: 12,
+    logoImg: {
+        width: 44,
+        height: 44,
+    },
+    logoTextWrap: {
+        gap: 1,
+    },
+    logoText: {
+        fontSize: 22,
+        fontFamily: Fonts.bold,
+        color: Colors.textPrimary,
+        letterSpacing: -0.7,
+        lineHeight: 24,
+    },
+    logoTagline: {
+        fontSize: 10,
+        fontFamily: Fonts.medium,
+        color: Colors.primary,
+        letterSpacing: 0.6,
+        textTransform: 'uppercase',
+        opacity: 0.8,
+    },
+
+    // ── Header actions ──
+    headerActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    actionBtn: {
+        width: 42,
+        height: 42,
+        borderRadius: 14,
         backgroundColor: Colors.cardAlt,
-        borderWidth: 1, borderColor: Colors.border,
-        alignItems: 'center', justifyContent: 'center',
+        borderWidth: 1,
+        borderColor: Colors.border,
+        alignItems: 'center',
+        justifyContent: 'center',
         position: 'relative',
     },
-    actionBtnUnread: { borderColor: Colors.primary + '55', backgroundColor: Colors.primary + '08' },
+    actionBtnUnread: {
+        borderColor: Colors.primary + '50',
+        backgroundColor: Colors.primary + '0C',
+    },
     unreadDot: {
-        position: 'absolute', top: -1, right: -1,
-        width: 8, height: 8, borderRadius: 4,
-        backgroundColor: Colors.error, borderWidth: 1.5, borderColor: Colors.background,
+        position: 'absolute',
+        top: 7,
+        right: 7,
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        backgroundColor: Colors.error,
+        borderWidth: 1.5,
+        borderColor: Colors.background,
     },
 
-    tabRow: { flexDirection: 'row', paddingHorizontal: 18, position: 'relative' },
-    tabBarLine: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 1, backgroundColor: Colors.border },
-    tab: { paddingVertical: 10, marginRight: 22, position: 'relative' },
-    tabActive: {},
-    tabText: { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.textMuted },
-    tabTextActive: { color: Colors.textPrimary, fontFamily: Fonts.bold },
-    tabUnderline: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 2, borderRadius: 1 },
+    // ── Stories ──
+    storiesSection: {
+        paddingTop: 20,
+        paddingBottom: 16,
+    },
+    storiesContent: {
+        paddingHorizontal: 16,
+        gap: 4,
+    },
+    storyDividerWrap: {
+        paddingHorizontal: 0,
+        marginBottom: 2,
+    },
+    storyDivider: {
+        height: 1,
+        width: '100%',
+    },
 
-    storiesSection: { paddingTop: 18, paddingBottom: 14 },
-    storiesContent: { paddingHorizontal: 18 },
+    // ── Filter bar ──
+    filterBar: {
+        marginTop: 10,
+        marginBottom: 2,
+    },
+    filterBarContent: {
+        paddingHorizontal: 16,
+        gap: 8,
+        paddingBottom: 10,
+    },
 
-    filterBar: { marginBottom: 2 },
-    filterBarContent: { paddingHorizontal: 18, gap: 8, paddingBottom: 10 },
+    // ── Feed section label ──
+    feedLabelRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 18,
+        paddingVertical: 10,
+        gap: 6,
+    },
+    feedLabelDot: {
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+        backgroundColor: Colors.primary,
+        opacity: 0.7,
+    },
+    feedLabelText: {
+        fontSize: 11,
+        fontFamily: Fonts.semiBold,
+        color: Colors.textMuted,
+        letterSpacing: 0.8,
+        textTransform: 'uppercase',
+    },
 
-    feedDivider: { height: 1, backgroundColor: Colors.divider, marginBottom: 4 },
+    // ── List ──
+    listContent: {
+        paddingTop: 0,
+    },
+    loadMoreWrap: {
+        paddingVertical: 24,
+        alignItems: 'center',
+    },
 
-    listContent: { paddingTop: 0 },
-    gridListContent: { paddingHorizontal: 12, paddingTop: 6 },
-    gridItemWrap: { flex: 1, padding: 4 },
-
-    emptyState: { alignItems: 'center', paddingTop: 60, paddingHorizontal: 40, paddingBottom: 40 },
-    emptyIconWrap: { width: 90, height: 90, borderRadius: 45, alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
-    emptyTitle: { fontSize: 21, fontFamily: Fonts.bold, color: Colors.textPrimary, marginBottom: 10, letterSpacing: -0.3 },
-    emptySub: { color: Colors.textSecondary, fontSize: 14, fontFamily: Fonts.regular, textAlign: 'center', lineHeight: 21, marginBottom: 28 },
-    emptyBtn: { width: '100%', borderRadius: 16, overflow: 'hidden' },
-    emptyBtnGrad: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
-    emptyBtnText: { color: '#fff', fontFamily: Fonts.bold, fontSize: 14 },
-
-    pickerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'flex-end' },
-    pickerSheet: { backgroundColor: Colors.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28, maxHeight: '88%', overflow: 'hidden' },
-    pickerHandle: { alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.divider, marginTop: 12, marginBottom: 4 },
-    pickerHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: Colors.border },
-    pickerTitle: { fontSize: 17, fontFamily: Fonts.bold, color: Colors.textPrimary },
-    pickerNavBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: Colors.cardAlt, alignItems: 'center', justifyContent: 'center' },
-    pickerItem: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: Colors.border },
-    pickerModelWrap: { width: 48, height: 48, borderRadius: 12, backgroundColor: Colors.cardAlt, alignItems: 'center', justifyContent: 'center' },
-    pickerModelImg: { width: '80%', height: '80%' },
-    pickerItemTitle: { fontSize: 15, fontFamily: Fonts.bold, color: Colors.textPrimary },
-    pickerItemStatus: { fontSize: 12, fontFamily: Fonts.medium, marginTop: 2 },
-    pickerGridCell: { width: width / 3, aspectRatio: 1, padding: 1 },
-    pickerGridImg: { width: '100%', height: '100%' },
-
-    animWrap: { padding: 28, alignItems: 'center' },
-    searchingWrap: { alignItems: 'center', gap: 14, paddingVertical: 20 },
-    animTitle: { fontSize: 17, fontFamily: Fonts.bold, color: Colors.textPrimary, textAlign: 'center' },
-    animSub: { fontSize: 13, color: Colors.textSecondary, fontFamily: Fonts.medium, textAlign: 'center' },
-    previewImgWrap: { width: '100%', height: 320, borderRadius: 20, overflow: 'hidden', marginBottom: 20 },
-    previewImg: { width: '100%', height: '100%' },
-    previewActions: { flexDirection: 'row', gap: 12, width: '100%' },
-    previewCancelBtn: { flex: 1, height: 52, borderRadius: 16, borderWidth: 1.5, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center' },
-    previewCancelText: { color: Colors.textSecondary, fontFamily: Fonts.semiBold, fontSize: 14 },
-    previewConfirmBtn: { flex: 1, height: 52, borderRadius: 16, overflow: 'hidden' },
-    previewConfirmGrad: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-    previewConfirmText: { color: '#fff', fontFamily: Fonts.bold, fontSize: 14 },
+    // ── Empty state ──
+    emptyState: {
+        alignItems: 'center',
+        paddingTop: 64,
+        paddingHorizontal: 40,
+        paddingBottom: 40,
+    },
+    emptyIconWrap: {
+        width: 88,
+        height: 88,
+        borderRadius: 44,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 22,
+    },
+    emptyTitle: {
+        fontSize: 20,
+        fontFamily: Fonts.bold,
+        color: Colors.textPrimary,
+        marginBottom: 10,
+        letterSpacing: -0.3,
+        textAlign: 'center',
+    },
+    emptySub: {
+        color: Colors.textSecondary,
+        fontSize: 14,
+        fontFamily: Fonts.regular,
+        textAlign: 'center',
+        lineHeight: 21,
+        marginBottom: 30,
+    },
+    emptyBtn: {
+        width: '100%',
+        borderRadius: 16,
+        overflow: 'hidden',
+    },
+    emptyBtnGrad: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        paddingVertical: 15,
+    },
+    emptyBtnText: {
+        color: '#fff',
+        fontFamily: Fonts.bold,
+        fontSize: 14,
+    },
 });
 
 const attStyles = StyleSheet.create({
-    overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center', padding: 25 },
-    sheet: { backgroundColor: Colors.surface, borderRadius: 28, padding: 25, alignItems: 'center', width: '100%', maxWidth: 340, ...Shadow.primary },
-    iconRing: { width: 64, height: 64, borderRadius: 32, backgroundColor: Colors.primary + '10', alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
-    title: { fontSize: 22, fontFamily: Fonts.bold, color: Colors.textPrimary, marginBottom: 12, textAlign: 'center' },
-    desc: { fontSize: 15, fontFamily: Fonts.regular, color: Colors.textSecondary, textAlign: 'center', lineHeight: 22, marginBottom: 30 },
-    btn: { width: '100%', borderRadius: 18, overflow: 'hidden' },
-    btnGrad: { paddingVertical: 15, alignItems: 'center' },
-    btnText: { color: '#fff', fontSize: 16, fontFamily: Fonts.bold },
+    overlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.50)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 24,
+    },
+    sheet: {
+        backgroundColor: Colors.surface,
+        borderRadius: 28,
+        padding: 26,
+        alignItems: 'center',
+        width: '100%',
+        maxWidth: 340,
+        ...Shadow.primary,
+    },
+    iconRing: {
+        width: 64,
+        height: 64,
+        borderRadius: 32,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 20,
+    },
+    title: {
+        fontSize: 21,
+        fontFamily: Fonts.bold,
+        color: Colors.textPrimary,
+        marginBottom: 12,
+        textAlign: 'center',
+        letterSpacing: -0.3,
+    },
+    desc: {
+        fontSize: 14,
+        fontFamily: Fonts.regular,
+        color: Colors.textSecondary,
+        textAlign: 'center',
+        lineHeight: 21,
+        marginBottom: 28,
+    },
+    btn: {
+        width: '100%',
+        borderRadius: 16,
+        overflow: 'hidden',
+    },
+    btnGrad: {
+        paddingVertical: 15,
+        alignItems: 'center',
+    },
+    btnText: {
+        color: '#fff',
+        fontSize: 15,
+        fontFamily: Fonts.bold,
+        letterSpacing: 0.2,
+    },
 });

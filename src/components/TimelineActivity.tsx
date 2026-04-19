@@ -250,13 +250,7 @@ export default React.memo(function TimelineActivity({
                 {/* White bottom info */}
                 <View style={styles.gridBottom}>
                     <View style={styles.gridAvatarRow}>
-                        {profile.avatar_url ? (
-                            <Image source={{ uri: profile.avatar_url }} style={styles.gridAvatar} contentFit="cover" cachePolicy="memory-disk" />
-                        ) : (
-                            <View style={[styles.gridAvatar, { backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' }]}>
-                                <Ionicons name="person" size={8} color="#fff" />
-                            </View>
-                        )}
+                        <Image source={{ uri: Colors.getAvatarUrl(profile.avatar_url, profile.display_name || profile.username) }} style={styles.gridAvatar} contentFit="cover" cachePolicy="memory-disk" />
                         <Text style={styles.gridUsername} numberOfLines={1}>
                             {profile.display_name || profile.username || 'user'}
                         </Text>
@@ -281,13 +275,7 @@ export default React.memo(function TimelineActivity({
                     activeOpacity={0.8}
                     onPress={() => navigation.navigate('UserProfile', { targetUserId: item.owner_id })}
                 >
-                    {profile.avatar_url ? (
-                        <Image source={{ uri: profile.avatar_url }} style={styles.avatar} contentFit="cover" cachePolicy="memory-disk" />
-                    ) : (
-                        <View style={[styles.avatar, styles.avatarPlaceholder]}>
-                            <Ionicons name="person" size={12} color="#fff" />
-                        </View>
-                    )}
+                    <Image source={{ uri: Colors.getAvatarUrl(profile.avatar_url, profile.display_name || profile.username) }} style={styles.avatar} contentFit="cover" cachePolicy="memory-disk" />
                     <View style={{ flex: 1 }}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                             <Text style={styles.authorName} numberOfLines={1}>

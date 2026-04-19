@@ -19,7 +19,7 @@ export default function ChatRow({ conversation, onPress }: ChatRowProps) {
     return (
         <TouchableOpacity style={styles.row} onPress={onPress} activeOpacity={0.7}>
             <View style={styles.avatarContainer}>
-                <Image source={{ uri: conversation.user.avatar }} style={styles.avatar} />
+                <Image source={{ uri: Colors.getAvatarUrl(conversation.user.avatar, conversation.user.username) }} style={styles.avatar} />
                 {conversation.user.isOnline && <View style={styles.onlineDot} />}
             </View>
             <View style={styles.content}>

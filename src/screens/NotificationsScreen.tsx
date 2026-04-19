@@ -81,6 +81,7 @@ const rippleS = StyleSheet.create({
 
 // ─── Pull-up indicator ────────────────────────────────────────────────────────
 function PullUpIndicator({ pullY, threshold }: { pullY: Animated.Value; threshold: number }) {
+    const { t } = useTranslation();
     const progress = pullY.interpolate({
         inputRange: [0, threshold],
         outputRange: [0, 1],
@@ -108,7 +109,7 @@ function PullUpIndicator({ pullY, threshold }: { pullY: Animated.Value; threshol
                 <Animated.View style={{ transform: [{ rotate: arrowRotate }] }}>
                     <Ionicons name="arrow-up" size={14} color={Colors.primary} />
                 </Animated.View>
-                <Text style={pullS.pillText}>Mark all as read</Text>
+                <Text style={pullS.pillText}>{t('notifications.mark_all_read')}</Text>
                 {/* Progress arc */}
                 <View style={pullS.progressWrap}>
                     <Animated.View style={[pullS.progressFill, {
@@ -202,7 +203,7 @@ export default function NotificationsScreen() {
 
         if (data) {
             const mapped: Notification[] = data
-                .filter(n => !blocked.includes(n.sender_id) && !n.conversation_id && n.type !== 'chat' && n.type !== 'message')
+                .filter(n => !blocked.includes(n.sender_id) && !n.conversation_id && n.type !== 'chat' && n.type !== 'message' && n.type !== 'capsule_chat' && n.type !== 'chat_message')
                 .map(n => {
                     const createdDate = new Date(n.created_at);
                     const expiryDate = new Date(createdDate.getTime() + 3 * 86400000);
@@ -212,7 +213,7 @@ export default function NotificationsScreen() {
                         user: {
                             id: n.sender_id,
                             username: n.sender?.display_name || n.sender?.username || 'Unknown',
-                            avatar: n.sender?.avatar_url || 'https://via.placeholder.com/150',
+                            avatar: Colors.getAvatarUrl(n.sender?.avatar_url, n.sender?.display_name || n.sender?.username),
                         },
                         message: n.message || '',
                         time: formatTime(n.created_at),
@@ -267,7 +268,7 @@ export default function NotificationsScreen() {
         if (n.capsuleOwnerId && n.capsuleOwnerId !== user.id) {
             await supabase.from('notifications').insert({
                 user_id: n.capsuleOwnerId, sender_id: user.id, type: 'system',
-                capsule_id: n.capsuleId, message: `accepted your invite to "${n.capsuleTitle || 'a capsule'}"`,
+                capsule_id: n.capsuleId, message: `${t('notifications.accepted_your_invite')} "${n.capsuleTitle || 'a capsule'}"`,
             });
         }
     };
@@ -390,7 +391,7 @@ export default function NotificationsScreen() {
                                 </Text>
                             </View>
                         ) : (
-                            <Text style={s.allReadText}>All caught up ✓</Text>
+                            <Text style={s.allReadText}>{t('notifications.all_caught_up')}</Text>
                         )}
                     </View>
 
@@ -406,7 +407,7 @@ export default function NotificationsScreen() {
                 {unreadCount > 0 && (
                     <View style={s.swipeHint}>
                         <Ionicons name="arrow-down-outline" size={11} color={Colors.textMuted} />
-                        <Text style={s.swipeHintText}>Swipe down to mark all as read</Text>
+                        <Text style={s.swipeHintText}>{t('notifications.swipe_all_read')}</Text>
                     </View>
                 )}
 
@@ -448,7 +449,7 @@ export default function NotificationsScreen() {
                     {grouped.today.length > 0 && (<>
                         <View style={s.sectionHeader}>
                             <View style={[s.sectionDot, { backgroundColor: Colors.primary }]} />
-                            <Text style={s.sectionTitle}>Today</Text>
+                            <Text style={s.sectionTitle}>{t('notifications.today')}</Text>
                             <View style={s.sectionLine} />
                         </View>
                         {grouped.today.map((n, i) => (
@@ -476,7 +477,7 @@ export default function NotificationsScreen() {
                     {grouped.earlier.length > 0 && (<>
                         <View style={[s.sectionHeader, { marginTop: 12 }]}>
                             <View style={[s.sectionDot, { backgroundColor: Colors.textMuted }]} />
-                            <Text style={[s.sectionTitle, { color: Colors.textMuted }]}>Earlier</Text>
+                            <Text style={[s.sectionTitle, { color: Colors.textMuted }]}>{t('notifications.earlier')}</Text>
                             <View style={s.sectionLine} />
                         </View>
                         {grouped.earlier.map(n => (

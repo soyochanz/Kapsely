@@ -174,7 +174,8 @@ export default function TabBar(props: any) {
             .from('notifications')
             .select('*', { count: 'exact', head: true })
             .eq('user_id', user.id)
-            .eq('is_read', false);
+            .eq('is_read', false)
+            .not('type', 'in', '("chat_message","capsule_chat","chat","message")');
         setUnreadCount(count || 0);
     }, []);
 

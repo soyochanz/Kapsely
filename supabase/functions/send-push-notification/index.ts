@@ -5,6 +5,11 @@ serve(async (req) => {
     try {
         const payload = await req.json()
         const { record } = payload
+        
+        // Skip chat and capsule_chat notifications to prevent redundancy
+        if (record.type === 'capsule_chat' || record.type === 'chat' || record.type === 'message') {
+            return new Response(JSON.stringify({ message: 'Skipping chat/message notification' }), { status: 200 })
+        }
 
         // record will be the new notification row:
         // { id, user_id, sender_id, type, message, capsule_id, ... }

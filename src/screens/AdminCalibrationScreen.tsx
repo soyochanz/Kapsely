@@ -68,6 +68,7 @@ export default function AdminCalibrationScreen() {
         drop_id: null
     });
     const [datePickerMode, setDatePickerMode] = useState<'start' | 'end' | null>(null);
+    const [datePickerTarget, setDatePickerTarget] = useState<'model' | 'drop' | null>(null);
 
     const handleDatePickerPress = (mode: 'start' | 'end') => {
         const currentVal = (newModel as any)[mode === 'start' ? 'event_start' : 'event_end'];
@@ -82,11 +83,12 @@ export default function AdminCalibrationScreen() {
         if (Platform.OS === 'android') {
             try {
                 if (typeof DateTimePickerAndroid !== 'undefined' && DateTimePickerAndroid.open) {
+                    // ... (android logic remains same, but we can also set target just in case)
+                    setDatePickerTarget('model');
                     DateTimePickerAndroid.open({
                         value: date,
                         onChange: (event, selectedDate) => {
                             if (event.type === 'set' && selectedDate) {
-                                // Add a small delay before opening time picker to avoid conflict with closing date picker
                                 setTimeout(() => {
                                     if (typeof DateTimePickerAndroid !== 'undefined' && DateTimePickerAndroid.open) {
                                         DateTimePickerAndroid.open({
@@ -110,13 +112,16 @@ export default function AdminCalibrationScreen() {
                         is24Hour: true,
                     });
                 } else {
+                    setDatePickerTarget('model');
                     setDatePickerMode(mode);
                 }
             } catch (error) {
                 console.error('Date picker error:', error);
+                setDatePickerTarget('model');
                 setDatePickerMode(mode);
             }
         } else {
+            setDatePickerTarget('model');
             setDatePickerMode(mode);
         }
     };
@@ -125,9 +130,13 @@ export default function AdminCalibrationScreen() {
         if (Platform.OS === 'android') {
             let date = new Date();
             const currentVal = (newDrop as any)[mode === 'start' ? 'start_date' : 'end_date'];
-            if (currentVal) date = new Date(currentVal);
+            if (currentVal) {
+                const parsed = new Date(currentVal);
+                if (!isNaN(parsed.getTime())) date = parsed;
+            }
 
             if (typeof DateTimePickerAndroid !== 'undefined' && DateTimePickerAndroid.open) {
+                setDatePickerTarget('drop');
                 DateTimePickerAndroid.open({
                     value: date,
                     onChange: (event, selectedDate) => {
@@ -140,8 +149,12 @@ export default function AdminCalibrationScreen() {
                     },
                     mode: 'date',
                 });
+            } else {
+                setDatePickerTarget('drop');
+                setDatePickerMode(mode as any);
             }
         } else {
+            setDatePickerTarget('drop');
             setDatePickerMode(mode as any);
         }
     };
@@ -1179,7 +1192,33 @@ export default function AdminCalibrationScreen() {
                                         </View>
                                     </View>
 
-                                    {datePickerMode && (
+                                    {Platform.OS === 'web' && datePickerMode && datePickerTarget === 'model' && (
+                                        <View style={{ marginTop: 10 }}>
+                                            <input 
+                                                type="datetime-local"
+                                                style={{ 
+                                                    width: '100%', 
+                                                    padding: '10px', 
+                                                    borderRadius: '8px', 
+                                                    border: '1px solid #ddd',
+                                                    fontFamily: 'inherit'
+                                                }}
+                                                onChange={(e) => {
+                                                    const val = e.target.value;
+                                                    if (val) {
+                                                        setNewModel(p => ({
+                                                            ...p,
+                                                            [datePickerMode === 'start' ? 'event_start' : 'event_end']: new Date(val).toISOString()
+                                                        }));
+                                                    }
+                                                    setDatePickerMode(null);
+                                                    setDatePickerTarget(null);
+                                                }}
+                                            />
+                                        </View>
+                                    )}
+
+                                    {Platform.OS !== 'web' && datePickerMode && datePickerTarget === 'model' && (
                                         <DateTimePicker
                                             value={(() => {
                                                 const v = (newModel as any)[datePickerMode === 'start' ? 'event_start' : 'event_end'];
@@ -1196,6 +1235,7 @@ export default function AdminCalibrationScreen() {
                                                     }));
                                                 }
                                                 setDatePickerMode(null);
+                                                setDatePickerTarget(null);
                                             }}
                                         />
                                     )}
@@ -1316,11 +1356,7 @@ export default function AdminCalibrationScreen() {
                                 <Text style={styles.miniLabel}>Start Date</Text>
                                 <TouchableOpacity 
                                     style={styles.datePickerBtn} 
-                                    onPress={() => {
-                                        setDatePickerMode('start' as any);
-                                        // Specific handler for drop start date
-                                        handleDropDatePicker('start');
-                                    }}
+                                    onPress={() => handleDropDatePicker('start')}
                                 >
                                     <Ionicons name="calendar-outline" size={16} color={Colors.textMuted} />
                                     <Text style={styles.dateText}>
@@ -1332,10 +1368,7 @@ export default function AdminCalibrationScreen() {
                                 <Text style={styles.miniLabel}>End Date</Text>
                                 <TouchableOpacity 
                                     style={styles.datePickerBtn} 
-                                    onPress={() => {
-                                        setDatePickerMode('end' as any);
-                                        handleDropDatePicker('end');
-                                    }}
+                                    onPress={() => handleDropDatePicker('end')}
                                 >
                                     <Ionicons name="calendar-outline" size={16} color={Colors.textMuted} />
                                     <Text style={styles.dateText}>
@@ -1344,6 +1377,56 @@ export default function AdminCalibrationScreen() {
                                 </TouchableOpacity>
                             </View>
                         </View>
+
+                        {Platform.OS === 'web' && datePickerMode && datePickerTarget === 'drop' && (
+                            <View style={{ marginTop: 10 }}>
+                                <input 
+                                    type="date"
+                                    style={{ 
+                                        width: '100%', 
+                                        padding: '10px', 
+                                        borderRadius: '8px', 
+                                        border: '1px solid #ddd',
+                                        fontFamily: 'inherit'
+                                    }}
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        if (val) {
+                                            setNewDrop(p => ({
+                                                ...p,
+                                                [datePickerMode === 'start' ? 'start_date' : 'end_date']: new Date(val).toISOString()
+                                            }));
+                                        }
+                                        setDatePickerMode(null);
+                                        setDatePickerTarget(null);
+                                    }}
+                                />
+                            </View>
+                        )}
+
+                        {Platform.OS !== 'web' && datePickerMode && datePickerTarget === 'drop' && (
+                            <DateTimePicker
+                                value={(() => {
+                                    const v = (newDrop as any)[datePickerMode === 'start' ? 'start_date' : 'end_date'];
+                                    const d = v ? new Date(v) : new Date();
+                                    return isNaN(d.getTime()) ? new Date() : d;
+                                })()}
+                                mode="date"
+                                display={Platform.OS === 'ios' ? 'default' : 'default'}
+                                onChange={(event, selectedDate) => {
+                                    if (selectedDate) {
+                                        setNewDrop(p => ({
+                                            ...p,
+                                            [datePickerMode === 'start' ? 'start_date' : 'end_date']: selectedDate.toISOString()
+                                        }));
+                                    }
+                                    if (Platform.OS === 'android' || event.type === 'dismissed' || event.type === 'set') {
+                                        setDatePickerMode(null);
+                                        setDatePickerTarget(null);
+                                    }
+                                }}
+                            />
+                        )}
 
                         <View style={styles.modalActions}>
                             <TouchableOpacity style={styles.cancelBtn} onPress={() => setShowAddDrop(false)}>
@@ -1440,8 +1523,8 @@ const styles = StyleSheet.create({
     tabImgWrapper: { position: 'relative', width: 56, height: 56, alignItems: 'center', justifyContent: 'center' },
     tabActiveIndicator: { position: 'absolute', bottom: -10, width: 4, height: 4, borderRadius: 2, backgroundColor: Colors.primary },
     sliderTrackAlt: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#f5f5f5', padding: 4, borderRadius: 12 },
-    datePickerBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e2e2', borderRadius: 8, paddingHorizontal: 10, height: 40, marginTop: 5 },
-    dateText: { fontSize: 12, fontFamily: Fonts.medium, color: Colors.textPrimary },
+    datePickerBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#ddd', borderRadius: 10, paddingHorizontal: 12, height: 44, marginTop: 5 },
+    dateText: { fontSize: 13, fontFamily: Fonts.bold, color: '#000000' },
     chainCard: { width: 100, height: 130, alignItems: 'center', justifyContent: 'center', gap: 8, opacity: 0.6, backgroundColor: '#fff', borderRadius: 20, borderWidth: 1, borderColor: '#eee' },
     activeChainCard: { opacity: 1, borderColor: Colors.primary, backgroundColor: Colors.primary + '08' },
     chainImg: { width: 80, height: 80, borderRadius: 15 },

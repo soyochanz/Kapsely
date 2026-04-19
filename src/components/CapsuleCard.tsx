@@ -33,10 +33,79 @@ function timeAgo(dateStr: string): string {
     return `${Math.floor(h / 24)}d`;
 }
 
-function formatOpenDate(dateStr: string): string {
+const formatOpenDate = (dateStr: string): string => {
     const d = new Date(dateStr);
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-}
+};
+
+const CollageView = ({ items, isOpened, themeColor, s }: { items: any[], isOpened: boolean, themeColor: string, s: any }) => {
+    if (items.length <= 1) return null;
+
+    const displayItems = items.slice(0, 4);
+    const hasMore = items.length > 4;
+
+    const renderItem = (item: any, style: any, idx: number) => {
+        const src = item.thumbnail_url || item.media_url;
+        const isLast = idx === 3 && hasMore;
+
+        return (
+            <View key={item.id || idx} style={[s.collageItem, style, { height: '100%' }]}>
+                <Image 
+                    source={{ uri: src }}
+                    style={StyleSheet.absoluteFill}
+                    blurRadius={!isOpened ? (Platform.OS === 'ios' ? 40 : 10) : 0}
+                    contentFit="cover"
+                    cachePolicy="memory-disk"
+                />
+                {!isOpened && (
+                    <View style={[StyleSheet.absoluteFill, { backgroundColor: Platform.OS === 'ios' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.7)' }]} />
+                )}
+                {item.media_type === 'video' && !isLast && (
+                    <View style={s.collagePlayBtn}>
+                        <Ionicons name="play" size={12} color="#fff" />
+                    </View>
+                )}
+                {isLast && (
+                    <View style={s.collageMoreOverlay}>
+                        <Text style={s.collageMoreText}>+{items.length - 3}</Text>
+                    </View>
+                )}
+            </View>
+        );
+    };
+
+    return (
+        <View style={s.collageContainer}>
+            {displayItems.length === 2 && (
+                <View style={s.collageRow}>
+                    {renderItem(displayItems[0], { flex: 1 }, 0)}
+                    {renderItem(displayItems[1], { flex: 1, marginLeft: 2 }, 1)}
+                </View>
+            )}
+            {displayItems.length === 3 && (
+                <View style={s.collageRow}>
+                    {renderItem(displayItems[0], { flex: 2 }, 0)}
+                    <View style={{ flex: 1, marginLeft: 2, gap: 2 }}>
+                        {renderItem(displayItems[1], { flex: 1 }, 1)}
+                        {renderItem(displayItems[2], { flex: 1 }, 2)}
+                    </View>
+                </View>
+            )}
+            {displayItems.length >= 4 && (
+                <View style={{ flex: 1, gap: 2 }}>
+                    <View style={s.collageRow}>
+                        {renderItem(displayItems[0], { flex: 1 }, 0)}
+                        {renderItem(displayItems[1], { flex: 1, marginLeft: 2 }, 1)}
+                    </View>
+                    <View style={s.collageRow}>
+                        {renderItem(displayItems[2], { flex: 1 }, 2)}
+                        {renderItem(displayItems[3], { flex: 1, marginLeft: 2 }, 3)}
+                    </View>
+                </View>
+            )}
+        </View>
+    );
+};
 
 const CapsuleCard = React.memo(({ 
     capsule, 
@@ -54,6 +123,7 @@ const CapsuleCard = React.memo(({
     lightweight,
     hideParticles,
     gridMode,
+    onViewable,
 }: { 
     capsule: any; 
     userId?: string | null;
@@ -70,6 +140,7 @@ const CapsuleCard = React.memo(({
     lightweight?: boolean;
     hideParticles?: boolean;
     gridMode?: boolean;
+    onViewable?: () => void;
 }) => {
     const navigation = useNavigation<any>();
     const { t } = useTranslation();
@@ -113,6 +184,12 @@ const CapsuleCard = React.memo(({
         setLatestItem(latestItemProp ?? capsule.latest_item ?? null);
         setLatestItemLoaded(!!(latestItemProp || capsule.latest_item));
     }, [isFollowedProp, likeCountProp, isLikedProp, commentCountProp, postsCountProp, mediaCollageProp, latestItemProp, capsule]);
+
+    useEffect(() => {
+        if (onViewable) {
+            onViewable();
+        }
+    }, []);
 
     const handleFollow = async () => {
         if (!currentUserId || currentUserId === capsule.owner_id) return;
@@ -163,13 +240,17 @@ const CapsuleCard = React.memo(({
 
     const handlePress = () => {
         if (isLocked) { Alert.alert(t('profile.private_capsule'), t('profile.private_capsule_msg')); return; }
-        navigation.navigate('CapsuleDetail', { capsuleId: capsule.id });
+        // Navigation should use capsule_id for item events, falling back to id for capsule events
+        const cid = (capsule as any).capsule_id || capsule.id;
+        navigation.navigate('CapsuleDetail', { capsuleId: cid });
     };
 
     const profile = capsule.profiles || { username: 'user', avatar_url: null };
     const isOpened = capsule.status === 'opened';
     const isSealed = capsule.status === 'sealed';
-    const isVideoPost = isSealed && latestItemLoaded && latestItem?.media_type === 'video';
+    // A media post is shown if it's an item event from the feed, OR if it's a sealed capsule with content (legacy behavior/profile)
+    const isMediaPost = (capsule.feed_type === 'item' || (isSealed && !capsule.feed_type)) && 
+                        latestItemLoaded && (latestItem?.media_type === 'video' || latestItem?.media_type === 'image');
 
     const isToday = useMemo(() => {
         if (!capsule.opens_at || isOpened) return false;
@@ -215,17 +296,8 @@ const CapsuleCard = React.memo(({
                         <Text style={s.gridTypeBadgeText}>{cfg.label}</Text>
                     </View>
 
-                    {/* Status badge */}
-                    {isSealed && (
-                        <View style={s.gridStatusBadge}>
-                            <Ionicons name="lock-closed" size={9} color={Colors.textMuted} />
-                        </View>
-                    )}
-                    {isOpened && (
-                        <View style={[s.gridStatusBadge, { backgroundColor: themeColor + '18', borderColor: themeColor + '30' }]}>
-                            <Ionicons name="lock-open" size={9} color={themeColor} />
-                        </View>
-                    )}
+                    {/* Status badge removed from here */}
+
                 </View>
 
                 {/* ── Middle: 3-column post preview ── */}
@@ -239,7 +311,7 @@ const CapsuleCard = React.memo(({
                                         <Image
                                             source={{ uri: src }}
                                             style={StyleSheet.absoluteFill}
-                                            blurRadius={!isOpened ? (Platform.OS === 'ios' ? 45 : 22) : 0}
+                                            blurRadius={!isOpened ? (Platform.OS === 'ios' ? 5 : 3) : 0}
                                             contentFit="cover"
                                             cachePolicy="memory-disk"
                                             recyclingKey={`gp-${capsule.id}-${idx}`}
@@ -248,6 +320,9 @@ const CapsuleCard = React.memo(({
                                         <View style={[StyleSheet.absoluteFill, { backgroundColor: Colors.cardAlt, alignItems: 'center', justifyContent: 'center' }]}>
                                             <Ionicons name="document-text-outline" size={12} color={Colors.textMuted} opacity={0.5} />
                                         </View>
+                                    )}
+                                    {!isOpened && (
+                                        <View style={[StyleSheet.absoluteFill, { backgroundColor: Platform.OS === 'ios' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.7)' }]} />
                                     )}
                                 </View>
                             );
@@ -264,17 +339,13 @@ const CapsuleCard = React.memo(({
                     )}
                 </View>
 
-                {/* ── Bottom: white info bar ── */}
                 <View style={s.gridBottom}>
-                    <Text style={s.gridTitle} numberOfLines={1}>{capsule.title}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                        <Text style={s.gridTitle} numberOfLines={1}>{capsule.title}</Text>
+                        {isSealed && <Ionicons name="lock-closed" size={10} color={Colors.textMuted} />}
+                    </View>
                     <View style={s.gridAuthorRow}>
-                        {profile.avatar_url ? (
-                            <Image source={{ uri: profile.avatar_url }} style={s.gridAvatar} contentFit="cover" cachePolicy="memory-disk" />
-                        ) : (
-                            <View style={[s.gridAvatar, { backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' }]}>
-                                <Ionicons name="person" size={7} color="#fff" />
-                            </View>
-                        )}
+                        <Image source={{ uri: Colors.getAvatarUrl(profile.avatar_url, profile.display_name || profile.username) }} style={s.gridAvatar} contentFit="cover" cachePolicy="memory-disk" />
                         <Text style={s.gridAuthorName} numberOfLines={1}>
                             {profile.display_name || profile.username}
                         </Text>
@@ -302,27 +373,41 @@ const CapsuleCard = React.memo(({
                     />
                 )}
 
-                {/* Blurred bg for video — using blurRadius on Image (no BlurView) */}
-                {isVideoPost && latestItem?.thumbnail_url && (
+                {/* Blurred bg for media post — using blurRadius on Image (no BlurView) */}
+                {isMediaPost && (latestItem?.thumbnail_url || latestItem?.media_url) && mediaCollage.length <= 1 && (
                     <View style={StyleSheet.absoluteFill}>
                         <Image 
-                            source={{ uri: latestItem.thumbnail_url }} 
-                            style={s.blurBg} 
-                            blurRadius={Platform.OS === 'ios' ? 40 : 20} 
+                            source={{ uri: latestItem.thumbnail_url || latestItem.media_url }} 
+                            style={[s.blurBg, isOpened && { opacity: 1 }]} 
+                            blurRadius={!isOpened ? (Platform.OS === 'ios' ? 15 : 2) : 0} 
                             contentFit="cover" 
                             cachePolicy="memory-disk"
                             recyclingKey={`card-vid-${capsule.id}`}
                         />
-                        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.3)' }]} />
+                        <View style={[StyleSheet.absoluteFill, { backgroundColor: !isOpened ? (Platform.OS === 'ios' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.7)') : 'transparent' }]} />
                     </View>
                 )}
 
-                {/* ── Opened: collage + model ── */}
-                {isOpened && mediaCollage.length > 0 ? (
+                {/* Collage View for Multiple Items */}
+                {isMediaPost && mediaCollage.length > 1 && (
+                    <CollageView items={mediaCollage} isOpened={isOpened} themeColor={themeColor} s={s} />
+                )}
+
+                {/* ── Opened: cover_url OR collage + model (Only if NOT a specific media post event) ── */}
+                {isOpened && capsule.feed_type !== 'item' && (capsule.cover_url || mediaCollage.length > 0) ? (
                     <View style={s.openedRow}>
-                        <View style={s.collageWrap}>
-                            <View style={s.collageGrid}>
-                                {mediaCollage.map((item, i) => (
+                        {capsule.cover_url ? (
+                            <Image
+                                source={{ uri: capsule.cover_url }}
+                                style={StyleSheet.absoluteFill}
+                                contentFit="cover"
+                                cachePolicy="memory-disk"
+                                recyclingKey={`cap-cover-${capsule.id}`}
+                            />
+                        ) : (
+                            <View style={s.collageWrap}>
+                                <View style={s.collageGrid}>
+                                {mediaCollage.slice(0, 4).map((item, i) => (
                                     <Image
                                         key={item.id || i}
                                         source={{ uri: (item.media_url && !item.media_url.startsWith('text://')) ? item.media_url : '' }}
@@ -330,20 +415,21 @@ const CapsuleCard = React.memo(({
                                             s.collageItem,
                                             mediaCollage.length === 1 && s.collageSingle,
                                             mediaCollage.length === 2 && s.collageDual,
-                                            mediaCollage.length === 3 && i === 0 && s.collageTripleLarge,
+                                            mediaCollage.slice(0, 4).length === 3 && i === 0 && s.collageTripleLarge,
                                         ]}
                                         contentFit="cover"
                                         cachePolicy="memory-disk"
                                         recyclingKey={`cap-collage-${item.id || i}`}
                                     />
                                 ))}
+                                </View>
+                                <LinearGradient
+                                    colors={['rgba(255,255,255,0)', 'rgba(255,255,255,0.9)']}
+                                    start={{ x: 0.5, y: 0 }} end={{ x: 1, y: 0 }}
+                                    style={[StyleSheet.absoluteFill, { pointerEvents: 'none' } as any]}
+                                />
                             </View>
-                            <LinearGradient
-                                colors={['rgba(255,255,255,0)', 'rgba(255,255,255,0.9)']}
-                                start={{ x: 0.5, y: 0 }} end={{ x: 1, y: 0 }}
-                                style={[StyleSheet.absoluteFill, { pointerEvents: 'none' } as any]}
-                            />
-                        </View>
+                        )}
                         <View style={s.modelOverlap}>
                             <CapsuleWithTimer
                                 modelKey={capsule.model}
@@ -361,11 +447,13 @@ const CapsuleCard = React.memo(({
                         </View>
                     </View>
 
-                ) : isVideoPost ? (
+                ) : isMediaPost ? (
                     <View style={s.videoWrap}>
-                        <View style={s.videoPlayBtn}>
-                            <Ionicons name="play" size={24} color="#fff" style={{ marginLeft: 2 }} />
-                        </View>
+                        {latestItem?.media_type === 'video' && mediaCollage.length <= 1 && (
+                            <View style={s.videoPlayBtn}>
+                                <Ionicons name="play" size={24} color="#fff" style={{ marginLeft: 2 }} />
+                            </View>
+                        )}
                         <View style={s.modelCorner}>
                             <Image 
                                 source={{ uri: modelImages.closed }} 
@@ -387,9 +475,10 @@ const CapsuleCard = React.memo(({
                             hideTimer={isOpened}
                             isOpened={isOpened}
                             style={s.capsuleLarge}
-                            hideParticles={true}
-                            lightweight={true}
-                            disableAnimations={true}
+                            hideParticles={hideParticles || lightweight || gridMode}
+                            lightweight={lightweight}
+                            disableAnimations={gridMode || lightweight}
+                            isMinimal={lightweight || gridMode}
                         />
                     </View>
                 )}
@@ -400,31 +489,15 @@ const CapsuleCard = React.memo(({
                     <Text style={s.typeBadgeText}>{cfg.label}</Text>
                 </View>
 
-                {isVideoPost && latestItem?.content && (
+                {isMediaPost && latestItem?.content && (
                     <View style={s.durationBadge}>
-                        <Ionicons name="play" size={10} color="#fff" />
-                        <Text style={s.durationText}>{latestItem.content}</Text>
+                        <Text style={s.durationText}>{latestItem.content.split('|')[0]}</Text>
                     </View>
                 )}
 
-                {isOpened && (
-                    <View style={[s.openedBadge, { backgroundColor: themeColor }]}>
-                        <Ionicons name="lock-open-outline" size={10} color="#fff" />
-                        <Text style={s.openedBadgeText}>Opened</Text>
-                    </View>
-                )}
 
-                {isSealed && (
-                    <View style={s.lockBadge}>
-                        <Ionicons name="lock-closed" size={11} color="rgba(255,255,255,0.9)" />
-                    </View>
-                )}
 
-                {isSealed && postsCount > 1 && (
-                    <View style={[s.lockBadge, { right: 46 }]}>
-                        <Ionicons name="images" size={11} color="rgba(255,255,255,0.9)" />
-                    </View>
-                )}
+                {/* Lock badge removed from here */}
             </View>
 
             {/* ── BODY ─────────────────────────────────────────────────── */}
@@ -437,17 +510,12 @@ const CapsuleCard = React.memo(({
                         style={s.authorLeft}
                         onPress={() => navigation.navigate('UserProfile', { targetUserId: capsule.owner_id })}
                     >
-                        {profile.avatar_url
-                            ? <Image 
-                                source={{ uri: profile.avatar_url }} 
-                                style={s.avatar} 
-                                contentFit="cover" 
-                                cachePolicy="memory-disk"
-                            />
-                            : <View style={[s.avatar, s.avatarFallback]}>
-                                <Ionicons name="person" size={14} color={Colors.textMuted} />
-                            </View>
-                        }
+                        <Image 
+                            source={{ uri: Colors.getAvatarUrl(profile.avatar_url, profile.display_name || profile.username) }} 
+                            style={s.avatar} 
+                            contentFit="cover" 
+                            cachePolicy="memory-disk"
+                        />
 
                         <View style={{ flex: 1, minWidth: 0 }}>
                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
@@ -474,15 +542,30 @@ const CapsuleCard = React.memo(({
                 </View>
 
                 {/* Title */}
-                <Text style={s.title} numberOfLines={1}>
-                    {capsule.title}{isLocked ? ' 🔒' : ''}
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 3 }}>
+                    <Text style={s.title} numberOfLines={1}>
+                        {capsule.title}
+                    </Text>
+                    {isSealed && <Ionicons name="lock-closed" size={12} color={Colors.textMuted} />}
+                </View>
 
-                {/* Desc or video label */}
-                {isVideoPost ? (
-                    <View style={s.videoRow}>
-                        <Ionicons name="videocam" size={11} color={Colors.primary} />
-                        <Text style={s.videoLabel}>New video shared</Text>
+                {/* Desc or media label */}
+                {isMediaPost ? (
+                    <View style={{ marginBottom: 9 }}>
+                        {latestItem?.caption ? (
+                            <Text style={[s.desc, { marginBottom: 4, fontFamily: Fonts.semiBold, color: Colors.primary }]} numberOfLines={1}>
+                                {latestItem.caption.replace(/!!b:[a-z0-9]+/g, '').trim()}
+                            </Text>
+                        ) : null}
+                        <View style={s.videoRow}>
+                            <Ionicons name={mediaCollage.length > 1 ? "images" : (latestItem?.media_type === 'video' ? "videocam" : "image")} size={11} color={Colors.primary} />
+                            <Text style={s.videoLabel}>
+                                {mediaCollage.length > 1 
+                                    ? t('feed.shared_items', { count: latestItem?.group_count || mediaCollage.length })
+                                    : t(`feed.shared_${latestItem?.media_type === 'video' ? "video" : "photo"}`)
+                                }
+                            </Text>
+                        </View>
                     </View>
                 ) : (
                     <Text style={s.desc} numberOfLines={2}>{capsule.description}</Text>
@@ -553,7 +636,7 @@ const s = StyleSheet.create({
 
     visual: {
         width: '100%',
-        height: 180,
+        height: 200,
         overflow: 'hidden',
         position: 'relative',
         alignItems: 'center',
@@ -670,6 +753,32 @@ const s = StyleSheet.create({
     },
     videoRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 9 },
     videoLabel: { fontSize: 11, fontFamily: Fonts.semiBold, color: Colors.primary },
+
+    // Collage
+    collageContainer: { ...StyleSheet.absoluteFillObject, width: '100%', height: '100%' },
+    collageRow: { flex: 1, flexDirection: 'row' },
+    collagePlayBtn: {
+        position: 'absolute',
+        top: 6,
+        right: 6,
+        width: 22,
+        height: 22,
+        borderRadius: 11,
+        backgroundColor: 'rgba(0,0,0,0.4)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    collageMoreOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    collageMoreText: {
+        color: '#fff',
+        fontSize: 18,
+        fontFamily: Fonts.bold,
+    },
 
     actions: {
         flexDirection: 'row', alignItems: 'center',

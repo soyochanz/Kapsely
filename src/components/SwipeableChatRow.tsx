@@ -1,8 +1,9 @@
 import React, { useRef, useState } from 'react';
 import {
     View, Text, StyleSheet, Animated, PanResponder, Dimensions, Vibration,
-    TouchableOpacity, Image
+    TouchableOpacity
 } from 'react-native';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
 
@@ -106,19 +107,26 @@ export default function SwipeableChatRow({
                     onPress={onPress}
                 >
                     <TouchableOpacity activeOpacity={0.7} onPress={onAvatarPress} style={styles.avatarWrap}>
-                        {item.otherUser?.avatar_url ? (
-                            <Image source={{ uri: item.otherUser.avatar_url }} style={styles.avatar} />
-                        ) : (
-                            <View style={styles.avatarPlaceholder}>
-                                <Ionicons name={item.is_group ? "people" : "person"} size={24} color={Colors.textMuted} />
-                            </View>
-                        )}
+                        <Image 
+                            source={{ uri: Colors.getAvatarUrl(item.otherUser?.avatar_url, item.otherUser?.display_name || item.otherUser?.username) }} 
+                            style={styles.avatar} 
+                            contentFit="cover"
+                            cachePolicy="memory-disk"
+                        />
                         {hasUnread && <View style={styles.unreadAvatarDot} />}
                     </TouchableOpacity>
                     <View style={styles.chatInfo}>
                         <Text style={[styles.chatName, hasUnread && styles.chatNameUnread]}>{item.otherUser?.display_name || item.otherUser?.username || 'User'}</Text>
                         <Text style={[styles.lastMessage, hasUnread && styles.lastMessageUnread]} numberOfLines={1}>
-                            {item.lastMessage?.content || 'No messages yet'}
+                            {(() => {
+                                const msg = item.lastMessage;
+                                if (!msg) return 'No messages yet';
+                                if (msg.media_type === 'capsule') return '🎁 Sent a capsule';
+                                if (msg.media_type === 'image') return '📷 Sent a photo';
+                                if (msg.media_type === 'video') return '🎥 Sent a video';
+                                if (msg.media_type === 'audio') return '🎵 Sent a voice message';
+                                return msg.content || 'No messages yet';
+                            })()}
                         </Text>
                     </View>
                     <View style={styles.chatRight}>

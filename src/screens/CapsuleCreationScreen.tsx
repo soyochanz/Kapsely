@@ -3,7 +3,7 @@ import {
     View, Text, StyleSheet, ScrollView, TouchableOpacity,
     TextInput, StatusBar, Dimensions, Switch,
     Image, Animated, Alert, ActivityIndicator,
-    Easing, Modal, Platform, Keyboard,
+    Easing, Modal, Platform, Keyboard, KeyboardAvoidingView,
 } from 'react-native';
 import * as NavigationBar from 'expo-navigation-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -879,7 +879,7 @@ export default function CapsuleCreationScreen() {
     const [hasLegacyCap, setHasLegacyCap] = useState(false);
     const [activeInstaCapCount, setActiveInstaCapCount] = useState(0);
     const [loadingLimits, setLoadingLimits] = useState(true);
-    const [allModels, setAllModels] = useState<any[]>(timerConfigManager.models.length > 0 ? timerConfigManager.models : MODELS);
+    const [allModels, setAllModels] = useState<any[]>([...(timerConfigManager.models.length > 0 ? timerConfigManager.models : CAPSULE_MODELS)]);
     const [drops, setDrops] = useState<any[]>([]);
     
     useEffect(() => {
@@ -1202,7 +1202,19 @@ export default function CapsuleCreationScreen() {
             if (error) throw error;
 
             if (isShared && invitedUsers.length > 0 && newCapsule) {
-                await supabase.from('capsule_invites').insert(invitedUsers.map(u => ({ capsule_id: newCapsule.id, user_id: u.id, status: 'pending' })));
+                const inviteData = invitedUsers.map(u => ({ capsule_id: newCapsule.id, user_id: u.id, status: 'pending' }));
+                await supabase.from('capsule_invites').insert(inviteData);
+                
+                // Add notifications for each invited user
+                const notificationData = invitedUsers.map(u => ({
+                    user_id: u.id,
+                    sender_id: user.id,
+                    type: 'capsule_invite',
+                    capsule_id: newCapsule.id,
+                    message: `invited you to collaborate on the capsule "${title || 'New Capsule'}"`,
+                    is_read: false
+                }));
+                await supabase.from('notifications').insert(notificationData);
             }
 
             setTimeout(() => {
@@ -1260,6 +1272,7 @@ export default function CapsuleCreationScreen() {
                 accent={accent}
                 selectedType={selectedType}
                 activeEvent={activeEvent}
+                drops={drops}
             />
 
             {/* Header */}
@@ -1278,8 +1291,13 @@ export default function CapsuleCreationScreen() {
                 <View style={{ width: 34 }} />
             </View>
 
-            {/* Scrollable content */}
-            <Animated.ScrollView
+            <KeyboardAvoidingView
+                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                style={{ flex: 1 }}
+                keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+            >
+                {/* Scrollable content */}
+                <Animated.ScrollView
                 ref={scrollRef as any}
                 style={[s.scroll, { transform: [{ translateX: slideAnim }] }]}
                 scrollEnabled={scrollEnabled}
@@ -1911,6 +1929,7 @@ export default function CapsuleCreationScreen() {
                     </View>
                 )}
             </Animated.ScrollView>
+            </KeyboardAvoidingView>
 
             {/* ─── Bottom Nav ───────────────────────────────────────────── */}
             {currentStep !== 'review' && (

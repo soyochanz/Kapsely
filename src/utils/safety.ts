@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supabase';
 
-export type ReportType = 'user' | 'capsule' | 'capsule_item' | 'comment' | 'chat_message';
+export type ReportType = 'user' | 'capsule' | 'capsule_item' | 'comment' | 'chat_message' | 'capsule_chat';
 
 export const safetyService = {
     async blockUser(blockerId: string, blockedId: string) {

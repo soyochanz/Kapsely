@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
     View, Text, StyleSheet, ScrollView, TouchableOpacity,
     TextInput, Dimensions, Animated, Easing, StatusBar, Alert, ActivityIndicator,
-    Modal, FlatList, KeyboardAvoidingView, Platform, Pressable, SectionList, Keyboard
+    Modal, FlatList, KeyboardAvoidingView, Platform, Pressable, SectionList, Keyboard, InteractionManager,
+    DeviceEventEmitter
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -23,9 +24,10 @@ import VerifiedBadge from '../components/VerifiedBadge';
 import { timerConfigManager } from '../utils/timerConfig';
 import { safetyService, ReportType } from '../utils/safety';
 import { useWebDragScroll } from '../utils/useWebDragScroll';
-// ✅ FloatingEmojis is now a self-contained component that handles its own subscription
 import FloatingEmojis from '../components/FloatingEmojis';
 import AestheticLocation from '../components/AestheticLocation';
+import { EpicOpening } from '../components/detail/EpicOpening';
+import { CapsuleHero } from '../components/detail/CapsuleHero';
 
 const { width, height } = Dimensions.get('window');
 const GRID_COLS = 3;
@@ -80,7 +82,7 @@ const ds = StyleSheet.create({
     unsealBtnGrad: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, paddingVertical: 18, borderRadius: 24 },
     unsealBtnIconWrap: { width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(255,255,255,0.25)', alignItems: 'center', justifyContent: 'center', marginRight: 10 },
     unsealBtnText: { fontSize: 17, fontFamily: Fonts.bold, color: '#fff', letterSpacing: -0.2 },
-    readyBadgeText: { fontSize: 10, fontFamily: Fonts.bold, color: '#fff', opacity: 0.9, marginTop: 1 },
+    readyBadgeText: { fontSize: 13, fontFamily: Fonts.bold, color: '#fff', opacity: 0.9 },
     approvalHint: { fontSize: 12, fontFamily: Fonts.medium, color: D.textMuted },
     countdownCard: { flexDirection: 'row', alignItems: 'center', gap: 14, borderRadius: 18, borderWidth: 1.5, padding: 14, width: '88%' },
     countdownIconWrap: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
@@ -216,67 +218,75 @@ const ds = StyleSheet.create({
     audioPlayBtn: { width: 88, height: 88, borderRadius: 44, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.35)' },
     viewerCaption: { position: 'absolute', bottom: 80, left: 20, right: 20, backgroundColor: 'rgba(0,0,0,0.55)', padding: 12, borderRadius: 14 },
     viewerCaptionText: { color: '#fff', fontSize: 14, fontFamily: Fonts.regular, textAlign: 'center' },
-    itemDateTag: { position: 'absolute', top: 6, left: 6, backgroundColor: 'rgba(0,0,0,0.32)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, zIndex: 12 },
-    itemDateText: { fontSize: 8.5, fontFamily: Fonts.bold, color: '#fff', opacity: 0.95 },
+    itemDateTag: { position: 'absolute', bottom: 6, left: 6, backgroundColor: 'rgba(255,255,255,0.85)', paddingHorizontal: 6, paddingVertical: 3, borderRadius: 8, zIndex: 12 },
+    itemDateText: { fontSize: 8, fontFamily: Fonts.bold, color: D.textSec },
+
+    // Collaborators
+    collabBar: { flexDirection: 'row', alignItems: 'center', gap: -8, marginBottom: 12 },
+    collabAvatar: { width: 30, height: 30, borderRadius: 15, borderWidth: 2, borderColor: D.bg },
+    collabMore: { width: 30, height: 30, borderRadius: 15, backgroundColor: D.surfaceAlt, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: D.bg },
+    collabMoreText: { fontSize: 10, fontFamily: Fonts.bold, color: D.textSec },
+    collabNameCard: { backgroundColor: 'rgba(26, 21, 48, 0.85)', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12, position: 'absolute', top: -35, alignSelf: 'center', zIndex: 100 },
+    collabNameText: { color: '#fff', fontSize: 11, fontFamily: Fonts.bold },
+
+    // Item Author Overlay
+    itemAuthorOverlay: { position: 'absolute', top: 6, left: 6, width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, borderColor: '#fff', zIndex: 15, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 2, shadowOffset: { width: 0, height: 1 } },
 });
 
-// Epic opening styles (separate object to keep ds clean)
-const eo = StyleSheet.create({
-    container: { ...StyleSheet.absoluteFillObject },
-    center: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, paddingTop: 60 },
-    glowRing: {
-        position: 'absolute', width: 340, height: 340, borderRadius: 170,
-        borderWidth: 2, alignSelf: 'center',
-        top: height / 2 - 170,
-    },
-    glowRing2: {
-        position: 'absolute', width: 480, height: 480, borderRadius: 240,
-        borderWidth: 1.5, alignSelf: 'center',
-        top: height / 2 - 240,
-        opacity: 0.45,
-    },
-    glowRing3: {
-        position: 'absolute', width: 620, height: 620, borderRadius: 310,
-        borderWidth: 1, alignSelf: 'center',
-        top: height / 2 - 310,
-        opacity: 0.2,
-    },
-    lockWrap: { width: 88, height: 88, borderRadius: 28, overflow: 'hidden', marginBottom: 24 },
-    lockGrad: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-    capsuleTitle: {
-        fontSize: 28, fontFamily: Fonts.bold, color: '#fff', textAlign: 'center',
-        marginBottom: 6, letterSpacing: -0.5,
-        textShadowColor: 'rgba(0,0,0,0.6)',
-        textShadowOffset: { width: 0, height: 2 },
-        textShadowRadius: 10,
-    },
-    openingLabel: {
-        fontSize: 11, fontFamily: Fonts.bold, color: 'rgba(255,255,255,0.5)',
-        letterSpacing: 3.5, textTransform: 'uppercase', marginBottom: 36,
-    },
-    countCircle: {
-        width: 148, height: 148, borderRadius: 74,
-        borderWidth: 3, alignItems: 'center', justifyContent: 'center',
-        backgroundColor: 'rgba(124,92,191,0.12)',
-    },
-    countRingFill: {
-        position: 'absolute', width: 140, height: 140, borderRadius: 70,
-        borderWidth: 3,
-    },
-    countNumber: { fontSize: 72, fontFamily: Fonts.bold, lineHeight: 80 },
-    sparkleCircle: { width: 130, height: 130, borderRadius: 65, borderWidth: 2, alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
-    openNowText: {
-        fontSize: 38, fontFamily: Fonts.bold, letterSpacing: 4,
-        textShadowColor: 'rgba(0,0,0,0.4)',
-        textShadowOffset: { width: 0, height: 2 },
-        textShadowRadius: 10,
-    },
-    hintText: {
-        fontSize: 13, color: 'rgba(255,255,255,0.35)', textAlign: 'center',
-        marginTop: 28, fontFamily: Fonts.medium, lineHeight: 20,
-    },
-});
+// ── Collaborators Component ──────────────────────────────────────────────────
+const CollaboratorsBar = React.memo(({ owner, members, tint }: any) => {
+    const [activeUser, setActiveUser] = useState<any>(null);
+    const timeoutRef = useRef<any>(null);
+    const navigation = useNavigation<any>();
 
+    const allMembers = useMemo(() => {
+        return [owner, ...members].filter(Boolean);
+    }, [owner, members]);
+
+    const handlePress = (m: any) => {
+        if (activeUser && activeUser.id === m.id) {
+            if (timeoutRef.current) clearTimeout(timeoutRef.current);
+            setActiveUser(null);
+            navigation.navigate('UserProfile', { targetUserId: m.id });
+        } else {
+            if (timeoutRef.current) clearTimeout(timeoutRef.current);
+            setActiveUser(m);
+            timeoutRef.current = setTimeout(() => setActiveUser(null), 2500);
+        }
+    };
+
+    if (!owner) return null;
+
+    return (
+        <View style={{ alignItems: 'center', marginBottom: 20 }}>
+            {activeUser && (
+                <View style={ds.collabNameCard}>
+                    <Text style={ds.collabNameText}>{activeUser.display_name || activeUser.username}</Text>
+                </View>
+            )}
+            <View style={ds.collabBar}>
+                {allMembers.slice(0, 5).map((m, i) => (
+                    <TouchableOpacity 
+                        key={m.id || i} 
+                        activeOpacity={0.8} 
+                        onPress={() => handlePress(m)}
+                        style={{ zIndex: 10 - i }}
+                    >
+                        <Image 
+                            source={{ uri: m.avatar_url || 'https://via.placeholder.com/150' }} 
+                            style={[ds.collabAvatar as any, { borderColor: i === 0 ? tint + '40' : D.bg }]} 
+                        />
+                    </TouchableOpacity>
+                ))}
+                {allMembers.length > 5 && (
+                    <View style={ds.collabMore}>
+                        <Text style={ds.collabMoreText}>+{allMembers.length - 5}</Text>
+                    </View>
+                )}
+            </View>
+        </View>
+    );
+});
 
 // ─── Audio controller (memoized to avoid re-mount on parent re-renders) ───────
 const AudioController = React.memo(({ uri, onFinish }: { uri: string | null; onFinish: () => void }) => {
@@ -290,20 +300,16 @@ const AudioController = React.memo(({ uri, onFinish }: { uri: string | null; onF
             }
             if (uri) {
                 try {
-                    // Force playback through speakers and ensure it's not in recording mode
                     await Audio.setAudioModeAsync({
                         allowsRecordingIOS: false,
                         playsInSilentModeIOS: true,
                         playThroughEarpieceAndroid: false,
                         staysActiveInBackground: false,
                     });
-
                     const { sound } = await Audio.Sound.createAsync(
                         { uri },
                         { shouldPlay: true, volume: 1.0 },
-                        (status: any) => {
-                            if (status.didJustFinish) onFinish();
-                        }
+                        (status: any) => { if (status.didJustFinish) onFinish(); }
                     );
                     soundRef.current = sound;
                 } catch (e) {
@@ -312,11 +318,7 @@ const AudioController = React.memo(({ uri, onFinish }: { uri: string | null; onF
             }
         };
         loadAndPlay();
-        return () => {
-            if (soundRef.current) {
-                soundRef.current.unloadAsync();
-            }
-        };
+        return () => { if (soundRef.current) soundRef.current.unloadAsync(); };
     }, [uri]);
 
     return null;
@@ -340,7 +342,7 @@ const VideoWithTrim = React.memo(({ item, isActive, style }: { item: any; isActi
     );
 });
 
-// ─── Ambient orbs (memoized - only re-renders if accent changes) ──────────────
+// ─── Ambient orbs ─────────────────────────────────────────────────────────────
 const AmbientOrbs = React.memo(({ accent }: { accent: string }) => (
     <View style={StyleSheet.absoluteFill} pointerEvents="none">
         <View style={{ position: 'absolute', top: -60, right: -50, width: 240, height: 240, borderRadius: 120, backgroundColor: accent + '09' }} />
@@ -356,216 +358,81 @@ const StatPill = React.memo(({ icon, label, color, bg }: { icon: any; label: str
     </View>
 ));
 
-// ═════════════════════════════════════════════════════════════════════════════
-// ── EPIC OPENING ANIMATION ────────────────────────────────────────────────────
-// ═════════════════════════════════════════════════════════════════════════════
-interface EpicOpeningProps {
-    tint: string;
-    capsuleTitle: string;
-    imageUrls: string[];
-    countdown: number;     // 10 → 0
-    onComplete: () => void;
-}
-
-const EpicOpening = React.memo(({ tint, capsuleTitle, countdown, onComplete }: EpicOpeningProps) => {
+// ─── Interaction Bar component (isolated) ──────────────────────────────────
+const InteractionBar = React.memo(({ 
+    showChat, setShowChat, isChatAvailable, comment, setComment, tint, 
+    handleSendComment, liveChatRef, scrollToChat, localEmojiTriggerRef 
+}: any) => {
     const { t } = useTranslation();
-    // Core anims
-    const bgAnim = useRef(new Animated.Value(0)).current;
-    const flashAnim = useRef(new Animated.Value(0)).current;
-    const titleAnim = useRef(new Animated.Value(0)).current;
-    const countAnim = useRef(new Animated.Value(1)).current;
-    const revealAnim = useRef(new Animated.Value(0)).current;
-    const ring1Anim = useRef(new Animated.Value(0.6)).current;
-    const ring2Anim = useRef(new Animated.Value(0.3)).current;
-
-    // Particles
-    const particles = useRef(
-        Array.from({ length: 32 }, (_, i) => ({
-            anim: new Animated.Value(0),
-            angle: (i / 32) * Math.PI * 2,
-            dist: width * 0.6 + Math.random() * 100,
-        }))
-    ).current;
-
-    // Sounds
-    const tickSound = useRef<Audio.Sound | null>(null);
-    const revealSound = useRef<Audio.Sound | null>(null);
-
-    useEffect(() => {
-        const loadSounds = async () => {
-            try {
-                const { sound: tS } = await Audio.Sound.createAsync({ uri: 'https://assets.mixkit.co/sfx/preview/mixkit-button-countdown-2972.mp3' });
-                const { sound: rS } = await Audio.Sound.createAsync({ uri: 'https://assets.mixkit.co/sfx/preview/mixkit-epic-reveal-2661.mp3' });
-                tickSound.current = tS;
-                revealSound.current = rS;
-            } catch (e) {
-                console.warn("Failed to load sounds", e);
-            }
-        };
-        loadSounds();
-        return () => {
-            tickSound.current?.unloadAsync();
-            revealSound.current?.unloadAsync();
-        };
-    }, []);
-
-    // Entrance
-    useEffect(() => {
-        Animated.parallel([
-            Animated.timing(bgAnim, { toValue: 1, duration: 500, easing: Easing.out(Easing.quad), useNativeDriver: true }),
-            Animated.timing(titleAnim, { toValue: 1, duration: 700, delay: 150, easing: Easing.out(Easing.back(1.3)), useNativeDriver: true }),
-        ]).start();
-
-        // Pulsing rings
-        Animated.loop(
-            Animated.sequence([
-                Animated.timing(ring1Anim, { toValue: 1, duration: 1400, useNativeDriver: true }),
-                Animated.timing(ring1Anim, { toValue: 0.6, duration: 1400, useNativeDriver: true }),
-            ])
-        ).start();
-        Animated.loop(
-            Animated.sequence([
-                Animated.timing(ring2Anim, { toValue: 0.7, duration: 1800, useNativeDriver: true }),
-                Animated.timing(ring2Anim, { toValue: 0.3, duration: 1800, useNativeDriver: true }),
-            ])
-        ).start();
-    }, []);
-
-    // Countdown pulse + Sound
-    useEffect(() => {
-        if (countdown > 0) {
-            tickSound.current?.replayAsync().catch(() => {});
-        }
-
-        Animated.sequence([
-            Animated.timing(countAnim, { toValue: 1.3, duration: 100, useNativeDriver: true }),
-            Animated.timing(countAnim, { toValue: 1, duration: 300, easing: Easing.out(Easing.back(1.5)), useNativeDriver: true }),
-        ]).start();
-
-        // At 0 → trigger explosion + reveal
-        if (countdown === 0) {
-            revealSound.current?.playAsync().catch(() => {});
-            
-            const pAnims = particles.map(p =>
-                Animated.timing(p.anim, { toValue: 1, duration: 1000, easing: Easing.out(Easing.quad), useNativeDriver: true })
-            );
-            Animated.parallel([
-                ...pAnims,
-                Animated.sequence([
-                    Animated.timing(flashAnim, { toValue: 1, duration: 400, useNativeDriver: true }),
-                    Animated.timing(flashAnim, { toValue: 0, duration: 1500, useNativeDriver: true }),
-                ]),
-                Animated.timing(revealAnim, { toValue: 1, duration: 1500, delay: 400, useNativeDriver: true }),
-            ]).start(() => {
-                setTimeout(onComplete, 500);
-            });
-        }
-    }, [countdown]);
-
-    const backdropOpacity = bgAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
-    const purpleRose = ['#7C5CBF', '#C06090'] as const;
-
+    const insets = useSafeAreaInsets();
+    
     return (
-        <View style={eo.container}>
-            {/* ── Deep purple backdrop ── */}
-            <Animated.View style={[StyleSheet.absoluteFill, { opacity: backdropOpacity }]}>
-                <LinearGradient
-                    colors={['#0A0618', '#0E0A1A', '#13081E']}
-                    style={StyleSheet.absoluteFill}
+        <BlurView intensity={70} tint="extraLight" style={[ds.commentBar, { paddingBottom: Math.max(insets.bottom, 14) }]}>
+            <View style={[ds.commentBarBorderTop, { backgroundColor: tint + '20' }]} />
+            {showChat && (
+                <View style={ds.emojiRow}>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, gap: 10 }}>
+                        {REACTION_EMOJIS.map(emoji => (
+                            <TouchableOpacity
+                                key={emoji}
+                                style={[ds.emojiBtn, { backgroundColor: tint + '15' }]}
+                                onPress={() => {
+                                    liveChatRef.current?.sendReaction(emoji);
+                                    localEmojiTriggerRef.current?.(emoji);
+                                }}
+                            >
+                                <Text style={{ fontSize: 20 }}>{emoji}</Text>
+                            </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+                </View>
+            )}
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 4 }}>
+                {isChatAvailable && (
+                    <TouchableOpacity style={{ marginRight: 2 }} activeOpacity={0.7} onPress={() => { setShowChat(!showChat); if (!showChat) scrollToChat(); }}>
+                        <View style={[ds.actionIconWrap, { width: 40, height: 40, borderRadius: 20, backgroundColor: showChat ? tint : D.surfaceAlt, borderColor: showChat ? tint : D.border }]}>
+                            <Ionicons name={showChat ? "images" : "chatbubbles"} size={18} color={showChat ? "#fff" : D.textMuted} />
+                        </View>
+                    </TouchableOpacity>
+                )}
+
+                <TextInput
+                    style={[ds.commentInput, { borderColor: comment ? tint + '50' : D.border }]}
+                    placeholder={showChat ? t('detail.live_chat_placeholder') : t('detail.add_comment_placeholder')}
+                    placeholderTextColor={D.textMuted}
+                    value={comment}
+                    onChangeText={setComment}
+                    multiline={!showChat}
+                    selectionColor={tint}
+                    onSubmitEditing={() => { 
+                        if (showChat && comment.trim()) { 
+                            liveChatRef.current?.sendMessage(comment.trim()); 
+                            setComment(''); 
+                        } 
+                    }}
                 />
-            </Animated.View>
-
-            {/* ── Ambient purple radial glow ── */}
-            <Animated.View style={[eo.glowRing, { borderColor: tint, opacity: ring1Anim, transform: [{ scale: ring1Anim }] }]} />
-            <Animated.View style={[eo.glowRing2, { borderColor: D.rose, opacity: ring2Anim, transform: [{ scale: ring2Anim }] }]} />
-            <Animated.View style={[eo.glowRing3, { borderColor: tint, opacity: 0.1, transform: [{ scale: ring1Anim.interpolate({ inputRange: [0.6, 1], outputRange: [1, 1.2] }) }] }]} />
-
-            {/* ── Soft purple orbs ── */}
-            <Animated.View pointerEvents="none" style={[
-                StyleSheet.absoluteFill,
-                { opacity: ring1Anim },
-            ]}>
-                <View style={{ position: 'absolute', top: height * 0.12, left: -80, width: 250, height: 250, borderRadius: 125, backgroundColor: tint + '18' }} />
-                <View style={{ position: 'absolute', bottom: height * 0.15, right: -60, width: 200, height: 200, borderRadius: 100, backgroundColor: D.rose + '15' }} />
-            </Animated.View>
-
-            {/* ── Center content ── */}
-            <View style={eo.center} pointerEvents="none">
-                {/* Lock icon */}
-                <Animated.View style={[eo.lockWrap, {
-                    opacity: titleAnim,
-                    transform: [{ scale: titleAnim.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] }) }]
-                }]}>
-                    <LinearGradient colors={[tint, D.rose]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={eo.lockGrad}>
-                        <Ionicons name={countdown === 0 ? 'lock-open' : 'lock-closed'} size={40} color="#fff" />
+                
+                <TouchableOpacity
+                    onPress={() => {
+                        if (showChat) {
+                            if (comment.trim()) {
+                                liveChatRef.current?.sendMessage(comment.trim());
+                                setComment('');
+                            }
+                        } else {
+                            handleSendComment();
+                        }
+                    }}
+                    disabled={!comment.trim()}
+                    style={[ds.postBtnWrap, { opacity: comment.trim() ? 1 : 0.4 }]}
+                >
+                    <LinearGradient colors={[tint, tint + 'CC']} style={ds.postBtnGrad}>
+                        <Ionicons name={showChat ? "send" : "arrow-up"} size={showChat ? 14 : 16} color="#fff" />
                     </LinearGradient>
-                </Animated.View>
-
-                {/* Title */}
-                <Animated.Text style={[eo.capsuleTitle, {
-                    opacity: titleAnim,
-                    transform: [{ translateY: titleAnim.interpolate({ inputRange: [0, 1], outputRange: [24, 0] }) }],
-                }]} numberOfLines={2}>
-                    {capsuleTitle}
-                </Animated.Text>
-
-                <Animated.Text style={[eo.openingLabel, { opacity: titleAnim }]}>
-                    {countdown > 0 ? t('detail.epic_opening_in') : t('detail.epic_revealing')}
-                </Animated.Text>
-
-                {/* Countdown */}
-                {countdown > 0 ? (
-                    <Animated.View style={[eo.countCircle, { borderColor: tint + '70' }]}>
-                        <View style={[eo.countRingFill, { borderColor: tint + '55', borderTopColor: D.rose + '80' }]} />
-                        <Animated.Text style={[eo.countNumber, { color: '#FFFFFF', transform: [{ scale: countAnim }] }]}>
-                            {countdown}
-                        </Animated.Text>
-                    </Animated.View>
-                ) : (
-                    <Animated.View style={{ opacity: Animated.subtract(new Animated.Value(1), flashAnim), alignItems: 'center' }}>
-                        <LinearGradient colors={[tint + '44', D.rose + '33']} style={eo.sparkleCircle}>
-                            <Ionicons name="sparkles" size={56} color={tint} />
-                        </LinearGradient>
-                        <Text style={[eo.openNowText, { color: '#FFFFFF' }]}>{t('detail.epic_opened')}</Text>
-                    </Animated.View>
-                )}
-
-                {/* Hint */}
-                {countdown > 0 && (
-                    <Animated.Text style={[eo.hintText, { opacity: titleAnim }]}>
-                        {t('detail.epic_hint')}
-                    </Animated.Text>
-                )}
+                </TouchableOpacity>
             </View>
-
-            {/* ── Particle burst ── */}
-            {particles.map((p, i) => {
-                const tx = p.anim.interpolate({ inputRange: [0, 1], outputRange: [0, Math.cos(p.angle) * p.dist] });
-                const ty = p.anim.interpolate({ inputRange: [0, 1], outputRange: [0, Math.sin(p.angle) * p.dist] });
-                const sc = p.anim.interpolate({ inputRange: [0, 0.25, 1], outputRange: [0.2, 2.5, 1.2] });
-                const op = p.anim.interpolate({ inputRange: [0, 0.15, 0.8, 1], outputRange: [0, 1, 1, 0] });
-                const palette = [tint, '#fff', D.rose, '#FCD34D', '#A78BFA', '#F472B6'];
-                return (
-                    <Animated.View
-                        key={i}
-                        pointerEvents="none"
-                        style={{
-                            position: 'absolute', left: width / 2 - 5, top: height / 2 - 5,
-                            width: 8 + (i % 3) * 4, height: 8 + (i % 3) * 4, borderRadius: 6,
-                            backgroundColor: palette[i % palette.length],
-                            transform: [{ translateX: tx }, { translateY: ty }, { scale: sc }],
-                            opacity: op,
-                        }}
-                    />
-                );
-            })}
-
-            {/* ── Flash overlay ── */}
-            <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: '#fff', opacity: flashAnim }]} pointerEvents="none" />
-
-            {/* ── Final reveal (fade to app bg) ── */}
-            <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: D.bg, opacity: revealAnim }]} pointerEvents="none" />
-        </View>
+        </BlurView>
     );
 });
 
@@ -589,7 +456,8 @@ function CapsuleDetailScreen() {
     const [showEpicOpening, setShowEpicOpening] = useState(false);
     const [epicCountdown, setEpicCountdown] = useState(10);
     const epicIntervalRef = useRef<NodeJS.Timeout | null>(null);
-    // Images to show during opening (pulled from capsule items)
+
+    // ── Images + model for the epic opening animation ──────────────────────
     const epicImageUrls = useMemo(() => {
         return items
             .filter(i => (i.media_type === 'image' || i.media_type === 'video') && (i.thumbnail_url || i.media_url))
@@ -623,7 +491,6 @@ function CapsuleDetailScreen() {
     const [playingAudio, setPlayingAudio] = useState<string | null>(null);
     const [scrollEnabled, setScrollEnabled] = useState(true);
 
-
     const timerRef = useRef<NodeJS.Timeout | null>(null);
     const insets = useSafeAreaInsets();
 
@@ -632,22 +499,52 @@ function CapsuleDetailScreen() {
     const sectionListRef = useRef<SectionList>(null);
     useWebDragScroll(sectionListRef);
 
+    const [openDesign, setOpenDesign] = useState<'open' | 'closed'>('open');
+
     useEffect(() => {
         if (!capsule) return;
+        const desc = capsule.description || '';
+        if (desc.includes('[STYLE:CLOSED]')) setOpenDesign('closed');
+        else setOpenDesign('open');
+
         const update = () => {
+            const currentDesc = capsule.description || '';
+            const isClosed = currentDesc.includes('[STYLE:CLOSED]');
             setModelImg(isSealed
                 ? (timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model] || (MODEL_IMAGES as any).basicred_kap)
-                : (timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model] || MODEL_IMAGES[capsule.model] || (MODEL_IMAGES as any).basicred_kap)
+                : (isClosed 
+                    ? (timerConfigManager.getModelImage(capsule.model) || MODEL_IMAGES[capsule.model] || (MODEL_IMAGES as any).basicred_kap)
+                    : (timerConfigManager.getModelImageOpen(capsule.model) || MODEL_IMAGES_OPEN[capsule.model] || MODEL_IMAGES[capsule.model] || (MODEL_IMAGES as any).basicred_kap))
             );
         };
         const unsub = timerConfigManager.subscribe(update);
         update();
         return unsub;
-    }, [capsule?.model, isSealed]);
+    }, [capsule?.model, isSealed, capsule?.description]);
+
+    const handleToggleDesign = async () => {
+        if (!capsule) return;
+        const newDesign = openDesign === 'open' ? 'closed' : 'open';
+        let newDesc = capsule.description || '';
+        // Clean existing tags
+        newDesc = newDesc.replace(/\[STYLE:OPEN\]|\[STYLE:CLOSED\]/g, '').trim();
+        if (newDesign === 'closed') {
+            newDesc = (newDesc + ' [STYLE:CLOSED]').trim();
+        }
+        
+        setOpenDesign(newDesign);
+        setCapsule({ ...capsule, description: newDesc });
+        
+        try {
+            await supabase.from('capsules').update({ description: newDesc }).eq('id', capsuleId);
+        } catch (err) {
+            console.error('Error updating design:', err);
+        }
+    };
 
     const activeModelTint = capsule ? ((MODEL_TINTS as any)[capsule.model] || '#7C5CBF') : '#7C5CBF';
     const tint = modelTint || activeModelTint;
-    const isOwner = userId === capsule?.owner_id;
+    const isOwner = !!(userId && capsule?.owner_id && userId === capsule.owner_id);
     const acceptedInvitesCount = invites?.filter(i => i.status === 'accepted').length || 0;
     const isLegacyAccepted = capsule?.invited_user_id && capsule?.invite_status === 'accepted';
     const totalMembers = 1 + acceptedInvitesCount + (isLegacyAccepted ? 1 : 0);
@@ -666,11 +563,18 @@ function CapsuleDetailScreen() {
 
     const opensAt = capsule?.opens_at ? new Date(capsule.opens_at) : null;
     const createdAt = capsule?.created_at ? new Date(capsule.created_at) : null;
-    const isBornOpen = opensAt && createdAt && Math.abs(opensAt.getTime() - createdAt.getTime()) < 10000;
+    const isBornOpen = !!(opensAt && createdAt && Math.abs(opensAt.getTime() - createdAt.getTime()) < 10000);
     const now_val = new Date();
     const chatStart = opensAt ? new Date(opensAt.getTime() - 86400000) : null;
     const chatEnd = opensAt ? new Date(opensAt.getTime() + 18000000) : null;
-    const showChat = !isBornOpen && chatStart && chatEnd && now_val >= chatStart && now_val <= chatEnd;
+    const isChatAvailable = !!(!isBornOpen && chatStart && chatEnd && now_val >= chatStart && now_val <= chatEnd);
+    const [isChatView, setIsChatView] = useState(false);
+
+    // Toggle chat view based on availability
+    useEffect(() => {
+        if (isChatAvailable) setIsChatView(true);
+        else setIsChatView(false);
+    }, [isChatAvailable]);
 
     const filteredData = useMemo(() => {
         let result = [...items];
@@ -691,7 +595,12 @@ function CapsuleDetailScreen() {
         return { items: sortedItems, columns, total: realCount };
     }, [items, filterType, filterSort]);
 
-    useFocusEffect(useCallback(() => { loadData(); }, [capsuleId]));
+    useFocusEffect(useCallback(() => {
+        const task = InteractionManager.runAfterInteractions(() => {
+            loadData();
+        });
+        return () => task.cancel();
+    }, [capsuleId]));
 
     const formatDetailedDate = (dateStr: string) => {
         return new Date(dateStr).toLocaleDateString(undefined, {
@@ -719,10 +628,16 @@ function CapsuleDetailScreen() {
         epicIntervalRef.current = setInterval(tick, 1000);
     }, []);
 
-    const handleEpicComplete = useCallback(() => {
+    const handleEpicComplete = useCallback(async () => {
         setShowEpicOpening(false);
         setCapsule((prev: any) => ({ ...prev, status: 'opened', is_opening: false }));
-    }, []);
+        try {
+            await supabase.from('capsules').update({ status: 'opened', is_opening: false }).eq('id', capsuleId);
+            DeviceEventEmitter.emit('CAPSULE_UPDATED', { id: capsuleId, status: 'opened' });
+        } catch (err) {
+            console.error('Error persisting capsule open status:', err);
+        }
+    }, [capsuleId]);
 
     useEffect(() => {
         return () => { if (epicIntervalRef.current) clearInterval(epicIntervalRef.current); };
@@ -730,10 +645,6 @@ function CapsuleDetailScreen() {
 
     useEffect(() => {
         if (!capsuleId) return;
-        loadData();
-
-        // Ensure data is refreshed when screen comes into focus (fixes sync state issues)
-        const unsubFocus = navigation.addListener('focus', loadData);
 
         const capCh = supabase.channel(`capsule-${capsuleId}-detail`)
             .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'capsules', filter: `id=eq.${capsuleId}` }, payload => {
@@ -757,7 +668,6 @@ function CapsuleDetailScreen() {
             .subscribe();
 
         return () => {
-            unsubFocus();
             supabase.removeChannel(capCh);
             supabase.removeChannel(invCh);
             if (timerRef.current) clearInterval(timerRef.current);
@@ -780,17 +690,11 @@ function CapsuleDetailScreen() {
         let blocked: string[] = [];
         if (user) { blocked = await safetyService.getAllSafetyUserIds(user.id); setBlockedUserIds(blocked); }
 
-        const { data: capsuleData, error: capError } = await supabase.from('capsules').select(`
-                id, title, description, created_at, opens_at, status, model, type, owner_id, chain_id, duration_days, is_shared, is_opening, opening_at, open_requests,
+        const [initialCapRes, itemsRes, likesRes, commentsRes, myLikeRes, invitesRes, fCountRes, myFollowRes] = await Promise.all([
+            supabase.from('capsules').select(`
+                id, title, description, created_at, opens_at, status, model, type, owner_id, chain_id, duration_days, is_shared, is_opening, opening_at, open_requests, cover_url,
                 profiles:owner_id(id, username, display_name, avatar_url, is_verified)
-            `).eq('id', capsuleId).maybeSingle();
-
-        if (capError || !capsuleData) {
-            setLoading(false);
-            return;
-        }
-
-        const [itemsRes, likesRes, commentsRes, myLikeRes, invitesRes, fCountRes, myFollowRes] = await Promise.all([
+            `).eq('id', capsuleId).maybeSingle(),
             supabase.from('capsule_items').select(`
                 id, capsule_id, owner_id, media_url, thumbnail_url, media_type, content, caption, created_at,
                 latitude, longitude, altitude, location_name,
@@ -801,38 +705,50 @@ function CapsuleDetailScreen() {
                 id, capsule_id, user_id, content, created_at,
                 profiles:user_id(id, display_name, username, avatar_url, is_verified),
                 comment_likes(user_id)
-            `).eq('capsule_id', capsuleId).order('created_at', { ascending: false }),
-            user ? supabase.from('likes').select('id').eq('capsule_id', capsuleId).eq('user_id', user.id).maybeSingle() : { data: null },
+            `).eq('capsule_id', capsuleId).order('created_at', { ascending: false }).limit(100),
+            user ? supabase.from('likes').select('id').eq('capsule_id', capsuleId).eq('user_id', user.id).maybeSingle() : Promise.resolve({ data: null }),
             supabase.from('capsule_invites').select('id, capsule_id, user_id, status, profiles:user_id(id, username, display_name, avatar_url)').eq('capsule_id', capsuleId),
-            supabase.from('follows').select('id', { count: 'exact', head: true }).eq('following_id', capsuleData.owner_id),
-            user ? supabase.from('follows').select('id').eq('follower_id', user.id).eq('following_id', capsuleData.owner_id).maybeSingle() : { data: null },
+            Promise.resolve({ count: 0 }),
+            Promise.resolve({ data: null })
         ]);
 
-        const capRes = { data: capsuleData };
+        const capsuleData = initialCapRes.data;
+        if (initialCapRes.error || !capsuleData) {
+            setLoading(false);
+            return;
+        }
 
-        const isActuallyOpenCap = capRes.data?.type === 'opencap' || (capRes.data?.status === 'opened' && capRes.data?.duration_days === 0);
-        if (capRes.data?.status === 'opened' && !isActuallyOpenCap && (!itemsRes.data || itemsRes.data.length === 0)) {
+        const [ownerFollowRes, myFollowOwnerRes] = await Promise.all([
+            supabase.from('follows').select('id', { count: 'exact', head: true }).eq('following_id', capsuleData.owner_id),
+            user ? supabase.from('follows').select('id').eq('follower_id', user.id).eq('following_id', capsuleData.owner_id).maybeSingle() : Promise.resolve({ data: null })
+        ]);
+
+        setFollowerCount(ownerFollowRes.count || 0);
+        setIsFollowedOwner(!!myFollowOwnerRes.data);
+
+        const isActuallyOpenCap = initialCapRes.data?.type === 'opencap' || (initialCapRes.data?.status === 'opened' && initialCapRes.data?.duration_days === 0);
+        if (initialCapRes.data?.status === 'opened' && !isActuallyOpenCap && (!itemsRes.data || itemsRes.data.length === 0)) {
             await supabase.rpc('delete_capsule', { p_capsule_id: capsuleId });
             Alert.alert('Kapsely', t('detail.deleted_empty') || 'Capsule was empty and has been deleted.');
             if (navigation.canGoBack()) navigation.goBack();
             return;
         }
 
-        if (capRes.data) {
-            setCapsule(capRes.data);
-            const cfg = timerConfigManager.getConfig(capRes.data.model);
-            setModelTint(cfg?.themeColor || MODEL_TINTS[capRes.data.model] || '#7C5CBF');
-            const allMemberIds = [capRes.data.owner_id, ...(invitesRes.data?.filter((i: any) => i.status === 'accepted').map((i: any) => i.profiles?.id) || [])];
+        if (initialCapRes.data) {
+            setCapsule(initialCapRes.data);
+            const cfg = timerConfigManager.getConfig(initialCapRes.data.model);
+            setModelTint(cfg?.themeColor || MODEL_TINTS[initialCapRes.data.model] || '#7C5CBF');
+            const allMemberIds = [initialCapRes.data.owner_id, ...(invitesRes.data?.filter((i: any) => i.status === 'accepted').map((i: any) => i.profiles?.id) || [])];
             let followed = new Set<string>();
             if (user) {
                 const { data: fids } = await supabase.from('follows').select('following_id').eq('follower_id', user.id).in('following_id', allMemberIds);
                 fids?.forEach(f => followed.add(f.following_id));
             }
-            setIsFollowedOwner(followed.has(capRes.data.owner_id));
+            setIsFollowedOwner(followed.has(initialCapRes.data.owner_id));
             setAcceptedMembers((invitesRes.data?.filter((i: any) => i.status === 'accepted').map((i: any) => ({ ...i.profiles, isFollowed: followed.has(i.profiles?.id) }))) || []);
-            if (capRes.data.is_opening && capRes.data.status !== 'opened' && capRes.data.opening_at) {
-                const target = new Date(capRes.data.opening_at).getTime();
-                if (target > Date.now()) startEpicOpening(capRes.data.opening_at);
+            if (initialCapRes.data.is_opening && initialCapRes.data.status !== 'opened' && initialCapRes.data.opening_at) {
+                const target = new Date(initialCapRes.data.opening_at).getTime();
+                if (target > Date.now()) startEpicOpening(initialCapRes.data.opening_at);
                 else setCapsule((p: any) => ({ ...p, status: 'opened', is_opening: false }));
             }
         }
@@ -845,19 +761,23 @@ function CapsuleDetailScreen() {
         })));
         setIsLiked(!!myLikeRes.data);
         if (invitesRes.data) setInvites(invitesRes.data);
-        setFollowerCount(fCountRes?.count || 0);
-        setIsFollowedCapsule(!!myFollowRes?.data);
+        setFollowerCount(ownerFollowRes.count || 0);
+        setIsFollowedCapsule(!!myFollowOwnerRes.data);
         setLoading(false);
     };
 
-    const handleFollowToggle = async (targetId: string, isFollowed: boolean, setIsFollowed: (v: boolean) => void) => {
+    const handleFollowToggle = useCallback(async (targetId: string, isFollowed: boolean, setIsFollowed: (v: boolean) => void) => {
         if (!userId || userId === targetId) return;
+        const newStatus = !isFollowed;
+        setIsFollowed(newStatus);
+        if (targetId === capsule?.owner_id) {
+            setIsFollowedCapsule(newStatus);
+            setFollowerCount(prev => newStatus ? prev + 1 : Math.max(0, prev - 1));
+        }
         if (isFollowed) {
             await supabase.from('follows').delete().eq('follower_id', userId).eq('following_id', targetId);
-            setIsFollowed(false);
         } else {
             await supabase.from('follows').insert({ follower_id: userId, following_id: targetId });
-            setIsFollowed(true);
             const { data: existing } = await supabase.from('notifications').select('id').eq('user_id', targetId).eq('sender_id', userId).eq('type', 'follow').maybeSingle();
             if (existing) {
                 await supabase.from('notifications').update({ created_at: new Date().toISOString(), is_read: false }).eq('id', existing.id);
@@ -865,18 +785,15 @@ function CapsuleDetailScreen() {
                 await supabase.from('notifications').insert({ user_id: targetId, sender_id: userId, type: 'follow', message: t('common.started_following_you') });
             }
         }
-    };
+    }, [userId, capsule?.owner_id, t]);
 
-    const handleCapsuleFollowToggle = async () => {
+    const handleCapsuleFollowToggle = useCallback(async () => {
         if (!userId || !capsule?.owner_id) return;
-
         const wasFollowed = isFollowedCapsule;
         const newStatus = !wasFollowed;
-
-        // Optimistic UI update
         setIsFollowedCapsule(newStatus);
+        setIsFollowedOwner(newStatus);
         setFollowerCount(prev => newStatus ? prev + 1 : Math.max(0, prev - 1));
-
         try {
             if (wasFollowed) {
                 const { error } = await supabase.from('follows').delete().eq('follower_id', userId).eq('following_id', capsule.owner_id);
@@ -884,34 +801,35 @@ function CapsuleDetailScreen() {
             } else {
                 const { error } = await supabase.from('follows').insert({ follower_id: userId, following_id: capsule.owner_id });
                 if (error) throw error;
-
-                // Optional: Send notification to the owner about the new follower
                 try {
                     await supabase.from('notifications').insert({
                         user_id: capsule.owner_id,
                         sender_id: userId,
                         type: 'follow',
-                        message: 'started following you'
+                        message: t('common.started_following_you')
                     });
                 } catch (notifErr) {
                     console.warn('Failed to send follow notification', notifErr);
                 }
             }
-        } catch (err) {
+        } catch (err: any) {
+            if (err?.code === '23505') return;
             console.error('Follow toggle error:', err);
-            // Rollback optimistic update
             setIsFollowedCapsule(wasFollowed);
+            setIsFollowedOwner(wasFollowed);
             setFollowerCount(prev => wasFollowed ? prev + 1 : Math.max(0, prev - 1));
-            Alert.alert(t('common.error'), t('detail.follow_error') || 'Could not sync capsule. Please try again.');
+            Alert.alert(t('common.error'), t('detail.follow_error') || 'Could not follow. Please try again.');
         }
-    };
+    }, [userId, capsule?.owner_id, isFollowedCapsule, t]);
 
     const handleSetCover = async (mediaUrl: string) => {
         if (!capsule) return;
         try {
-            await supabase.from('capsules').update({ cover_url: mediaUrl }).eq('id', capsuleId);
+            const { error } = await supabase.from('capsules').update({ cover_url: mediaUrl }).eq('id', capsuleId);
+            if (error) throw error;
             setCapsule((p: any) => ({ ...p, cover_url: mediaUrl }));
-            Alert.alert(t('common.ready'), t('profile.cover_updated') || 'Portada actualizada!');
+            DeviceEventEmitter.emit('CAPSULE_UPDATED', { id: capsuleId, cover_url: mediaUrl });
+            Alert.alert(t('common.ready') || '¡Listo!', t('profile.cover_updated') || 'La portada de tu cápsula ha sido actualizada.');
         } catch (err: any) { Alert.alert('Error', err.message); }
     };
 
@@ -963,14 +881,18 @@ function CapsuleDetailScreen() {
 
     const handleItemLongPress = (item: any) => {
         if (capsule?.status !== 'opened') { handleReportItem(item.id); return; }
-        Alert.alert(t('common.options') || 'Opciones', '', [
-            { text: t('profile.setAsCover') || 'Usar de portada', onPress: () => handleSetCover(item.media_url) },
-            { text: t('common.report') || 'Reportar', onPress: () => handleReportItem(item.id) },
-            { text: t('common.cancel'), style: 'cancel' },
+        const optionsTitle = t('common.options');
+        const setCoverText = t('profile.setAsCover');
+        const reportText = t('common.report');
+        const cancelText = t('common.cancel');
+        Alert.alert(optionsTitle, '', [
+            { text: setCoverText, onPress: () => handleSetCover(item.media_url) },
+            { text: reportText, onPress: () => handleReportItem(item.id) },
+            { text: cancelText, style: 'cancel' },
         ]);
     };
 
-    const handleRequestOpen = async () => {
+    const handleRequestOpen = useCallback(async () => {
         if (!userId || !capsule) return;
         const { data, error } = await supabase.rpc('request_capsule_open_v4', { target_capsule_id: capsuleId, requester_user_id: userId });
         if (error) { console.error(error); return; }
@@ -986,7 +908,7 @@ function CapsuleDetailScreen() {
                 }
             }
         }
-    };
+    }, [userId, capsule, capsuleId, startEpicOpening, invites, t]);
 
     const handleLike = async () => {
         if (!userId) return;
@@ -1028,6 +950,16 @@ function CapsuleDetailScreen() {
         ]);
     };
 
+    const handleReportComment = (cid: string) => {
+        if (!userId) return;
+        Alert.alert(t('detail.report_comment'), t('detail.report_reason'), [
+            { text: t('detail.report_types.inappropriate'), onPress: () => submitReport(cid, 'comment', 'inappropriate') },
+            { text: t('detail.report_types.spam'), onPress: () => submitReport(cid, 'comment', 'spam') },
+            { text: t('detail.report_types.harassment'), onPress: () => submitReport(cid, 'comment', 'harassment') },
+            { text: t('common.cancel'), style: 'cancel' },
+        ]);
+    };
+
     const handleReportItem = (itemId: string) => {
         if (!userId) return;
         Alert.alert(t('detail.report_content'), t('detail.report_reason'), [
@@ -1046,6 +978,250 @@ function CapsuleDetailScreen() {
 
     const openViewer = (index: number) => { setInitialIndex(index); setActiveViewerIndex(index); setViewerVisible(true); };
     const toggleAudio = (url: string) => setPlayingAudio(p => p === url ? null : url);
+
+    const scrollToChat = useCallback(() => {
+        sectionListRef.current?.scrollToLocation({
+            sectionIndex: 1, // 'chat' section
+            itemIndex: 0,
+            animated: true,
+            viewOffset: 100
+        });
+    }, []);
+
+    const renderItem = useCallback(({ item }: any) => {
+        if (item === 'content') {
+            return (
+                <View style={ds.contentSection}>
+                    <View style={ds.sectionHeader}>
+                        <View style={[ds.sectionHeaderBar, { backgroundColor: tint }]} />
+                        <Text style={ds.sectionTitle}>{t('detail.contents')}</Text>
+                        <Text style={ds.sectionCount}>{filteredData.total}</Text>
+                    </View>
+                    <FilterBar />
+                    {filteredData.columns.length > 0 ? (
+                        <FlatList
+                            horizontal
+                            showsHorizontalScrollIndicator={false}
+                            data={filteredData.columns}
+                            keyExtractor={(_, i) => i.toString()}
+                            scrollEventThrottle={16}
+                            decelerationRate="fast"
+                            snapToInterval={((width - 44) / 2.4) + 10}
+                            contentContainerStyle={{ paddingHorizontal: 2, gap: 10 }}
+                            initialNumToRender={3}
+                            windowSize={2.5}
+                            maxToRenderPerBatch={2}
+                            removeClippedSubviews={true}
+                            renderItem={({ item: colItems }) => (
+                                <View style={{ width: (width - 44) / 2.4, gap: 12 }}>
+                                    {colItems.map((pi: any) => (
+                                        <View key={pi.id} style={{ height: ((width - 44) / 2.4) + 22 }}>
+                                            {pi.isPlaceholder ? (
+                                                <TouchableOpacity
+                                                    style={[ds.cellWrap, ds.cellPlaceholder]}
+                                                    activeOpacity={0.7}
+                                                    disabled={!(isMember && (isBornOpen || (isSealed && !canBeOpened && !isOpening)))}
+                                                    onPress={() => {
+                                                        if (!isSealed && !isBornOpen) return;
+                                                        navigation.navigate('CreateSelection', { capsuleId: capsule.id });
+                                                    }}
+                                                >
+                                                    {isMember && (isBornOpen || (isSealed && !canBeOpened && !isOpening)) ? (
+                                                        <Ionicons name="add" size={24} color={tint + '25'} />
+                                                    ) : (
+                                                        <Ionicons name="cube-outline" size={22} color={D.textMuted + '15'} />
+                                                    )}
+                                                </TouchableOpacity>
+                                            ) : isSealed ? (
+                                                <View style={[ds.cellWrap, ds.cellSealed]}>
+                                                    {pi.media_type === 'audio' ? (
+                                                        <LinearGradient colors={[tint, tint + 'CC', D.rose + 'AA']} style={StyleSheet.absoluteFill} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+                                                            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', opacity: 0.15 }}>
+                                                                <Ionicons name="mic" size={((width - 44) / 2.4) * 0.6} color="#fff" />
+                                                            </View>
+                                                        </LinearGradient>
+                                                    ) : pi.media_type === 'note' ? (
+                                                        <View style={[StyleSheet.absoluteFill, { backgroundColor: '#FFF9E0' }]}>
+                                                            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', opacity: 0.1 }}>
+                                                                <Ionicons name="reader-outline" size={((width - 44) / 2.4) * 0.5} color="#000" />
+                                                            </View>
+                                                            <View style={[ds.noteTape, { top: 4, transform: [{ rotate: '-6deg' }], width: '40%', opacity: 0.3 }]} />
+                                                        </View>
+                                                    ) : (pi.media_url || pi.thumbnail_url) && (pi.media_type === 'image' || pi.media_type === 'video') && (
+                                                        <Image
+                                                            source={{ uri: pi.thumbnail_url || pi.media_url }}
+                                                            style={StyleSheet.absoluteFill}
+                                                            blurRadius={Platform.OS === 'ios' ? 12 : 4}
+                                                            cachePolicy="memory-disk"
+                                                        />
+                                                    )}
+                                                    {Platform.OS === 'ios' ? (
+                                                        (pi.media_type === 'image' || pi.media_type === 'video') && (
+                                                            <BlurView intensity={32} tint="extraLight" style={StyleSheet.absoluteFill} />
+                                                        )
+                                                    ) : (
+                                                        (pi.media_type === 'image' || pi.media_type === 'video') && (
+                                                            <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255,255,255,0.7)' }]} />
+                                                        )
+                                                    )}
+                                                    {(pi.media_type === 'image' || pi.media_type === 'video') && (
+                                                        <View style={[ds.cellTypeTag, { backgroundColor: tint + '18', borderColor: tint + '30' }]}>
+                                                            <Ionicons name={pi.media_type === 'video' ? 'videocam' : 'image'} size={11} color={tint} />
+                                                        </View>
+                                                    )}
+                                                    {pi.profiles && totalMembers > 1 && (
+                                                        <Image source={{ uri: pi.profiles.avatar_url || 'https://via.placeholder.com/150' }} style={[ds.itemAuthorOverlay as any, { borderColor: tint + '40' }]} />
+                                                    )}
+                                                    <Ionicons name="lock-closed" size={20} color={tint + '50'} />
+                                                    <View style={ds.itemDateTag}>
+                                                        <Text style={ds.itemDateText}>{new Date(pi.created_at).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: '2-digit' })}</Text>
+                                                    </View>
+                                                </View>
+                                            ) : (
+                                                <TouchableOpacity
+                                                    style={ds.cellWrap} activeOpacity={0.82}
+                                                    onPress={() => {
+                                                        if (pi.media_type === 'audio') toggleAudio(pi.media_url);
+                                                        else openViewer(filteredData.items.indexOf(pi));
+                                                    }}
+                                                    onLongPress={() => !pi.isPlaceholder && handleItemLongPress(pi)}
+                                                >
+                                                    {pi.media_type === 'audio' ? (
+                                                        <LinearGradient colors={[tint, tint + 'CC', D.rose + 'AA']} style={StyleSheet.absoluteFill} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+                                                            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                                                                <View style={ds.audioWaveContainer}>
+                                                                    {[12, 22, 16, 28, 20, 14, 18].map((h, i) => (
+                                                                        <View key={i} style={[ds.audioWaveBar, { height: h }]} />
+                                                                    ))}
+                                                                </View>
+                                                                <Ionicons name={playingAudio === pi.media_url ? 'pause-circle' : 'mic-circle'} size={38} color="#fff" />
+                                                            </View>
+                                                            <View style={ds.audioPreviewFooter}>
+                                                                <Text style={ds.audioPreviewLabel}>{playingAudio === pi.media_url ? t('detail.playing') : ''}</Text>
+                                                                <Ionicons name="pulse" size={14} color="#fff" />
+                                                            </View>
+                                                        </LinearGradient>
+                                                    ) : pi.media_type === 'note' ? (
+                                                        <View style={ds.notePreview}>
+                                                            <View style={ds.noteTape} />
+                                                            <View style={ds.notePreviewIcon}>
+                                                                <Ionicons name="create-outline" size={16} color="#B49D4F" />
+                                                            </View>
+                                                            <Text style={ds.notePreviewText} numberOfLines={4}>{pi.content}</Text>
+                                                        </View>
+                                                    ) : (
+                                                        <Image source={{ uri: pi.thumbnail_url || pi.media_url }} style={ds.cellWrap as any} contentFit="cover" cachePolicy="memory-disk" transition={200} />
+                                                    )}
+                                                    {pi.media_type === 'video' && (
+                                                        <View style={ds.playBadge}><Ionicons name="play" size={10} color="#fff" /></View>
+                                                    )}
+                                                    <View style={ds.itemDateTag}>
+                                                        <Text style={ds.itemDateText}>{new Date(pi.created_at).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: '2-digit' })}</Text>
+                                                    </View>
+                                                    {pi.profiles && totalMembers > 1 && (
+                                                        <Image source={{ uri: pi.profiles.avatar_url || 'https://via.placeholder.com/150' }} style={[ds.itemAuthorOverlay as any, { borderColor: '#fff' }]} />
+                                                    )}
+                                                    {pi.location_name && (
+                                                        <View style={{ position: 'absolute', bottom: 6, right: 6 }}>
+                                                            <AestheticLocation name={pi.location_name} compact dark />
+                                                        </View>
+                                                    )}
+                                                </TouchableOpacity>
+                                            )}
+                                            {!pi.isPlaceholder && (
+                                                <Text style={ds.cellCaption} numberOfLines={1}>
+                                                    {pi.caption && pi.caption.replace(/!!b:[^\s]+/g, '').trim() ? pi.caption.replace(/!!b:[^\s]+/g, '').trim() : ' '}
+                                                </Text>
+                                            )}
+                                        </View>
+                                    ))}
+                                </View>
+                            )}
+                        />
+                    ) : null}
+                </View>
+            );
+        }
+
+        if (item === 'chat' && isChatAvailable && isChatView) {
+            return (
+                <LiveChat
+                    ref={liveChatRef}
+                    capsuleId={capsuleId}
+                    tint={tint}
+                    hideInput
+                    isOwner={isOwner}
+                    isNested
+                    onInteractionStart={() => setScrollEnabled(false)}
+                    onInteractionEnd={() => setScrollEnabled(true)}
+                />
+            );
+        }
+
+        if (item === 'social_header') {
+            return (
+                <View style={ds.socialSection}>
+                    <View style={ds.sectionHeader}>
+                        <View style={[ds.sectionHeaderBar, { backgroundColor: tint }]} />
+                        <Text style={ds.sectionTitle}>{t('detail.reactions')}</Text>
+                    </View>
+                    <View style={ds.actionRow}>
+                        <TouchableOpacity style={ds.actionBtn} activeOpacity={0.72} onPress={handleLike}>
+                            <View style={[ds.actionIconWrap, isLiked && { backgroundColor: '#FFF0F3' }]}>
+                                <Ionicons name={isLiked ? 'heart' : 'heart-outline'} size={20} color={isLiked ? '#F43F5E' : D.textSec} />
+                            </View>
+                            <Text style={[ds.actionCount, isLiked && { color: '#F43F5E' }]}>{likeCount}</Text>
+                        </TouchableOpacity>
+                        <View style={ds.actionBtn}>
+                            <View style={ds.actionIconWrap}>
+                                <Ionicons name="chatbubble-outline" size={19} color={D.textSec} />
+                            </View>
+                            <Text style={ds.actionCount}>{comments.length}</Text>
+                        </View>
+                    </View>
+                </View>
+            );
+        }
+
+        if (typeof item === 'object' && item.id) {
+            const c = item;
+            return (
+                <TouchableOpacity 
+                    activeOpacity={0.8}
+                    onLongPress={() => handleReportComment(c.id)}
+                    style={{ paddingHorizontal: 22 }}
+                >
+                    <BlurView intensity={25} tint="extraLight" style={[ds.commentCard, { borderColor: highlightedCommentId === c.id ? tint + '60' : D.border, marginBottom: 10 }, highlightedCommentId === c.id && { borderLeftWidth: 3, borderLeftColor: tint }]}>
+                        <TouchableOpacity onPress={() => navigation.navigate('UserProfile', { targetUserId: c.user_id })}>
+                            <Image source={{ uri: c.profiles?.avatar_url || 'https://via.placeholder.com/150' }} style={[ds.commentAvatar as any, { borderColor: D.border }]} cachePolicy="memory-disk" contentFit="cover" />
+                        </TouchableOpacity>
+                        <View style={{ flex: 1 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>
+                                <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }} onPress={() => navigation.navigate('UserProfile', { targetUserId: c.user_id })}>
+                                    <Text style={ds.commentName}>{c.profiles?.display_name || c.profiles?.username}</Text>
+                                    {c.profiles?.is_verified && <VerifiedBadge size={9} />}
+                                </TouchableOpacity>
+                                <Text style={ds.commentTime}>{formatTime(c.created_at)}</Text>
+                            </View>
+                            <Text style={ds.commentText}>{c.content}</Text>
+                        </View>
+                        <View style={{ alignItems: 'center', gap: 8, paddingLeft: 6 }}>
+                            <TouchableOpacity onPress={() => handleLikeComment(c.id)} style={{ alignItems: 'center', gap: 2 }}>
+                                <Ionicons name={c.myLike ? 'heart' : 'heart-outline'} size={13} color={c.myLike ? '#F43F5E' : D.textMuted} />
+                                {c.likeCount > 0 && <Text style={[ds.commentLikeCount, c.myLike && { color: '#F43F5E' }]}>{c.likeCount}</Text>}
+                            </TouchableOpacity>
+                            {(c.user_id === userId || isOwner) && (
+                                <TouchableOpacity onPress={() => handleDeleteComment(c.id)} style={{ padding: 2 }}>
+                                    <Ionicons name="trash-outline" size={12} color={D.textMuted} />
+                                </TouchableOpacity>
+                            )}
+                        </View>
+                    </BlurView>
+                </TouchableOpacity>
+            );
+        }
+        return null;
+    }, [tint, t, filteredData, isChatAvailable, isChatView, isOwner, userId, comments, highlightedCommentId, playingAudio, isMember, isBornOpen, isSealed, canBeOpened, isOpening, totalMembers]);
 
     const FilterBar = useCallback(() => {
         const filterScrollRef = useRef<ScrollView>(null);
@@ -1068,7 +1244,26 @@ function CapsuleDetailScreen() {
                 </TouchableOpacity>
             </ScrollView>
         );
-    }, [filterType, filterSort, tint]);
+    }, [filterType, filterSort, tint, t]);
+
+    const renderHero = useCallback(() => (
+        <CapsuleHero
+            capsule={capsule} tint={tint} isMember={isMember}
+            isSealed={isSealed} isOpening={isOpening} modelImg={modelImg}
+            totalMembers={totalMembers} likeCount={likeCount} followerCount={followerCount}
+            isFollowedCapsule={isFollowedCapsule} handleCapsuleFollowToggle={handleCapsuleFollowToggle}
+            isOwner={isOwner} canBeOpened={canBeOpened} hasRequestedOpen={hasRequestedOpen}
+            handleRequestOpen={handleRequestOpen} reqCount={reqCount} isBornOpen={isBornOpen} userId={userId}
+            setCapsule={setCapsule} t={t}
+            onAddContent={() => navigation.navigate('CreateSelection', { capsuleId: capsule.id })}
+            collaborators={totalMembers > 1 ? <CollaboratorsBar owner={capsule.profiles} members={acceptedMembers} tint={tint} /> : null}
+        />
+    ), [
+        capsule, tint, isMember, isSealed, isOpening, modelImg,
+        totalMembers, likeCount, followerCount, isFollowedCapsule,
+        handleCapsuleFollowToggle, isOwner, canBeOpened, hasRequestedOpen,
+        handleRequestOpen, reqCount, isBornOpen, userId, t, acceptedMembers
+    ]);
 
     if (loading && !capsule) return (
         <View style={[ds.root, { alignItems: 'center', justifyContent: 'center' }]}>
@@ -1087,7 +1282,6 @@ function CapsuleDetailScreen() {
 
     return (
         <View style={ds.root}>
-            {/* ✅ AudioController is memoized — won't cause tree re-renders */}
             <AudioController uri={playingAudio} onFinish={() => setPlayingAudio(null)} />
             <AmbientOrbs accent={tint} />
             <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
@@ -1099,26 +1293,30 @@ function CapsuleDetailScreen() {
                 <TouchableOpacity style={ds.headerBackBtn} activeOpacity={0.65} onPress={() => navigation.goBack()}>
                     <Ionicons name="chevron-back" size={20} color={D.text} />
                 </TouchableOpacity>
-                <TouchableOpacity style={ds.headerCenter} activeOpacity={0.78} onPress={() => navigation.navigate('UserProfile', { targetUserId: capsule.owner_id })}>
-                    <Image source={{ uri: capsule.profiles?.avatar_url || 'https://via.placeholder.com/150' }} style={[ds.headerAvatar as any, { borderColor: tint + '40' }]} cachePolicy="memory-disk" contentFit="cover" transition={200} />
-                    <View style={{ flexShrink: 1 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                            <Text style={ds.headerName} numberOfLines={1}>{capsule.profiles?.display_name || capsule.profiles?.username}</Text>
-                            {capsule.profiles?.is_verified && <VerifiedBadge size={10} />}
+                {totalMembers <= 1 ? (
+                    <TouchableOpacity style={ds.headerCenter} activeOpacity={0.78} onPress={() => navigation.navigate('UserProfile', { targetUserId: capsule.owner_id })}>
+                        <Image source={{ uri: capsule.profiles?.avatar_url || 'https://via.placeholder.com/150' }} style={[ds.headerAvatar as any, { borderColor: tint + '40' }]} cachePolicy="memory-disk" contentFit="cover" transition={200} />
+                        <View style={{ flexShrink: 1 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                <Text style={ds.headerName} numberOfLines={1}>{capsule.profiles?.display_name || capsule.profiles?.username}</Text>
+                                {capsule.profiles?.is_verified && <VerifiedBadge size={10} />}
+                            </View>
+                            <Text style={ds.headerSub} numberOfLines={1}>{capsule.title}</Text>
                         </View>
-                        <Text style={ds.headerSub} numberOfLines={1}>{capsule.title}</Text>
-                    </View>
-                    {userId !== capsule.owner_id && (
-                        <Pressable
-                            onPress={e => { e.stopPropagation?.(); handleFollowToggle(capsule.owner_id, isFollowedOwner, setIsFollowedOwner); }}
-                            style={[ds.followPill, isFollowedOwner ? { backgroundColor: 'transparent', borderWidth: 1, borderColor: D.border } : { backgroundColor: tint }]}
-                        >
-                            <Text style={[ds.followPillText, isFollowedOwner && { color: D.textMuted }]}>
-                                {isFollowedOwner ? t('common.following') : t('common.follow')}
-                            </Text>
-                        </Pressable>
-                    )}
-                </TouchableOpacity>
+                        {userId !== capsule.owner_id && (
+                            <Pressable
+                                onPress={e => { e.stopPropagation?.(); handleFollowToggle(capsule.owner_id, isFollowedOwner, setIsFollowedOwner); }}
+                                style={[ds.followPill, isFollowedOwner ? { backgroundColor: 'transparent', borderWidth: 1, borderColor: D.border } : { backgroundColor: tint }]}
+                            >
+                                <Text style={[ds.followPillText, isFollowedOwner && { color: D.textMuted }]}>
+                                    {isFollowedOwner ? t('common.following') : t('common.follow')}
+                                </Text>
+                            </Pressable>
+                        )}
+                    </TouchableOpacity>
+                ) : (
+                    <View style={ds.headerCenter} />
+                )}
                 <TouchableOpacity style={ds.headerOptionsBtn} activeOpacity={0.65} onPress={() => setShowOptions(true)}>
                     <Ionicons name="ellipsis-horizontal" size={17} color={D.textSec} />
                 </TouchableOpacity>
@@ -1129,328 +1327,38 @@ function CapsuleDetailScreen() {
                     ref={sectionListRef}
                     sections={[
                         { title: 'content', data: ['content'] },
-                        { title: 'chat', data: showChat ? ['chat'] : [] },
-                        { title: 'social', data: ['social'] },
+                        { title: 'chat', data: (isChatAvailable && isChatView) ? ['chat'] : [] },
+                        { title: 'social_header', data: ['social_header'] },
+                        { title: 'comments', data: comments },
                     ]}
                     nestedScrollEnabled
                     scrollEnabled={scrollEnabled}
-
-                    keyExtractor={(item, i) => item + i}
+                    keyExtractor={(item, i) => (typeof item === 'string' ? item : item.id) + i}
                     showsVerticalScrollIndicator={false}
                     contentContainerStyle={[ds.scrollContent, { paddingTop: 72 + insets.top, paddingBottom: 20 }]}
                     keyboardShouldPersistTaps="handled"
                     stickySectionHeadersEnabled={false}
                     renderSectionHeader={() => null}
-                    ListHeaderComponent={() => (
-                        <CapsuleHero
-                            capsule={capsule} tint={tint} isMember={isMember}
-                            isSealed={isSealed} isOpening={isOpening} modelImg={modelImg}
-                            totalMembers={totalMembers} likeCount={likeCount} followerCount={followerCount}
-                            isFollowedCapsule={isFollowedCapsule} handleCapsuleFollowToggle={handleCapsuleFollowToggle}
-                            isOwner={isOwner} canBeOpened={canBeOpened} hasRequestedOpen={hasRequestedOpen}
-                            handleRequestOpen={handleRequestOpen} reqCount={reqCount} isBornOpen={isBornOpen} userId={userId}
-                            setCapsule={setCapsule}
-
-                        />
-                    )}
-                    renderItem={({ item }) => {
-                        if (item === 'content') {
-                            return (
-                                <View style={ds.contentSection}>
-                                    <View style={ds.sectionHeader}>
-                                        <View style={[ds.sectionHeaderBar, { backgroundColor: tint }]} />
-                                        <Text style={ds.sectionTitle}>Contents</Text>
-                                        <Text style={ds.sectionCount}>{filteredData.total}</Text>
-                                    </View>
-                                    <FilterBar />
-                                    {filteredData.columns.length > 0 ? (
-                                        <FlatList
-                                            horizontal
-                                            showsHorizontalScrollIndicator={false}
-                                            data={filteredData.columns}
-                                            keyExtractor={(_, i) => i.toString()}
-                                            scrollEventThrottle={16}
-                                            decelerationRate="fast"
-                                            snapToInterval={((width - 44) / 2.4) + 10}
-                                            contentContainerStyle={{ paddingHorizontal: 2, gap: 10 }}
-                                            initialNumToRender={3}
-                                            windowSize={2.5}
-                                            maxToRenderPerBatch={2}
-                                            removeClippedSubviews={true}
-                                            renderItem={({ item: colItems }) => (
-                                                <View style={{ width: (width - 44) / 2.4, gap: 12 }}>
-                                                    {colItems.map((pi: any) => (
-                                                        <View key={pi.id} style={{ height: ((width - 44) / 2.4) + 22 }}>
-                                                            {pi.isPlaceholder ? (
-                                                                <TouchableOpacity
-                                                                    style={[ds.cellWrap, ds.cellPlaceholder]}
-                                                                    activeOpacity={0.7}
-                                                                    disabled={!(isMember && isSealed && !isOpening)}
-                                                                    onPress={() => {
-                                                                        if (!isSealed) return;
-                                                                        navigation.navigate('CreateSelection', { capsuleId: capsule.id });
-                                                                    }}
-                                                                >
-                                                                    {isMember && isSealed && !isOpening ? (
-                                                                        <Ionicons name="add" size={24} color={tint + '25'} />
-                                                                    ) : (
-                                                                        <Ionicons name="cube-outline" size={22} color={D.textMuted + '15'} />
-                                                                    )}
-                                                                </TouchableOpacity>
-                                                            ) : isSealed ? (
-                                                                <View style={[ds.cellWrap, ds.cellSealed]}>
-                                                                    {pi.media_type === 'audio' ? (
-                                                                        <LinearGradient colors={[tint, tint + 'CC', D.rose + 'AA']} style={StyleSheet.absoluteFill} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-                                                                            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', opacity: 0.15 }}>
-                                                                                <Ionicons name="mic" size={((width - 44) / 2.4) * 0.6} color="#fff" />
-                                                                            </View>
-                                                                        </LinearGradient>
-                                                                    ) : pi.media_type === 'note' ? (
-                                                                        <View style={[StyleSheet.absoluteFill, { backgroundColor: '#FFF9E0' }]}>
-                                                                            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', opacity: 0.1 }}>
-                                                                                <Ionicons name="reader-outline" size={((width - 44) / 2.4) * 0.5} color="#000" />
-                                                                            </View>
-                                                                            <View style={[ds.noteTape, { top: 4, transform: [{ rotate: '-6deg' }], width: '40%', opacity: 0.3 }]} />
-                                                                        </View>
-                                                                    ) : (pi.media_url || pi.thumbnail_url) && (pi.media_type === 'image' || pi.media_type === 'video') && (
-                                                                        <Image
-                                                                            source={{ uri: pi.thumbnail_url || pi.media_url }}
-                                                                            style={StyleSheet.absoluteFill}
-                                                                            blurRadius={15}
-                                                                            cachePolicy="memory-disk"
-                                                                        />
-                                                                    )}
-                                                                    {Platform.OS === 'ios' ? (
-                                                                        (pi.media_type === 'image' || pi.media_type === 'video') && (
-                                                                            <BlurView
-                                                                                intensity={32}
-                                                                                tint="extraLight"
-                                                                                style={StyleSheet.absoluteFill}
-                                                                            />
-                                                                        )
-                                                                    ) : (
-                                                                        (pi.media_type === 'image' || pi.media_type === 'video') && (
-                                                                            <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255,255,255,0.65)' }]} />
-                                                                        )
-                                                                    )}
-
-                                                                    {(pi.media_type === 'image' || pi.media_type === 'video') && (
-                                                                        <View style={[ds.cellTypeTag, { backgroundColor: tint + '18', borderColor: tint + '30' }]}>
-                                                                            <Ionicons name={pi.media_type === 'video' ? 'videocam' : 'image'} size={11} color={tint} />
-                                                                        </View>
-                                                                    )}
-                                                                    <Ionicons name="lock-closed" size={20} color={tint + '50'} />
-                                                                    <View style={ds.itemDateTag}>
-                                                                        <Text style={ds.itemDateText}>{new Date(pi.created_at).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: '2-digit' })}</Text>
-                                                                    </View>
-                                                                </View>
-                                                            ) : (
-                                                                <TouchableOpacity
-                                                                    style={ds.cellWrap} activeOpacity={0.82}
-                                                                    onPress={() => {
-                                                                        if (pi.media_type === 'audio') toggleAudio(pi.media_url);
-                                                                        else openViewer(filteredData.items.indexOf(pi));
-                                                                    }}
-                                                                    onLongPress={() => !pi.isPlaceholder && handleItemLongPress(pi)}
-                                                                >
-                                                                    {pi.media_type === 'audio' ? (
-                                                                        <LinearGradient colors={[tint, tint + 'CC', D.rose + 'AA']} style={StyleSheet.absoluteFill} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-                                                                            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                                                                                <View style={ds.audioWaveContainer}>
-                                                                                    {[12, 22, 16, 28, 20, 14, 18].map((h, i) => (
-                                                                                        <View key={i} style={[ds.audioWaveBar, { height: h }]} />
-                                                                                    ))}
-                                                                                </View>
-                                                                                <Ionicons name={playingAudio === pi.media_url ? 'pause-circle' : 'mic-circle'} size={38} color="#fff" />
-                                                                            </View>
-                                                                            <View style={ds.audioPreviewFooter}>
-                                                                                <Text style={ds.audioPreviewLabel}>{playingAudio === pi.media_url ? (t('detail.playing') || 'Reproduciendo...') : ''}</Text>
-                                                                                <Ionicons name="pulse" size={14} color="#fff" />
-                                                                            </View>
-                                                                        </LinearGradient>
-                                                                    ) : pi.media_type === 'note' ? (
-                                                                        <View style={ds.notePreview}>
-                                                                            <View style={ds.noteTape} />
-                                                                            <View style={ds.notePreviewIcon}>
-                                                                                <Ionicons name="create-outline" size={16} color="#B49D4F" />
-                                                                            </View>
-                                                                            <Text style={ds.notePreviewText} numberOfLines={4}>{pi.content}</Text>
-                                                                        </View>
-                                                                    ) : (
-                                                                        <Image source={{ uri: pi.thumbnail_url || pi.media_url }} style={ds.cellWrap as any} contentFit="cover" cachePolicy="memory-disk" transition={200} />
-                                                                    )}
-                                                                    {pi.media_type === 'video' && (
-                                                                        <View style={ds.playBadge}><Ionicons name="play" size={10} color="#fff" /></View>
-                                                                    )}
-                                                                    <View style={ds.itemDateTag}>
-                                                                        <Text style={ds.itemDateText}>{new Date(pi.created_at).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: '2-digit' })}</Text>
-                                                                    </View>
-                                                                    {pi.location_name && (
-                                                                        <View style={{ position: 'absolute', bottom: 6, right: 6 }}>
-                                                                            <AestheticLocation name={pi.location_name} compact dark />
-                                                                        </View>
-                                                                    )}
-                                                                </TouchableOpacity>
-                                                            )}
-                                                            {!pi.isPlaceholder && (
-                                                                <Text style={ds.cellCaption} numberOfLines={1}>
-                                                                    {pi.caption && pi.caption.replace(/!!b:[^\s]+/g, '').trim() ? pi.caption.replace(/!!b:[^\s]+/g, '').trim() : ' '}
-                                                                </Text>
-                                                            )}
-                                                        </View>
-                                                    ))}
-                                                </View>
-                                            )}
-                                        />
-                                    ) : null}
-                                </View>
-                            );
-                        }
-                        // Dentro del renderItem del SectionList, donde item === 'chat':
-                        if (item === 'chat' && showChat) {
-                            return (
-                                <LiveChat
-                                    ref={liveChatRef}
-                                    capsuleId={capsuleId}
-                                    tint={tint}
-                                    hideInput
-                                    isOwner={isOwner}
-                                    isNested
-                                    // ✅ FIX: Deshabilita el scroll del SectionList padre mientras el usuario
-                                    // interactúa con el chat, para que los gestos no sean "robados"
-                                    onInteractionStart={() => setScrollEnabled(false)}
-                                    onInteractionEnd={() => setScrollEnabled(true)}
-                                />
-                            );
-                        }
-                        if (item === 'social') {
-                            return (
-                                <View style={ds.socialSection}>
-                                    <View style={ds.sectionHeader}>
-                                        <View style={[ds.sectionHeaderBar, { backgroundColor: tint }]} />
-                                        <Text style={ds.sectionTitle}>Reactions</Text>
-                                    </View>
-                                    <View style={ds.actionRow}>
-                                        <TouchableOpacity style={ds.actionBtn} activeOpacity={0.72} onPress={handleLike}>
-                                            <View style={[ds.actionIconWrap, isLiked && { backgroundColor: '#FFF0F3' }]}>
-                                                <Ionicons name={isLiked ? 'heart' : 'heart-outline'} size={20} color={isLiked ? '#F43F5E' : D.textSec} />
-                                            </View>
-                                            <Text style={[ds.actionCount, isLiked && { color: '#F43F5E' }]}>{likeCount}</Text>
-                                        </TouchableOpacity>
-                                        <View style={ds.actionBtn}>
-                                            <View style={ds.actionIconWrap}>
-                                                <Ionicons name="chatbubble-outline" size={19} color={D.textSec} />
-                                            </View>
-                                            <Text style={ds.actionCount}>{comments.length}</Text>
-                                        </View>
-                                    </View>
-                                    <View style={{ gap: 10 }}>
-                                        {comments.map(c => (
-                                            <BlurView key={c.id} intensity={25} tint="extraLight" style={[ds.commentCard, { borderColor: highlightedCommentId === c.id ? tint + '60' : D.border }, highlightedCommentId === c.id && { borderLeftWidth: 3, borderLeftColor: tint }]}>
-                                                <TouchableOpacity onPress={() => navigation.navigate('UserProfile', { targetUserId: c.user_id })}>
-                                                    <Image source={{ uri: c.profiles?.avatar_url || 'https://via.placeholder.com/150' }} style={[ds.commentAvatar as any, { borderColor: D.border }]} cachePolicy="memory-disk" contentFit="cover" />
-                                                </TouchableOpacity>
-                                                <View style={{ flex: 1 }}>
-                                                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>
-                                                        <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }} onPress={() => navigation.navigate('UserProfile', { targetUserId: c.user_id })}>
-                                                            <Text style={ds.commentName}>{c.profiles?.display_name || c.profiles?.username}</Text>
-                                                            {c.profiles?.is_verified && <VerifiedBadge size={9} />}
-                                                        </TouchableOpacity>
-                                                        <Text style={ds.commentTime}>{formatTime(c.created_at)}</Text>
-                                                    </View>
-                                                    <Text style={ds.commentText}>{c.content}</Text>
-                                                </View>
-                                                <View style={{ alignItems: 'center', gap: 8, paddingLeft: 6 }}>
-                                                    <TouchableOpacity onPress={() => handleLikeComment(c.id)} style={{ alignItems: 'center', gap: 2 }}>
-                                                        <Ionicons name={c.myLike ? 'heart' : 'heart-outline'} size={13} color={c.myLike ? '#F43F5E' : D.textMuted} />
-                                                        {c.likeCount > 0 && <Text style={[ds.commentLikeCount, c.myLike && { color: '#F43F5E' }]}>{c.likeCount}</Text>}
-                                                    </TouchableOpacity>
-                                                    {(c.user_id === userId || isOwner) && (
-                                                        <TouchableOpacity onPress={() => handleDeleteComment(c.id)} style={{ padding: 2 }}>
-                                                            <Ionicons name="trash-outline" size={12} color={D.textMuted} />
-                                                        </TouchableOpacity>
-                                                    )}
-                                                </View>
-                                            </BlurView>
-                                        ))}
-                                    </View>
-                                </View>
-                            );
-                        }
-                        return null;
-                    }}
+                    ListHeaderComponent={renderHero}
+                    renderItem={renderItem}
                 />
 
-                {/* Comment / chat input bar */}
-                <BlurView intensity={70} tint="extraLight" style={[ds.commentBar, { paddingBottom: Math.max(insets.bottom, 14) }]}>
-                    <View style={[ds.commentBarBorderTop, { backgroundColor: tint + '20' }]} />
-                    {showChat && (
-                        <View style={ds.emojiRow}>
-                            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, gap: 10 }}>
-                                {REACTION_EMOJIS.map(emoji => (
-                                    <TouchableOpacity
-                                        key={emoji}
-                                        style={[ds.emojiBtn, { backgroundColor: tint + '15' }]}
-                                        onPress={() => {
-                                            liveChatRef.current?.sendReaction(emoji);
-                                            // Also show locally for sender immediately
-                                            localEmojiTriggerRef.current?.(emoji);
-                                        }}
-                                    >
-                                        <Text style={{ fontSize: 20 }}>{emoji}</Text>
-                                    </TouchableOpacity>
-                                ))}
-                            </ScrollView>
-                        </View>
-                    )}
-                    {showChat ? (
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 4 }}>
-                            <TextInput
-                                style={[ds.commentInput, { borderColor: comment ? tint + '50' : D.border }]}
-                                placeholder="Escribe en el chat en vivo..."
-                                placeholderTextColor={D.textMuted}
-                                value={comment}
-                                onChangeText={setComment}
-                                multiline={false}
-                                selectionColor={tint}
-                                onSubmitEditing={() => { if (comment.trim()) { liveChatRef.current?.sendMessage(comment.trim()); setComment(''); } }}
-                            />
-                            <TouchableOpacity
-                                onPress={() => { if (comment.trim()) { liveChatRef.current?.sendMessage(comment.trim()); setComment(''); } }}
-                                disabled={!comment.trim()}
-                                style={[ds.postBtnWrap, { opacity: comment.trim() ? 1 : 0.4 }]}
-                            >
-                                <LinearGradient colors={[tint, tint + 'CC']} style={ds.postBtnGrad}>
-                                    <Ionicons name="send" size={14} color="#fff" />
-                                </LinearGradient>
-                            </TouchableOpacity>
-                        </View>
-                    ) : (
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 4 }}>
-                            <TextInput
-                                style={[ds.commentInput, { borderColor: comment ? tint + '50' : D.border }]}
-                                placeholder={t('detail.add_comment_placeholder') || 'Añade un comentario...'}
-                                placeholderTextColor={D.textMuted}
-                                value={comment}
-                                onChangeText={setComment}
-                                multiline
-                                selectionColor={tint}
-                            />
-                            <TouchableOpacity
-                                onPress={handleSendComment}
-                                disabled={!comment.trim()}
-                                style={[ds.postBtnWrap, { opacity: comment.trim() ? 1 : 0.4 }]}
-                            >
-                                <LinearGradient colors={[tint, tint + 'CC']} style={ds.postBtnGrad}>
-                                    <Ionicons name="arrow-up" size={16} color="#fff" />
-                                </LinearGradient>
-                            </TouchableOpacity>
-                        </View>
-                    )}
-                </BlurView>
+                {!showEpicOpening && (
+                    <InteractionBar
+                        showChat={isChatView}
+                        setShowChat={setIsChatView}
+                        isChatAvailable={isChatAvailable}
+                        comment={comment}
+                        setComment={setComment}
+                        tint={tint}
+                        handleSendComment={handleSendComment}
+                        liveChatRef={liveChatRef}
+                        scrollToChat={scrollToChat}
+                        localEmojiTriggerRef={localEmojiTriggerRef}
+                    />
+                )}
             </KeyboardAvoidingView>
 
-            {/* ✅ FloatingEmojis: self-contained channel subscriber + local trigger for sender */}
             <FloatingEmojis
                 capsuleId={capsuleId}
                 onLocalEmoji={(triggerFn) => { localEmojiTriggerRef.current = triggerFn; }}
@@ -1465,6 +1373,12 @@ function CapsuleDetailScreen() {
                         {[
                             { icon: 'qr-code-outline', color: D.text, label: t('detail.view_qr'), onPress: () => { setShowOptions(false); setShowQRModal(true); } },
                             { icon: 'logo-instagram', color: '#E1306C', label: t('detail.share_instagram'), onPress: () => { setShowOptions(false); navigation.navigate('InstagramShare', { capsule }); } },
+                            ...(!isSealed && (isOwner || totalMembers > 1) ? [{ 
+                                icon: openDesign === 'open' ? 'cube-outline' : 'cube', 
+                                color: tint, 
+                                label: t('detail.capsule_design') + ': ' + (openDesign === 'open' ? t('detail.opened') : t('detail.sealed')), 
+                                onPress: () => { setShowOptions(false); handleToggleDesign(); } 
+                            }] : []),
                             ...(!isOwner ? [{ icon: 'alert-circle-outline', color: D.textSec, label: t('detail.report_capsule'), onPress: handleReportCapsule }] : []),
                             ...(isOwner ? [{ icon: 'trash-outline', color: '#EF4444', label: t('detail.delete_perm'), onPress: handleDeleteCapsule }] : []),
                         ].map((opt, i) => (
@@ -1552,116 +1466,26 @@ function CapsuleDetailScreen() {
             </Modal>
 
             {/* ══════════════════════════════════════════════════════════
-                ✅ EPIC OPENING — covers everything, blocks all interaction
-                Triggered by realtime DB update (is_opening = true)
-                All members on this screen see it simultaneously
+                EPIC OPENING — covers everything, blocks all interaction.
+                Now passes epicImageUrls (flashback photos) and modelImg
+                (open capsule design) to the cinematic animation.
             ══════════════════════════════════════════════════════════ */}
             {showEpicOpening && (
                 <View style={[StyleSheet.absoluteFill, { zIndex: 9999 }]} pointerEvents="box-only">
                     <EpicOpening
                         tint={tint}
                         capsuleTitle={capsule?.title || ''}
-                        imageUrls={epicImageUrls}
-                        countdown={epicCountdown}
+                        countdown={10}
                         onComplete={handleEpicComplete}
+                        epicImageUrls={epicImageUrls}
+                        modelKey={capsule?.model || 'basicred_kap'}
+                        modelImg={timerConfigManager.getModelImageOpen(capsule?.model) || (MODEL_IMAGES_OPEN as any).basicred_kap}
+                        closedModelImg={timerConfigManager.getModelImage(capsule?.model) || (MODEL_IMAGES as any).basicred_kap}
                     />
                 </View>
             )}
-
         </View>
-
     );
 }
-
-// ─── Sub-components ───────────────────────────────────────────────────────────
-const CapsuleHero = React.memo(({
-    capsule, tint, isMember, isSealed, isOpening, modelImg, totalMembers,
-    likeCount, followerCount, isFollowedCapsule, handleCapsuleFollowToggle,
-    isOwner, canBeOpened, hasRequestedOpen, handleRequestOpen, reqCount, isBornOpen, userId, setCapsule
-}: any) => {
-    const { t } = useTranslation();
-    const navigation = useNavigation<any>();
-    return (
-        <View style={ds.heroSection}>
-            <View style={ds.capsuleStage}>
-                <View style={[ds.capsuleGlow, { backgroundColor: tint + '20' }]} />
-                <View style={[ds.capsuleGlowInner, { backgroundColor: tint + '10' }]} />
-                <TouchableOpacity
-                    activeOpacity={0.92}
-                    onPress={() => { if (isMember && isSealed && !isOpening) navigation.navigate('CreateSelection', { capsuleId: capsule.id }); }}
-                    disabled={!isMember || !isSealed || isOpening}
-                    style={{ zIndex: 2 }}
-                >
-                    <CapsuleWithTimer modelKey={capsule.model} source={{ uri: modelImg }} date={capsule.opens_at} chainId={capsule.chain_id} capsuleType={capsule.type || undefined} style={{ width: 220, height: 220 }} />
-                </TouchableOpacity>
-            </View>
-            <View style={ds.heroMeta}>
-                <View style={ds.statRow}>
-                    <StatPill icon="people-outline" label={t('detail.members', { count: totalMembers })} />
-                    {isSealed ? <StatPill icon="lock-closed-outline" label={t('detail.sealed')} color={tint} bg={tint + '12'} /> : <StatPill icon="book-outline" label={t('detail.opened')} color={D.purple} bg={D.purple + '12'} />}
-                    <StatPill icon="flash-outline" label={totalMembers > 1 ? t('detail.shared') : t('detail.solo')} />
-                    <StatPill icon="heart-outline" label={`${likeCount}`} color={D.rose} bg={D.rose + '10'} />
-                    <StatPill icon="eye-outline" label={`${followerCount}`} color={D.purple} bg={D.purple + '10'} />
-                </View>
-                <Text style={ds.title}>{capsule.title}</Text>
-                {capsule.description && <Text style={ds.desc}>{capsule.description}</Text>}
-                {userId !== capsule.owner_id && (
-                    <TouchableOpacity
-                        onPress={handleCapsuleFollowToggle}
-                        style={[ds.capsuleFollowBtn, { backgroundColor: isFollowedCapsule ? D.surfaceAlt : tint, borderColor: isFollowedCapsule ? D.border : tint }]}
-                        activeOpacity={0.8}
-                    >
-                        <Ionicons name={isFollowedCapsule ? 'checkmark-circle' : 'add-circle'} size={18} color={isFollowedCapsule ? tint : '#fff'} />
-                        <Text style={[ds.capsuleFollowBtnText, { color: isFollowedCapsule ? D.text : '#fff' }]}>
-                            {isFollowedCapsule ? (t('common.synced') || 'Synced') : (t('common.follow_capsule') || 'Sync')}
-                        </Text>
-                    </TouchableOpacity>
-                )}
-            </View>
-            {((!isOpening && isSealed) || (isBornOpen && isSealed)) && (
-                <View style={ds.ctaBlock}>
-                    {isOwner && canBeOpened ? (
-                        <View style={{ alignItems: 'center', width: '100%', gap: 8 }}>
-                            <TouchableOpacity style={[ds.unsealBtnWrap, { shadowColor: tint }]} activeOpacity={0.86} onPress={handleRequestOpen} disabled={hasRequestedOpen}>
-                                <LinearGradient colors={[tint, tint + 'CC', D.rose + 'AA']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={ds.unsealBtnGrad}>
-                                    <View style={ds.unsealBtnIconWrap}><Ionicons name="sparkles" size={20} color="#fff" /></View>
-                                    <View style={{ flex: 1 }}>
-                                        <Text style={ds.unsealBtnText}>{hasRequestedOpen ? t('detail.awaiting_others', { current: reqCount, total: totalMembers }) : t('detail.unseal_capsule')}</Text>
-                                        <Text style={ds.readyBadgeText}>READY! ✨</Text>
-                                    </View>
-                                    <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.8)" style={{ marginRight: 4 }} />
-                                </LinearGradient>
-                            </TouchableOpacity>
-                        </View>
-                    ) : (
-                        <View style={[ds.countdownCard, { backgroundColor: tint + '08', borderColor: tint + '20' }]}>
-                            <View style={[ds.countdownIconWrap, { backgroundColor: tint + '15' }]}>
-                                <Ionicons name="time" size={20} color={tint} />
-                            </View>
-                            <View style={{ flex: 1 }}>
-                                <Text style={[ds.countdownLabel, { color: tint }]}>
-                                    {isOpening
-                                        ? t('detail.opening_in')
-                                        : (canBeOpened ? (t('detail.unsealing_soon') || 'Abriendo pronto...') : (t('detail.unseals_in') || 'Se abre en'))}
-                                </Text>
-
-                                <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
-                                    {!canBeOpened || isOpening ? (
-                                        <LiveTimer
-                                            date={isOpening ? capsule.opening_at : capsule.opens_at}
-                                            style={[ds.countdownTimer, { color: D.text, minWidth: 80 }]}
-                                        />
-                                    ) : (
-                                        <Text style={[ds.countdownTimer, { color: tint }]}>READY! ✨</Text>
-                                    )}
-                                </View>
-                            </View>
-                        </View>
-                    )}
-                </View>
-            )}
-        </View>
-    );
-});
 
 export default CapsuleDetailScreen;
