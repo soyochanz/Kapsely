@@ -304,7 +304,7 @@ const ds = StyleSheet.create({
 });
 
 // ── Collaborators Component ──────────────────────────────────────────────────
-const CollaboratorsBar = React.memo(({ owner, members, invites, tint, isMember, onInvite }: any) => {
+const CollaboratorsBar = React.memo(({ owner, members, invites, tint, isMember, onInvite, t }: any) => {
     const [activeUser, setActiveUser] = useState<any>(null);
     const timeoutRef = useRef<any>(null);
     const navigation = useNavigation<any>();
@@ -344,6 +344,13 @@ const CollaboratorsBar = React.memo(({ owner, members, invites, tint, isMember, 
                     <Text style={ds.collabNameText}>{activeUser.display_name || activeUser.username}</Text>
                 </View>
             )}
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 6 }}>
+                <Ionicons name="people" size={14} color={D.textMuted} />
+                <Text style={{ fontSize: 13, fontFamily: Fonts.semiBold, color: D.textSec }}>
+                    {allMembers.length} {t('common.members')}
+                </Text>
+            </View>
+
             <View style={[ds.collabBar, { gap: -10 }]}>
                 {allMembers.slice(0, 6).map((m, i) => {
                     const size = m.isPending ? 36 : 32;
@@ -369,20 +376,22 @@ const CollaboratorsBar = React.memo(({ owner, members, invites, tint, isMember, 
                                 alignItems: 'center'
                             }}>
                                 <Image 
-                                    source={{ uri: m.avatar_url || 'https://via.placeholder.com/150' }} 
+                                    source={{ uri: m.avatar_url || Colors.getAvatarUrl(null, m.display_name || m.username) }} 
                                     style={{ 
                                         width: '100%', 
                                         height: '100%',
-                                        opacity: m.isPending ? 0.6 : 1,
                                     }}
-                                    contentFit="cover"
+                                    contentFit="contain" // Better for SVGs and centering initials
                                     // Use grayscale filter for true Black & White effect
-                                    {...(m.isPending ? { filters: [{ grayscale: 1.0 }] } : {})}
+                                    {...(m.isPending ? { 
+                                        filters: [{ grayscale: 1.0 }, { brightness: 1.1 }],
+                                        opacity: 0.9
+                                    } : {})}
                                 />
                                 {m.isPending && (
                                     <View style={{ 
                                         ...StyleSheet.absoluteFillObject, 
-                                        backgroundColor: 'rgba(0,0,0,0.1)', // Very subtle dimming
+                                        backgroundColor: 'rgba(255,255,255,0.05)', // Very light white overlay to "clean" the B&W
                                     }} />
                                 )}
                             </View>
@@ -1601,6 +1610,7 @@ function CapsuleDetailScreen() {
                         tint={tint} 
                         isMember={isMember}
                         onInvite={() => setShowInviteModal(true)}
+                        t={t}
                     />
                 ) : null}
             />

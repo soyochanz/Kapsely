@@ -82,9 +82,8 @@ export const CapsuleHero = React.memo(({
 
             <View style={s.heroMeta}>
                 <View style={s.statRow}>
-                    <StatPill icon="people-outline" label={`${totalMembers}`} />
                     <StatPill icon="heart-outline" label={`${likeCount}`} />
-                    <StatPill icon="notifications-outline" label={`${followerCount}`} />
+                    <StatPill icon="person-outline" label={`${followerCount}`} />
                     <View style={s.statPill}>
                         <Ionicons name={isSealed ? "lock-closed" : "lock-open"} size={16} color={isSealed ? "#EF4444" : "#10B981"} />
                     </View>
@@ -98,7 +97,7 @@ export const CapsuleHero = React.memo(({
                         style={[s.capsuleFollowBtn, { borderColor: isFollowedCapsule ? D.border : tint + '40', backgroundColor: isFollowedCapsule ? 'transparent' : tint + '08' }]}
                         onPress={handleCapsuleFollowToggle}
                     >
-                        <Ionicons name={isFollowedCapsule ? "notifications" : "notifications-outline"} size={16} color={isFollowedCapsule ? D.textMuted : tint} />
+                        <Ionicons name={isFollowedCapsule ? "person" : "person-outline"} size={16} color={isFollowedCapsule ? D.textMuted : tint} />
                         <Text style={[s.capsuleFollowBtnText, { color: isFollowedCapsule ? D.textMuted : tint }]}>
                             {isFollowedCapsule ? t('detail.unfollow_capsule') : t('detail.follow_capsule')}
                         </Text>

@@ -49,7 +49,8 @@ export const Colors = {
     getAvatarUrl: (url?: string | null, name?: string | null) => {
         if (url) return url;
         const seed = name || 'U';
-        return `https://ui-avatars.com/api/?background=a66eff&color=fff&name=${encodeURIComponent(seed)}&size=256`;
+        // Using Dicebear for better centering and aesthetics
+        return `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(seed)}&backgroundColor=a66eff&fontFamily=Arial&fontWeight=bold`;
     }
 };
 
