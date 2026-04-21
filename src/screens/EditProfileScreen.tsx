@@ -233,7 +233,7 @@ export default function EditProfileScreen({ onClose, initialData }: Props) {
                 const recentChanges = displayNameHistory.filter(ts => new Date(ts) > fifteenDaysAgo);
                 
                 if (recentChanges.length >= 2) {
-                    Alert.alert('Límite alcanzado', 'Solo puedes cambiar tu nombre visible dos veces cada 15 días.');
+                    Alert.alert(t('common.limit_reached', 'Límite alcanzado'), t('profile.name_limit_msg', 'Solo puedes cambiar tu nombre visible dos veces cada 15 días.'));
                     setSaving(false); return;
                 }
                 newNameHistory.push(new Date().toISOString());
@@ -245,14 +245,14 @@ export default function EditProfileScreen({ onClose, initialData }: Props) {
                 const recentUserChanges = usernameHistory.filter(ts => new Date(ts) > oneMonthAgo);
                 
                 if (recentUserChanges.length >= 2) {
-                    Alert.alert('Límite alcanzado', 'Solo puedes cambiar tu nombre de usuario (@) dos veces al mes.');
+                    Alert.alert(t('common.limit_reached', 'Límite alcanzado'), t('profile.username_limit_msg', 'Solo puedes cambiar tu nombre de usuario (@) dos veces al mes.'));
                     setSaving(false); return;
                 }
 
                 // Check if username is taken
                 const { data: existing } = await supabase.from('profiles').select('id').eq('username', username.trim().toLowerCase()).single();
                 if (existing && existing.id !== userId) {
-                    Alert.alert('Error', 'Este nombre de usuario ya está en uso.');
+                    Alert.alert(t('common.error'), t('profile.username_taken', 'Este nombre de usuario ya está en uso.'));
                     setSaving(false); return;
                 }
                 newUsernameHistory.push(new Date().toISOString());
@@ -274,7 +274,7 @@ export default function EditProfileScreen({ onClose, initialData }: Props) {
             }).eq('id', userId);
 
             if (error) throw error;
-            Alert.alert('✅ Saved', 'Profile updated successfully.');
+            Alert.alert(t('common.success'), t('profile.profile_updated', 'Perfil actualizado correctamente.'));
             if (onClose) onClose();
             else navigation.goBack();
         } catch (e: any) {
@@ -427,7 +427,7 @@ export default function EditProfileScreen({ onClose, initialData }: Props) {
                     <TextInput style={styles.input} value={displayName} onChangeText={setDisplayName}
                         placeholder={t('profile.yourVisibleName')} placeholderTextColor={Colors.textMuted} />
 
-                    <Text style={styles.sectionLabel}>Nombre de usuario (@)</Text>
+                    <Text style={styles.sectionLabel}>{t('profile.username', 'Nombre de usuario (@)')}</Text>
                     <TextInput style={styles.input} value={username} onChangeText={(val) => setUsername(val.replace(/\s/g, '').toLowerCase())}
                         placeholder="usuario" placeholderTextColor={Colors.textMuted} autoCapitalize="none" />
 

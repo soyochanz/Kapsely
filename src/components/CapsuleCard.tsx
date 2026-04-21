@@ -38,7 +38,7 @@ const formatOpenDate = (dateStr: string): string => {
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 };
 
-const CollageView = ({ items, isOpened, themeColor, s }: { items: any[], isOpened: boolean, themeColor: string, s: any }) => {
+const CollageView = React.memo(({ items, isOpened, themeColor, s }: { items: any[], isOpened: boolean, themeColor: string, s: any }) => {
     if (items.length <= 1) return null;
 
     const displayItems = items.slice(0, 4);
@@ -53,7 +53,7 @@ const CollageView = ({ items, isOpened, themeColor, s }: { items: any[], isOpene
                 <Image 
                     source={{ uri: src }}
                     style={StyleSheet.absoluteFill}
-                    blurRadius={!isOpened ? (Platform.OS === 'ios' ? 40 : 10) : 0}
+                    blurRadius={!isOpened ? (Platform.OS === 'ios' ? 50 : 20) : 0}
                     contentFit="cover"
                     cachePolicy="memory-disk"
                 />
@@ -105,7 +105,7 @@ const CollageView = ({ items, isOpened, themeColor, s }: { items: any[], isOpene
             )}
         </View>
     );
-};
+});
 
 const CapsuleCard = React.memo(({ 
     capsule, 
@@ -209,17 +209,26 @@ const CapsuleCard = React.memo(({
     const handleLike = async () => {
         if (!currentUserId) return;
         bounceHeart();
+        
+        const wasLiked = isLiked;
+        const newIsLiked = !wasLiked;
+        const newCount = wasLiked ? likeCount - 1 : likeCount + 1;
+
+        // Instant visual feedback
+        setIsLiked(newIsLiked);
+        setLikeCount(newCount);
+
         if (onLike) {
-            onLike(capsule.id, isLiked);
+            onLike(capsule.id, wasLiked);
         } else {
-            if (isLiked) {
-                const { error } = await supabase.from('likes').delete().eq('capsule_id', capsule.id).eq('user_id', currentUserId);
-                if (!error) { setIsLiked(false); setLikeCount((p: number) => p - 1); }
-            } else {
-                const { error } = await supabase.from('likes').insert({ capsule_id: capsule.id, user_id: currentUserId });
-                if (!error) {
-                    setIsLiked(true);
-                    setLikeCount((p: number) => p + 1);
+            try {
+                if (wasLiked) {
+                    const { error } = await supabase.from('likes').delete().eq('capsule_id', capsule.id).eq('user_id', currentUserId);
+                    if (error) throw error;
+                } else {
+                    const { error } = await supabase.from('likes').insert({ capsule_id: capsule.id, user_id: currentUserId });
+                    if (error) throw error;
+                    
                     if (currentUserId !== capsule.owner_id) {
                         const { data: existing } = await supabase.from('notifications')
                             .select('id').eq('user_id', capsule.owner_id).eq('sender_id', currentUserId).eq('type', 'like').eq('capsule_id', capsule.id).maybeSingle();
@@ -234,6 +243,11 @@ const CapsuleCard = React.memo(({
                         }
                     }
                 }
+            } catch (err) {
+                // Revert on error
+                setIsLiked(wasLiked);
+                setLikeCount(wasLiked ? newCount + 1 : newCount - 1);
+                console.error('Like error in Card:', err);
             }
         }
     };
@@ -296,7 +310,10 @@ const CapsuleCard = React.memo(({
                         <Text style={s.gridTypeBadgeText}>{cfg.label}</Text>
                     </View>
 
-                    {/* Status badge removed from here */}
+                    {/* Status badge */}
+                    <View style={[s.gridStatusBadge, { backgroundColor: isOpened ? '#4ADE80' : '#F87171' }]}>
+                        <Ionicons name={isOpened ? "lock-open" : "lock-closed"} size={10} color="#fff" />
+                    </View>
 
                 </View>
 
@@ -311,7 +328,7 @@ const CapsuleCard = React.memo(({
                                         <Image
                                             source={{ uri: src }}
                                             style={StyleSheet.absoluteFill}
-                                            blurRadius={!isOpened ? (Platform.OS === 'ios' ? 5 : 3) : 0}
+                                            blurRadius={!isOpened ? (Platform.OS === 'ios' ? 35 : 15) : 0}
                                             contentFit="cover"
                                             cachePolicy="memory-disk"
                                             recyclingKey={`gp-${capsule.id}-${idx}`}
@@ -342,7 +359,6 @@ const CapsuleCard = React.memo(({
                 <View style={s.gridBottom}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                         <Text style={s.gridTitle} numberOfLines={1}>{capsule.title}</Text>
-                        {isSealed && <Ionicons name="lock-closed" size={10} color={Colors.textMuted} />}
                     </View>
                     <View style={s.gridAuthorRow}>
                         <Image source={{ uri: Colors.getAvatarUrl(profile.avatar_url, profile.display_name || profile.username) }} style={s.gridAvatar} contentFit="cover" cachePolicy="memory-disk" />
@@ -379,7 +395,7 @@ const CapsuleCard = React.memo(({
                         <Image 
                             source={{ uri: latestItem.thumbnail_url || latestItem.media_url }} 
                             style={[s.blurBg, isOpened && { opacity: 1 }]} 
-                            blurRadius={!isOpened ? (Platform.OS === 'ios' ? 15 : 2) : 0} 
+                            blurRadius={!isOpened ? (Platform.OS === 'ios' ? 50 : 20) : 0} 
                             contentFit="cover" 
                             cachePolicy="memory-disk"
                             recyclingKey={`card-vid-${capsule.id}`}
@@ -497,7 +513,10 @@ const CapsuleCard = React.memo(({
 
 
 
-                {/* Lock badge removed from here */}
+                {/* Lock Status Badge */}
+                <View style={[s.lockBadge, { backgroundColor: isOpened ? '#4ADE80' : '#F87171' }]}>
+                    <Ionicons name={isOpened ? "lock-open" : "lock-closed"} size={10} color="#fff" />
+                </View>
             </View>
 
             {/* ── BODY ─────────────────────────────────────────────────── */}
@@ -523,7 +542,7 @@ const CapsuleCard = React.memo(({
                                 {profile.is_verified && <VerifiedBadge size={13} />}
                             </View>
                             <Text style={s.authorTime}>
-                                {isOpened ? '✨ Opened · ' : ''}{timeAgo(isOpened ? capsule.opens_at : capsule.created_at)}
+                                {timeAgo(isOpened ? capsule.opens_at : capsule.created_at)}
                             </Text>
                         </View>
                     </TouchableOpacity>
@@ -546,7 +565,6 @@ const CapsuleCard = React.memo(({
                     <Text style={s.title} numberOfLines={1}>
                         {capsule.title}
                     </Text>
-                    {isSealed && <Ionicons name="lock-closed" size={12} color={Colors.textMuted} />}
                 </View>
 
                 {/* Desc or media label */}
@@ -563,7 +581,7 @@ const CapsuleCard = React.memo(({
                                 {mediaCollage.length > 1 
                                     ? t('feed.shared_items', { count: latestItem?.group_count || mediaCollage.length })
                                     : t(`feed.shared_${latestItem?.media_type === 'video' ? "video" : "photo"}`)
-                                }
+                                 }
                             </Text>
                         </View>
                     </View>
@@ -595,12 +613,12 @@ const CapsuleCard = React.memo(({
                     {capsule.opens_at && (
                         <View style={s.dateChip}>
                             <Ionicons
-                                name={isOpened ? 'lock-open-outline' : 'calendar-outline'}
+                                name={isOpened ? 'lock-open' : 'lock-closed'}
                                 size={10}
-                                color={Colors.textMuted}
+                                color={isOpened ? '#4ADE80' : '#F87171'}
                             />
-                            <Text style={s.dateText}>
-                                {isOpened ? 'Opened ' : 'Opens '}{formatOpenDate(capsule.opens_at)}
+                            <Text style={[s.dateText, isOpened && { color: '#4ADE80', fontFamily: Fonts.bold }]}>
+                                {isOpened ? 'Unlocked ' : 'Unlocks '}{formatOpenDate(capsule.opens_at)}
                             </Text>
                         </View>
                     )}
@@ -712,10 +730,9 @@ const s = StyleSheet.create({
 
     lockBadge: {
         position: 'absolute', bottom: 8, right: 10,
-        width: 26, height: 26, borderRadius: 13,
-        backgroundColor: 'rgba(0,0,0,0.36)',
+        width: 22, height: 22, borderRadius: 11,
         alignItems: 'center', justifyContent: 'center',
-        borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
+        borderWidth: 2, borderColor: Colors.surface,
     },
 
     // Body
@@ -858,14 +875,13 @@ const s = StyleSheet.create({
         position: 'absolute',
         top: 8,
         right: 8,
-        width: 22,
-        height: 22,
-        borderRadius: 11,
-        backgroundColor: Colors.cardAlt,
+        width: 18,
+        height: 18,
+        borderRadius: 9,
         alignItems: 'center',
         justifyContent: 'center',
-        borderWidth: 1,
-        borderColor: Colors.border,
+        borderWidth: 1.5,
+        borderColor: Colors.surface,
     },
 
     // 2×2 post preview

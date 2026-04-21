@@ -79,34 +79,48 @@ export const ProfileCapsuleCell = React.memo(({
                     <Image source={{ uri: modelImg }} style={s.capsuleModelImg} contentFit="contain" cachePolicy="memory-disk" />
                 )}
 
-                <View style={[s.capsuleTypeDot, { backgroundColor: cfg.color }]}>
-                    <Ionicons name={cfg.icon} size={10} color="#fff" />
+                {/* Status Badges */}
+                <View style={s.badgeContainer}>
+                    <View style={[s.miniBadge, { backgroundColor: cfg.color }]}>
+                        <Ionicons name={cfg.icon} size={8} color="#fff" />
+                    </View>
+                    {(cap.is_shared || cap.participant_count > 0) && (
+                        <View style={[s.miniBadge, { backgroundColor: Colors.primary }]}>
+                            <Ionicons name="people" size={8} color="#fff" />
+                        </View>
+                    )}
                 </View>
 
-                {(cap.is_shared || cap.participant_count > 0) && (
-                    <View style={s.capsuleSharedDot}>
-                        <Ionicons name="people" size={10} color="#fff" />
-                    </View>
-                )}
-
-                {!isSealed && isOwnProfile && (
-                    <TouchableOpacity
-                        style={s.capsuleLockOverlay}
-                        activeOpacity={0.7}
-                        onPress={() => setPickerCapsuleId(cap.id)}
-                    >
-                        <Ionicons name="image" size={12} color="#fff" />
-                    </TouchableOpacity>
-                )}
+                {/* Lock Status */}
+                <View style={[s.lockStatus, { backgroundColor: isSealed ? '#F87171' : '#4ADE80' }]}>
+                    <Ionicons name={isSealed ? "lock-closed" : "lock-open"} size={10} color="#fff" />
+                </View>
             </View>
 
             <View style={s.capsuleMeta}>
                 <Text style={s.capsuleTitle} numberOfLines={1}>{cap.title || 'Untitled'}</Text>
-                {isSealed ? (
-                    <Text style={[s.capsuleTimer, { color: themeColor }]}>{t('detail.sealed')}</Text>
-                ) : (
-                    <Text style={s.capsuleOpenedTag}>{t('detail.opened')}</Text>
-                )}
+                
+                <View style={s.statsRow}>
+                    <View style={s.statItem}>
+                        <Ionicons name="heart" size={10} color={Colors.textMuted} />
+                        <Text style={s.statText}>{likesCount}</Text>
+                    </View>
+                    <View style={s.statItem}>
+                        <Ionicons name="chatbubble" size={10} color={Colors.textMuted} />
+                        <Text style={s.statText}>{commentsCount}</Text>
+                    </View>
+                    <View style={s.statItem}>
+                        <Ionicons name="images" size={10} color={Colors.textMuted} />
+                        <Text style={s.statText}>{itemsCount}</Text>
+                    </View>
+                </View>
+
+                <View style={s.timeRow}>
+                    <Ionicons name="time-outline" size={10} color={Colors.textMuted} />
+                    <Text style={s.timeText} numberOfLines={1}>
+                        {isSealed ? (cap.opens_at ? new Date(cap.opens_at).toLocaleDateString() : t('detail.sealed')) : t('detail.opened')}
+                    </Text>
+                </View>
             </View>
         </TouchableOpacity>
     );
@@ -125,27 +139,31 @@ const s = StyleSheet.create({
         alignItems: 'center', justifyContent: 'center',
         position: 'relative',
     },
-    capsuleModelImg: { width: '95%', height: '95%' },
+    capsuleModelImg: { width: '90%', height: '90%' },
     capsuleCoverImg: { width: '100%', height: '100%' },
-    capsuleTypeDot: {
-        position: 'absolute', top: 8, left: 8,
+    
+    badgeContainer: {
+        position: 'absolute', top: 6, left: 6,
+        flexDirection: 'row', gap: 4,
+    },
+    miniBadge: {
+        width: 16, height: 16, borderRadius: 8,
+        alignItems: 'center', justifyContent: 'center',
+    },
+    lockStatus: {
+        position: 'absolute', top: 6, right: 6,
         width: 18, height: 18, borderRadius: 9,
         alignItems: 'center', justifyContent: 'center',
+        borderWidth: 1.5, borderColor: Colors.surface,
     },
-    capsuleSharedDot: {
-        position: 'absolute', top: 8, left: 30,
-        width: 18, height: 18, borderRadius: 9,
-        backgroundColor: Colors.primary,
-        alignItems: 'center', justifyContent: 'center',
-    },
-    capsuleLockOverlay: {
-        position: 'absolute', bottom: 8, right: 8,
-        width: 20, height: 20, borderRadius: 10,
-        backgroundColor: 'rgba(0,0,0,0.38)',
-        alignItems: 'center', justifyContent: 'center',
-    },
-    capsuleMeta: { padding: 9, paddingTop: 7 },
-    capsuleTitle: { fontSize: 11, fontFamily: Fonts.bold, color: Colors.textPrimary, marginBottom: 2 },
-    capsuleTimer: { fontSize: 8.5, fontFamily: Fonts.semiBold, color: Colors.primary },
-    capsuleOpenedTag: { fontSize: 8.5, fontFamily: Fonts.bold, color: Colors.textMuted, letterSpacing: 0.5 },
+
+    capsuleMeta: { padding: 8, gap: 2 },
+    capsuleTitle: { fontSize: 10, fontFamily: Fonts.bold, color: Colors.textPrimary },
+    
+    statsRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginVertical: 2 },
+    statItem: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+    statText: { fontSize: 9, fontFamily: Fonts.medium, color: Colors.textMuted },
+    
+    timeRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    timeText: { fontSize: 9, fontFamily: Fonts.regular, color: Colors.textMuted },
 });

@@ -40,7 +40,7 @@ export default function CapsuleSelectorScreen() {
 
         const { data: ownCaps } = await supabase
             .from('capsules')
-            .select('*')
+            .select('*, items_count:capsule_items(count), invites_count:capsule_invites(count)')
             .or(`owner_id.eq.${user.id},invited_user_id.eq.${user.id}`)
             .in('status', ['sealed', 'opened'])
             .order('created_at', { ascending: false });
@@ -55,7 +55,7 @@ export default function CapsuleSelectorScreen() {
 
         const { data: inviteEntries } = await supabase
             .from('capsule_invites')
-            .select('capsule_id, capsules:capsule_id(*)')
+            .select('capsule_id, capsules:capsule_id(*, items_count:capsule_items(count), invites_count:capsule_invites(count))')
             .eq('user_id', user.id)
             .eq('status', 'accepted');
 
@@ -152,6 +152,13 @@ export default function CapsuleSelectorScreen() {
 const CapsuleEntry = React.memo(({ item, onSelect }: { item: any; onSelect: (cap: any) => void }) => {
     const isBornOpen = item.status === 'opened' && item.duration_days === 0;
     const cfg = isBornOpen ? TYPE_CONFIG.opencap : (TYPE_CONFIG[item.type as keyof typeof TYPE_CONFIG] || TYPE_CONFIG.legacycap);
+    
+    // Count logic: handles Supabase (count) format
+    const itemCount = Array.isArray(item.items_count) ? (item.items_count[0]?.count || 0) : (item.items_count?.count || 0);
+    const invitesCount = Array.isArray(item.invites_count) ? (item.invites_count[0]?.count || 0) : (item.invites_count?.count || 0);
+    const totalMembers = 1 + invitesCount; // Owner + accepted invites
+    const isShared = totalMembers > 1;
+
     const [modelImg, setModelImg] = useState<string>(() => {
         const modelId = item.model;
         const img = item.status === 'opened' 
@@ -173,12 +180,14 @@ const CapsuleEntry = React.memo(({ item, onSelect }: { item: any; onSelect: (cap
         return unsub;
     }, [item.model, item.status]);
 
+    const isOpened = item.status === 'opened';
+
     return (
-        <TouchableOpacity style={styles.card} activeOpacity={0.82} onPress={() => onSelect(item)}>
-            {/* Left: capsule preview with tinted glow bg */}
-            <View style={[styles.cardImageContainer, { backgroundColor: cfg.color + '12' }]}>
+        <TouchableOpacity style={styles.card} activeOpacity={0.85} onPress={() => onSelect(item)}>
+            {/* Left: capsule preview */}
+            <View style={[styles.cardImageContainer, { backgroundColor: cfg.color + '08' }]}>
                 <LinearGradient
-                    colors={[cfg.color + '1A', 'transparent']}
+                    colors={[cfg.color + '12', 'transparent']}
                     style={StyleSheet.absoluteFill}
                 />
                 <CapsuleWithTimer
@@ -190,32 +199,53 @@ const CapsuleEntry = React.memo(({ item, onSelect }: { item: any; onSelect: (cap
                     style={styles.cardImage}
                     hideTimer={true}
                     hideParticles={true}
-                    isOpened={item.status === 'opened'}
+                    isOpened={isOpened}
                 />
+                {/* Lock Indicator */}
+                <View style={[styles.lockBadge, { backgroundColor: isOpened ? '#4ADE80' : '#F87171' }]}>
+                    <Ionicons name={isOpened ? "lock-open" : "lock-closed"} size={10} color="#fff" />
+                </View>
             </View>
 
-            {/* Center: title + metadata */}
+            {/* Center: Info */}
             <View style={styles.cardInfo}>
-                <Text style={styles.cardTitle} numberOfLines={1}>{item.title}</Text>
-                {/* Type pill */}
+                <View style={styles.cardHeaderRow}>
+                    <Text style={styles.cardTitle} numberOfLines={1}>{item.title}</Text>
+                    {isShared && (
+                        <View style={styles.sharedBadge}>
+                            <Ionicons name="people" size={10} color={Colors.textMuted} />
+                            <Text style={styles.sharedBadgeText}>{totalMembers}</Text>
+                        </View>
+                    )}
+                </View>
+
                 <View style={styles.metaRow}>
-                    <View style={[styles.typePill, { backgroundColor: cfg.color + '18' }]}>
+                    <View style={[styles.typePill, { backgroundColor: cfg.color + '15' }]}>
                         <Text style={[styles.typePillText, { color: cfg.color }]}>{cfg.label}</Text>
                     </View>
+                    <View style={styles.dotSeparator} />
+                    <View style={styles.statRow}>
+                        <Ionicons name="images-outline" size={12} color={Colors.textMuted} />
+                        <Text style={styles.statText}>{itemCount}</Text>
+                    </View>
                 </View>
+
                 <View style={styles.openRow}>
-                    <Ionicons name={item.status === 'opened' ? "eye-outline" : "time-outline"} size={11} color={Colors.textMuted} />
-                    {item.status === 'opened' ? (
+                    <Ionicons name="time-outline" size={12} color={Colors.textMuted} />
+                    {isOpened ? (
                         <Text style={styles.cardDate}>Always open</Text>
                     ) : (
-                        <LiveTimer date={item.opens_at} style={styles.cardDate} />
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                            <Text style={styles.cardDate}>Opens:</Text>
+                            <LiveTimer date={item.opens_at} style={styles.cardDateBold} />
+                        </View>
                     )}
                 </View>
             </View>
 
-            {/* Right: soft chevron circle */}
-            <View style={styles.chevronCircle}>
-                <Ionicons name="chevron-forward" size={14} color={Colors.textMuted} />
+            {/* Right Action */}
+            <View style={styles.selectBtn}>
+                <Ionicons name="chevron-forward" size={16} color={Colors.primary} />
             </View>
         </TouchableOpacity>
     );
@@ -254,35 +284,52 @@ const styles = StyleSheet.create({
         flexDirection: 'row', alignItems: 'center',
         backgroundColor: Colors.surface,
         paddingVertical: 14, paddingHorizontal: 14,
-        borderRadius: 20, borderWidth: 1, borderColor: Colors.border,
+        borderRadius: 24, borderWidth: 1, borderColor: Colors.border,
         gap: 14,
+        marginBottom: 4,
     },
     cardImageContainer: {
-        width: 64, height: 64, borderRadius: 16,
+        width: 72, height: 72, borderRadius: 20,
         alignItems: 'center', justifyContent: 'center',
         overflow: 'hidden',
     },
-    cardImage: { width: 54, height: 54 },
+    cardImage: { width: 62, height: 62 },
+    lockBadge: {
+        position: 'absolute', top: 4, right: 4,
+        width: 18, height: 18, borderRadius: 9,
+        alignItems: 'center', justifyContent: 'center',
+        borderWidth: 2, borderColor: Colors.surface,
+    },
     cardInfo: { flex: 1, gap: 4 },
-    cardTitle: { fontSize: 16, fontFamily: Fonts.bold, color: Colors.textPrimary },
+    cardHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+    cardTitle: { fontSize: 16, fontFamily: Fonts.bold, color: Colors.textPrimary, flex: 1 },
+    sharedBadge: {
+        flexDirection: 'row', alignItems: 'center', gap: 4,
+        backgroundColor: Colors.cardAlt, paddingHorizontal: 6, paddingVertical: 2,
+        borderRadius: 8, borderWidth: 1, borderColor: Colors.border,
+    },
+    sharedBadgeText: { fontSize: 10, fontFamily: Fonts.bold, color: Colors.textMuted },
 
-    // Type pill
-    metaRow: { flexDirection: 'row', alignItems: 'center' },
+    // Type pill & stats
+    metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     typePill: {
         paddingHorizontal: 8, paddingVertical: 3,
-        borderRadius: BorderRadius.full,
-        alignSelf: 'flex-start',
+        borderRadius: 10,
     },
-    typePillText: { fontSize: 10, fontFamily: Fonts.bold, letterSpacing: 0.3 },
+    typePillText: { fontSize: 10, fontFamily: Fonts.bold, letterSpacing: 0.3, textTransform: 'uppercase' },
+    dotSeparator: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: Colors.border },
+    statRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    statText: { fontSize: 11, fontFamily: Fonts.medium, color: Colors.textMuted },
 
     // Timer row
-    openRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    openRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
     cardDate: { fontSize: 12, fontFamily: Fonts.regular, color: Colors.textMuted },
+    cardDateBold: { fontSize: 12, fontFamily: Fonts.bold, color: Colors.textPrimary },
 
-    // Chevron
-    chevronCircle: {
-        width: 28, height: 28, borderRadius: 14,
-        backgroundColor: Colors.cardAlt, borderWidth: 1, borderColor: Colors.border,
+    // Select Btn
+    selectBtn: {
+        width: 32, height: 32, borderRadius: 16,
+        backgroundColor: Colors.primary + '10',
         alignItems: 'center', justifyContent: 'center',
     },
 

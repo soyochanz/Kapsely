@@ -94,7 +94,7 @@ export default function LandingScreen({ onNavigateToLogin, onNavigateToRegister 
 
                     <Animated.View style={[styles.textContainer, { opacity: fadeAnim, transform: [{ translateY }] }]}>
                         <Text style={styles.appName}>kapsely</Text>
-                        <Text style={styles.slogan}>BRIDGE THROUGH TIME</Text>
+                        <Text style={styles.slogan}>Memories forever</Text>
 
                         <Text style={styles.conceptText}>
                             The premier digital sanctuary for your future memories. 

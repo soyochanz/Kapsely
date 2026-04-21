@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import * as ExpoLocation from 'expo-location';
 import {
     View, Text, StyleSheet, TouchableOpacity, TextInput,
@@ -21,53 +21,16 @@ import { Image } from 'expo-image';
 import Slider from '@react-native-community/slider';
 import { optimizeImageForUpload, optimizeThumbnailForUpload } from '../utils/mediaOptimization';
 import { locationService } from '../utils/location';
+import { MODEL_IMAGES, MODEL_IMAGES_OPEN } from '../constants/models';
+import { P, R, shadow } from '../theme';
+import ViewShot from 'react-native-view-shot';
+import Svg, { Path as SvgPath } from 'react-native-svg';
+import { PanResponder } from 'react-native';
 
 const { width } = Dimensions.get('window');
 
 // ─── Design Tokens ────────────────────────────────────────────────────────────
-const P = {
-    // Purples
-    p50: '#F5F3FF',
-    p100: '#EDE9FE',
-    p200: '#DDD6FE',
-    p300: '#C4B5FD',
-    p400: '#A78BFA',
-    p500: '#8B5CF6',
-    p600: '#7C3AED',
-    p700: '#6D28D9',
-    p800: '#5B21B6',
-    // Neutrals
-    white: '#FFFFFF',
-    gray50: '#FAFAFA',
-    gray100: '#F4F4F5',
-    gray200: '#E4E4E7',
-    gray300: '#D1D1D6',
-    gray400: '#A1A1AA',
-    gray500: '#71717A',
-    gray700: '#3F3F46',
-    gray900: '#18181B',
-    // Semantic
-    red: '#EF4444',
-    redPale: '#FEF2F2',
-    green: '#10B981',
-};
-
-const R = { xs: 8, sm: 14, md: 18, lg: 24, xl: 32, full: 999 };
-
-const shadow = {
-    soft: Platform.select({
-        ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 10 },
-        android: { elevation: 3 },
-    }),
-    medium: Platform.select({
-        ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.09, shadowRadius: 18 },
-        android: { elevation: 6 },
-    }),
-    purple: Platform.select({
-        ios: { shadowColor: P.p600, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.28, shadowRadius: 20 },
-        android: { elevation: 10 },
-    }),
-};
+// Imported from ../theme/DesignTokens
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function AddItemScreen() {
@@ -78,6 +41,7 @@ export default function AddItemScreen() {
     const insets = useSafeAreaInsets();
 
     const [loading, setLoading] = useState(false);
+    const [scrollEnabled, setScrollEnabled] = useState(true);
     const [mediaList, setMediaList] = useState<any[]>([]);
     const [uploadProgress, setUploadProgress] = useState<{ [key: string]: number }>({});
     const [text, setText] = useState('');
@@ -100,6 +64,105 @@ export default function AddItemScreen() {
     const [locationModalVisible, setLocationModalVisible] = useState(false);
     const [locationSuggestions, setLocationSuggestions] = useState<any[]>([]);
     const [includeLocation, setIncludeLocation] = useState(true);
+
+    // --- New Capsule Selection State ---
+    const [myCapsules, setMyCapsules] = useState<any[]>([]);
+    const [selectedCapsule, setSelectedCapsule] = useState<any>(null);
+    const [capsuleSelectorVisible, setCapsuleSelectorVisible] = useState(false);
+    const [isLoadingCapsules, setIsLoadingCapsules] = useState(false);
+
+    // --- Handwriting State ---
+    const [isHandwriting, setIsHandwriting] = useState(false);
+    const [paths, setPaths] = useState<string[]>([]);
+    const [currentPath, setCurrentPath] = useState<string>('');
+    const currentPathRef = useRef<string>('');
+    const viewShotRef = React.useRef<any>(null);
+
+    const panResponder = React.useRef(
+        PanResponder.create({
+            onStartShouldSetPanResponder: () => true,
+            onStartShouldSetPanResponderCapture: () => true,
+            onMoveShouldSetPanResponder: () => true,
+            onMoveShouldSetPanResponderCapture: () => true,
+            onPanResponderGrant: (evt) => {
+                setScrollEnabled(false);
+                const { locationX, locationY } = evt.nativeEvent;
+                if (locationX != null && locationY != null) {
+                    const startPoint = `M${locationX} ${locationY}`;
+                    currentPathRef.current = startPoint;
+                    setCurrentPath(startPoint);
+                }
+            },
+            onPanResponderMove: (evt) => {
+                const { locationX, locationY } = evt.nativeEvent;
+                if (locationX != null && locationY != null) {
+                    const newPoint = ` L${locationX} ${locationY}`;
+                    currentPathRef.current += newPoint;
+                    setCurrentPath(currentPathRef.current);
+                }
+            },
+            onPanResponderRelease: (evt) => {
+                const { locationX, locationY } = evt.nativeEvent;
+                const finalPoint = locationX != null ? ` L${locationX} ${locationY}` : '';
+                const fullPath = currentPathRef.current + finalPoint;
+                
+                if (fullPath) {
+                    setPaths(prev => [...prev, fullPath]);
+                }
+                
+                currentPathRef.current = '';
+                setCurrentPath('');
+                setScrollEnabled(true);
+            },
+            onPanResponderTerminate: () => {
+                if (currentPathRef.current) {
+                    setPaths(prev => [...prev, currentPathRef.current]);
+                }
+                currentPathRef.current = '';
+                setCurrentPath('');
+                setScrollEnabled(true);
+            }
+        })
+    ).current;
+
+    useEffect(() => {
+        if (!capsuleId) {
+            fetchMyCapsules();
+            setCapsuleSelectorVisible(true);
+        } else {
+            // Fetch the specific capsule info if needed for the header
+            fetchTargetCapsule(capsuleId);
+        }
+    }, [capsuleId]);
+
+    const fetchMyCapsules = async () => {
+        setIsLoadingCapsules(true);
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+            // Fetch capsules where I am owner OR I am a member (accepted invite)
+            const { data, error } = await supabase.rpc('get_my_available_capsules', { p_user_id: user.id });
+            if (data) setMyCapsules(data);
+            else if (error) {
+                // Fallback to owned capsules if RPC fails
+                const { data: owned } = await supabase
+                    .from('capsules')
+                    .select('*, profiles:owner_id(username, avatar_url, display_name)')
+                    .eq('owner_id', user.id)
+                    .order('created_at', { ascending: false });
+                if (owned) setMyCapsules(owned);
+            }
+        }
+        setIsLoadingCapsules(false);
+    };
+
+    const fetchTargetCapsule = async (id: string) => {
+        const { data } = await supabase
+            .from('capsules')
+            .select('*, profiles:owner_id(username, avatar_url, display_name)')
+            .eq('id', id)
+            .single();
+        if (data) setSelectedCapsule(data);
+    };
 
     useEffect(() => {
         const fetchLocation = async () => {
@@ -290,7 +353,7 @@ export default function AddItemScreen() {
 
     const handleUpload = async () => {
         if (loading) return;
-        if (contentType === 'note' && !text) return;
+        if (contentType === 'note' && !text && (!isHandwriting || paths.length === 0)) return;
         if (contentType === 'audio' && !recordedUri) return;
         if ((contentType === 'image' || contentType === 'video') && mediaList.length === 0) return;
 
@@ -299,34 +362,24 @@ export default function AddItemScreen() {
         try {
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) throw new Error('Not authenticated');
-            const uploadTasks: Promise<any>[] = [];
-
+            let results;
             if (contentType === 'audio' && recordedUri) {
-                uploadTasks.push((async () => {
-                    const url = await uploadFile(recordedUri, 'audio', user.id);
-                    return { mediaUrl: url, thumbUrl: null, duration: audioDuration, type: 'audio' };
-                })());
+                const url = await uploadFile(recordedUri, 'audio', user.id);
+                results = [{ status: 'fulfilled', value: { mediaUrl: url, thumbUrl: null, duration: audioDuration, type: 'audio' } }];
             } else if (mediaList.length > 0) {
-                mediaList.forEach((media) => {
-                    uploadTasks.push((async () => {
-                        const mediaUrl = await uploadFile(media.uri, contentType, user.id);
-                        let thumbUrl = null;
-                        if (media.thumbnailUri) {
-                            try { thumbUrl = await uploadFile(media.thumbnailUri, 'image', user.id, true); } catch (e) { }
-                        }
-                        return { mediaUrl, thumbUrl, duration: media.duration, type: contentType, originalMedia: media };
-                    })());
-                });
+                results = await uploadInChunks(mediaList, user);
             } else if (contentType === 'note') {
-                uploadTasks.push(Promise.resolve({ mediaUrl: '', thumbUrl: '', duration: null, type: 'note' }));
+                results = [{ status: 'fulfilled', value: { mediaUrl: '', thumbUrl: '', duration: null, type: 'note' } }];
+            } else {
+                throw new Error('No content to upload');
             }
 
-            const results = await Promise.allSettled(uploadTasks);
             const successfulUploads: any[] = [];
             const failedUploads: any[] = [];
-            results.forEach((res, idx) => {
+            
+            results.forEach((res: any) => {
                 if (res.status === 'fulfilled') successfulUploads.push(res.value);
-                else failedUploads.push({ index: idx, reason: res.reason?.message || 'Unknown error', item: mediaList[idx] });
+                else failedUploads.push({ reason: res.reason || 'Unknown error' });
             });
 
             if (successfulUploads.length === 0 && failedUploads.length > 0) throw new Error(failedUploads[0].reason);
@@ -342,7 +395,7 @@ export default function AddItemScreen() {
                     if (mi.trimStart !== undefined && mi.trimEnd !== undefined) contentStr += `|${mi.trimStart}-${mi.trimEnd}`;
                 }
                 return {
-                    capsule_id: capsuleId, owner_id: user.id,
+                    capsule_id: capsuleId || selectedCapsule?.id, owner_id: user.id,
                     media_url: res.mediaUrl || '', thumbnail_url: res.thumbUrl || '',
                     media_type: res.type, content: contentStr,
                     caption: caption ? `${caption} !!b:${batchId}` : `!!b:${batchId}`,
@@ -353,21 +406,28 @@ export default function AddItemScreen() {
                 };
             });
 
-            const { error: dbError } = await supabase.from('capsule_items').insert(entries);
+            let finalEntries = entries;
+
+            // Handle Handwriting Capture
+            if (contentType === 'note' && isHandwriting && viewShotRef.current) {
+                try {
+                    const uri = await viewShotRef.current.capture();
+                    const url = await uploadFile(uri, 'image', user.id);
+                    finalEntries = entries.map(e => ({
+                        ...e,
+                        media_url: url,
+                        media_type: 'image',
+                        content: 'Nota manuscrita'
+                    }));
+                } catch (e) {
+                    console.error('Handwriting capture failed:', e);
+                }
+            }
+
+            const { error: dbError } = await supabase.from('capsule_items').insert(finalEntries);
             if (dbError) throw dbError;
 
-            try {
-                const { data: followers } = await supabase.from('capsule_followers').select('user_id').eq('capsule_id', capsuleId);
-                const { data: capData } = await supabase.from('capsules').select('title, owner_id').eq('id', capsuleId).single();
-                const recipients = new Set((followers || []).map((f: any) => f.user_id));
-                if (capData) recipients.add(capData.owner_id);
-                recipients.delete(user.id);
-                const notifs = Array.from(recipients).map(rid => ({
-                    user_id: rid, sender_id: user.id, type: 'item_added', capsule_id: capsuleId,
-                    message: `New items were added to "${capData?.title || 'a capsule'}"`
-                }));
-                if (notifs.length > 0) await supabase.from('notifications').insert(notifs);
-            } catch (e) { }
+            // Notifications will be handled by a Database Trigger for better performance
 
             if (failedUploads.length > 0) {
                 setAestheticAlert({
@@ -377,37 +437,85 @@ export default function AddItemScreen() {
                     onClose: () => { setAestheticAlert(null); navigation.pop(2); }
                 });
             } else {
-                Alert.alert('¡Listo!', `${entries.length} elemento${entries.length !== 1 ? 's' : ''} guardado${entries.length !== 1 ? 's' : ''}.`);
+                Alert.alert(t('add.save_success'), t('add.save_success_msg', { count: entries.length }));
                 navigation.pop(2);
             }
         } catch (err: any) {
             setAestheticAlert({
-                visible: true, title: 'Algo salió mal',
+                visible: true, title: t('common.error'),
                 message: err.message?.includes('allowed size') ? 'El archivo es demasiado grande.' : (err.message || 'Error al subir.'),
                 onClose: () => setAestheticAlert(null)
             });
         } finally { setLoading(false); }
     };
 
-    const uploadFile = async (uri: string, type: string, userId: string, isThumbnail = false) => {
+    const uploadFile = async (uri: string, type: string, userId: string, isThumbnail = false, onProgress?: (p: number) => void) => {
         let ext = 'jpg';
         const lastDot = uri.lastIndexOf('.');
         if (lastDot !== -1 && lastDot > uri.lastIndexOf('/')) ext = uri.substring(lastDot + 1).split('?')[0];
         else ext = type === 'video' ? 'mp4' : type === 'audio' ? 'm4a' : 'webp';
+        
         const fileName = `${userId}/${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
         const filePath = isThumbnail ? `thumbnails/${fileName}` : `items/${fileName}`;
+        
         try {
-            if (!isThumbnail) setUploadProgress(prev => ({ ...prev, [uri]: 20 }));
+            if (!isThumbnail && onProgress) onProgress(10);
+            
+            // Note: Supabase JS SDK doesn't natively support onUploadProgress in all environments
+            // so we simulate a granular progress if needed or use the storage API
             const formData = new FormData();
-            formData.append('file', { uri: Platform.OS === 'android' ? uri : uri.replace('file://', ''), name: `file.${ext}`, type: type === 'video' ? 'video/mp4' : type === 'audio' ? 'audio/x-m4a' : 'image/jpeg' } as any);
-            const { data, error } = await supabase.storage.from('capsule-media').upload(filePath, formData, { contentType: 'multipart/form-data', upsert: true });
+            formData.append('file', { 
+                uri: Platform.OS === 'android' ? uri : uri.replace('file://', ''), 
+                name: `file.${ext}`, 
+                type: type === 'video' ? 'video/mp4' : type === 'audio' ? 'audio/x-m4a' : 'image/jpeg' 
+            } as any);
+
+            const { data, error } = await supabase.storage
+                .from('capsule-media')
+                .upload(filePath, formData, { 
+                    contentType: 'multipart/form-data', 
+                    upsert: true 
+                });
+
             if (error) throw error;
-            if (!isThumbnail) setUploadProgress(prev => ({ ...prev, [uri]: 100 }));
+            if (!isThumbnail && onProgress) onProgress(100);
+            
             const { data: { publicUrl } } = supabase.storage.from('capsule-media').getPublicUrl(filePath);
             return publicUrl;
         } catch (error: any) {
             throw new Error(`Upload failed: ${error.message || 'Network error'}`);
         }
+    };
+
+    // Helper to process uploads in chunks to prevent freezing
+    const uploadInChunks = async (items: any[], user: any) => {
+        const results = [];
+        const CHUNK_SIZE = 3; // Upload 3 at a time
+        
+        for (let i = 0; i < items.length; i += CHUNK_SIZE) {
+            const chunk = items.slice(i, i + CHUNK_SIZE);
+            const chunkPromises = chunk.map(async (media, indexInChunk) => {
+                const globalIndex = i + indexInChunk;
+                try {
+                    const mediaUrl = await uploadFile(media.uri, contentType, user.id, false, (p) => {
+                        setUploadProgress(prev => ({ ...prev, [media.uri]: p }));
+                    });
+                    
+                    let thumbUrl = null;
+                    if (media.thumbnailUri) {
+                        try { thumbUrl = await uploadFile(media.thumbnailUri, 'image', user.id, true); } catch (e) {}
+                    }
+                    
+                    return { status: 'fulfilled', value: { mediaUrl, thumbUrl, duration: media.duration, type: contentType, originalMedia: media } };
+                } catch (e: any) {
+                    return { status: 'rejected', reason: e.message, index: globalIndex };
+                }
+            });
+            
+            const chunkResults = await Promise.all(chunkPromises);
+            results.push(...chunkResults);
+        }
+        return results;
     };
 
     const isUploadDisabled = loading
@@ -425,32 +533,53 @@ export default function AddItemScreen() {
 
     return (
         <View style={[s.root, { paddingTop: insets.top }]}>
-            <StatusBar barStyle="dark-content" backgroundColor={P.white} />
+            {/* Ambient Background Orbs */}
+            <View style={StyleSheet.absoluteFill} pointerEvents="none">
+                <View style={[s.orb, { top: -50, right: -100, width: 350, height: 350, backgroundColor: '#F5F3FF' }]} />
+                <View style={[s.orb, { bottom: 100, left: -80, width: 250, height: 250, backgroundColor: '#FFF1F2' }]} />
+            </View>
+            <StatusBar barStyle="dark-content" />
 
             {/* ── Header ── */}
             <View style={s.header}>
                 <TouchableOpacity style={s.backBtn} activeOpacity={0.7} onPress={() => navigation.goBack()}>
-                    <Ionicons name="chevron-back" size={22} color={P.gray700} />
+                    <Ionicons name="close-outline" size={26} color={P.gray900} />
                 </TouchableOpacity>
 
                 <View style={s.headerMid}>
-                    <View style={s.typePill}>
-                        <Ionicons name={tc.icon} size={12} color={P.p600} />
-                        <Text style={s.typePillText}>{tc.label}</Text>
-                    </View>
-                    <Text style={s.headerTitle}>Nueva memoria</Text>
+                    <Text style={s.headerTitle}>{t('add.new_memory')}</Text>
+                    <TouchableOpacity 
+                        style={s.targetPill} 
+                        activeOpacity={0.7}
+                        onPress={() => {
+                            fetchMyCapsules();
+                            setCapsuleSelectorVisible(true);
+                        }}
+                    >
+                        <Text style={s.targetPillLabel}>En: </Text>
+                        <Text style={s.targetPillValue} numberOfLines={1}>
+                            {selectedCapsule?.title || t('common.search')}
+                        </Text>
+                        <Ionicons name="chevron-down" size={14} color={P.p600} />
+                    </TouchableOpacity>
                 </View>
 
                 <TouchableOpacity
-                    style={[s.publishBtn, isUploadDisabled && s.publishBtnOff]}
+                    style={[s.publishBtn, (isUploadDisabled || (!capsuleId && !selectedCapsule)) && s.publishBtnOff]}
                     activeOpacity={0.85}
                     onPress={handleUpload}
-                    disabled={isUploadDisabled}
+                    disabled={isUploadDisabled || (!capsuleId && !selectedCapsule)}
                 >
-                    {loading
-                        ? <ActivityIndicator size="small" color={P.white} />
-                        : <Text style={s.publishBtnText}>Guardar</Text>
-                    }
+                    <LinearGradient 
+                        colors={isUploadDisabled || (!capsuleId && !selectedCapsule) ? [P.gray100, P.gray200] : [P.p500, P.p700]} 
+                        style={s.publishBtnGrad}
+                        start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                    >
+                        {loading
+                            ? <ActivityIndicator size="small" color={P.white} />
+                            : <Text style={s.publishBtnText}>{t('add.save_btn')}</Text>
+                        }
+                    </LinearGradient>
                 </TouchableOpacity>
             </View>
 
@@ -462,35 +591,80 @@ export default function AddItemScreen() {
                 style={{ flex: 1 }}
                 keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
             >
-                <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+                <ScrollView 
+                    contentContainerStyle={s.scroll} 
+                    keyboardShouldPersistTaps="handled" 
+                    showsVerticalScrollIndicator={false}
+                    scrollEnabled={scrollEnabled}
+                >
 
                     {/* ════════ NOTE ════════ */}
                     {contentType === 'note' && (
                         <View style={s.noteWrapper}>
-                            <View style={s.noteTopRow}>
-                                <View style={s.noteIconWrap}>
-                                    <Ionicons name="create" size={16} color={P.p600} />
-                                </View>
-                                <Text style={s.noteSectionLabel}>Tu nota</Text>
+                            {/* Note Mode Selector */}
+                            <View style={s.noteModeSelector}>
+                                <TouchableOpacity 
+                                    style={[s.noteModeBtn, !isHandwriting && s.noteModeBtnActive]} 
+                                    onPress={() => setIsHandwriting(false)}
+                                >
+                                    <Ionicons name="text-outline" size={18} color={!isHandwriting ? P.white : P.gray400} />
+                                    <Text style={[s.noteModeText, !isHandwriting && s.noteModeTextActive]}>{t('add.keyboard')}</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity 
+                                    style={[s.noteModeBtn, isHandwriting && s.noteModeBtnActive]} 
+                                    onPress={() => setIsHandwriting(true)}
+                                >
+                                    <Ionicons name="brush-outline" size={18} color={isHandwriting ? P.white : P.gray400} />
+                                    <Text style={[s.noteModeText, isHandwriting && s.noteModeTextActive]}>{t('add.handwriting')}</Text>
+                                </TouchableOpacity>
                             </View>
 
-                            <View style={s.noteField}>
-                                <TextInput
-                                    style={s.noteInput}
-                                    placeholder="Escribe algo que quieras recordar..."
-                                    placeholderTextColor={P.gray300}
-                                    multiline
-                                    value={text}
-                                    onChangeText={setText}
-                                    autoFocus
-                                    autoCorrect={false}
-                                    spellCheck={false}
-                                />
-                                <View style={s.noteFooter}>
-                                    <View style={s.noteFooterDot} />
-                                    <Text style={s.noteCharCount}>{text.length} caracteres</Text>
+                            {!isHandwriting ? (
+                                <View style={s.noteCard}>
+                                    <TextInput
+                                        style={s.noteInput}
+                                        placeholder="Escribe algo que quieras recordar..."
+                                        placeholderTextColor={P.gray300}
+                                        multiline
+                                        value={text}
+                                        onChangeText={setText}
+                                        autoFocus
+                                        autoCorrect={false}
+                                        spellCheck={false}
+                                    />
+                                    <View style={s.noteFooter}>
+                                        <View style={s.noteSignatureLine} />
+                                        <View style={s.noteCharBadge}>
+                                            <Text style={s.noteCharCount}>{text.length} caracteres</Text>
+                                        </View>
+                                    </View>
                                 </View>
-                            </View>
+                            ) : (
+                                <View style={s.handwritingContainer}>
+                                    <ViewShot ref={viewShotRef} options={{ format: 'png', quality: 0.9 }} style={s.drawingCanvas}>
+                                        <View style={s.paperBackground} {...panResponder.panHandlers}>
+                                            <Svg style={StyleSheet.absoluteFill}>
+                                                {paths.map((p, i) => (
+                                                    <SvgPath key={i} d={p} fill="none" stroke={P.gray900} strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />
+                                                ))}
+                                                {currentPath ? (
+                                                    <SvgPath d={currentPath} fill="none" stroke={P.gray900} strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />
+                                                ) : null}
+                                            </Svg>
+                                            {paths.length === 0 && !currentPath && (
+                                                <View style={s.drawingPlaceholder} pointerEvents="none">
+                                                    <Ionicons name="pencil-outline" size={40} color={P.gray100} />
+                                                    <Text style={s.drawingPlaceholderText}>{t('add.draw_here')}</Text>
+                                                </View>
+                                            )}
+                                        </View>
+                                    </ViewShot>
+                                    <TouchableOpacity style={s.clearCanvasBtn} onPress={() => setPaths([])}>
+                                        <Ionicons name="trash-outline" size={18} color={P.red} />
+                                        <Text style={s.clearCanvasText}>{t('add.clear_all')}</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            )}
                         </View>
                     )}
 
@@ -537,16 +711,16 @@ export default function AddItemScreen() {
                             </TouchableOpacity>
 
                             <Text style={s.micStatus}>
-                                {isRecording ? 'Grabando…' : recordedUri ? '¡Listo!' : 'Toca para grabar'}
+                                {isRecording ? t('add.recording') : recordedUri ? t('common.ready') : t('add.tap_to_record')}
                             </Text>
                             <Text style={s.micHint}>
-                                {isRecording ? 'Toca de nuevo para detener' : recordedUri ? 'Nota de voz guardada' : 'Nota de voz'}
+                                {isRecording ? t('add.stop_record') : recordedUri ? t('add.voice_note_saved') : t('add.voice_note')}
                             </Text>
 
                             {recordedUri && (
                                 <TouchableOpacity style={s.retryRow} activeOpacity={0.7} onPress={() => setRecordedUri(null)}>
                                     <Ionicons name="refresh-circle-outline" size={16} color={P.red} />
-                                    <Text style={s.retryLabel}>Grabar de nuevo</Text>
+                                    <Text style={s.retryLabel}>{t('add.retry_record')}</Text>
                                 </TouchableOpacity>
                             )}
                         </View>
@@ -567,9 +741,9 @@ export default function AddItemScreen() {
                                 />
                             </View>
                             <View style={{ flex: 1 }}>
-                                <Text style={s.locationTitle}>Ubicación del contenido</Text>
+                                <Text style={s.locationTitle}>{t('add.location_title')}</Text>
                                 <Text style={s.locationSub} numberOfLines={1}>
-                                    {includeLocation && currentLocation ? currentLocation.locationName : 'Configurar ubicación…'}
+                                    {includeLocation && currentLocation ? currentLocation.locationName : t('add.location_placeholder')}
                                 </Text>
                             </View>
                             <Ionicons name="chevron-forward" size={18} color={P.gray300} />
@@ -580,45 +754,58 @@ export default function AddItemScreen() {
                     {(contentType === 'image' || contentType === 'video') && (
                         <>
                             {mediaList.length === 0 ? (
-                                /* ── Empty picker ── */
-                                <View style={s.emptyWrap}>
-                                    <View style={s.emptyIcon}>
-                                        <LinearGradient colors={[P.p50, P.p100]} style={s.emptyIconGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-                                            <Ionicons
-                                                name={contentType === 'image' ? 'images-outline' : 'film-outline'}
-                                                size={40} color={P.p600}
-                                            />
-                                        </LinearGradient>
+                                /* ── Premium Empty Picker ── */
+                                <View style={s.emptyPremiumContainer}>
+                                    <View style={s.emptyPremiumHeader}>
+                                        <Text style={s.emptyPremiumTitle}>
+                                            {contentType === 'image' ? t('add.add_your_photos') : t('add.add_your_video')}
+                                        </Text>
+                                        <Text style={s.emptyPremiumSub}>
+                                            {contentType === 'image'
+                                                ? t('add.capture_moment')
+                                                : t('add.hd_ready')}
+                                        </Text>
                                     </View>
 
-                                    <Text style={s.emptyTitle}>
-                                        {contentType === 'image' ? 'Añade tus fotos' : 'Añade tu video'}
-                                    </Text>
-                                    <Text style={s.emptySub}>
-                                        {contentType === 'image'
-                                            ? 'Captura un momento o elige desde la galería'
-                                            : 'Máximo 1 minuto · HD listo para guardar'}
-                                    </Text>
-
-                                    <View style={s.pickerRow}>
-                                        {/* Camera */}
-                                        <TouchableOpacity style={s.pickerCardPrimary} activeOpacity={0.85} onPress={captureMediaWithTrack}>
-                                            <LinearGradient colors={[P.p500, P.p800]} style={s.pickerCardGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-                                                <View style={s.pickerIconCircle}>
-                                                    <Ionicons name="camera" size={28} color={P.white} />
-                                                </View>
-                                                <Text style={s.pickerLabelPrimary}>Cámara</Text>
-                                                <Text style={s.pickerSubPrimary}>Captura ahora</Text>
-                                            </LinearGradient>
+                                    <View style={s.pickerRowContainer}>
+                                        <TouchableOpacity 
+                                            style={s.pickerRow} 
+                                            activeOpacity={0.7} 
+                                            onPress={captureMediaWithTrack}
+                                        >
+                                            <View style={[s.pickerIconCircle, { backgroundColor: '#FF4B8B' }]}>
+                                                <LinearGradient 
+                                                    colors={['#FF4B8B', '#FF2D55']} 
+                                                    style={StyleSheet.absoluteFill}
+                                                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                                                />
+                                                <Ionicons name="camera" size={24} color={P.white} />
+                                            </View>
+                                            <View style={s.pickerRowText}>
+                                                <Text style={s.pickerRowTitle}>{t('add.camera')}</Text>
+                                                <Text style={s.pickerRowDesc}>{t('add.camera_sub')}</Text>
+                                            </View>
+                                            <Ionicons name="chevron-forward" size={20} color={P.gray300} />
                                         </TouchableOpacity>
 
-                                        {/* Gallery */}
-                                        <TouchableOpacity style={s.pickerCardSecondary} activeOpacity={0.85} onPress={pickMediaWithTrack}>
-                                            <View style={s.pickerIconCircleGhost}>
-                                                <Ionicons name="images-outline" size={28} color={P.p600} />
+                                        <TouchableOpacity 
+                                            style={s.pickerRow} 
+                                            activeOpacity={0.7} 
+                                            onPress={pickMediaWithTrack}
+                                        >
+                                            <View style={[s.pickerIconCircle, { backgroundColor: '#6366F1' }]}>
+                                                <LinearGradient 
+                                                    colors={['#6366F1', '#4F46E5']} 
+                                                    style={StyleSheet.absoluteFill}
+                                                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                                                />
+                                                <Ionicons name="images" size={24} color={P.white} />
                                             </View>
-                                            <Text style={s.pickerLabelSecondary}>Galería</Text>
-                                            <Text style={s.pickerSubSecondary}>Tus fotos</Text>
+                                            <View style={s.pickerRowText}>
+                                                <Text style={s.pickerRowTitle}>{t('add.gallery')}</Text>
+                                                <Text style={s.pickerRowDesc}>{t('add.gallery_sub')}</Text>
+                                            </View>
+                                            <Ionicons name="chevron-forward" size={20} color={P.gray300} />
                                         </TouchableOpacity>
                                     </View>
                                 </View>
@@ -626,15 +813,16 @@ export default function AddItemScreen() {
                                 /* ── Media strip ── */
                                 <>
                                     <View style={s.stripHeader}>
-                                        <View style={s.countChip}>
-                                            <View style={s.countDot} />
-                                            <Text style={s.countText}>
+                                        <View style={s.premiumCountBadge}>
+                                            <Text style={s.premiumCountText}>
                                                 {mediaList.length} {contentType === 'image' ? 'foto' : 'video'}{mediaList.length !== 1 ? 's' : ''}
                                             </Text>
                                         </View>
-                                        <TouchableOpacity style={s.addMoreBtn} onPress={handleAddMore} activeOpacity={0.7}>
-                                            <Ionicons name="add" size={15} color={P.p600} />
-                                            <Text style={s.addMoreText}>Añadir más</Text>
+                                        <TouchableOpacity style={s.premiumAddMoreBtn} onPress={handleAddMore} activeOpacity={0.7}>
+                                            <LinearGradient colors={[P.p500, P.p600]} style={s.premiumAddMoreGrad}>
+                                                <Ionicons name="add" size={18} color={P.white} />
+                                            </LinearGradient>
+                                            <Text style={s.premiumAddMoreText}>Añadir más</Text>
                                         </TouchableOpacity>
                                     </View>
 
@@ -688,7 +876,7 @@ export default function AddItemScreen() {
                                 </View>
                                 <TextInput
                                     style={s.captionInput}
-                                    placeholder="Añade un pie de foto…"
+                                    placeholder={t('add.add_caption')}
                                     placeholderTextColor={P.gray300}
                                     value={caption}
                                     onChangeText={setCaption}
@@ -701,6 +889,108 @@ export default function AddItemScreen() {
                     )}
                 </ScrollView>
             </KeyboardAvoidingView>
+
+            {/* ── Capsule Selector Modal (Premium) ── */}
+            <Modal visible={capsuleSelectorVisible} transparent animationType="slide">
+                <View style={s.capsuleModalOverlay}>
+                    <BlurView intensity={80} tint="light" style={StyleSheet.absoluteFill} />
+                    
+                    {/* Ambient Orbs */}
+                    <View style={StyleSheet.absoluteFill} pointerEvents="none">
+                        <View style={[s.orb, { top: 100, right: -50, backgroundColor: P.p100 + '80' }]} />
+                        <View style={[s.orb, { bottom: 200, left: -60, backgroundColor: P.p200 + '50' }]} />
+                    </View>
+
+                    <View style={s.capsuleSheet}>
+                        <View style={s.capsuleSheetHandle} />
+                        <View style={s.capsuleSheetHeader}>
+                            <View>
+                                <Text style={s.capsuleSheetTitle}>{t('add.target_capsule')}</Text>
+                                <Text style={s.capsuleSheetSub}>{t('add.target_capsule_sub')}</Text>
+                            </View>
+                            <TouchableOpacity onPress={() => setCapsuleSelectorVisible(false)}>
+                                <Ionicons name="close-circle" size={32} color={P.gray300} />
+                            </TouchableOpacity>
+                        </View>
+
+                        {isLoadingCapsules ? (
+                            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                                <ActivityIndicator size="large" color={P.p600} />
+                            </View>
+                        ) : (
+                            <ScrollView 
+                                style={s.capsuleOptionsScroll} 
+                                showsVerticalScrollIndicator={false}
+                                contentContainerStyle={{ paddingBottom: 40 }}
+                            >
+                                {myCapsules.length === 0 ? (
+                                    <View style={s.emptyMyCaps}>
+                                        <Ionicons name="albums-outline" size={48} color={P.gray200} />
+                                        <Text style={s.emptyMyCapsText}>{t('add.no_capsules')}</Text>
+                                        <TouchableOpacity 
+                                            style={s.createCapsBtn}
+                                            onPress={() => {
+                                                setCapsuleSelectorVisible(false);
+                                                navigation.navigate('CreateCapsule');
+                                            }}
+                                        >
+                                            <Text style={s.createCapsBtnText}>{t('add.create_first_capsule')}</Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                ) : (
+                                    myCapsules.map((cap) => (
+                                        <TouchableOpacity 
+                                            key={cap.id}
+                                            activeOpacity={0.8}
+                                            style={[
+                                                s.capsuleChoiceCard,
+                                                selectedCapsule?.id === cap.id && s.capsuleChoiceSelected
+                                            ]}
+                                            onPress={() => {
+                                                setSelectedCapsule(cap);
+                                                setCapsuleSelectorVisible(false);
+                                            }}
+                                        >
+                                            <View style={s.capsuleChoiceVisual}>
+                                                <Image 
+                                                    source={{ 
+                                                        uri: cap.cover_url || 
+                                                             (cap.status === 'opened' ? MODEL_IMAGES_OPEN[cap.model] : MODEL_IMAGES[cap.model]) || 
+                                                             MODEL_IMAGES.cartoonkap 
+                                                    }}
+                                                    style={s.capsuleChoiceImg}
+                                                    contentFit="cover"
+                                                />
+                                                <LinearGradient 
+                                                    colors={['transparent', 'rgba(0,0,0,0.3)']}
+                                                    style={StyleSheet.absoluteFill}
+                                                />
+                                                <View style={s.capsuleChoiceBadge}>
+                                                    <Ionicons 
+                                                        name={cap.status === 'opened' ? "lock-open" : "lock-closed"} 
+                                                        size={10} color="#fff" 
+                                                    />
+                                                </View>
+                                            </View>
+                                            <View style={s.capsuleChoiceInfo}>
+                                                <Text style={s.capsuleChoiceTitle} numberOfLines={1}>{cap.title}</Text>
+                                                <Text style={s.capsuleChoiceMeta}>
+                                                    {cap.status === 'opened' ? t('common.open') : t('common.sealed')} · {cap.type}
+                                                </Text>
+                                            </View>
+                                            {selectedCapsule?.id === cap.id && (
+                                                <View style={s.checkMark}>
+                                                    <Ionicons name="checkmark-circle" size={24} color={P.p600} />
+                                                </View>
+                                            )}
+                                        </TouchableOpacity>
+                                    ))
+                                )}
+                            </ScrollView>
+                        )}
+                    </View>
+                </View>
+            </Modal>
 
             {/* ── Video Preview Modal ── */}
             <Modal visible={!!previewVideo} transparent animationType="fade">
@@ -726,7 +1016,7 @@ export default function AddItemScreen() {
                     }
                     <View style={s.trimSheet}>
                         <View style={s.trimHandle} />
-                        <Text style={s.trimTitle}>Recortar video</Text>
+                        <Text style={s.trimTitle}>{t('add.trim_video')}</Text>
 
                         {trimmingIndex !== null && mediaList[trimmingIndex] && (
                             <Video source={{ uri: mediaList[trimmingIndex].uri }}
@@ -787,12 +1077,39 @@ export default function AddItemScreen() {
             {/* ── Upload Overlay ── */}
             {loading && (
                 <View style={s.uploadOverlay}>
+                    <BlurView intensity={20} style={StyleSheet.absoluteFill} />
                     <View style={s.uploadCard}>
-                        <View style={s.uploadSpinner}>
+                        <View style={s.uploadProgressCircle}>
                             <ActivityIndicator size="large" color={P.p600} />
                         </View>
-                        <Text style={s.uploadTitle}>Subiendo…</Text>
-                        <Text style={s.uploadSub}>{mediaList.length > 0 ? 'Procesando archivos' : 'Un momento'}</Text>
+                        <Text style={s.uploadTitle}>
+                            {mediaList.length > 0 
+                                ? t('add.saving_items', { current: Math.min(Object.values(uploadProgress).filter(v => v === 100).length + 1, mediaList.length), total: mediaList.length })
+                                : contentType === 'note' ? t('add.saving_note') : contentType === 'audio' ? t('add.saving_audio') : t('add.saving_content')
+                            }
+                        </Text>
+                        
+                        {mediaList.length > 0 && (
+                            <View style={s.globalProgressContainer}>
+                                <View style={s.globalProgressBar}>
+                                    <View 
+                                        style={[
+                                            s.globalProgressFill, 
+                                            { 
+                                                width: `${(Object.values(uploadProgress).reduce((a, b) => a + b, 0) / (mediaList.length * 100)) * 100}%` as any 
+                                            }
+                                        ]} 
+                                    />
+                                </View>
+                                <Text style={s.globalProgressText}>
+                                    {Math.round((Object.values(uploadProgress).reduce((a, b) => a + b, 0) / (mediaList.length * 100)) * 100)}%
+                                </Text>
+                            </View>
+                        )}
+                        
+                        <Text style={s.uploadSub}>
+                            {mediaList.length > 0 ? t('add.uploading_success') : t('add.one_moment')}
+                        </Text>
                     </View>
                 </View>
             )}
@@ -963,74 +1280,69 @@ const s = StyleSheet.create({
     // Header
     header: {
         flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-        paddingHorizontal: 20, paddingVertical: 12, backgroundColor: P.white,
+        paddingHorizontal: 22, paddingVertical: 18, backgroundColor: 'transparent',
     },
     headerRule: { height: 1, backgroundColor: P.gray100, marginHorizontal: 0 },
     backBtn: {
-        width: 38, height: 38, borderRadius: 19,
-        backgroundColor: P.gray100,
+        width: 44, height: 44, borderRadius: 22,
+        backgroundColor: P.white, ...shadow.soft,
         alignItems: 'center', justifyContent: 'center',
     },
     headerMid: { alignItems: 'center', flex: 1, marginHorizontal: 10 },
-    typePill: {
+    headerTitle: { fontSize: 16, fontWeight: '800', color: P.gray900, marginBottom: 2 },
+    targetPill: {
         flexDirection: 'row', alignItems: 'center', gap: 4,
-        backgroundColor: P.p100, paddingHorizontal: 10, paddingVertical: 3,
-        borderRadius: R.full, marginBottom: 3,
+        backgroundColor: P.p50, paddingHorizontal: 10, paddingVertical: 4,
+        borderRadius: R.full, borderWidth: 1, borderColor: P.p100,
     },
-    typePillText: { fontSize: 10, fontWeight: '700', color: P.p600, textTransform: 'uppercase', letterSpacing: 0.8 },
-    headerTitle: { fontSize: 16, fontWeight: '700', color: P.gray900 },
+    targetPillLabel: { fontSize: 11, fontWeight: '600', color: P.gray400 },
+    targetPillValue: { fontSize: 11, fontWeight: '700', color: P.p700, maxWidth: 120 },
     publishBtn: {
-        backgroundColor: P.p600, paddingHorizontal: 20, paddingVertical: 10,
-        borderRadius: R.full, minWidth: 78, alignItems: 'center',
+        borderRadius: R.full, minWidth: 90, overflow: 'hidden',
         ...shadow.purple,
     },
-    publishBtnOff: { backgroundColor: P.gray200, ...Platform.select({ ios: { shadowOpacity: 0 }, android: { elevation: 0 } }) },
-    publishBtnText: { color: P.white, fontSize: 14, fontWeight: '700' },
+    publishBtnGrad: { paddingHorizontal: 22, paddingVertical: 12, alignItems: 'center', justifyContent: 'center' },
+    publishBtnOff: { opacity: 0.5, ...shadow.soft },
+    publishBtnText: { color: P.white, fontSize: 14, fontWeight: '800' },
 
     // Scroll
     scroll: { padding: 20, paddingBottom: 60 },
 
-    // ── NOTE
-    noteWrapper: { gap: 14 },
-    noteTopRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    noteIconWrap: {
-        width: 30, height: 30, borderRadius: 10,
-        backgroundColor: P.p100, alignItems: 'center', justifyContent: 'center',
-    },
-    noteSectionLabel: { fontSize: 13, fontWeight: '700', color: P.p600, letterSpacing: 0.3 },
-    noteField: {
-        borderWidth: 1.5, borderColor: P.gray200,
-        borderRadius: R.lg, backgroundColor: P.white,
-        overflow: 'hidden', ...shadow.soft,
+    noteWrapper: { paddingHorizontal: 20, paddingTop: 10 },
+    noteCard: {
+        backgroundColor: P.white, borderRadius: 28, padding: 22,
+        minHeight: 200, ...shadow.medium, borderWidth: 1, borderColor: P.gray100,
     },
     noteInput: {
-        fontSize: 16, color: P.gray900, lineHeight: 26,
-        minHeight: 230, textAlignVertical: 'top', padding: 20,
+        fontSize: 18, fontFamily: Platform.OS === 'ios' ? 'System' : 'sans-serif-medium',
+        color: P.gray900, lineHeight: 26, flex: 1, textAlignVertical: 'top',
     },
     noteFooter: {
-        flexDirection: 'row', alignItems: 'center', gap: 8,
-        paddingHorizontal: 20, paddingVertical: 12,
-        borderTopWidth: 1, borderTopColor: P.gray100,
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+        marginTop: 20, paddingTop: 15, borderTopWidth: 1, borderTopColor: P.gray50,
     },
-    noteFooterDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: P.p300 },
-    noteCharCount: { fontSize: 12, color: P.gray400, fontWeight: '500' },
+    noteSignatureLine: { height: 1, flex: 1, backgroundColor: P.gray100, marginRight: 20 },
+    noteCharBadge: {
+        backgroundColor: P.gray50, paddingHorizontal: 10, paddingVertical: 4,
+        borderRadius: 8,
+    },
+    noteCharCount: { fontSize: 10, fontWeight: '700', color: P.gray400, textTransform: 'uppercase' },
 
     // ── AUDIO
     audioCard: {
-        alignItems: 'center', paddingVertical: 48, paddingHorizontal: 24, gap: 6,
-        backgroundColor: P.p50, borderRadius: R.xl,
-        borderWidth: 1.5, borderColor: P.p100, marginTop: 8,
-        ...shadow.soft,
+        backgroundColor: P.white, borderRadius: 32, padding: 30,
+        marginHorizontal: 0, marginTop: 10, alignItems: 'center',
+        ...shadow.medium, borderWidth: 1, borderColor: P.gray100,
     },
-    waveRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 28, height: 40 },
-    wave: { width: 3.5, borderRadius: 2 },
+    waveRow: { flexDirection: 'row', alignItems: 'center', gap: 4, height: 60, marginBottom: 30 },
+    wave: { width: 3, borderRadius: 1.5, backgroundColor: P.gray100 },
     micBtnOuter: {
-        width: 96, height: 96, borderRadius: 48, overflow: 'hidden',
-        ...shadow.purple,
+        width: 90, height: 90, borderRadius: 45, backgroundColor: P.white,
+        alignItems: 'center', justifyContent: 'center', ...shadow.purple,
     },
-    micBtnGrad: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-    micStatus: { fontSize: 18, fontWeight: '700', color: P.gray900, marginTop: 22 },
-    micHint: { fontSize: 13, color: P.gray400, marginBottom: 10 },
+    micBtnGrad: { width: 74, height: 74, borderRadius: 37, alignItems: 'center', justifyContent: 'center' },
+    micStatus: { fontSize: 18, fontWeight: '800', color: P.gray900, marginTop: 20 },
+    micHint: { fontSize: 13, color: P.gray400, marginTop: 4, fontWeight: '500' },
 
     // Location Modal
     modalOverlay: { flex: 1, justifyContent: 'flex-end' },
@@ -1071,21 +1383,21 @@ const s = StyleSheet.create({
     },
     retryLabel: { color: P.red, fontSize: 13, fontWeight: '600' },
 
+    locationCard: {
+        marginHorizontal: 20, marginTop: 24,
+        backgroundColor: P.white, borderRadius: 24, padding: 18,
+        flexDirection: 'row', alignItems: 'center', gap: 14,
+        borderWidth: 1, borderColor: P.gray100, ...shadow.soft,
+    },
+
     // ── EMPTY STATE
     emptyWrap: { alignItems: 'center', paddingVertical: 32, gap: 0 },
     emptyIcon: { width: 110, height: 110, borderRadius: 55, overflow: 'hidden', marginBottom: 22, ...shadow.soft },
     emptyIconGrad: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     emptyTitle: { fontSize: 22, fontWeight: '700', color: P.gray900, marginBottom: 8 },
     emptySub: { fontSize: 14, color: P.gray400, textAlign: 'center', lineHeight: 20, marginBottom: 30 },
-    pickerRow: { flexDirection: 'row', gap: 14, width: '100%' },
-
     pickerCardPrimary: { flex: 1, borderRadius: R.lg, overflow: 'hidden', ...shadow.purple },
     pickerCardGrad: { padding: 22, alignItems: 'center', gap: 10 },
-    pickerIconCircle: {
-        width: 54, height: 54, borderRadius: 27,
-        backgroundColor: 'rgba(255,255,255,0.18)',
-        alignItems: 'center', justifyContent: 'center', marginBottom: 2,
-    },
     pickerLabelPrimary: { fontSize: 15, fontWeight: '700', color: P.white },
     pickerSubPrimary: { fontSize: 12, color: 'rgba(255,255,255,0.7)' },
 
@@ -1163,6 +1475,27 @@ const s = StyleSheet.create({
     },
     captionInput: { flex: 1, paddingVertical: 14, fontSize: 15, color: P.gray900 },
 
+    // ── PREMIUM EMPTY PICKER
+    emptyPremiumContainer: { paddingVertical: 20 },
+    emptyPremiumHeader: { marginBottom: 24, paddingLeft: 4 },
+    emptyPremiumTitle: { fontSize: 26, fontWeight: '900', color: P.gray900, letterSpacing: -0.8 },
+    emptyPremiumSub: { fontSize: 14, color: P.gray400, marginTop: 4, fontWeight: '500' },
+    premiumPickerGrid: { flexDirection: 'row', gap: 14 },
+    premiumPickerCard: { flex: 1, height: 180, borderRadius: 32, overflow: 'hidden', ...shadow.medium },
+    premiumPickerGrad: { flex: 1, padding: 20, justifyContent: 'flex-end', gap: 8 },
+    premiumIconCircle: { width: 54, height: 54, borderRadius: 27, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center', marginBottom: 6 },
+    premiumPickerLabel: { fontSize: 18, fontWeight: '800', color: P.white },
+    premiumPickerHint: { fontSize: 12, color: 'rgba(255,255,255,0.6)', fontWeight: '600' },
+
+    // ── PREMIUM STRIP HEADER
+    premiumCountBadge: {
+        backgroundColor: P.gray900, paddingHorizontal: 14, paddingVertical: 6, borderRadius: 12,
+    },
+    premiumCountText: { fontSize: 13, fontWeight: '800', color: P.white, letterSpacing: 0.5 },
+    premiumAddMoreBtn: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    premiumAddMoreGrad: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', ...shadow.soft },
+    premiumAddMoreText: { fontSize: 14, fontWeight: '700', color: P.p700 },
+
     // Video Modal
     videoModal: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
     videoFull: { width: '100%', height: '80%' },
@@ -1199,28 +1532,144 @@ const s = StyleSheet.create({
         backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: R.full,
         borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
     },
+
+    // Note Mode
+    noteModeSelector: {
+        flexDirection: 'row', backgroundColor: P.gray100,
+        borderRadius: 16, padding: 4, marginBottom: 16, gap: 4,
+    },
+    noteModeBtn: {
+        flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+        gap: 8, paddingVertical: 10, borderRadius: 12,
+    },
+    noteModeBtnActive: {
+        backgroundColor: P.p600, ...shadow.soft,
+    },
+    noteModeText: { fontSize: 14, fontWeight: '700', color: P.gray500 },
+    noteModeTextActive: { color: P.white },
+
+    // Handwriting
+    handwritingContainer: { gap: 16 },
+    drawingCanvas: {
+        width: '100%', height: 350, borderRadius: 28,
+        backgroundColor: P.white, overflow: 'hidden',
+        borderWidth: 1, borderColor: P.gray100, ...shadow.medium,
+    },
+    paperBackground: { flex: 1, backgroundColor: '#FFFEF5' }, // Slightly yellowish paper feel
+    drawingPlaceholder: { 
+        ...StyleSheet.absoluteFillObject, 
+        alignItems: 'center', justifyContent: 'center', opacity: 0.5 
+    },
+    drawingPlaceholderText: { color: P.gray300, fontSize: 16, fontWeight: '600', marginTop: 10 },
+    clearCanvasBtn: {
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+        gap: 8, alignSelf: 'flex-end', paddingHorizontal: 16, paddingVertical: 8,
+    },
+    clearCanvasText: { color: P.red, fontSize: 14, fontWeight: '700' },
     trimCancelText: { color: 'rgba(255,255,255,0.65)', fontWeight: '600' },
     trimSave: { flex: 1, borderRadius: R.full, overflow: 'hidden' },
     trimSaveGrad: { paddingVertical: 15, alignItems: 'center' },
     trimSaveText: { color: P.white, fontWeight: '700' },
+    // Picker Rows
+    pickerRowContainer: { gap: 12, marginTop: 10 },
+    pickerRow: {
+        flexDirection: 'row', alignItems: 'center', gap: 16,
+        padding: 16, backgroundColor: P.white, borderRadius: 24,
+        ...shadow.soft, borderWidth: 1, borderColor: P.gray100,
+    },
+    pickerIconCircle: {
+        width: 56, height: 56, borderRadius: 18,
+        alignItems: 'center', justifyContent: 'center',
+        overflow: 'hidden',
+    },
+    pickerRowText: { flex: 1 },
+    pickerRowTitle: { fontSize: 18, fontWeight: '800', color: P.gray900, marginBottom: 2 },
+    pickerRowDesc: { fontSize: 13, color: P.gray400, fontWeight: '500' },
+
+    // ── CAPSULE SELECTOR MODAL
+    capsuleModalOverlay: { flex: 1, justifyContent: 'flex-end' },
+    capsuleSheet: {
+        backgroundColor: P.white,
+        borderTopLeftRadius: 40, borderTopRightRadius: 40,
+        paddingHorizontal: 24, paddingBottom: 40,
+        height: '82%', ...shadow.medium,
+    },
+    capsuleSheetHandle: { width: 40, height: 4, backgroundColor: P.gray100, borderRadius: 2, alignSelf: 'center', marginTop: 12, marginBottom: 20 },
+    capsuleSheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
+    capsuleSheetTitle: { fontSize: 24, fontWeight: '900', color: P.gray900, letterSpacing: -0.5 },
+    capsuleSheetSub: { fontSize: 13, color: P.gray400, marginTop: 2, fontWeight: '500' },
+    capsuleOptionsScroll: { flex: 1 },
+    capsuleChoiceCard: {
+        flexDirection: 'row', alignItems: 'center', gap: 16,
+        padding: 12, backgroundColor: P.gray50, borderRadius: 24,
+        marginBottom: 12, borderWidth: 2, borderColor: 'transparent',
+    },
+    capsuleChoiceSelected: {
+        borderColor: P.p200, backgroundColor: P.p50,
+    },
+    capsuleChoiceVisual: {
+        width: 64, height: 64, borderRadius: 18, overflow: 'hidden',
+    },
+    capsuleChoiceImg: { width: '100%', height: '100%' },
+    capsuleChoiceBadge: {
+        position: 'absolute', top: 6, right: 6,
+        width: 18, height: 18, borderRadius: 9,
+        backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center',
+    },
+    capsuleChoiceInfo: { flex: 1 },
+    capsuleChoiceTitle: { fontSize: 16, fontWeight: '800', color: P.gray900, marginBottom: 4 },
+    capsuleChoiceMeta: { fontSize: 12, color: P.gray500, fontWeight: '600' },
+    checkMark: { marginLeft: 8 },
+    orb: { position: 'absolute', width: 300, height: 300, borderRadius: 150 },
+    emptyMyCaps: { alignItems: 'center', paddingVertical: 60 },
+    emptyMyCapsText: { fontSize: 15, color: P.gray400, marginTop: 16, fontWeight: '600' },
+    createCapsBtn: {
+        marginTop: 24, backgroundColor: P.p600, 
+        paddingHorizontal: 24, paddingVertical: 14, borderRadius: R.full,
+    },
+    createCapsBtnText: { color: P.white, fontSize: 14, fontWeight: '700' },
 
     // Upload Overlay
     uploadOverlay: {
         ...StyleSheet.absoluteFillObject,
-        backgroundColor: 'rgba(255,255,255,0.9)',
         alignItems: 'center', justifyContent: 'center', zIndex: 999,
     },
     uploadCard: {
-        alignItems: 'center', gap: 10, backgroundColor: P.white,
-        borderRadius: R.xl, padding: 36,
+        width: width * 0.82,
+        alignItems: 'center', backgroundColor: P.white,
+        borderRadius: R.xl, padding: 32,
         borderWidth: 1, borderColor: P.gray100, ...shadow.medium,
     },
-    uploadSpinner: {
-        width: 70, height: 70, borderRadius: 35,
-        backgroundColor: P.p50, alignItems: 'center', justifyContent: 'center', marginBottom: 2,
+    uploadProgressCircle: {
+        width: 64, height: 64, borderRadius: 32,
+        backgroundColor: P.p50, alignItems: 'center', justifyContent: 'center', marginBottom: 12,
     },
-    uploadTitle: { fontSize: 17, fontWeight: '700', color: P.gray900 },
-    uploadSub: { fontSize: 13, color: P.gray400 },
+    globalProgressContainer: {
+        width: '100%',
+        marginTop: 18,
+        marginBottom: 8,
+        alignItems: 'center',
+    },
+    globalProgressBar: {
+        width: '100%',
+        height: 8,
+        backgroundColor: P.gray100,
+        borderRadius: 4,
+        overflow: 'hidden',
+    },
+    globalProgressFill: {
+        height: '100%',
+        backgroundColor: P.p600,
+        borderRadius: 4,
+    },
+    globalProgressText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: P.p600,
+        marginTop: 8,
+    },
+    uploadTitle: { fontSize: 17, fontWeight: '700', color: P.gray900, textAlign: 'center' },
+    uploadSub: { fontSize: 13, color: P.gray400, textAlign: 'center', marginTop: 8 },
 
     // Alert
     alertOverlay: { flex: 1, alignItems: 'center', justifyContent: 'center' },
@@ -1246,16 +1695,7 @@ const s = StyleSheet.create({
     alertBtnGrad: { paddingVertical: 15, alignItems: 'center' },
     alertBtnText: { color: P.white, fontSize: 15, fontWeight: '700' },
 
-    // ── LOCATION TOGGLE
-    locationCard: {
-        marginTop: 20,
-        backgroundColor: P.white,
-        borderRadius: R.md,
-        padding: 16,
-        borderWidth: 1.5,
-        borderColor: P.gray200,
-        ...shadow.soft,
-    },
+    // ── LOCATION TOGGLE (Handled in locationCard block above)
     locationInfo: {
         flexDirection: 'row',
         alignItems: 'center',

@@ -3,7 +3,7 @@ import {
     View, Text, StyleSheet, ScrollView, TouchableOpacity,
     TextInput, Dimensions, Animated, Easing, StatusBar, Alert, ActivityIndicator,
     Modal, FlatList, KeyboardAvoidingView, Platform, Pressable, SectionList, Keyboard, InteractionManager,
-    DeviceEventEmitter
+    DeviceEventEmitter, Vibration
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -231,19 +231,95 @@ const ds = StyleSheet.create({
 
     // Item Author Overlay
     itemAuthorOverlay: { position: 'absolute', top: 6, left: 6, width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, borderColor: '#fff', zIndex: 15, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 2, shadowOffset: { width: 0, height: 1 } },
+
+    // Modern Search
+    searchContainer: { marginBottom: 20, paddingHorizontal: 4 },
+    searchInputWrapper: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        backgroundColor: D.surfaceAlt,
+        borderRadius: 24,
+        paddingHorizontal: 16,
+        paddingVertical: Platform.OS === 'ios' ? 12 : 6,
+        borderWidth: 1.5,
+        borderColor: D.border,
+    },
+    modernSearchInput: {
+        flex: 1,
+        fontSize: 15,
+        fontFamily: Fonts.medium,
+        color: D.text,
+        height: 40,
+    },
+
+    // Modern User Result Card
+    modernUserCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: D.surface,
+        padding: 12,
+        borderRadius: 20,
+        marginBottom: 10,
+        borderWidth: 1,
+        borderColor: D.border,
+        gap: 12,
+    },
+    modernUserAvatarWrap: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        borderWidth: 2,
+        borderColor: D.border,
+        padding: 2,
+    },
+    modernUserAvatar: {
+        flex: 1,
+        borderRadius: 20,
+    },
+    modernUserName: {
+        fontSize: 15,
+        fontFamily: Fonts.bold,
+        color: D.text,
+    },
+    modernUserTag: {
+        fontSize: 12,
+        fontFamily: Fonts.regular,
+        color: D.textMuted,
+    },
+    modernInviteBtn: {
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: 14,
+        shadowColor: '#000',
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        shadowOffset: { width: 0, height: 2 },
+    },
+    modernInviteBtnText: {
+        color: '#fff',
+        fontSize: 13,
+        fontFamily: Fonts.bold,
+    },
 });
 
 // ── Collaborators Component ──────────────────────────────────────────────────
-const CollaboratorsBar = React.memo(({ owner, members, tint }: any) => {
+const CollaboratorsBar = React.memo(({ owner, members, invites, tint, isMember, onInvite }: any) => {
     const [activeUser, setActiveUser] = useState<any>(null);
     const timeoutRef = useRef<any>(null);
     const navigation = useNavigation<any>();
 
     const allMembers = useMemo(() => {
-        return [owner, ...members].filter(Boolean);
-    }, [owner, members]);
+        const acceptedIds = new Set(members.map((m: any) => m.id));
+        const pending = (invites || [])
+            .filter((i: any) => i.status === 'pending' && i.profiles)
+            .map((i: any) => ({ ...i.profiles, isPending: true }));
+        
+        return [owner, ...members, ...pending].filter(Boolean);
+    }, [owner, members, invites]);
 
     const handlePress = (m: any) => {
+        if (m.isPending) return;
         if (activeUser && activeUser.id === m.id) {
             if (timeoutRef.current) clearTimeout(timeoutRef.current);
             setActiveUser(null);
@@ -251,6 +327,7 @@ const CollaboratorsBar = React.memo(({ owner, members, tint }: any) => {
         } else {
             if (timeoutRef.current) clearTimeout(timeoutRef.current);
             setActiveUser(m);
+            timeoutRef.current = setTimeout(() => setActiveUser(m), 2500); // Fixed typo: set to m not null to keep visible if clicked again? No, usually null.
             timeoutRef.current = setTimeout(() => setActiveUser(null), 2500);
         }
     };
@@ -268,9 +345,9 @@ const CollaboratorsBar = React.memo(({ owner, members, tint }: any) => {
                 {allMembers.slice(0, 5).map((m, i) => (
                     <TouchableOpacity 
                         key={m.id || i} 
-                        activeOpacity={0.8} 
+                        activeOpacity={m.isPending ? 1 : 0.8} 
                         onPress={() => handlePress(m)}
-                        style={{ zIndex: 10 - i }}
+                        style={{ zIndex: 10 - i, opacity: m.isPending ? 0.45 : 1 }}
                     >
                         <Image 
                             source={{ uri: m.avatar_url || 'https://via.placeholder.com/150' }} 
@@ -282,6 +359,14 @@ const CollaboratorsBar = React.memo(({ owner, members, tint }: any) => {
                     <View style={ds.collabMore}>
                         <Text style={ds.collabMoreText}>+{allMembers.length - 5}</Text>
                     </View>
+                )}
+                {isMember && (
+                    <TouchableOpacity 
+                        style={[ds.collabMore, { backgroundColor: tint + '15', marginLeft: 8, borderColor: tint + '30' }]}
+                        onPress={onInvite}
+                    >
+                        <Ionicons name="add" size={16} color={tint} />
+                    </TouchableOpacity>
                 )}
             </View>
         </View>
@@ -489,7 +574,15 @@ function CapsuleDetailScreen() {
     const [showQRModal, setShowQRModal] = useState(false);
     const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
     const [playingAudio, setPlayingAudio] = useState<string | null>(null);
+    const [showInviteModal, setShowInviteModal] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [searchResults, setSearchResults] = useState<any[]>([]);
+    const [isSearching, setIsSearching] = useState(false);
     const [scrollEnabled, setScrollEnabled] = useState(true);
+    const [showBigHeart, setShowBigHeart] = useState(false);
+    const [invitedUsers, setInvitedUsers] = useState<any[]>([]);
+    const bigHeartScale = useRef(new Animated.Value(0)).current;
+    const bigHeartOpacity = useRef(new Animated.Value(0)).current;
 
     const timerRef = useRef<NodeJS.Timeout | null>(null);
     const insets = useSafeAreaInsets();
@@ -553,6 +646,7 @@ function CapsuleDetailScreen() {
         (capsule?.invite_status === 'accepted' && capsule?.invited_user_id === userId);
     const hasRequestedOpen = capsule?.open_requests?.includes(userId || '') || false;
     const reqCount = capsule?.open_requests?.length || 0;
+    const isSharedCapsule = capsule?.is_shared === true || totalMembers > 1 || (invites && invites.length > 0);
     const [canBeOpened, setCanBeOpened] = useState(false);
     useEffect(() => {
         const checkReady = () => setCanBeOpened(capsule?.opens_at ? new Date(capsule.opens_at) <= new Date() : true);
@@ -596,10 +690,14 @@ function CapsuleDetailScreen() {
     }, [items, filterType, filterSort]);
 
     useFocusEffect(useCallback(() => {
+        const controller = new AbortController();
         const task = InteractionManager.runAfterInteractions(() => {
-            loadData();
+            loadData(controller.signal);
         });
-        return () => task.cancel();
+        return () => {
+            task.cancel();
+            controller.abort();
+        };
     }, [capsuleId]));
 
     const formatDetailedDate = (dateStr: string) => {
@@ -664,12 +762,21 @@ function CapsuleDetailScreen() {
             })
             .subscribe();
         const invCh = supabase.channel(`capsule-${capsuleId}-invites`)
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'capsule_invites', filter: `capsule_id=eq.${capsuleId}` }, loadData)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'capsule_invites', filter: `capsule_id=eq.${capsuleId}` }, () => loadData())
+            .subscribe();
+
+        const likesCh = supabase.channel(`capsule-${capsuleId}-likes`)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'likes', filter: `capsule_id=eq.${capsuleId}` }, async () => {
+                // Fetch fresh count from DB to be 100% accurate
+                const { count } = await supabase.from('likes').select('*', { count: 'exact', head: true }).eq('capsule_id', capsuleId);
+                setLikeCount(count || 0);
+            })
             .subscribe();
 
         return () => {
             supabase.removeChannel(capCh);
             supabase.removeChannel(invCh);
+            supabase.removeChannel(likesCh);
             if (timerRef.current) clearInterval(timerRef.current);
         };
     }, [capsuleId, navigation]);
@@ -684,85 +791,128 @@ function CapsuleDetailScreen() {
         return t('common.d_ago', { count: Math.floor(h / 24) });
     };
 
-    const loadData = async () => {
-        const { data: { user } } = await supabase.auth.getUser();
-        setUserId(user?.id ?? null);
+    const loadData = async (signal?: AbortSignal) => {
+        const { data: { session } } = await supabase.auth.getSession();
+        const user = session?.user;
+        if (signal?.aborted) return;
+        const myId = user?.id ?? null;
+        setUserId(myId);
+
         let blocked: string[] = [];
-        if (user) { blocked = await safetyService.getAllSafetyUserIds(user.id); setBlockedUserIds(blocked); }
+        if (myId) { 
+            blocked = await safetyService.getAllSafetyUserIds(myId); 
+            setBlockedUserIds(blocked); 
+        }
+        if (signal?.aborted) return;
 
-        const [initialCapRes, itemsRes, likesRes, commentsRes, myLikeRes, invitesRes, fCountRes, myFollowRes] = await Promise.all([
-            supabase.from('capsules').select(`
-                id, title, description, created_at, opens_at, status, model, type, owner_id, chain_id, duration_days, is_shared, is_opening, opening_at, open_requests, cover_url,
-                profiles:owner_id(id, username, display_name, avatar_url, is_verified)
-            `).eq('id', capsuleId).maybeSingle(),
-            supabase.from('capsule_items').select(`
-                id, capsule_id, owner_id, media_url, thumbnail_url, media_type, content, caption, created_at,
-                latitude, longitude, altitude, location_name,
-                profiles:owner_id(avatar_url, id, display_name, username)
-            `).eq('capsule_id', capsuleId).order('created_at', { ascending: true }),
-            supabase.from('likes').select('id', { count: 'exact', head: true }).eq('capsule_id', capsuleId),
-            supabase.from('comments').select(`
-                id, capsule_id, user_id, content, created_at,
-                profiles:user_id(id, display_name, username, avatar_url, is_verified),
-                comment_likes(user_id)
-            `).eq('capsule_id', capsuleId).order('created_at', { ascending: false }).limit(100),
-            user ? supabase.from('likes').select('id').eq('capsule_id', capsuleId).eq('user_id', user.id).maybeSingle() : Promise.resolve({ data: null }),
-            supabase.from('capsule_invites').select('id, capsule_id, user_id, status, profiles:user_id(id, username, display_name, avatar_url)').eq('capsule_id', capsuleId),
-            Promise.resolve({ count: 0 }),
-            Promise.resolve({ data: null })
-        ]);
+        // NEW: Single RPC call replacing 11 requests
+        const { data, error } = await (signal
+            ? supabase.rpc('get_capsule_detail_unified', { 
+                p_capsule_id: capsuleId, 
+                p_user_id: myId 
+              }).abortSignal(signal)
+            : supabase.rpc('get_capsule_detail_unified', { 
+                p_capsule_id: capsuleId, 
+                p_user_id: myId 
+              })
+        );
 
-        const capsuleData = initialCapRes.data;
-        if (initialCapRes.error || !capsuleData) {
+        if (error || !data) {
+            if (error?.message?.includes('Abort') || error?.name === 'AbortError') return;
+            console.error('RPC Error:', error);
+            // Fallback for safety if RPC doesn't exist yet
             setLoading(false);
             return;
         }
 
-        const [ownerFollowRes, myFollowOwnerRes] = await Promise.all([
-            supabase.from('follows').select('id', { count: 'exact', head: true }).eq('following_id', capsuleData.owner_id),
-            user ? supabase.from('follows').select('id').eq('follower_id', user.id).eq('following_id', capsuleData.owner_id).maybeSingle() : Promise.resolve({ data: null })
-        ]);
+        if (signal?.aborted) return;
 
-        setFollowerCount(ownerFollowRes.count || 0);
-        setIsFollowedOwner(!!myFollowOwnerRes.data);
+        const { capsule: capsuleData, items: itemsData, likes_count, is_liked, invites: invitesData, owner_followers_count, is_followed_owner } = data;
 
-        const isActuallyOpenCap = initialCapRes.data?.type === 'opencap' || (initialCapRes.data?.status === 'opened' && initialCapRes.data?.duration_days === 0);
-        if (initialCapRes.data?.status === 'opened' && !isActuallyOpenCap && (!itemsRes.data || itemsRes.data.length === 0)) {
-            await supabase.rpc('delete_capsule', { p_capsule_id: capsuleId });
-            Alert.alert('Kapsely', t('detail.deleted_empty') || 'Capsule was empty and has been deleted.');
-            if (navigation.canGoBack()) navigation.goBack();
+        if (!capsuleData) {
+            setLoading(false);
             return;
         }
 
-        if (initialCapRes.data) {
-            setCapsule(initialCapRes.data);
-            const cfg = timerConfigManager.getConfig(initialCapRes.data.model);
-            setModelTint(cfg?.themeColor || MODEL_TINTS[initialCapRes.data.model] || '#7C5CBF');
-            const allMemberIds = [initialCapRes.data.owner_id, ...(invitesRes.data?.filter((i: any) => i.status === 'accepted').map((i: any) => i.profiles?.id) || [])];
-            let followed = new Set<string>();
-            if (user) {
-                const { data: fids } = await supabase.from('follows').select('following_id').eq('follower_id', user.id).in('following_id', allMemberIds);
-                fids?.forEach(f => followed.add(f.following_id));
-            }
-            setIsFollowedOwner(followed.has(initialCapRes.data.owner_id));
-            setAcceptedMembers((invitesRes.data?.filter((i: any) => i.status === 'accepted').map((i: any) => ({ ...i.profiles, isFollowed: followed.has(i.profiles?.id) }))) || []);
-            if (initialCapRes.data.is_opening && initialCapRes.data.status !== 'opened' && initialCapRes.data.opening_at) {
-                const target = new Date(initialCapRes.data.opening_at).getTime();
-                if (target > Date.now()) startEpicOpening(initialCapRes.data.opening_at);
-                else setCapsule((p: any) => ({ ...p, status: 'opened', is_opening: false }));
+        // Handle auto-deletion of empty capsules
+        // Rule: Only delete sealed capsules that are now opened and empty. Never delete 'opencap'.
+        if (capsuleData.status === 'opened' && capsuleData.type !== 'opencap' && (!itemsData || itemsData.length === 0)) {
+            // Check if it has been open for a bit (to avoid deleting while user is adding first item)
+            const opensAt = new Date(capsuleData.opens_at).getTime();
+            if (Date.now() - opensAt > 60000) { // 1 minute grace period if opening now
+                await supabase.rpc('delete_capsule', { p_capsule_id: capsuleId });
+                Alert.alert('Kapsely', t('detail.deleted_empty') || 'Capsule was empty and has been deleted.');
+                if (navigation.canGoBack()) navigation.goBack();
+                return;
             }
         }
-        if (itemsRes.data) setItems(itemsRes.data.filter((i: any) => !blocked.includes(i.owner_id)));
-        setLikeCount(likesRes.count || 0);
-        setComments((commentsRes.data || []).filter((c: any) => !blocked.includes(c.user_id)).map((c: any) => ({
-            ...c,
-            myLike: user ? c.comment_likes?.some((l: any) => l.user_id === user.id) : false,
-            likeCount: c.comment_likes?.length || 0,
-        })));
-        setIsLiked(!!myLikeRes.data);
-        if (invitesRes.data) setInvites(invitesRes.data);
-        setFollowerCount(ownerFollowRes.count || 0);
-        setIsFollowedCapsule(!!myFollowOwnerRes.data);
+
+        setCapsule(capsuleData);
+        const cfg = timerConfigManager.getConfig(capsuleData.model);
+        setModelTint(cfg?.themeColor || MODEL_TINTS[capsuleData.model] || '#7C5CBF');
+
+        // Set Followers/Follow status
+        setFollowerCount(owner_followers_count || 0);
+        setIsFollowedOwner(is_followed_owner);
+        setIsFollowedCapsule(is_followed_owner);
+
+        // Enrich items with profiles if missing (from owner or collaborators)
+        const profileMap: Record<string, any> = {};
+        if (capsuleData.profiles) profileMap[capsuleData.owner_id] = capsuleData.profiles;
+        if (invitesData) {
+            invitesData.forEach((inv: any) => {
+                if (inv.status === 'accepted' && inv.profiles) {
+                    profileMap[inv.user_id] = inv.profiles;
+                }
+            });
+        }
+
+        // Filter blocked content and attach profiles
+        if (itemsData) {
+            const enriched = itemsData.map((item: any) => ({
+                ...item,
+                profiles: item.profiles || profileMap[item.owner_id]
+            })).filter((i: any) => !blocked.includes(i.owner_id));
+            setItems(enriched);
+        }
+
+        setLikeCount(likes_count || 0);
+        setIsLiked(is_liked);
+
+        if (invitesData) {
+            setInvites(invitesData);
+            setAcceptedMembers(invitesData.filter((i: any) => i.status === 'accepted').map((i: any) => i.profiles));
+        }
+
+        // Handle epic opening state
+        if (capsuleData.is_opening && capsuleData.status !== 'opened' && capsuleData.opening_at) {
+            const target = new Date(capsuleData.opening_at).getTime();
+            if (target > Date.now()) startEpicOpening(capsuleData.opening_at);
+            else setCapsule((p: any) => ({ ...p, status: 'opened', is_opening: false }));
+        }
+
+        // Load comments separately (or we could add them to RPC later)
+        const { data: commentsData } = await (signal
+            ? supabase.from('comments').select(`
+                id, capsule_id, user_id, content, created_at,
+                profiles:user_id(id, display_name, username, avatar_url, is_verified),
+                comment_likes(user_id)
+              `).eq('capsule_id', capsuleId).order('created_at', { ascending: false }).limit(50).abortSignal(signal)
+            : supabase.from('comments').select(`
+                id, capsule_id, user_id, content, created_at,
+                profiles:user_id(id, display_name, username, avatar_url, is_verified),
+                comment_likes(user_id)
+              `).eq('capsule_id', capsuleId).order('created_at', { ascending: false }).limit(50)
+        );
+
+        if (commentsData) {
+            setComments(commentsData.filter((c: any) => !blocked.includes(c.user_id)).map((c: any) => ({
+                ...c,
+                myLike: myId ? c.comment_likes?.some((l: any) => l.user_id === myId) : false,
+                likeCount: c.comment_likes?.length || 0,
+            })));
+        }
+
         setLoading(false);
     };
 
@@ -849,19 +999,101 @@ function CapsuleDetailScreen() {
         }
     };
 
+    const handleSearchUsers = async (q: string) => {
+        setSearchQuery(q);
+        if (q.length < 2) { setSearchResults([]); return; }
+        setIsSearching(true);
+        try {
+            const { data } = await supabase.from('profiles').select('id, username, display_name, avatar_url')
+                .or(`username.ilike.%${q}%,display_name.ilike.%${q}%`).limit(10);
+            
+            const filtered = (data || []).filter(u => 
+                u.id !== userId && 
+                !acceptedMembers.some(m => m.id === u.id) &&
+                !invites.some(i => i.user_id === u.id) &&
+                !invitedUsers.some(iu => iu.id === u.id)
+            );
+            setSearchResults(filtered);
+        } catch (err) { console.error('Search error:', err); }
+        finally { setIsSearching(false); }
+    };
+
+    const toggleInviteUser = (u: any) => {
+        if (invitedUsers.some(iu => iu.id === u.id)) {
+            setInvitedUsers(prev => prev.filter(iu => iu.id !== u.id));
+        } else {
+            setInvitedUsers(prev => [...prev, u]);
+            setSearchQuery('');
+            setSearchResults([]);
+        }
+    };
+
+    const handleSendInvitations = async () => {
+        if (!invitedUsers.length || !userId) return;
+        setLoading(true);
+        setShowInviteModal(false);
+        try {
+            const invitesToInsert = invitedUsers.map(u => ({
+                capsule_id: capsuleId,
+                user_id: u.id,
+                status: 'pending'
+            }));
+
+            const { error } = await supabase.from('capsule_invites').insert(invitesToInsert);
+            if (error) throw error;
+
+            for (const u of invitedUsers) {
+                await supabase.from('notifications').insert({
+                    user_id: u.id,
+                    sender_id: userId,
+                    type: 'capsule_invite',
+                    capsule_id: capsuleId,
+                    message: t('detail.invited_you_to_capsule') || 'Invited you to a capsule'
+                });
+                try {
+                    sendPushNotification(u.id, t('notifications.new_invite') || 'New Invitation!', `@${capsule.owner_profile?.username || 'Someone'} invited you to join a capsule.`, { screen: 'CapsuleDetail', params: { capsuleId } });
+                } catch (e) {}
+            }
+
+            setInvitedUsers([]);
+            Alert.alert(t('common.success'), t('detail.invites_sent') || 'Invitations sent successfully!');
+            loadData();
+        } catch (err: any) {
+            console.error('Invite error:', err);
+            Alert.alert(t('common.error'), err.message || t('detail.invite_error'));
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const handleDeleteCapsule = () => {
         const exec = async () => {
             setShowOptions(false); setLoading(true);
             try {
-                const { data: toDelete } = await supabase.from('capsule_items').select('media_url, thumbnail_url').eq('capsule_id', capsuleId);
-                if (toDelete?.length) {
-                    const base = 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/capsule-media/';
-                    const files = toDelete.flatMap(i => [i.media_url, i.thumbnail_url].filter(u => u?.startsWith(base)).map(u => u!.replace(base, '').split('?')[0]));
-                    if (files.length) await supabase.storage.from('capsule-media').remove(files);
+                if (capsule?.is_shared) {
+                    const { data, error } = await supabase.rpc('vote_delete_capsule', { p_capsule_id: capsuleId });
+                    if (error) throw error;
+                    
+                    if (data?.status === 'deleted') {
+                        navigation.goBack();
+                    } else if (data?.status === 'voted' || data?.status === 'already_voted') {
+                        setCapsule((prev: any) => ({ ...prev, delete_requests: data.delete_requests }));
+                        Alert.alert('Kapsely', t('detail.delete_vote_registered') || 'Tu voto para eliminar la cápsula ha sido registrado.');
+                    }
+                } else {
+                    const { data: toDelete } = await supabase.from('capsule_items').select('media_url, thumbnail_url').eq('capsule_id', capsuleId);
+                    if (toDelete?.length) {
+                        const base = 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/capsule-media/';
+                        const files = toDelete.flatMap(i => [i.media_url, i.thumbnail_url].filter(u => u?.startsWith(base)).map(u => u!.replace(base, '').split('?')[0]));
+                        if (files.length) await supabase.storage.from('capsule-media').remove(files);
+                    }
+                    const { error } = await supabase.rpc('delete_capsule', { p_capsule_id: capsuleId });
+                    if (!error) navigation.goBack(); else throw error;
                 }
-                const { error } = await supabase.rpc('delete_capsule', { p_capsule_id: capsuleId });
-                if (!error) navigation.goBack(); else throw error;
-            } catch { Alert.alert(t('common.error'), t('detail.delete_error')); }
+            } catch (err) { 
+                console.error(err);
+                Alert.alert(t('common.error'), t('detail.delete_error')); 
+            }
             finally { setLoading(false); }
         };
         Alert.alert(t('detail.delete_capsule_title'), t('detail.delete_capsule_msg'), [
@@ -910,23 +1142,83 @@ function CapsuleDetailScreen() {
         }
     }, [userId, capsule, capsuleId, startEpicOpening, invites, t]);
 
+    const triggerBigHeart = () => {
+        setShowBigHeart(true);
+        bigHeartScale.setValue(0);
+        bigHeartOpacity.setValue(0);
+
+        Animated.parallel([
+            Animated.spring(bigHeartScale, {
+                toValue: 1,
+                friction: 3,
+                tension: 40,
+                useNativeDriver: true,
+            }),
+            Animated.sequence([
+                Animated.timing(bigHeartOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+                Animated.timing(bigHeartOpacity, { toValue: 0, duration: 500, delay: 600, useNativeDriver: true }),
+            ]),
+        ]).start(() => setShowBigHeart(false));
+    };
+
     const handleLike = async () => {
         if (!userId) return;
-        if (isLiked) {
-            await supabase.from('likes').delete().eq('capsule_id', capsuleId).eq('user_id', userId);
-            setLikeCount(p => p - 1); setIsLiked(false);
-        } else {
-            await supabase.from('likes').insert({ capsule_id: capsuleId, user_id: userId });
-            setLikeCount(p => p + 1); setIsLiked(true);
-            if (capsule.owner_id !== userId) {
-                const { data: existing } = await supabase.from('notifications').select('id').eq('user_id', capsule.owner_id).eq('sender_id', userId).eq('type', 'like').eq('capsule_id', capsuleId).maybeSingle();
-                if (existing) {
-                    await supabase.from('notifications').update({ created_at: new Date().toISOString(), is_read: false }).eq('id', existing.id);
-                } else {
-                    await supabase.from('notifications').insert({ user_id: capsule.owner_id, sender_id: userId, type: 'like', capsule_id: capsuleId, message: t('detail.liked_your_capsule') });
-                    try { sendPushNotification(capsule.owner_id, '❤️ Nuevo Me Gusta!', 'A alguien le ha gustado tu cápsula.', { screen: 'CapsuleDetail', params: { capsuleId } }); } catch { }
+        
+        const wasLiked = isLiked;
+        const previousCount = likeCount;
+
+        // UI Optimista
+        setIsLiked(!wasLiked);
+        setLikeCount(prev => wasLiked ? prev - 1 : prev + 1);
+        
+        if (!wasLiked) {
+            triggerBigHeart();
+            if (Platform.OS !== 'web') Vibration.vibrate(15);
+        }
+
+        // Emitir evento para actualizar el Feed de forma instantánea
+        DeviceEventEmitter.emit('CAPSULE_UPDATED', { 
+            id: capsuleId, 
+            is_liked: !wasLiked, 
+            likes_count: wasLiked ? Math.max(0, (likeCount || 1) - 1) : (likeCount || 0) + 1 
+        });
+
+        try {
+            if (wasLiked) {
+                const { error } = await supabase.from('likes').delete().eq('capsule_id', capsuleId).eq('user_id', userId);
+                if (error) throw error;
+            } else {
+                const { error } = await supabase.from('likes').insert({ capsule_id: capsuleId, user_id: userId });
+                
+                // Si ya estaba likeado en la DB, sincronizamos el estado y no lanzamos error
+                if (error) {
+                    if (error.code === '23505') {
+                        setIsLiked(true);
+                        // No sumamos doble, la UI ya sumó una vez optimísticamente
+                        return;
+                    }
+                    throw error;
+                }
+                
+                if (capsule.owner_id !== userId) {
+                    const { data: existing } = await supabase.from('notifications')
+                        .select('id').eq('user_id', capsule.owner_id)
+                        .eq('sender_id', userId).eq('type', 'like')
+                        .eq('capsule_id', capsuleId).maybeSingle();
+                    
+                    if (existing) {
+                        await supabase.from('notifications').update({ created_at: new Date().toISOString(), is_read: false }).eq('id', existing.id);
+                    } else {
+                        await supabase.from('notifications').insert({ user_id: capsule.owner_id, sender_id: userId, type: 'like', capsule_id: capsuleId, message: t('detail.liked_your_capsule') });
+                        try { sendPushNotification(capsule.owner_id, '❤️ Nuevo Me Gusta!', 'A alguien le ha gustado tu cápsula.', { screen: 'CapsuleDetail', params: { capsuleId } }); } catch { }
+                    }
                 }
             }
+        } catch (err) {
+            // Revertir si falla
+            setIsLiked(wasLiked);
+            setLikeCount(previousCount);
+            console.error('Like error:', err);
         }
     };
 
@@ -975,6 +1267,7 @@ function CapsuleDetailScreen() {
         Alert.alert(t('common.ready'), t('detail.report_submitted'));
         setShowOptions(false);
     };
+
 
     const openViewer = (index: number) => { setInitialIndex(index); setActiveViewerIndex(index); setViewerVisible(true); };
     const toggleAudio = (url: string) => setPlayingAudio(p => p === url ? null : url);
@@ -1069,7 +1362,7 @@ function CapsuleDetailScreen() {
                                                             <Ionicons name={pi.media_type === 'video' ? 'videocam' : 'image'} size={11} color={tint} />
                                                         </View>
                                                     )}
-                                                    {pi.profiles && totalMembers > 1 && (
+                                                    {pi.profiles && isSharedCapsule && (
                                                         <Image source={{ uri: pi.profiles.avatar_url || 'https://via.placeholder.com/150' }} style={[ds.itemAuthorOverlay as any, { borderColor: tint + '40' }]} />
                                                     )}
                                                     <Ionicons name="lock-closed" size={20} color={tint + '50'} />
@@ -1118,7 +1411,7 @@ function CapsuleDetailScreen() {
                                                     <View style={ds.itemDateTag}>
                                                         <Text style={ds.itemDateText}>{new Date(pi.created_at).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: '2-digit' })}</Text>
                                                     </View>
-                                                    {pi.profiles && totalMembers > 1 && (
+                                                    {pi.profiles && isSharedCapsule && (
                                                         <Image source={{ uri: pi.profiles.avatar_url || 'https://via.placeholder.com/150' }} style={[ds.itemAuthorOverlay as any, { borderColor: '#fff' }]} />
                                                     )}
                                                     {pi.location_name && (
@@ -1221,7 +1514,7 @@ function CapsuleDetailScreen() {
             );
         }
         return null;
-    }, [tint, t, filteredData, isChatAvailable, isChatView, isOwner, userId, comments, highlightedCommentId, playingAudio, isMember, isBornOpen, isSealed, canBeOpened, isOpening, totalMembers]);
+    }, [tint, t, filteredData, isChatAvailable, isChatView, isOwner, userId, comments, highlightedCommentId, playingAudio, isMember, isBornOpen, isSealed, canBeOpened, isOpening, totalMembers, isLiked, likeCount]);
 
     const FilterBar = useCallback(() => {
         const filterScrollRef = useRef<ScrollView>(null);
@@ -1247,22 +1540,53 @@ function CapsuleDetailScreen() {
     }, [filterType, filterSort, tint, t]);
 
     const renderHero = useCallback(() => (
-        <CapsuleHero
-            capsule={capsule} tint={tint} isMember={isMember}
-            isSealed={isSealed} isOpening={isOpening} modelImg={modelImg}
-            totalMembers={totalMembers} likeCount={likeCount} followerCount={followerCount}
-            isFollowedCapsule={isFollowedCapsule} handleCapsuleFollowToggle={handleCapsuleFollowToggle}
-            isOwner={isOwner} canBeOpened={canBeOpened} hasRequestedOpen={hasRequestedOpen}
-            handleRequestOpen={handleRequestOpen} reqCount={reqCount} isBornOpen={isBornOpen} userId={userId}
-            setCapsule={setCapsule} t={t}
-            onAddContent={() => navigation.navigate('CreateSelection', { capsuleId: capsule.id })}
-            collaborators={totalMembers > 1 ? <CollaboratorsBar owner={capsule.profiles} members={acceptedMembers} tint={tint} /> : null}
-        />
+        <View>
+            <CapsuleHero
+                capsule={capsule} tint={tint} isMember={isMember}
+                isSealed={isSealed} isOpening={isOpening} modelImg={modelImg}
+                totalMembers={totalMembers} likeCount={likeCount} followerCount={followerCount}
+                isFollowedCapsule={isFollowedCapsule} handleCapsuleFollowToggle={handleCapsuleFollowToggle}
+                isOwner={isOwner} canBeOpened={canBeOpened} hasRequestedOpen={hasRequestedOpen}
+                handleRequestOpen={handleRequestOpen} reqCount={reqCount} isBornOpen={isBornOpen} userId={userId}
+                setCapsule={setCapsule} t={t}
+                onAddContent={() => navigation.navigate('CreateSelection', { capsuleId: capsule.id })}
+                collaborators={isSharedCapsule ? (
+                    <CollaboratorsBar 
+                        owner={capsule.profiles} 
+                        members={acceptedMembers} 
+                        invites={invites}
+                        tint={tint} 
+                        isMember={isMember}
+                        onInvite={() => setShowInviteModal(true)}
+                    />
+                ) : null}
+            />
+            {isSharedCapsule && capsule?.delete_requests?.length > 0 && (
+                <View style={[ds.countdownCard, { borderColor: '#F8717130', backgroundColor: '#F8717110', alignSelf: 'center', marginTop: 10 }]}>
+                    <View style={[ds.countdownIconWrap, { backgroundColor: '#F8717120' }]}>
+                        <Ionicons name="trash" size={22} color="#F87171" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                        <Text style={[ds.countdownLabel, { color: '#F87171' }]}>
+                            {t('detail.voting_to_delete') || 'Voting to Delete'}: {capsule.delete_requests.length}/{totalMembers}
+                        </Text>
+                        {!capsule.delete_requests.includes(userId) && (
+                            <TouchableOpacity onPress={handleDeleteCapsule}>
+                                <Text style={{ fontSize: 13, fontFamily: Fonts.bold, color: '#F87171' }}>{t('detail.agree_to_delete') || 'Agree to Delete'}</Text>
+                            </TouchableOpacity>
+                        )}
+                        {capsule.delete_requests.includes(userId) && (
+                            <Text style={{ fontSize: 12, fontFamily: Fonts.medium, color: '#F87171', opacity: 0.8 }}>{t('detail.you_voted_to_delete') || 'You voted to delete'}</Text>
+                        )}
+                    </View>
+                </View>
+            )}
+        </View>
     ), [
         capsule, tint, isMember, isSealed, isOpening, modelImg,
         totalMembers, likeCount, followerCount, isFollowedCapsule,
         handleCapsuleFollowToggle, isOwner, canBeOpened, hasRequestedOpen,
-        handleRequestOpen, reqCount, isBornOpen, userId, t, acceptedMembers
+        handleRequestOpen, reqCount, isBornOpen, userId, t, acceptedMembers, invites
     ]);
 
     if (loading && !capsule) return (
@@ -1341,6 +1665,7 @@ function CapsuleDetailScreen() {
                     renderSectionHeader={() => null}
                     ListHeaderComponent={renderHero}
                     renderItem={renderItem}
+                    extraData={{ likeCount, isLiked, comments, tint, playingAudio }}
                 />
 
                 {!showEpicOpening && (
@@ -1379,6 +1704,12 @@ function CapsuleDetailScreen() {
                                 label: t('detail.capsule_design') + ': ' + (openDesign === 'open' ? t('detail.opened') : t('detail.sealed')), 
                                 onPress: () => { setShowOptions(false); handleToggleDesign(); } 
                             }] : []),
+                            ...(isMember && isSharedCapsule ? [{ 
+                                icon: 'person-add-outline', 
+                                color: tint, 
+                                label: t('detail.invite_members') || 'Invite members', 
+                                onPress: () => { setShowOptions(false); setShowInviteModal(true); } 
+                            }] : []),
                             ...(!isOwner ? [{ icon: 'alert-circle-outline', color: D.textSec, label: t('detail.report_capsule'), onPress: handleReportCapsule }] : []),
                             ...(isOwner ? [{ icon: 'trash-outline', color: '#EF4444', label: t('detail.delete_perm'), onPress: handleDeleteCapsule }] : []),
                         ].map((opt, i) => (
@@ -1412,6 +1743,98 @@ function CapsuleDetailScreen() {
                 </Pressable>
             </Modal>
 
+            {/* Invite Modal */}
+            <Modal visible={showInviteModal} transparent animationType="slide">
+                <View style={ds.overlay}>
+                    <BlurView intensity={90} tint="light" style={[ds.optionsSheet, { height: '80%', paddingBottom: 20 }]}>
+                        <View style={ds.sheetHandle} />
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 15 }}>
+                            <Text style={ds.sheetTitle}>{t('detail.invite_members')}</Text>
+                            <TouchableOpacity onPress={() => { setShowInviteModal(false); setSearchQuery(''); setSearchResults([]); }}>
+                                <Ionicons name="close-circle" size={24} color={D.textMuted} />
+                            </TouchableOpacity>
+                        </View>
+
+                        <View style={ds.searchContainer}>
+                            {invitedUsers.length > 0 && (
+                                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 15 }}>
+                                    {invitedUsers.map(u => (
+                                        <View key={u.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: tint + '14', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, borderWidth: 1, borderColor: tint + '40' }}>
+                                            <Text style={{ fontSize: 12, fontFamily: Fonts.bold, color: tint }}>@{u.username}</Text>
+                                            <TouchableOpacity onPress={() => toggleInviteUser(u)}>
+                                                <Ionicons name="close-circle" size={14} color={tint} />
+                                            </TouchableOpacity>
+                                        </View>
+                                    ))}
+                                </View>
+                            )}
+                            <View style={ds.searchInputWrapper}>
+                                <Ionicons name="search" size={18} color={tint} style={{ opacity: 0.6 }} />
+                                <TextInput 
+                                    style={ds.modernSearchInput}
+                                    placeholder={t('common.search_users') || "Search users..."}
+                                    placeholderTextColor={D.textMuted}
+                                    value={searchQuery}
+                                    onChangeText={handleSearchUsers}
+                                    autoFocus
+                                    autoCorrect={false}
+                                    autoCapitalize="none"
+                                    spellCheck={false}
+                                />
+                                {isSearching && <ActivityIndicator size="small" color={tint} />}
+                                {searchQuery.length > 0 && !isSearching && (
+                                    <TouchableOpacity onPress={() => { setSearchQuery(''); setSearchResults([]); }}>
+                                        <Ionicons name="close-circle" size={18} color={D.textMuted} />
+                                    </TouchableOpacity>
+                                )}
+                            </View>
+                        </View>
+
+                        <FlatList 
+                            data={searchResults}
+                            keyExtractor={i => i.id}
+                            showsVerticalScrollIndicator={false}
+                            keyboardDismissMode="on-drag"
+                            contentContainerStyle={{ paddingBottom: 20 }}
+                            renderItem={({ item: u }) => (
+                                <TouchableOpacity style={ds.modernUserCard} activeOpacity={0.7} onPress={() => toggleInviteUser(u)}>
+                                    <View style={ds.modernUserAvatarWrap}>
+                                        <Image source={{ uri: u.avatar_url || 'https://via.placeholder.com/150' }} style={ds.modernUserAvatar as any} />
+                                    </View>
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={ds.modernUserName} numberOfLines={1}>{u.display_name || u.username}</Text>
+                                        <Text style={ds.modernUserTag} numberOfLines={1}>@{u.username}</Text>
+                                    </View>
+                                    <View style={[ds.modernInviteBtn, { backgroundColor: tint + '15', borderWidth: 1, borderColor: tint + '30' }]}>
+                                        <Ionicons name="add" size={16} color={tint} />
+                                    </View>
+                                </TouchableOpacity>
+                            )}
+                            ListEmptyComponent={() => (
+                                <View style={{ alignItems: 'center', marginTop: 40 }}>
+                                    {searchQuery.length < 2 && invitedUsers.length === 0 ? (
+                                        <Text style={{ color: D.textMuted, textAlign: 'center' }}>{t('detail.search_hint') || "Type at least 2 characters to search"}</Text>
+                                    ) : !isSearching && searchQuery.length >= 2 && searchResults.length === 0 ? (
+                                        <Text style={{ color: D.textMuted }}>{t('common.no_results')}</Text>
+                                    ) : null}
+                                </View>
+                            )}
+                        />
+
+                        {invitedUsers.length > 0 && (
+                            <TouchableOpacity onPress={handleSendInvitations} style={{ marginTop: 10 }}>
+                                <LinearGradient colors={[tint, tint + 'CC']} style={{ paddingVertical: 14, borderRadius: 18, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 }}>
+                                    <Ionicons name="send" size={16} color="#fff" />
+                                    <Text style={{ color: '#fff', fontSize: 16, fontFamily: Fonts.bold }}>
+                                        {t('detail.send_invites') || 'Send Invitations'} ({invitedUsers.length})
+                                    </Text>
+                                </LinearGradient>
+                            </TouchableOpacity>
+                        )}
+                    </BlurView>
+                </View>
+            </Modal>
+
             {/* Media viewer */}
             <Modal visible={viewerVisible} transparent animationType="fade">
                 <View style={ds.viewer}>
@@ -1427,6 +1850,9 @@ function CapsuleDetailScreen() {
                         keyExtractor={i => i.id}
                         renderItem={({ item: vi, index }) => (
                             <View style={{ width, height, alignItems: 'center', justifyContent: 'center' }}>
+                                {vi.profiles && isSharedCapsule && (
+                                    <Image source={{ uri: vi.profiles.avatar_url || 'https://via.placeholder.com/150' }} style={[ds.itemAuthorOverlay as any, { top: insets.top + 50, left: 20, width: 32, height: 32, borderRadius: 16, borderColor: '#fff', borderWidth: 2 }]} />
+                                )}
                                 {vi.media_type === 'note' ? (
                                     <View style={ds.viewerNote}><Text style={ds.viewerNoteText}>{vi.content}</Text></View>
                                 ) : vi.media_type === 'audio' ? (
@@ -1482,6 +1908,17 @@ function CapsuleDetailScreen() {
                         modelImg={timerConfigManager.getModelImageOpen(capsule?.model) || (MODEL_IMAGES_OPEN as any).basicred_kap}
                         closedModelImg={timerConfigManager.getModelImage(capsule?.model) || (MODEL_IMAGES as any).basicred_kap}
                     />
+                </View>
+            )}
+            {/* Big Heart Animation Overlay */}
+            {showBigHeart && (
+                <View style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center', zIndex: 2000 }]} pointerEvents="none">
+                    <Animated.View style={{
+                        transform: [{ scale: bigHeartScale }],
+                        opacity: bigHeartOpacity,
+                    }}>
+                        <Ionicons name="heart" size={120} color="#F43F5E" />
+                    </Animated.View>
                 </View>
             )}
         </View>

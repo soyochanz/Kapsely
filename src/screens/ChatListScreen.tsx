@@ -96,22 +96,20 @@ export default function ChatListScreen() {
             const lastMsg = latestMsgMap[cId];
             const delTime = deletedStamps[cId];
 
-            // If deleted, keep it hidden until a new message arrives (Instagram-like)
             const lastMsgTimeStr = lastMsg?.created_at || conv?.last_message_at;
             if (delTime && lastMsgTimeStr) {
                 const lastMsgTime = new Date(lastMsgTimeStr).getTime();
                 const deletionTime = new Date(delTime).getTime();
-                if (lastMsgTime <= deletionTime) {
-                    return null;
-                }
+                if (lastMsgTime <= deletionTime) return null;
             }
 
             const otherUserId = otherUserIdMap[cId];
             const otherUserProfile = profiles.find(p => p.id === otherUserId);
 
+            // Improved unread calculation: check mark read logic
             let unreadCount = 0;
             if (lastMsg && lastMsg.sender_id !== uid && !lastMsg.is_read) {
-                unreadCount = 1;
+                unreadCount = 1; // Simplification: we show a dot/badge if there's any unread
             }
 
             return {
@@ -120,19 +118,20 @@ export default function ChatListScreen() {
                     ? { display_name: conv.name || 'Grupo', avatar_url: conv.avatar_url }
                     : (otherUserProfile || { display_name: 'Usuario' }),
                 lastMessage: lastMsg,
-                unreadCount: unreadCount || 0,
+                unreadCount: unreadCount,
                 is_group: conv?.is_group || false,
             };
         }));
 
         const activeChats = chats.filter(c => c !== null && c.otherUser);
         const sorted = activeChats.sort((a: any, b: any) => {
-            if ((b.unreadCount > 0 ? 1 : 0) !== (a.unreadCount > 0 ? 1 : 0)) {
-                return (b.unreadCount > 0 ? 1 : 0) - (a.unreadCount > 0 ? 1 : 0);
+            // Priority to unread chats
+            if ((b.unreadCount > 0) !== (a.unreadCount > 0)) {
+                return (b.unreadCount > 0 ? 1 : -1);
             }
-            const aTime = a.lastMessage?.created_at || 0;
-            const bTime = b.lastMessage?.created_at || 0;
-            return new Date(bTime).getTime() - new Date(aTime).getTime();
+            const aTime = new Date(a.lastMessage?.created_at || 0).getTime();
+            const bTime = new Date(b.lastMessage?.created_at || 0).getTime();
+            return bTime - aTime;
         });
 
         setConversations(sorted);
@@ -414,6 +413,9 @@ export default function ChatListScreen() {
                             value={searchQuery}
                             onChangeText={searchUsers}
                             autoFocus
+                            autoCorrect={false}
+                            autoCapitalize="none"
+                            spellCheck={false}
                         />
                     </View>
                     {searching ? (
@@ -527,6 +529,9 @@ export default function ChatListScreen() {
                             placeholderTextColor={Colors.textMuted}
                             value={groupSearchQuery}
                             onChangeText={searchGroupUsers}
+                            autoCorrect={false}
+                            autoCapitalize="none"
+                            spellCheck={false}
                         />
                     </View>
 
@@ -631,31 +636,33 @@ const styles = StyleSheet.create({
     // Legacy (kept for SwipeableChatRow compat)
     chatItem: {
         flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.surface,
-        padding: Spacing.md, borderRadius: BorderRadius.lg, marginBottom: Spacing.sm,
-        borderWidth: 1, borderColor: Colors.border, ...Shadow.subtle
+        padding: 16, borderRadius: 24, marginBottom: 12,
+        borderWidth: 1, borderColor: '#F3F4F6', ...Shadow.subtle
     },
     chatItemUnread: {
-        borderColor: Colors.primary + '40',
-        backgroundColor: Colors.primary + '06',
+        borderColor: Colors.primary + '30',
+        backgroundColor: '#fff',
+        borderWidth: 1.5,
     },
-    avatarWrap: { position: 'relative', marginRight: Spacing.md },
-    avatar: { width: 50, height: 50, borderRadius: 25 },
-    avatarPlaceholder: { width: 50, height: 50, borderRadius: 25, backgroundColor: Colors.cardAlt, alignItems: 'center', justifyContent: 'center' },
+    avatarWrap: { position: 'relative', marginRight: 16 },
+    avatar: { width: 56, height: 56, borderRadius: 28 },
+    avatarPlaceholder: { width: 56, height: 56, borderRadius: 28, backgroundColor: Colors.cardAlt, alignItems: 'center', justifyContent: 'center' },
     unreadAvatarDot: {
-        position: 'absolute', bottom: 0, right: 0,
-        width: 12, height: 12, borderRadius: 6,
-        backgroundColor: Colors.primary, borderWidth: 2, borderColor: Colors.surface,
+        position: 'absolute', bottom: 2, right: 2,
+        width: 14, height: 14, borderRadius: 7,
+        backgroundColor: Colors.primary, borderWidth: 2, borderColor: '#fff',
     },
     chatInfo: { flex: 1 },
-    chatName: { fontSize: 15, fontFamily: Fonts.semiBold, color: Colors.textPrimary },
-    chatNameUnread: { fontFamily: Fonts.bold, color: Colors.textPrimary },
-    lastMessage: { fontSize: 13, fontFamily: Fonts.regular, color: Colors.textSecondary, marginTop: 2 },
-    lastMessageUnread: { fontFamily: Fonts.semiBold, color: Colors.textPrimary },
-    chatRight: { alignItems: 'flex-end', gap: 6 },
-    chatTime: { fontSize: 11, fontFamily: Fonts.regular, color: Colors.textMuted },
+    chatName: { fontSize: 16, fontFamily: Fonts.semiBold, color: '#111827' },
+    chatNameUnread: { fontFamily: Fonts.bold, color: '#000' },
+    lastMessage: { fontSize: 14, fontFamily: Fonts.regular, color: '#6B7280', marginTop: 3 },
+    lastMessageUnread: { fontFamily: Fonts.semiBold, color: '#111827' },
+    chatRight: { alignItems: 'flex-end', gap: 8 },
+    chatTime: { fontSize: 12, fontFamily: Fonts.medium, color: '#9CA3AF' },
     unreadBadge: {
-        backgroundColor: Colors.primary, minWidth: 20, height: 20,
-        borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4,
+        backgroundColor: Colors.primary, minWidth: 22, height: 22,
+        borderRadius: 11, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6,
+        ...Shadow.subtle
     },
     unreadBadgeText: { color: '#fff', fontSize: 11, fontFamily: Fonts.bold },
 });

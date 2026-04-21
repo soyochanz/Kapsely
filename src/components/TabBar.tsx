@@ -7,6 +7,7 @@ import { Colors } from '../theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
 import { feedScrollBus } from '../utils/feedScrollBus';
+import { BlurView } from 'expo-blur';
 
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -23,6 +24,7 @@ const PURPLE_LIGHT = '#a78bfa';
 
 import { multiAccountService, SavedAccount } from '../utils/multiAccount';
 import QuickLoginModal from './QuickLoginModal';
+import AccountHub from './AccountHub';
 
 export const TAB_BAR_HEIGHT = 50;
 
@@ -91,42 +93,88 @@ function TabItem({ route, index, state, navigation, cfg, hasBadge, onProfileLong
 
 // ─── Center create button ─────────────────────────────────────────────────────
 function CenterTab({ navigation, sealedCount, fetchSealedCount }: { navigation: any, sealedCount: number | null, fetchSealedCount: () => void }) {
+    const [showMenu, setShowMenu] = React.useState(false);
     const scale = React.useRef(new Animated.Value(1)).current;
 
-
     const onPress = () => {
-        // Instant visual feedback
         Animated.sequence([
             Animated.timing(scale, { toValue: 0.86, duration: 80, useNativeDriver: true }),
             Animated.spring(scale, { toValue: 1, friction: 5, tension: 120, useNativeDriver: true }),
         ]).start();
-
-        // Use cached count if available for instant navigation
-        if (sealedCount === 0) {
-            navigation.navigate('CapsuleCreation');
-        } else {
-            // Default to selection screen if we don't know or if > 0
-            navigation.navigate('CreateSelection');
-        }
-
-        // Background check to stay in sync (not blocking)
-        fetchSealedCount();
+        
+        setShowMenu(true);
     };
 
-
     return (
-        <TouchableOpacity onPress={onPress} style={s.tab} activeOpacity={0.8}>
-            <Animated.View style={{ transform: [{ scale }] }}>
-                <LinearGradient
-                    colors={[PURPLE_LIGHT, PURPLE, '#5b21b6']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={s.createBtn}
-                >
-                    <Ionicons name="add" size={22} color="#fff" />
-                </LinearGradient>
-            </Animated.View>
-        </TouchableOpacity>
+        <>
+            <TouchableOpacity onPress={onPress} style={s.tab} activeOpacity={0.8}>
+                <Animated.View style={{ transform: [{ scale }] }}>
+                    <LinearGradient
+                        colors={[PURPLE_LIGHT, PURPLE, '#5b21b6']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={s.createBtn}
+                    >
+                        <Ionicons name="add" size={26} color="#fff" />
+                    </LinearGradient>
+                </Animated.View>
+            </TouchableOpacity>
+
+            <Modal visible={showMenu} transparent animationType="fade" onRequestClose={() => setShowMenu(false)}>
+                <View style={s.menuOverlay}>
+                    <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setShowMenu(false)}>
+                        <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
+                    </TouchableOpacity>
+
+                    <View style={s.menuSheet}>
+                        <View style={s.menuHandle} />
+                        <Text style={s.menuTitle}>¿Qué quieres hacer?</Text>
+                        
+                        <View style={s.menuOptions}>
+                            <TouchableOpacity 
+                                style={s.menuOption} 
+                                activeOpacity={0.8}
+                                onPress={() => {
+                                    setShowMenu(false);
+                                    navigation.navigate('CapsuleCreation');
+                                }}
+                            >
+                                <LinearGradient colors={[PURPLE, '#5b21b6']} style={s.menuIcon} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+                                    <Ionicons name="rocket" size={28} color="#fff" />
+                                </LinearGradient>
+                                <View style={s.menuTextWrap}>
+                                    <Text style={s.menuLabel}>Crear Cápsula</Text>
+                                    <Text style={s.menuSub}>Empieza un nuevo viaje</Text>
+                                </View>
+                                <Ionicons name="chevron-forward" size={20} color={Colors.textMuted} />
+                            </TouchableOpacity>
+
+                            <TouchableOpacity 
+                                style={s.menuOption} 
+                                activeOpacity={0.8}
+                                onPress={() => {
+                                    setShowMenu(false);
+                                    navigation.navigate('CreateSelection');
+                                }}
+                            >
+                                <View style={[s.menuIcon, { backgroundColor: Colors.primary + '15' }]}>
+                                    <Ionicons name="add-circle" size={30} color={PURPLE} />
+                                </View>
+                                <View style={s.menuTextWrap}>
+                                    <Text style={s.menuLabel}>Añadir Memoria</Text>
+                                    <Text style={s.menuSub}>Sube fotos, videos o notas</Text>
+                                </View>
+                                <Ionicons name="chevron-forward" size={20} color={Colors.textMuted} />
+                            </TouchableOpacity>
+                        </View>
+
+                        <TouchableOpacity style={s.menuCloseBtn} onPress={() => setShowMenu(false)}>
+                            <Text style={s.menuCloseText}>Cancelar</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
+        </>
     );
 }
 
@@ -243,7 +291,7 @@ export default function TabBar(props: any) {
                 })}
             </View>
 
-            {/* Account Switcher Modal */}
+            {/* Account Hub Modal */}
             <Modal 
                 visible={showAccountSwitcher} 
                 transparent 
@@ -252,61 +300,21 @@ export default function TabBar(props: any) {
             >
                 <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
                     <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setShowAccountSwitcher(false)} />
-                    
-                    <View style={{ backgroundColor: Colors.surface, borderTopLeftRadius: 30, borderTopRightRadius: 30, padding: 20, paddingBottom: 40, elevation: 10, shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.1, shadowRadius: 10 }}>
-                        <View style={{ width: 40, height: 4, backgroundColor: '#E0E0E0', borderRadius: 2, alignSelf: 'center', marginBottom: 20 }} />
-                        <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 20, textAlign: 'center', color: Colors.textPrimary }}>{t('profile.switch_profile', 'Cambiar perfil')}</Text>
-                        
-                        <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 400 }}>
-                            {accounts.length === 0 ? (
-                                <ActivityIndicator size="small" color={PURPLE} style={{ marginVertical: 20 }} />
-                            ) : (
-                                accounts.map(acc => (
-                                    <TouchableOpacity 
-                                        key={acc.id}
-                                        style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: Colors.border + '33' }}
-                                        onPress={async () => {
-                                            await multiAccountService.saveCurrentAccount();
-                                            await multiAccountService.switchAccount(acc.id);
-                                            setShowAccountSwitcher(false);
-                                            navigation.navigate('Profile');
-                                        }}
-                                    >
-                                        <View style={[
-                                            { width: 44, height: 44, borderRadius: 22, padding: 2, backgroundColor: Colors.surface, elevation: 2 },
-                                            acc.id === currentUserId && { backgroundColor: PURPLE }
-                                        ]}>
-                                            <Image 
-                                                source={{ uri: acc.avatar_url || 'https://via.placeholder.com/150' }} 
-                                                style={{ width: '100%', height: '100%', borderRadius: 20, borderWidth: 1, borderColor: '#fff' }} 
-                                            />
-                                        </View>
-                                        <View style={{ flex: 1, marginLeft: 12 }}>
-                                            <Text style={{ fontSize: 16, fontWeight: acc.id === currentUserId ? '700' : '500', color: Colors.textPrimary }}>@{acc.username}</Text>
-                                            <Text style={{ fontSize: 12, color: Colors.textMuted }}>{acc.email}</Text>
-                                        </View>
-                                        {acc.id === currentUserId && (
-                                            <Ionicons name="checkmark-circle" size={24} color={PURPLE} />
-                                        )}
-                                    </TouchableOpacity>
-                                ))
-                            )}
-                            
-                            <TouchableOpacity 
-                                style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 15, marginTop: 10 }}
-                                onPress={async () => {
-                                    setShowAccountSwitcher(false);
-                                    // Give it a tiny delay to let the switcher modal close
-                                    setTimeout(() => setShowAddAccount(true), 300);
-                                }}
-                            >
-                                <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: PURPLE + '15', alignItems: 'center', justifyContent: 'center', borderStyle: 'dashed', borderWidth: 1, borderColor: PURPLE }}>
-                                    <Ionicons name="add" size={24} color={PURPLE} />
-                                </View>
-                                <Text style={{ marginLeft: 12, fontSize: 16, color: PURPLE, fontWeight: '600' }}>{t('profile.add_account')}</Text>
-                            </TouchableOpacity>
-                        </ScrollView>
-                    </View>
+                    <AccountHub 
+                        accounts={accounts}
+                        currentUserId={currentUserId}
+                        onClose={() => setShowAccountSwitcher(false)}
+                        onAddAccount={() => {
+                            setShowAccountSwitcher(false);
+                            setTimeout(() => setShowAddAccount(true), 300);
+                        }}
+                        onSwitch={async (accountId) => {
+                            await multiAccountService.saveCurrentAccount();
+                            await multiAccountService.switchAccount(accountId);
+                            setShowAccountSwitcher(false);
+                            navigation.navigate('Profile');
+                        }}
+                    />
                 </View>
             </Modal>
 
@@ -398,5 +406,82 @@ const s = StyleSheet.create({
             },
             android: { elevation: 6 },
         }),
+    },
+    // ── Menu Modal ──
+    menuOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.4)',
+        justifyContent: 'flex-end',
+    },
+    menuSheet: {
+        backgroundColor: '#fff',
+        borderTopLeftRadius: 32,
+        borderTopRightRadius: 32,
+        padding: 24,
+        paddingBottom: Platform.OS === 'ios' ? 44 : 32,
+        elevation: 20,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: -10 },
+        shadowOpacity: 0.15,
+        shadowRadius: 20,
+    },
+    menuHandle: {
+        width: 36,
+        height: 4,
+        borderRadius: 2,
+        backgroundColor: '#E5E7EB',
+        alignSelf: 'center',
+        marginBottom: 20,
+    },
+    menuTitle: {
+        fontSize: 20,
+        fontWeight: '800',
+        color: Colors.textPrimary,
+        textAlign: 'center',
+        marginBottom: 24,
+        letterSpacing: -0.5,
+    },
+    menuOptions: {
+        gap: 16,
+    },
+    menuOption: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#F9FAFB',
+        padding: 16,
+        borderRadius: 20,
+        borderWidth: 1,
+        borderColor: '#F3F4F6',
+    },
+    menuIcon: {
+        width: 52,
+        height: 52,
+        borderRadius: 18,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    menuTextWrap: {
+        flex: 1,
+        marginLeft: 16,
+    },
+    menuLabel: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: Colors.textPrimary,
+    },
+    menuSub: {
+        fontSize: 13,
+        color: Colors.textMuted,
+        marginTop: 2,
+    },
+    menuCloseBtn: {
+        marginTop: 20,
+        paddingVertical: 12,
+        alignItems: 'center',
+    },
+    menuCloseText: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: Colors.textMuted,
     },
 });

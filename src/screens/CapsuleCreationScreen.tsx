@@ -1605,7 +1605,16 @@ export default function CapsuleCreationScreen() {
                                         )}
                                         <View style={[s.searchRow, { borderColor: L.border }]}>
                                             <Ionicons name="search" size={15} color={L.textMuted} />
-                                            <TextInput style={s.searchInput} placeholder={t('create.search_username')} placeholderTextColor={L.textMuted} value={userSearchQuery} onChangeText={setUserSearchQuery} autoCapitalize="none" />
+                                            <TextInput 
+                                                style={s.searchInput} 
+                                                placeholder={t('create.search_username')} 
+                                                placeholderTextColor={L.textMuted} 
+                                                value={userSearchQuery} 
+                                                onChangeText={setUserSearchQuery} 
+                                                autoCapitalize="none"
+                                                autoCorrect={false}
+                                                spellCheck={false}
+                                            />
                                             {searchingUsers && <ActivityIndicator size="small" color={accent} />}
                                         </View>
                                         {userSearchResults.length > 0 && (

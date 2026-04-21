@@ -67,7 +67,7 @@ export const CapsuleHero = React.memo(({
                     source={{ uri: modelImg }}
                     date={capsule.opens_at}
                     chainId={capsule.chain_id}
-                    style={{ width: 180, height: 180 }}
+                    style={{ width: 210, height: 210 }}
                     isOpened={!isSealed}
                     hideParticles
                 />
@@ -84,6 +84,9 @@ export const CapsuleHero = React.memo(({
                 <View style={s.statRow}>
                     <StatPill icon="people-outline" label={`${totalMembers}`} />
                     <StatPill icon="heart-outline" label={`${likeCount}`} />
+                    <View style={s.statPill}>
+                        <Ionicons name={isSealed ? "lock-closed" : "lock-open"} size={16} color={isSealed ? "#EF4444" : "#10B981"} />
+                    </View>
                 </View>
 
                 <Text style={s.title}>{capsule.title}</Text>
@@ -142,12 +145,7 @@ export const CapsuleHero = React.memo(({
                                 </View>
                             )}
                         </>
-                    ) : (
-                        <View style={[s.statPill, { backgroundColor: tint + '10', borderColor: tint + '20' }]}>
-                            <Ionicons name="checkmark-circle" size={14} color={tint} />
-                            <Text style={[s.statPillText, { color: tint, fontFamily: Fonts.bold }]}>{t('detail.opened').toUpperCase()}</Text>
-                        </View>
-                    )}
+                    ) : null}
                 </View>
             </View>
         </View>
@@ -156,7 +154,7 @@ export const CapsuleHero = React.memo(({
 
 const StatPill = ({ icon, label }: any) => (
     <View style={s.statPill}>
-        <Ionicons name={icon} size={13} color={D.textMuted} />
+        <Ionicons name={icon} size={15} color={D.textMuted} />
         <Text style={s.statPillText}>{label}</Text>
     </View>
 );
@@ -164,12 +162,14 @@ const StatPill = ({ icon, label }: any) => (
 const s = StyleSheet.create({
     heroSection: { alignItems: 'center', paddingTop: 28, paddingBottom: 28, paddingHorizontal: 22 },
     capsuleStage: { alignItems: 'center', justifyContent: 'center', width: '100%', marginBottom: 8 },
-    capsuleGlow: { position: 'absolute', width: 220, height: 220, borderRadius: 110 },
-    capsuleGlowInner: { position: 'absolute', width: 160, height: 160, borderRadius: 80 },
+    capsuleGlow: { position: 'absolute', width: 260, height: 260, borderRadius: 130 },
+    capsuleGlowInner: { position: 'absolute', width: 190, height: 190, borderRadius: 95 },
     heroMeta: { width: '100%', alignItems: 'center', marginTop: 12 },
-    statRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', justifyContent: 'center', marginBottom: 16 },
-    statPill: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 11, paddingVertical: 6, borderRadius: 20, backgroundColor: D.surfaceAlt, borderWidth: 1, borderColor: D.border },
-    statPillText: { fontSize: 11, fontFamily: Fonts.semiBold, color: D.textSec },
+    statRow: { flexDirection: 'row', gap: 20, justifyContent: 'center', marginBottom: 12 },
+    statPill: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    statPillText: { fontSize: 13, fontFamily: Fonts.semiBold, color: D.textSec },
+    openedLabel: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 },
+    openedLabelText: { fontSize: 12, fontFamily: Fonts.bold, letterSpacing: 0.5 },
     title: { fontSize: 24, fontFamily: Fonts.bold, color: D.text, textAlign: 'center', marginBottom: 8 },
     desc: { fontSize: 14, fontFamily: Fonts.regular, color: D.textSec, textAlign: 'center', paddingHorizontal: 24, marginBottom: 16, lineHeight: 20 },
     capsuleFollowBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 24, borderWidth: 1.5 },

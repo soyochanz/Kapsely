@@ -24,6 +24,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { View, StyleSheet, ActivityIndicator } from 'react-native';
 import { Colors } from '../theme';
 import { navigationRef } from '../../App';
+import { supabase } from '../lib/supabase';
+import { multiAccountService } from '../utils/multiAccount';
 
 
 const Tab = createMaterialTopTabNavigator();
@@ -86,8 +88,43 @@ export default function AppNavigator() {
 
     React.useEffect(() => {
         const checkOnboarding = async () => {
-            const seen = await AsyncStorage.getItem('@has_seen_onboarding');
-            setHasSeenOnboarding(seen === 'true');
+            try {
+                // Sync push tokens for all accounts
+                multiAccountService.syncAllPushTokens().catch(console.error);
+                // Also ensure current is saved
+                multiAccountService.saveCurrentAccount().catch(console.error);
+
+                // 1. Get user first to check DB status
+                const { data: { user } } = await supabase.auth.getUser();
+                
+                if (user) {
+                    const { data, error } = await supabase
+                        .from('profiles')
+                        .select('has_completed_onboarding')
+                        .eq('id', user.id)
+                        .single();
+                    
+                    if (data) {
+                        // If DB says false, we MUST show onboarding even if local says true
+                        if (data.has_completed_onboarding === false) {
+                            await AsyncStorage.removeItem('@has_seen_onboarding_v2');
+                            setHasSeenOnboarding(false);
+                            return;
+                        } else {
+                            // If DB says true, ensure local is also true
+                            await AsyncStorage.setItem('@has_seen_onboarding_v2', 'true');
+                            setHasSeenOnboarding(true);
+                            return;
+                        }
+                    }
+                }
+
+                // 2. Fallback to local check (for guest or if DB check failed)
+                const seen = await AsyncStorage.getItem('@has_seen_onboarding_v2');
+                setHasSeenOnboarding(seen === 'true');
+            } catch (e) {
+                setHasSeenOnboarding(false);
+            }
         };
         checkOnboarding();
     }, []);

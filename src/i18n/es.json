@@ -20,6 +20,7 @@
     "done": "Hecho",
     "ready": "READY!",
     "warning": "Atención",
+    "limit_reached": "Límite alcanzado",
     "logout": "Cerrar sesión",
     "logoutConfirm": "¿Estás seguro de que quieres cerrar sesión?",
     "loading": "Cargando...",
@@ -70,7 +71,10 @@
     "follow_capsule": "Seguir",
     "synced": "Siguiendo",
     "unsync": "Dejar de seguir",
-    "created_by": "creado por"
+    "created_by": "creado por",
+    "search_users": "Buscar usuarios...",
+    "invite": "Invitar",
+    "no_results": "Sin resultados"
   },
   "profile": {
     "settings": "Ajustes",
@@ -171,7 +175,19 @@
     "delete_account_final_btn": "Eliminar cuenta definitivamente",
     "wrong_password": "Contraseña incorrecta",
     "account_deleted_success": "Tu cuenta y datos han sido eliminados correctamente.",
-    "delete_account_desc": "Esta acción es permanente. Se eliminarán todas tus cápsulas, comentarios y perfil. Por favor, introduce tu contraseña para confirmar."
+    "delete_account_desc": "Esta acción es permanente. Se eliminarán todas tus cápsulas, comentarios y perfil. Por favor, introduce tu contraseña para confirmar.",
+    "account_hub": "Centro de Cuentas",
+    "manage_accounts": "Gestiona tus sesiones activas",
+    "logout_account": "Cerrar sesión",
+    "remove_account_confirm": "¿Quieres quitar esta cuenta de este dispositivo?",
+    "current_session": "Sesión actual",
+    "add_account_sub": "Inicia sesión con otra cuenta",
+    "logout_current_warning": "Para cerrar esta sesión usa el botón de cerrar sesión en el menú principal.",
+    "name_limit_msg": "Solo puedes cambiar tu nombre visible dos veces cada 15 días.",
+    "username_limit_msg": "Solo puedes cambiar tu nombre de usuario (@) dos veces al mes.",
+    "username_taken": "Este nombre de usuario ya está en uso.",
+    "profile_updated": "Perfil actualizado correctamente.",
+    "username": "Nombre de usuario (@)"
   },
   "create": {
     "title": "Crear Cápsula",
@@ -395,7 +411,8 @@
     "swipe_all_read": "Desliza para marcar todo como leído",
     "today": "Hoy",
     "earlier": "Anteriores",
-    "accepted_your_invite": "aceptó tu invitación a"
+    "accepted_your_invite": "aceptó tu invitación a",
+    "new_invite": "Nueva Invitación 📩"
   },
   "search": {
     "explore_people": "Explorar Personas",
@@ -537,10 +554,21 @@
       "permission_denied": "Permiso denegado",
       "permission_hint": "Se necesita acceso a la galería para guardar la imagen.",
       "device_error": "No se puede compartir en este dispositivo"
-    }
+    },
+    "invite_members": "Invitar miembros",
+    "search_hint": "Escribe al menos 2 caracteres",
+    "invited_you_to_capsule": "Te ha invitado a la cápsula: {{title}}",
+    "invite_sent_to": "Invitación enviada a {{name}}",
+    "invited_push_title": "📩 ¡Nueva Invitación!",
+    "invited_push_body": "Te han invitado a la cápsula \"{{title}}\"",
+    "invites_sent": "¡Invitaciones enviadas!",
+    "send_invites": "Enviar invitaciones",
+    "invite_error": "No se pudieron enviar las invitaciones."
   },
   "onboarding": {
-    "step1_title": "Bienvenido a Kapsely",
+    "step0_title": "Elige tu idioma",
+    "step0_desc": "Selecciona el idioma en el que quieres disfrutar de Kapsely.",
+    "step1_title": "Recuerdos para siempre",
     "step1_desc": "Sella recuerdos hoy para tu yo del futuro o tus seres queridos.",
     "step2_title": "Crea tu primera Cápsula",
     "step2_desc": "Pulsa el botón + para empezar. Elige si el contenido es visible (Open Capsule) o no (Sealed Capsule). ¡Elige el modelo que más te guste!",
@@ -550,5 +578,43 @@
     "step4_desc": "Duran 48 horas y muestran contenido aleatorio de tu cápsula.",
     "step5_title": "KapsBox",
     "step5_desc": "Deja preguntas anónimas en los perfiles. Se revelarán todos los lunes para compartirlas con tu comunidad."
+  },
+  "add": {
+    "new_memory": "Nueva memoria",
+    "save_btn": "Guardar",
+    "target_capsule": "Destino",
+    "target_capsule_sub": "¿A qué cápsula va este recuerdo?",
+    "no_capsules": "No tienes cápsulas todavía",
+    "create_first_capsule": "Crear mi primera cápsula",
+    "camera": "Cámara",
+    "camera_sub": "Capturar ahora",
+    "gallery": "Galería",
+    "gallery_sub": "Elegir archivos",
+    "saving_items": "Guardando {{current}} de {{total}}",
+    "saving_note": "Guardando nota...",
+    "saving_audio": "Guardando audio...",
+    "saving_content": "Guardando contenido...",
+    "save_success": "¡Listo!",
+    "save_success_msg": "{{count}} elemento(s) guardado(s).",
+    "uploading_success": "Tus recuerdos se están guardando con éxito",
+    "one_moment": "Un momento por favor...",
+    "handwriting": "A mano",
+    "keyboard": "Teclado",
+    "draw_here": "Escribe o dibuja aquí...",
+    "clear_all": "Borrar todo",
+    "voice_note": "Nota de voz",
+    "tap_to_record": "Toca para grabar",
+    "recording": "Grabando...",
+    "stop_record": "Toca de nuevo para detener",
+    "voice_note_saved": "Nota de voz guardada",
+    "retry_record": "Grabar de nuevo",
+    "location_title": "Ubicación del contenido",
+    "location_placeholder": "Configurar ubicación...",
+    "add_caption": "Añade un pie de foto...",
+    "trim_video": "Recortar video",
+    "add_your_photos": "Añade tus fotos",
+    "add_your_video": "Añade tu video",
+    "capture_moment": "Captura un momento único",
+    "hd_ready": "HD listo para guardar (máx. 1 min)"
   }
 }

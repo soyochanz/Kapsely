@@ -20,6 +20,7 @@
     "done": "Done",
     "ready": "READY!",
     "warning": "Warning",
+    "limit_reached": "Limit reached",
     "logout": "Log Out",
     "logoutConfirm": "Are you sure you want to log out?",
     "loading": "Loading...",
@@ -70,7 +71,10 @@
     "follow_capsule": "Follow",
     "synced": "Following",
     "unsync": "Unfollow",
-    "created_by": "created by"
+    "created_by": "created by",
+    "search_users": "Search users...",
+    "invite": "Invite",
+    "no_results": "No results"
   },
   "profile": {
     "settings": "Settings",
@@ -172,7 +176,19 @@
     "delete_account_final_btn": "Delete account permanently",
     "wrong_password": "Wrong password",
     "account_deleted_success": "Your account and data have been successfully deleted.",
-    "delete_account_desc": "This action is permanent. All your capsules, comments, and profile will be deleted. Please enter your password to confirm."
+    "delete_account_desc": "This action is permanent. All your capsules, comments, and profile will be deleted. Please enter your password to confirm.",
+    "account_hub": "Account Hub",
+    "manage_accounts": "Manage your active sessions",
+    "logout_account": "Log out",
+    "remove_account_confirm": "Do you want to remove this account from this device?",
+    "current_session": "Current session",
+    "add_account_sub": "Log in with another account",
+    "logout_current_warning": "To log out of this session, use the log out button in the main menu.",
+    "name_limit_msg": "You can only change your display name twice every 15 days.",
+    "username_limit_msg": "You can only change your username (@) twice a month.",
+    "username_taken": "This username is already taken.",
+    "profile_updated": "Profile updated successfully.",
+    "username": "Username (@)"
   },
   "create": {
     "title": "Create Capsule",
@@ -396,7 +412,8 @@
     "swipe_all_read": "Swipe down to mark all as read",
     "today": "Today",
     "earlier": "Earlier",
-    "accepted_your_invite": "accepted your invite to"
+    "accepted_your_invite": "accepted your invite to",
+    "new_invite": "New Invitation 📩"
   },
   "search": {
     "explore_people": "Explore People",
@@ -535,10 +552,21 @@
       "permission_denied": "Permission Denied",
       "permission_hint": "Gallery access is needed to save.",
       "device_error": "Cannot share on this device"
-    }
+    },
+    "invite_members": "Invite members",
+    "search_hint": "Type at least 2 characters to search",
+    "invited_you_to_capsule": "Has invited you to the capsule: {{title}}",
+    "invite_sent_to": "Invitation sent to {{name}}",
+    "invited_push_title": "📩 New Invitation!",
+    "invited_push_body": "You've been invited to the capsule \"{{title}}\"",
+    "invites_sent": "Invitations sent!",
+    "send_invites": "Send Invitations",
+    "invite_error": "Could not send invitations."
   },
   "onboarding": {
-    "step1_title": "Welcome to Kapsely",
+    "step0_title": "Choose your language",
+    "step0_desc": "Select the language you want to enjoy Kapsely in.",
+    "step1_title": "Memories forever",
     "step1_desc": "Seal memories today for your future self or loved ones.",
     "step2_title": "Create your first Capsule",
     "step2_desc": "Tap the + button to start. Choose if the content is visible (Open Capsule) or not (Sealed Capsule). Pick the design you love!",
@@ -548,5 +576,43 @@
     "step4_desc": "They last 48 hours and feature random content from your capsule.",
     "step5_title": "KapsBox",
     "step5_desc": "Leave anonymous questions on profiles. They'll be revealed every Monday for you to share with your community."
+  },
+  "add": {
+    "new_memory": "New memory",
+    "save_btn": "Save",
+    "target_capsule": "Destination",
+    "target_capsule_sub": "Where does this memory go?",
+    "no_capsules": "No capsules yet",
+    "create_first_capsule": "Create my first capsule",
+    "camera": "Camera",
+    "camera_sub": "Capture now",
+    "gallery": "Gallery",
+    "gallery_sub": "Choose files",
+    "saving_items": "Saving {{current}} of {{total}}",
+    "saving_note": "Saving note...",
+    "saving_audio": "Saving audio...",
+    "saving_content": "Saving content...",
+    "save_success": "Done!",
+    "save_success_msg": "{{count}} item(s) saved.",
+    "uploading_success": "Your memories are being saved successfully",
+    "one_moment": "One moment please...",
+    "handwriting": "Handwriting",
+    "keyboard": "Keyboard",
+    "draw_here": "Write or draw here...",
+    "clear_all": "Clear all",
+    "voice_note": "Voice note",
+    "tap_to_record": "Tap to record",
+    "recording": "Recording...",
+    "stop_record": "Tap again to stop",
+    "voice_note_saved": "Voice note saved",
+    "retry_record": "Record again",
+    "location_title": "Content location",
+    "location_placeholder": "Set location...",
+    "add_caption": "Add a caption...",
+    "trim_video": "Trim video",
+    "add_your_photos": "Add your photos",
+    "add_your_video": "Add your video",
+    "capture_moment": "Capture a unique moment",
+    "hd_ready": "HD ready to save (max. 1 min)"
   }
 }

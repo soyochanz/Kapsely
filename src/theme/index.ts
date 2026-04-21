@@ -136,3 +136,5 @@ export const Shadow = Platform.select({
     }
 }) as any;
 
+export * from './DesignTokens';
+

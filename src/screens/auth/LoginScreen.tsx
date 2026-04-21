@@ -11,6 +11,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow, Gradients } from '../../theme';
 import { signIn } from '../../lib/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { multiAccountService } from '../../utils/multiAccount';
+import { supabase } from '../../lib/supabase';
 
 interface Props {
     onNavigateToRegister: () => void;
@@ -47,6 +49,15 @@ export default function LoginScreen({ onNavigateToRegister, onNavigateBack }: Pr
         try {
             await AsyncStorage.setItem('keep_connected', JSON.stringify(keepConnected));
             await signIn(email.trim().toLowerCase(), password);
+            
+            // After successful sign in, try to save to multi-account list to check limits
+            try {
+                await multiAccountService.saveCurrentAccount();
+            } catch (limitErr: any) {
+                // If limit reached, log out and show error
+                await supabase.auth.signOut();
+                setError(limitErr.message);
+            }
         } catch (e: any) {
             setError(e.message ?? 'Login failed. Please try again.');
         } finally {

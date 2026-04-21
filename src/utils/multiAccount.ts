@@ -23,12 +23,20 @@ export const multiAccountService = {
         if (!session) return;
 
         const { data: profile } = await supabase.from('profiles')
-            .select('username, avatar_url')
+            .select('username, avatar_url, is_verified')
             .eq('id', session.user.id)
             .single();
 
         const accounts = await this.getAccounts();
         const existingIdx = accounts.findIndex(a => a.id === session.user.id);
+
+        // ENFORCE LIMITS
+        if (existingIdx === -1) {
+            const limit = profile?.is_verified ? 10 : 3;
+            if (accounts.length >= limit) {
+                throw new Error(`Límite de cuentas alcanzado (${limit}). Cierra una sesión para añadir otra.`);
+            }
+        }
 
         const newAccount: SavedAccount = {
             id: session.user.id,
@@ -45,6 +53,24 @@ export const multiAccountService = {
         }
 
         await AsyncStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
+        
+        // Sync push token for this new account immediately
+        const { registerForPushNotificationsAsync, savePushToken } = require('./pushNotifications');
+        const token = await registerForPushNotificationsAsync();
+        if (token) await savePushToken(session.user.id, token);
+    },
+
+    async syncAllPushTokens() {
+        const accounts = await this.getAccounts();
+        if (accounts.length === 0) return;
+
+        const { registerForPushNotificationsAsync, savePushToken } = require('./pushNotifications');
+        const token = await registerForPushNotificationsAsync();
+        if (!token) return;
+
+        console.log(`[MultiAccount] Syncing token for ${accounts.length} accounts...`);
+        // We do this in parallel for speed
+        await Promise.all(accounts.map(acc => savePushToken(acc.id, token)));
     },
 
     async switchAccount(accountId: string) {

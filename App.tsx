@@ -12,6 +12,7 @@ import { supabase } from './src/lib/supabase';
 import { Colors } from './src/theme';
 import AppNavigator from './src/navigation/AppNavigator';
 import AuthNavigator from './src/navigation/AuthNavigator';
+import { multiAccountService } from './src/utils/multiAccount';
 
 import { timerConfigManager } from './src/utils/timerConfig';
 
@@ -81,10 +82,8 @@ export default function App() {
 
     async function handlePushRegistration(userId: string) {
       if (Platform.OS === 'web') return;
-      const token = await registerForPushNotificationsAsync();
-      if (token) {
-        await savePushToken(userId, token);
-      }
+      // Sync ALL saved accounts with the current token to ensure push works for all of them
+      await multiAccountService.syncAllPushTokens();
     }
 
     // Listen for auth state changes (login / logout / token refresh)

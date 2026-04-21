@@ -10,55 +10,65 @@ import { useTranslation } from 'react-i18next';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
+import { supabase } from '../lib/supabase';
+import { BlurView } from 'expo-blur';
+import { P, R, shadow } from '../theme';
 
 const { width, height } = Dimensions.get('window');
 
 const ONBOARDING_DATA = [
     {
+        id: '0',
+        type: 'language',
+        titleKey: 'onboarding.step0_title',
+        descKey: 'onboarding.step0_desc',
+        icon: 'language-outline',
+        colors: ['#1F2937', '#111827'],
+    },
+    {
         id: '1',
-        title: 'onboarding.step1_title',
-        desc: 'onboarding.step1_desc',
-        icon: 'heart-outline',
-        colors: ['#a269ff', '#7b2fbe'],
+        type: 'concept',
+        titleKey: 'onboarding.step1_title',
+        descKey: 'onboarding.step1_desc',
+        icon: 'infinite-outline',
+        colors: ['#4F46E5', '#7C3AED'],
     },
     {
         id: '2',
-        title: 'onboarding.step2_title',
-        desc: 'onboarding.step2_desc',
-        icon: 'cube-outline',
-        colors: ['#06D6A0', '#118A57'],
-        showModels: true,
-        models: [
-            'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/models/cartoonkap.png',
-            'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/models/goldenkap.png',
-            'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/models/model_1772952082826.jpg'
-        ]
+        type: 'capsule_logic',
+        titleKey: 'onboarding.step2_title',
+        descKey: 'onboarding.step2_desc',
+        icon: 'lock-open-outline',
+        colors: ['#7C3AED', '#C026D3'],
     },
     {
         id: '3',
-        title: 'onboarding.step3_title',
-        desc: 'onboarding.step3_desc',
-        icon: 'lock-closed-outline',
-        colors: ['#118AB2', '#0EA5E9'],
+        type: 'interactive_add',
+        titleKey: 'onboarding.step3_title',
+        descKey: 'onboarding.step3_desc',
+        icon: 'add-circle-outline',
+        colors: ['#DB2777', '#E11D48'],
     },
     {
         id: '4',
-        title: 'onboarding.step4_title',
-        desc: 'onboarding.step4_desc',
-        icon: 'flash',
-        colors: ['#FF6B6B', '#E91E63'],
+        type: 'social',
+        titleKey: 'onboarding.step4_title',
+        descKey: 'onboarding.step4_desc',
+        icon: 'heart-outline',
+        colors: ['#EA580C', '#E11D48'],
     },
     {
         id: '5',
-        title: 'onboarding.step5_title',
-        desc: 'onboarding.step5_desc',
-        icon: 'help-circle-outline',
-        colors: ['#FFD166', '#FFA552'],
+        type: 'ready',
+        titleKey: 'onboarding.step5_title',
+        descKey: 'onboarding.step5_desc',
+        icon: 'rocket-outline',
+        colors: ['#10B981', '#059669'],
     },
 ];
 
 export default function OnboardingScreen() {
-    const { t } = useTranslation();
+    const { t, i18n } = useTranslation();
     const navigation = useNavigation<any>();
     const insets = useSafeAreaInsets();
     const [activeIndex, setActiveIndex] = useState(0);
@@ -90,9 +100,18 @@ export default function OnboardingScreen() {
 
     const handleFinish = async () => {
         try {
-            await AsyncStorage.setItem('@has_seen_onboarding', 'true');
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) {
+                // Sync with account
+                await supabase
+                    .from('profiles')
+                    .update({ has_completed_onboarding: true })
+                    .eq('id', user.id);
+            }
+            await AsyncStorage.setItem('@has_seen_onboarding_v2', 'true');
             navigation.replace('Main');
         } catch (e) {
+            console.error('Onboarding sync failed:', e);
             navigation.replace('Main');
         }
     };
@@ -107,52 +126,115 @@ export default function OnboardingScreen() {
 
     const handleSkip = () => handleFinish();
 
+    const renderVisual = (item: any, opacity: any) => {
+        switch(item.type) {
+            case 'language':
+                const changeLang = async (lang: string) => {
+                    await i18n.changeLanguage(lang);
+                    await AsyncStorage.setItem('@user_language', lang);
+                };
+                return (
+                    <View style={s.langSelector}>
+                        <TouchableOpacity 
+                            activeOpacity={0.8}
+                            style={[s.langBtn, i18n.language.startsWith('es') && s.langBtnActive]} 
+                            onPress={() => changeLang('es')}
+                        >
+                            <View style={s.flagCircle}><Text style={s.langEmoji}>🇪🇸</Text></View>
+                            <View style={{ flex: 1 }}>
+                                <Text style={[s.langText, i18n.language.startsWith('es') && s.langTextActive]}>Español</Text>
+                                <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>Elegir idioma español</Text>
+                            </View>
+                            {i18n.language.startsWith('es') && <Ionicons name="checkmark-circle" size={24} color="#fff" />}
+                        </TouchableOpacity>
+                        <TouchableOpacity 
+                            activeOpacity={0.8}
+                            style={[s.langBtn, i18n.language.startsWith('en') && s.langBtnActive]} 
+                            onPress={() => changeLang('en')}
+                        >
+                            <View style={s.flagCircle}><Text style={s.langEmoji}>🇺🇸</Text></View>
+                            <View style={{ flex: 1 }}>
+                                <Text style={[s.langText, i18n.language.startsWith('en') && s.langTextActive]}>English</Text>
+                                <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>Choose English language</Text>
+                            </View>
+                            {i18n.language.startsWith('en') && <Ionicons name="checkmark-circle" size={24} color="#fff" />}
+                        </TouchableOpacity>
+                    </View>
+                );
+            case 'capsule_logic':
+                return (
+                    <View style={s.logicContainer}>
+                        <View style={s.logicCol}>
+                            <View style={[s.logicIcon, { backgroundColor: '#F0FDF4' }]}>
+                                <Ionicons name="lock-open" size={32} color="#22C55E" />
+                            </View>
+                            <Text style={s.logicLabel}>Abierta</Text>
+                        </View>
+                        <View style={s.logicDivider} />
+                        <View style={s.logicCol}>
+                            <View style={[s.logicIcon, { backgroundColor: '#FEF2F2' }]}>
+                                <Ionicons name="lock-closed" size={32} color="#EF4444" />
+                            </View>
+                            <Text style={s.logicLabel}>Sellada</Text>
+                        </View>
+                    </View>
+                );
+            case 'interactive_add':
+                return (
+                    <View style={s.addSimulation}>
+                        <View style={s.fakeButton}>
+                            <LinearGradient colors={[P.p500, P.p700]} style={s.fakeButtonGrad}>
+                                <Ionicons name="add" size={40} color="#fff" />
+                            </LinearGradient>
+                        </View>
+                        <View style={s.pulseOrb} />
+                    </View>
+                );
+            default:
+                return (
+                    <View style={s.iconCircle}>
+                        <View style={s.glow} />
+                        <Ionicons name={item.icon} size={80} color="#fff" />
+                    </View>
+                );
+        }
+    };
+
     const renderItem = ({ item, index }: any) => {
         const inputRange = [(index - 1) * width, index * width, (index + 1) * width];
         
         const scale = scrollX.interpolate({
             inputRange,
-            outputRange: [0.8, 1, 0.8],
+            outputRange: [0.85, 1, 0.85],
             extrapolate: 'clamp',
         });
 
         const opacity = scrollX.interpolate({
-            inputRange: [(index - 1) * width, index * width, (index + 1) * width],
+            inputRange,
             outputRange: [0, 1, 0],
+            extrapolate: 'clamp',
         });
 
         return (
             <View style={s.cardContainer}>
                 <LinearGradient colors={item.colors} style={s.gradientBg} />
                 
-                {/* Decorative background shapes */}
+                {/* Ambient Orbs */}
                 <View style={StyleSheet.absoluteFill}>
-                    <Ionicons name="sparkles" size={100} color="rgba(255,255,255,0.05)" style={{ position: 'absolute', top: 100, left: 30 }} />
-                    <Ionicons name="flash" size={80} color="rgba(255,255,255,0.05)" style={{ position: 'absolute', bottom: 150, right: 40 }} />
-                    <Ionicons name="star" size={60} color="rgba(255,255,255,0.05)" style={{ position: 'absolute', top: '40%', right: -20 }} />
+                    <View style={[s.bgOrb, { top: 100, right: -50, backgroundColor: 'rgba(255,255,255,0.1)' }]} />
+                    <View style={[s.bgOrb, { bottom: 150, left: -60, backgroundColor: 'rgba(255,255,255,0.05)' }]} />
                 </View>
 
                 <Animated.View style={[s.content, { 
                     scaleX: scale, scaleY: scale, opacity,
                     transform: [{ translateY: floatY }]
                 }]}>
-                    {item.showModels ? (
-                        <View style={s.modelsRow}>
-                            {item.models.map((uri: string, idx: number) => (
-                                <View key={idx} style={[s.iconCircle, idx !== 1 ? s.smallIconCircle : null]}>
-                                    <Image source={{ uri }} style={s.modelImg} resizeMode="contain" />
-                                </View>
-                            ))}
-                        </View>
-                    ) : (
-                        <View style={s.iconCircle}>
-                            <View style={s.glow} />
-                            <Ionicons name={item.icon} size={80} color="#fff" />
-                        </View>
-                    )}
+                    {renderVisual(item, opacity)}
                     
-                    <Text style={s.title}>{t(item.title)}</Text>
-                    <Text style={s.desc}>{t(item.desc)}</Text>
+                    <View style={s.textContainer}>
+                        <Text style={s.title}>{t(item.titleKey)}</Text>
+                        <Text style={s.desc}>{t(item.descKey)}</Text>
+                    </View>
                 </Animated.View>
             </View>
         );
@@ -220,83 +302,80 @@ export default function OnboardingScreen() {
 const s = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#000' },
     cardContainer: { width, height, alignItems: 'center', justifyContent: 'center' },
-    gradientBg: { ...StyleSheet.absoluteFillObject, opacity: 0.9 },
-    content: { alignItems: 'center', paddingHorizontal: 40 },
+    gradientBg: { ...StyleSheet.absoluteFillObject, opacity: 0.8 },
+    bgOrb: { position: 'absolute', width: 300, height: 300, borderRadius: 150 },
+    content: { alignItems: 'center', width: '100%', paddingHorizontal: 30 },
+    textContainer: { marginTop: 40, alignItems: 'center' },
     iconCircle: {
-        width: 160,
-        height: 160,
-        borderRadius: 80,
-        backgroundColor: 'rgba(255,255,255,0.2)',
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginBottom: 40,
-        borderWidth: 2,
-        borderColor: 'rgba(255,255,255,0.3)',
+        width: 180, height: 180, borderRadius: 90,
+        backgroundColor: 'rgba(255,255,255,0.15)',
+        alignItems: 'center', justifyContent: 'center',
+        borderWidth: 2, borderColor: 'rgba(255,255,255,0.2)',
+        ...shadow.medium,
     },
     glow: {
-        position: 'absolute',
-        width: '120%',
-        height: '120%',
-        borderRadius: 100,
-        backgroundColor: 'rgba(255,255,255,0.15)',
-    },
-    modelsRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginBottom: 20,
-    },
-    smallIconCircle: {
-        width: 100,
-        height: 100,
-        borderRadius: 50,
-        marginHorizontal: -10,
-        opacity: 0.8,
-    },
-    modelImg: {
-        width: '100%',
-        height: '100%',
-        borderRadius: 40,
+        position: 'absolute', width: '130%', height: '130%', borderRadius: 120,
+        backgroundColor: 'rgba(255,255,255,0.05)',
     },
     title: { 
-        fontSize: 32, fontFamily: Fonts.bold, color: '#fff', 
-        textAlign: 'center', marginBottom: 20,
-        textShadowColor: 'rgba(0,0,0,0.3)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 10
+        fontSize: 34, fontWeight: '900', color: '#fff', 
+        textAlign: 'center', marginBottom: 16, letterSpacing: -0.5,
     },
     desc: { 
-        fontSize: 16, fontFamily: Fonts.medium, color: 'rgba(255,255,255,0.85)', 
-        textAlign: 'center', lineHeight: 24 
+        fontSize: 16, fontWeight: '500', color: 'rgba(255,255,255,0.9)', 
+        textAlign: 'center', lineHeight: 26, paddingHorizontal: 10,
     },
     indicatorContainer: {
-        flexDirection: 'row',
-        position: 'absolute',
-        width: '100%',
-        justifyContent: 'center',
+        flexDirection: 'row', position: 'absolute', width: '100%', justifyContent: 'center',
     },
-    dot: {
-        height: 6,
-        borderRadius: 3,
-        backgroundColor: 'rgba(255,255,255,0.4)',
-        marginHorizontal: 4,
-    },
-    activeDot: {
-        backgroundColor: '#fff',
-        width: 24,
-    },
-    inactiveDot: {
-        width: 6,
-    },
+    dot: { height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.3)', marginHorizontal: 4 },
+    activeDot: { backgroundColor: '#fff', width: 32 },
+    inactiveDot: { width: 8 },
     actions: {
         position: 'absolute', width: '100%', flexDirection: 'row',
         justifyContent: 'space-between', paddingHorizontal: 30, alignItems: 'center'
     },
     skipBtn: { padding: 10, minWidth: 60 },
-    skipText: { color: 'rgba(255,255,255,0.6)', fontSize: 15, fontFamily: Fonts.bold },
+    skipText: { color: 'rgba(255,255,255,0.5)', fontSize: 15, fontWeight: '700' },
     nextBtn: {
-        flexDirection: 'row', alignItems: 'center', gap: 8,
-        backgroundColor: 'rgba(255,255,255,0.25)',
-        paddingHorizontal: 24, paddingVertical: 14,
-        borderRadius: 30, borderWidth: 1, borderColor: 'rgba(255,255,255,0.4)',
+        flexDirection: 'row', alignItems: 'center', gap: 10,
+        backgroundColor: '#fff', paddingHorizontal: 28, paddingVertical: 16,
+        borderRadius: 35, ...shadow.medium,
     },
-    nextBtnText: { color: '#fff', fontSize: 16, fontFamily: Fonts.bold },
+    nextBtnText: { color: '#000', fontSize: 16, fontWeight: '800' },
+
+    // Interactive Elements
+    logicContainer: {
+        flexDirection: 'row', alignItems: 'center', gap: 30,
+        backgroundColor: 'rgba(255,255,255,0.15)', padding: 30, borderRadius: 40,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
+    },
+    logicCol: { alignItems: 'center', gap: 10 },
+    logicIcon: { width: 70, height: 70, borderRadius: 25, alignItems: 'center', justifyContent: 'center' },
+    logicLabel: { color: '#fff', fontSize: 13, fontWeight: '800', textTransform: 'uppercase' },
+    logicDivider: { width: 1, height: 60, backgroundColor: 'rgba(255,255,255,0.1)' },
+    
+    addSimulation: { alignItems: 'center', justifyContent: 'center' },
+    fakeButton: { width: 100, height: 100, borderRadius: 50, overflow: 'hidden', ...shadow.purple },
+    fakeButtonGrad: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    pulseOrb: {
+        position: 'absolute', width: 140, height: 140, borderRadius: 70,
+        borderWidth: 2, borderColor: 'rgba(255,255,255,0.3)', opacity: 0.5,
+    },
+    langSelector: { width: '100%', gap: 12, paddingHorizontal: 10 },
+    langBtn: {
+        flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.1)',
+        padding: 20, borderRadius: 24, gap: 15, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+    },
+    langBtnActive: {
+        backgroundColor: 'rgba(255,255,255,0.25)', borderColor: 'rgba(255,255,255,0.4)',
+    },
+    langEmoji: { fontSize: 24 },
+    flagCircle: {
+        width: 48, height: 48, borderRadius: 24,
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        alignItems: 'center', justifyContent: 'center',
+    },
+    langText: { flex: 1, color: 'rgba(255,255,255,0.7)', fontSize: 18, fontWeight: '700' },
+    langTextActive: { color: '#fff' },
 });

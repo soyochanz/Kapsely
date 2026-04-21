@@ -5,6 +5,7 @@ import {
     Linking, Alert, Pressable, Animated, Easing, Platform, Switch, TextInput,
     InteractionManager, DeviceEventEmitter
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { FlashList } from '@shopify/flash-list';
 
 
@@ -32,6 +33,9 @@ import { sendPushNotification } from '../utils/pushNotifications';
 import StoryViewer from '../components/StoryViewer';
 import { safetyService } from '../utils/safety';
 import { multiAccountService, SavedAccount } from '../utils/multiAccount';
+import AccountHub from '../components/AccountHub';
+import QuickLoginModal from '../components/QuickLoginModal';
+import * as Localization from 'expo-localization';
 
 const { width } = Dimensions.get('window');
 
@@ -77,7 +81,8 @@ export default function ProfileScreen() {
     const [showPushSettings, setShowPushSettings] = useState(false);
     const [showSupportModal, setShowSupportModal] = useState(false);
     const [showAccountPanel, setShowAccountPanel] = useState(false);
-    const [accounts, setAccounts] = useState<any[]>([]);
+    const [accounts, setAccounts] = useState<SavedAccount[]>([]);
+    const [showAddAccount, setShowAddAccount] = useState(false);
     const [isDeletingAccount, setIsDeletingAccount] = useState(false);
     const [deleteConfirmPass, setDeleteConfirmPass] = useState('');
     const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -89,7 +94,7 @@ export default function ProfileScreen() {
 
     useEffect(() => {
         if (showAccountPanel) {
-            multiAccountService.getAccounts().then(setSavedAccounts);
+            multiAccountService.getAccounts().then(setAccounts);
         }
     }, [showAccountPanel]);
 
@@ -98,9 +103,8 @@ export default function ProfileScreen() {
             await multiAccountService.saveCurrentAccount();
             await multiAccountService.switchAccount(accountId);
             setShowAccountPanel(false);
-            onRefresh();
         } catch (e: any) {
-            Alert.alert('Error switching', e.message);
+            Alert.alert(t('common.error'), e.message);
         }
     };
 
@@ -222,9 +226,10 @@ export default function ProfileScreen() {
     const [hasMore, setHasMore] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
 
-    const loadData = async (isNewPage = false) => {
+    const loadData = async (isNewPage = false, signal?: AbortSignal) => {
         try {
             const { data: { session } } = await supabase.auth.getSession();
+            if (signal?.aborted) return;
             const user = session?.user;
             if (!user) {
                 setLoading(false);
@@ -237,122 +242,117 @@ export default function ProfileScreen() {
             const own = idToLoad === myId;
             setIsOwnProfileState(own);
 
-        const PAGE_SIZE = 12;
-        const currentPage = isNewPage ? page + 1 : 0;
-        const rangeStart = currentPage * PAGE_SIZE;
-        const rangeEnd = (currentPage + 1) * PAGE_SIZE - 1;
+            if (isNewPage) setLoadingMore(true);
+            else if (!refreshing) setLoading(true);
 
-        if (isNewPage) setLoadingMore(true);
-        else if (!refreshing) setLoading(true);
+            // NEW: Single RPC call replacing 7 requests
+            const { data, error } = await (signal 
+                ? supabase.rpc('get_profile_data_unified', {
+                    p_target_id: idToLoad,
+                    p_viewer_id: myId
+                  }).abortSignal(signal)
+                : supabase.rpc('get_profile_data_unified', {
+                    p_target_id: idToLoad,
+                    p_viewer_id: myId
+                  })
+            );
 
-        const [profileRes, followCheckRes, capsRes, storiesRes, readsRes, myInvitesRes, collabCapsRes] = await Promise.all([
-            // Consolidate Profile Info with counts
-            supabase.from('profiles').select('*, followers:follows!following_id(count), following:follows!follower_id(count)').eq('id', idToLoad).maybeSingle(),
-            // Follow check for current user
-            myId !== idToLoad 
-              ? supabase.from('follows').select('id').eq('follower_id', myId).eq('following_id', idToLoad).maybeSingle()
-              : Promise.resolve({ data: null, error: null }),
-
-            supabase.rpc('get_user_capsules_v2', { target_user_id: idToLoad }).range(rangeStart, rangeEnd),
-
-            supabase.from('capsule_items').select(`
-                id, media_url, media_type, content, expires_at, created_at, capsule_id, 
-                capsules:capsule_id(id, title, model)
-            `).eq('owner_id', idToLoad).eq('is_story', true).gt('expires_at', new Date().toISOString()).order('created_at', { ascending: false }),
-
-            supabase.from('story_reads').select('story_id').eq('user_id', myId),
-            supabase.from('capsule_invites').select('capsule_id').eq('user_id', myId).eq('status', 'accepted'),
-            
-            // Add fetch for capsules where user is collaborator (accepted invite)
-            supabase.from('capsule_invites')
-                .select('capsule_id, capsules(*)')
-                .eq('user_id', idToLoad)
-                .eq('status', 'accepted')
-                .range(rangeStart, rangeEnd)
-        ]);
-
-        if (profileRes.data) {
-            const p = profileRes.data as any;
-            setProfile(p);
-            setFollowersCount(p.followers?.[0]?.count || 0);
-            setFollowingCount(p.following?.[0]?.count || 0);
-        }
-        setIsFollowing(!!followCheckRes?.data);
-
-        const storiesData = storiesRes.data || [];
-        const readIds = new Set((readsRes.data || []).map(r => r.story_id));
-        if (storiesData.length > 0) {
-            const sw = storiesData.map(s => ({ ...s, is_read: readIds.has(s.id) }));
-            setUserStories({ owner_id: idToLoad, username: profileRes.data?.username, avatar_url: profileRes.data?.avatar_url, stories: sw, all_read: sw.every(s => s.is_read) });
-        } else setUserStories(null);
-
-        const myAcceptedCaps = new Set((myInvitesRes.data || []).map((i: any) => i.capsule_id));
-
-        if (capsRes.data || collabCapsRes.data) {
-            const owned = capsRes.data || [];
-            const collaborated = (collabCapsRes.data || []).map((inv: any) => inv.capsules).filter(Boolean);
-            
-            // Merge and deduplicate
-            const combined = [...owned];
-            collaborated.forEach((c: any) => {
-                if (!combined.some(o => o.id === c.id)) combined.push(c);
-            });
-
-            const viewable = combined.map((c: any) => ({
-                ...c,
-                is_shared: c.is_shared || combined.some(o => o.id === c.id && collaborated.some(col => col.id === c.id)),
-                isAccessible: own || c.is_public || c.owner_id === user.id || myAcceptedCaps.has(c.id) || (c.invited_user_id === myId && c.invite_status === 'accepted')
-            }));
-            
-            // Initialize coverMap with existing cover_url values
-            const initialCovers: Record<string, string> = {};
-            viewable.forEach((c: any) => { if (c.cover_url) initialCovers[c.id] = c.cover_url; });
-            setCoverMap(prev => ({ ...prev, ...initialCovers }));
-
-            const filtered = viewable;
-            let opened = filtered.filter((c: any) => c.status === 'opened');
-            const sealed = filtered.filter((c: any) => c.status === 'sealed');
-            
-            if (own) {
-                const nowMs = Date.now();
-                const toDelete = opened.filter((c: any) => {
-                    const itemCount = c.capsule_items_count_val !== undefined ? c.capsule_items_count_val : (c.capsule_items_count || 0);
-                    const isActuallyOpenCap = c.type === 'opencap' || (c.status === 'opened' && c.duration_days === 0);
-                    // Only auto-delete caps if I OWN them
-                    return c.owner_id === user.id && itemCount === 0 && !isActuallyOpenCap && (nowMs - new Date(c.opens_at).getTime()) > 86400000;
-                });
-                if (toDelete.length > 0) {
-                    opened = opened.filter((c: any) => !toDelete.includes(c));
-                    await Promise.all(toDelete.map(async (c: any) => {
-                        await supabase.from('capsules').delete().eq('id', c.id);
-                        await supabase.from('notifications').insert({ user_id: user.id, type: 'system', title: t('profile.delete_capsule_notif'), message: t('profile.delete_capsule_msg', { title: c.title }), metadata: { capsule_id: c.id } });
-                    }));
-                }
+            if (error || !data) {
+                if (error?.message?.includes('Abort') || error?.name === 'AbortError') return;
+                console.error('Profile RPC Error:', error);
+                setLoading(false);
+                return;
             }
-            setOpenedCaps(prev => isNewPage ? [...prev, ...opened] : opened);
-            setSealedCaps(prev => isNewPage ? [...prev, ...sealed] : sealed);
-            setHasMore((capsRes.data?.length || 0) >= PAGE_SIZE || (collabCapsRes.data?.length || 0) >= PAGE_SIZE);
-            if (isNewPage) setPage(currentPage);
-            else setPage(0);
 
-            if (opened.length > 0) {
-                const { data: mediaItems } = await supabase.from('capsule_items').select('id, capsule_id, media_url, media_type, created_at').in('capsule_id', opened.map((c: any) => c.id)).in('media_type', ['image', 'video']).order('created_at', { ascending: true });
-                const mediaMap: Record<string, any[]> = {};
-                (mediaItems || []).forEach((item: any) => {
-                    if (!mediaMap[item.capsule_id]) mediaMap[item.capsule_id] = [];
-                    mediaMap[item.capsule_id].push(item);
+            if (signal?.aborted) return;
+
+            const { 
+                profile: profileData, 
+                is_following, 
+                stories: storiesData, 
+                capsules: capsulesData,
+                my_reads,
+                my_accepted_invites
+            } = data;
+
+            if (profileData) {
+                setProfile(profileData);
+                setFollowersCount(profileData.followers_count || 0);
+                setFollowingCount(profileData.following_count || 0);
+            }
+            setIsFollowing(is_following);
+
+            // Handle Stories
+            const readIds = new Set(my_reads || []);
+            if (storiesData && storiesData.length > 0) {
+                const sw = storiesData.map((s: any) => ({ ...s, is_read: readIds.has(s.id) }));
+                setUserStories({ 
+                    owner_id: idToLoad, 
+                    username: profileData?.username, 
+                    avatar_url: profileData?.avatar_url, 
+                    stories: sw, 
+                    all_read: sw.every((s: any) => s.is_read) 
                 });
-                setCapsuleMediaMap(prev => isNewPage ? { ...prev, ...mediaMap } : mediaMap);
+            } else setUserStories(null);
+
+            const myAcceptedCaps = new Set(my_accepted_invites || []);
+
+            // Handle Capsules
+            if (capsulesData) {
+                const viewable = capsulesData.map((c: any) => ({
+                    ...c,
+                    isAccessible: own || c.is_public || c.owner_id === myId || myAcceptedCaps.has(c.id) || (c.invited_user_id === myId && c.invite_status === 'accepted')
+                }));
+                
+                const initialCovers: Record<string, string> = {};
+                viewable.forEach((c: any) => { if (c.cover_url) initialCovers[c.id] = c.cover_url; });
+                setCoverMap(prev => ({ ...prev, ...initialCovers }));
+
+                const opened = viewable.filter((c: any) => c.status === 'opened');
+                const sealed = viewable.filter((c: any) => c.status === 'sealed');
+                
+                // Auto-delete empty capsules logic for own profile
+                if (own) {
+                    const nowMs = Date.now();
+                    const toDelete = opened.filter((c: any) => {
+                        const itemCount = c.capsule_items_count_val ?? (c.capsule_items_count || 0);
+                        // NEVER delete opencap types automatically if empty
+                        if (c.type === 'opencap') return false;
+                        
+                        // Only delete sealed capsules that were opened and are still empty after 24h
+                        const opensAt = new Date(c.opens_at).getTime();
+                        return c.owner_id === myId && itemCount === 0 && (nowMs - opensAt) > 86400000;
+                    });
+                    if (toDelete.length > 0) {
+                        await Promise.all(toDelete.map(async (c: any) => {
+                            await supabase.from('capsules').delete().eq('id', c.id);
+                        }));
+                    }
+                }
+                setOpenedCaps(prev => isNewPage ? [...prev, ...opened] : opened);
+                setSealedCaps(prev => isNewPage ? [...prev, ...sealed] : sealed);
+                setHasMore(capsulesData.length >= 12);
+                
+                // Fetch covers logic
+                const { data: mediaItems } = await (signal
+                    ? supabase.from('capsule_items').select('id, capsule_id, media_url, media_type, created_at').in('capsule_id', opened.map((c: any) => c.id)).in('media_type', ['image', 'video']).order('created_at', { ascending: true }).abortSignal(signal)
+                    : supabase.from('capsule_items').select('id, capsule_id, media_url, media_type, created_at').in('capsule_id', opened.map((c: any) => c.id)).in('media_type', ['image', 'video']).order('created_at', { ascending: true })
+                );
+                    const mediaMap: Record<string, any[]> = {};
+                    (mediaItems || []).forEach((item: any) => {
+                        if (!mediaMap[item.capsule_id]) mediaMap[item.capsule_id] = [];
+                        mediaMap[item.capsule_id].push(item);
+                    });
+                    setCapsuleMediaMap(prev => isNewPage ? { ...prev, ...mediaMap } : mediaMap);
+                
                 const defaultCovers: Record<string, string> = {};
-                Object.entries(mediaMap).forEach(([capId, items]) => { 
-                    // Only set as default if no cover_url was already set in initialCovers
+                Object.entries(mediaMap).forEach(([capId, items]) => {
                     if (!initialCovers[capId] && (items as any[])[0]?.media_url) {
-                        defaultCovers[capId] = (items as any[])[0].media_url; 
+                        defaultCovers[capId] = (items as any[])[0].media_url;
                     }
                 });
                 setCoverMap(prev => ({ ...prev, ...defaultCovers }));
             }
-        }
 
             const { data: stks } = await supabase.from('profile_stickers').select('*, stickers(*)').eq('user_id', idToLoad);
             if (stks) setProfileStickers(stks);
@@ -396,14 +396,19 @@ export default function ProfileScreen() {
     }, [targetUserId, currentUserId]);
 
     useFocusEffect(useCallback(() => {
+        const controller = new AbortController();
         if (Platform.OS === 'web') {
-            loadData();
+            loadData(false, controller.signal);
         } else {
             const task = InteractionManager.runAfterInteractions(() => {
-                loadData();
+                loadData(false, controller.signal);
             });
-            return () => task.cancel();
+            return () => {
+                task.cancel();
+                controller.abort();
+            };
         }
+        return () => controller.abort();
     }, [targetUserId, currentUserId]));
 
     const onRefresh = () => { setRefreshing(true); loadData(); };
@@ -762,114 +767,37 @@ export default function ProfileScreen() {
                     </Pressable>
                 </Pressable>
             </Modal>
-
-            {/* Account Panel Modal */}
-            <Modal
-                visible={showAccountPanel}
-                transparent
+            {/* Account Hub Modal */}
+            <Modal 
+                visible={showAccountPanel} 
+                transparent 
                 animationType="slide"
+                onRequestClose={() => setShowAccountPanel(false)}
             >
                 <View style={s.overlay}>
-                    <TouchableOpacity 
-                        style={StyleSheet.absoluteFill} 
-                        activeOpacity={1} 
-                        onPress={() => setShowAccountPanel(false)}
-                    >
-                        <BlurView intensity={20} style={StyleSheet.absoluteFill} />
-                    </TouchableOpacity>
-
-                    <Animated.View style={[s.sheet, { backgroundColor: Colors.surface + 'F0', borderRadius: 30, paddingHorizontal: 20 }]}>
-                        <View style={s.sheetHandle} />
-                        <View style={s.sheetNav}>
-                            <TouchableOpacity onPress={() => setShowAccountPanel(false)} style={s.sheetNavBack}>
-                                <Ionicons name="close" size={24} color={Colors.textPrimary} />
-                            </TouchableOpacity>
-                            <Text style={[s.sheetNavTitle, { fontWeight: '700' }]}>{t('profile.account_panel')}</Text>
-                        </View>
-                        
-                        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
-                            <Text style={[s.pushSectionLabel, { marginBottom: 15, fontSize: 13, opacity: 0.6 }]}>{t('profile.profiles')}</Text>
-                            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 25 }}>
-                                {savedAccounts.map(acc => (
-                                    <TouchableOpacity 
-                                        key={acc.id} 
-                                        onPress={() => {
-                                            setShowAccountPanel(false);
-                                            handleSwitchAccount(acc.id);
-                                        }}
-                                        style={{ alignItems: 'center', marginRight: 20 }}
-                                    >
-                                        <View style={[
-                                            { width: 70, height: 70, borderRadius: 35, padding: 3, backgroundColor: Colors.surface, elevation: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 8 },
-                                            acc.id === currentUserId && { backgroundColor: Colors.primary }
-                                        ]}>
-                                            <Image 
-                                                source={{ uri: acc.avatar_url || 'https://via.placeholder.com/150' }} 
-                                                style={{ width: '100%', height: '100%', borderRadius: 32, borderWidth: 2, borderColor: '#fff' }} 
-                                            />
-                                            {acc.id === currentUserId && (
-                                                <View style={{ position: 'absolute', bottom: 0, right: 0, backgroundColor: Colors.success, borderRadius: 10, width: 20, height: 20, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#fff' }}>
-                                                    <Ionicons name="checkmark" size={12} color="#fff" />
-                                                </View>
-                                            )}
-                                        </View>
-                                        <Text style={[s.accUsername, { marginTop: 8, fontWeight: acc.id === currentUserId ? '700' : '400' }]} numberOfLines={1}>@{acc.username}</Text>
-                                    </TouchableOpacity>
-                                ))}
-                                <TouchableOpacity 
-                                    onPress={async () => { 
-                                        await multiAccountService.saveCurrentAccount();
-                                        await supabase.auth.signOut();
-                                        setShowAccountPanel(false); 
-                                    }}
-                                    style={{ alignItems: 'center' }}
-                                >
-                                    <View style={{ width: 70, height: 70, borderRadius: 35, backgroundColor: Colors.primary + '15', alignItems: 'center', justifyContent: 'center', borderStyle: 'dashed', borderWidth: 1, borderColor: Colors.primary }}>
-                                        <Ionicons name="add" size={30} color={Colors.primary} />
-                                    </View>
-                                    <Text style={[s.accUsername, { marginTop: 8, color: Colors.primary }]}>{t('profile.add_account')}</Text>
-                                </TouchableOpacity>
-                            </ScrollView>
-
-                            <Text style={[s.pushSectionLabel, { marginBottom: 10, fontSize: 13, opacity: 0.6 }]}>{t('profile.security_and_account')}</Text>
-                            
-                            <View style={{ backgroundColor: Colors.surface, borderRadius: 20, overflow: 'hidden', padding: 5 }}>
-                                <TouchableOpacity 
-                                    style={s.sheetItem} 
-                                    activeOpacity={0.7} 
-                                    onPress={() => {
-                                        setShowAccountPanel(false);
-                                        setTimeout(() => setShowPasswordChangeModal(true), 300);
-                                    }}
-                                >
-                                    <View style={[s.sheetItemIcon, { backgroundColor: Colors.primary + '15' }]}>
-                                        <Ionicons name="finger-print" size={18} color={Colors.primary} />
-                                    </View>
-                                    <Text style={s.sheetItemText}>{t('profile.change_password')}</Text>
-                                    <Ionicons name="chevron-forward" size={16} color={Colors.textMuted} />
-                                </TouchableOpacity>
-
-                                <View style={{ height: 1, backgroundColor: Colors.border, marginHorizontal: 50, opacity: 0.3 }} />
-
-                                <TouchableOpacity 
-                                    style={s.sheetItem} 
-                                    activeOpacity={0.7} 
-                                    onPress={() => {
-                                        setShowAccountPanel(false);
-                                        setTimeout(() => setShowDeleteModal(true), 300);
-                                    }}
-                                >
-                                    <View style={[s.sheetItemIcon, { backgroundColor: Colors.error + '15' }]}>
-                                        <Ionicons name="trash" size={18} color={Colors.error} />
-                                    </View>
-                                    <Text style={[s.sheetItemText, { color: Colors.error }]}>{t('profile.delete_account_final_btn')}</Text>
-                                    <Ionicons name="chevron-forward" size={16} color={Colors.textMuted} />
-                                </TouchableOpacity>
-                            </View>
-                        </ScrollView>
-                    </Animated.View>
+                    <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setShowAccountPanel(false)} />
+                    <AccountHub 
+                        accounts={accounts}
+                        currentUserId={currentUserId}
+                        onClose={() => setShowAccountPanel(false)}
+                        onAddAccount={() => {
+                            setShowAccountPanel(false);
+                            setTimeout(() => setShowAddAccount(true), 300);
+                        }}
+                        onSwitch={handleSwitchAccount}
+                    />
                 </View>
             </Modal>
+
+            <QuickLoginModal 
+                visible={showAddAccount}
+                onClose={() => setShowAddAccount(false)}
+                onSuccess={async () => {
+                    setShowAddAccount(false);
+                    const accs = await multiAccountService.getAccounts();
+                    setAccounts(accs);
+                }}
+            />
 
             {/* Password Change Modal */}
             <Modal visible={showPasswordChangeModal} transparent animationType="fade">
@@ -939,36 +867,77 @@ export default function ProfileScreen() {
             {/* Support Ticket Modal */}
             <SupportModal visible={showSupportModal} onClose={() => setShowSupportModal(false)} userId={currentUserId!} />
 
-            {/* Language */}
+            {/* Modern Language Selector */}
             <Modal
                 visible={showLanguageSettings}
-                transparent={Platform.OS === 'android'}
-                animationType="slide"
-                presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : 'overFullScreen'}
+                transparent
+                animationType="fade"
                 onRequestClose={() => setShowLanguageSettings(false)}
             >
-                <Pressable
-                    style={[s.overlay, Platform.OS === 'ios' && { backgroundColor: Colors.surface }]}
-                    onPress={() => setShowLanguageSettings(false)}
-                >
-                    <Pressable style={[s.sheet, Platform.OS === 'ios' && { borderTopLeftRadius: 0, borderTopRightRadius: 0, paddingTop: 20 }]}>
+                <View style={s.overlay}>
+                    <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setShowLanguageSettings(false)}>
+                        <BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFill} />
+                    </TouchableOpacity>
+                    
+                    <View style={[s.sheet, { borderTopLeftRadius: 32, borderTopRightRadius: 32, paddingBottom: Platform.OS === 'ios' ? 40 : 20 }]}>
                         <View style={s.sheetHandle} />
-                        <View style={s.sheetNav}>
-                            <TouchableOpacity onPress={() => { setShowLanguageSettings(false); setShowSettings(true); }} style={s.sheetNavBack}>
-                                <Ionicons name="chevron-back" size={22} color={Colors.textPrimary} />
-                            </TouchableOpacity>
-                            <Text style={s.sheetNavTitle}>{t('profile.language')}</Text>
-                            <View style={{ width: 34 }} />
+                        <Text style={[s.sheetTitle, { textAlign: 'center', marginBottom: 24 }]}>{t('profile.language')}</Text>
+                        
+                        <View style={{ gap: 12 }}>
+                            {[
+                                { code: 'en', label: 'English', flag: '🇺🇸' }, 
+                                { code: 'es', label: 'Español', flag: '🇪🇸' }
+                            ].map(lang => {
+                                const isSelected = i18n.language === lang.code || (i18n.language.startsWith(lang.code));
+                                return (
+                                    <TouchableOpacity 
+                                        key={lang.code} 
+                                        style={[
+                                            s.sheetItem, 
+                                            { 
+                                                borderRadius: 20, 
+                                                borderWidth: 1.5, 
+                                                borderColor: isSelected ? Colors.primary : 'rgba(0,0,0,0.05)',
+                                                backgroundColor: isSelected ? Colors.primary + '08' : Colors.cardAlt,
+                                                paddingHorizontal: 20,
+                                                paddingVertical: 18,
+                                                borderBottomWidth: 1.5,
+                                                flexDirection: 'row',
+                                                alignItems: 'center',
+                                                gap: 16
+                                            }
+                                        ]} 
+                                        activeOpacity={0.7}
+                                        onPress={async () => { 
+                                            await i18n.changeLanguage(lang.code); 
+                                            await AsyncStorage.setItem('@user_language', lang.code);
+                                            setShowLanguageSettings(false); 
+                                        }}
+                                    >
+                                        <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', ...Shadow.subtle }}>
+                                            <Text style={{ fontSize: 24 }}>{lang.flag}</Text>
+                                        </View>
+                                        <View style={{ flex: 1 }}>
+                                            <Text style={[s.sheetItemText, { fontSize: 16, fontFamily: isSelected ? Fonts.bold : Fonts.medium, color: isSelected ? Colors.primary : Colors.textPrimary }]}>
+                                                {lang.label}
+                                            </Text>
+                                            <Text style={{ fontSize: 11, color: Colors.textMuted }}>{lang.code === 'es' ? 'Predeterminado' : 'Switch to English'}</Text>
+                                        </View>
+                                        {isSelected && (
+                                            <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' }}>
+                                                <Ionicons name="checkmark" size={16} color="#fff" />
+                                            </View>
+                                        )}
+                                    </TouchableOpacity>
+                                );
+                            })}
                         </View>
-                        {[{ code: 'en', label: 'English' }, { code: 'es', label: 'Español' }].map(lang => (
-                            <TouchableOpacity key={lang.code} style={s.sheetItem} activeOpacity={0.7}
-                                onPress={() => { i18n.changeLanguage(lang.code); setShowLanguageSettings(false); setShowSettings(true); }}>
-                                <Text style={s.sheetItemText}>{lang.label}</Text>
-                                {i18n.language === lang.code && <Ionicons name="checkmark-circle" size={19} color={Colors.primary} />}
-                            </TouchableOpacity>
-                        ))}
-                    </Pressable>
-                </Pressable>
+
+                        <TouchableOpacity style={s.cancelBtn} onPress={() => setShowLanguageSettings(false)}>
+                            <Text style={s.cancelBtnText}>{t('common.cancel')}</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
             </Modal>
 
             {/* Push Notifications */}

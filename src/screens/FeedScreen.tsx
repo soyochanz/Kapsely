@@ -207,6 +207,8 @@ const tabPillStyles = StyleSheet.create({
     },
 });
 
+const AnyFlashList = FlashList as any;
+
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 export default function FeedScreen() {
     const { t } = useTranslation();
@@ -345,27 +347,7 @@ export default function FeedScreen() {
     }, [currentUserId]);
 
     // ─── Stories ──────────────────────────────────────────────────────────────
-    const loadStories = useCallback(async (userIdOverride?: string, blockedIds?: string[]) => {
-        const { data: { session } } = await supabase.auth.getSession();
-        const user = session?.user;
-        if (!user) return;
-        const targetUserId = userIdOverride || user.id;
-        const blocked = blockedIds ?? blockedUserIds;
-
-        const [storiesRes, readsRes] = await Promise.all([
-            supabase.from('capsule_items')
-                .select('*, profiles:owner_id(username, display_name, avatar_url, id), capsules:capsule_id(id, title, model)')
-                .eq('is_story', true)
-                .in('media_type', ['image', 'video'])
-                .gt('expires_at', new Date().toISOString())
-                .order('created_at', { ascending: false }),
-            supabase.from('story_reads').select('story_id').eq('user_id', user.id),
-        ]);
-
-        const data = storiesRes.data;
-        const readIds = new Set((readsRes.data || []).map((r: any) => r.story_id));
-        if (!data) return;
-
+    const processStoriesData = (data: any[], currentId: string, blocked: string[]) => {
         const usersWithStories: any[] = [];
         data.forEach((s: any) => {
             if (blocked.includes(s.owner_id)) return;
@@ -374,21 +356,44 @@ export default function FeedScreen() {
                 group = { ...s.profiles, owner_id: s.owner_id, stories: [] };
                 usersWithStories.push(group);
             }
-            group.stories.push({ ...s, is_read: readIds.has(s.id) });
+            group.stories.push(s);
         });
 
         const processed = usersWithStories
             .map(u => ({ ...u, all_read: u.stories.every((s: any) => s.is_read) }))
             .sort((a, b) => {
-                if (a.owner_id === targetUserId) return -1;
-                if (b.owner_id === targetUserId) return 1;
+                if (a.owner_id === currentId) return -1;
+                if (b.owner_id === currentId) return 1;
                 if (a.all_read !== b.all_read) return a.all_read ? 1 : -1;
                 return 0;
             });
 
         setStories(processed);
-        setMyStory(processed.find(u => u.owner_id === targetUserId) || null);
-    }, [blockedUserIds]);
+        setMyStory(processed.find(u => u.owner_id === currentId) || null);
+    };
+
+    const loadStories = useCallback(async (userIdOverride?: string, blockedIds?: string[]) => {
+        // Now mostly handled via RPC in loadFeed, but kept for standalone refreshes
+        try {
+            const { data: { session } } = await supabase.auth.getSession();
+            const user = session?.user;
+            if (!user) return;
+            const myId = user.id;
+            const blocked = blockedIds ?? blockedUserIds;
+
+            const controller = new AbortController();
+            const { data, error } = await (controller.signal 
+                ? supabase.rpc('get_combined_feed_data', { p_user_id: myId, p_tab: activeTab, p_filter: activeFilter, p_limit: 1, p_offset: 0 }).abortSignal(controller.signal)
+                : supabase.rpc('get_combined_feed_data', { p_user_id: myId, p_tab: activeTab, p_filter: activeFilter, p_limit: 1, p_offset: 0 })
+            );
+
+            if (error || !data) return;
+            processStoriesData(data.stories, myId, blocked);
+        } catch (err: any) {
+            if (err?.message?.includes('Abort') || err?.name === 'AbortError') return;
+            console.error('[Feed] loadStories error:', err);
+        }
+    }, [blockedUserIds, activeTab, activeFilter]);
 
     const markStoryRead = useCallback(async (storyId: string) => {
         if (!currentUserId) return;
@@ -439,55 +444,48 @@ export default function FeedScreen() {
                 return;
             }
 
-            if (!currentUserId) setCurrentUserId(user.id);
+            const myId = user.id;
+            if (!currentUserId) setCurrentUserId(myId);
 
-            const [blocked, followsResult, likesResult, participantResult] = await Promise.all([
-                safetyService.getAllSafetyUserIds(user.id),
-                supabase.from('follows').select('following_id').eq('follower_id', user.id),
-                supabase.from('likes').select('capsule_id').eq('user_id', user.id),
-                supabase.from('capsule_invites').select('capsule_id').eq('user_id', user.id).eq('status', 'accepted'),
-            ]);
-
-            if (feedRequestId.current !== currentReqId) return;
-
-            setBlockedUserIds(blocked);
-            if (!isNewPage) loadStories(user.id, blocked);
-
-            const followingIds = (followsResult.data || []).map((f: any) => f.following_id);
-            const likedSetNew = new Set((likesResult.data || []).map((l: any) => l.capsule_id));
-            const participantSetNew = new Set((participantResult.data || []).map((p: any) => p.capsule_id));
-
-            setFollowingSet(followingIds.length > 0 ? new Set(followingIds) : new Set());
-            setLikedCapsules(likedSetNew);
-            setParticipantCapsules(participantSetNew);
-
-            if (tab === 'following' && followingIds.length === 0) {
-                setCapsules([]);
-                setLoading(false); setRefreshing(false); setLoadingMore(false);
-                setHasMore(false);
-                return;
-            }
-
-            const rpcName = tab === 'explore' ? 'get_explore_feed' : 'get_following_feed';
-            const { data: rpcData, error } = await supabase.rpc(rpcName, {
-                req_user_id: user.id,
-                req_filter: activeFilter,
-                req_limit: PAGE_SIZE,
-                req_offset: currentPage * PAGE_SIZE,
-            });
+            const controller = new AbortController();
+            const { data, error } = await (controller.signal
+                ? supabase.rpc('get_combined_feed_data', {
+                    p_user_id: myId,
+                    p_tab: tab,
+                    p_filter: activeFilter,
+                    p_limit: PAGE_SIZE,
+                    p_offset: currentPage * PAGE_SIZE
+                  }).abortSignal(controller.signal)
+                : supabase.rpc('get_combined_feed_data', {
+                    p_user_id: myId,
+                    p_tab: tab,
+                    p_filter: activeFilter,
+                    p_limit: PAGE_SIZE,
+                    p_offset: currentPage * PAGE_SIZE
+                  })
+            );
 
             if (feedRequestId.current !== currentReqId) return;
 
-            if (error) {
-                console.error(`[Feed] RPC error (${rpcName}):`, error);
+            if (error || !data) {
+                if (error?.message?.includes('Abort')) return;
+                console.error(`[Feed] RPC error:`, error);
                 setLoading(false); setRefreshing(false); setLoadingMore(false);
                 return;
             }
 
-            const items: any[] = (rpcData || [])
-                .filter((c: any) => c && (!blocked || !blocked.includes(c.owner_id)))
-                .map((c: any) => ({ ...c, feedType: c.feed_type || 'capsule' }));
+            const { feed, stories: storiesData, following_ids, liked_ids, blocked_ids, participant_ids } = data;
 
+            setBlockedUserIds(blocked_ids || []);
+            setFollowingSet(new Set(following_ids || []));
+            setLikedCapsules(new Set(liked_ids || []));
+            setParticipantCapsules(new Set(participant_ids || []));
+
+            if (!isNewPage) {
+                processStoriesData(storiesData || [], myId, blocked_ids || []);
+            }
+
+            const items: any[] = (feed || []).map((c: any) => ({ ...c, feedType: c.feed_type || 'capsule' }));
             setHasMore(items.length >= PAGE_SIZE);
 
             if (isNewPage) {
@@ -503,13 +501,14 @@ export default function FeedScreen() {
             setLoading(false);
             setRefreshing(false);
             setLoadingMore(false);
-        } catch (err) {
+        } catch (err: any) {
+            if (err?.message?.includes('Abort') || err?.name === 'AbortError') return;
             console.error('[Feed] Uncaught error in loadFeed:', err);
             setLoading(false);
             setRefreshing(false);
             setLoadingMore(false);
         }
-    }, [activeTab, activeFilter, page, feedCache, refreshing, currentUserId, loadStories]);
+    }, [activeTab, activeFilter, page, feedCache, refreshing, currentUserId]);
 
     // ─── Handlers ─────────────────────────────────────────────────────────────
     const handleYourCapPress = useCallback(async () => {
@@ -575,9 +574,32 @@ export default function FeedScreen() {
     useEffect(() => {
         const sub = DeviceEventEmitter.addListener('CAPSULE_UPDATED', (payload: any) => {
             if (payload.id) {
-                setCapsules(prev => prev.map(c => c.id === payload.id ? { ...c, ...payload } : c));
+                // 1. Actualizar la lista de cápsulas de forma atómica
+                setCapsules(prev => prev.map(c => {
+                    const isTarget = c.id === payload.id || c.capsule_id === payload.id;
+                    if (isTarget) {
+                        return { 
+                            ...c, 
+                            likes_count: payload.likes_count ?? c.likes_count,
+                            is_liked: payload.is_liked ?? c.is_liked
+                        };
+                    }
+                    return c;
+                }));
+                
+                // 2. Actualizar el set de likes para el icono
+                if (payload.is_liked !== undefined) {
+                    setLikedCapsules(prev => {
+                        const n = new Set(prev);
+                        if (payload.is_liked) {
+                            n.add(payload.id);
+                        } else {
+                            n.delete(payload.id);
+                        }
+                        return n;
+                    });
+                }
             }
-            loadFeed(true);
         });
         return () => sub.remove();
     }, [loadFeed]);
@@ -701,34 +723,79 @@ export default function FeedScreen() {
         }
     }, [currentUserId]);
 
-    const handleGlobalLike = useCallback(async (capsuleId: string, isLiked: boolean) => {
+    const handleGlobalLike = useCallback(async (activityId: string, is_liked: boolean) => {
         if (!currentUserId) return;
-        if (isLiked) {
-            await supabase.from('likes').delete().eq('capsule_id', capsuleId).eq('user_id', currentUserId);
-            setLikedCapsules(prev => { const n = new Set(prev); n.delete(capsuleId); return n; });
-        } else {
-            await supabase.from('likes').insert({ capsule_id: capsuleId, user_id: currentUserId });
-            setLikedCapsules(prev => { const n = new Set(prev); n.add(capsuleId); return n; });
-            const { data: capsule } = await supabase.from('capsules').select('owner_id').eq('id', capsuleId).maybeSingle();
-            if (capsule && capsule.owner_id !== currentUserId) {
-                const { data: existing } = await supabase.from('notifications')
-                    .select('id').eq('user_id', capsule.owner_id).eq('sender_id', currentUserId).eq('type', 'like').eq('capsule_id', capsuleId).maybeSingle();
-                if (existing) {
-                    await supabase.from('notifications').update({ created_at: new Date().toISOString(), is_read: false }).eq('id', existing.id);
-                } else {
-                    await supabase.from('notifications').insert({ user_id: capsule.owner_id, sender_id: currentUserId, type: 'like', capsule_id: capsuleId, message: 'liked your capsule' });
+        
+        // Encontrar la actividad en la lista para obtener el capsule_id real
+        const activity = capsules.find(c => c.id === activityId);
+        const targetCapsuleId = activity?.capsule_id || activityId; // fallback al id si no hay capsule_id
+        
+        const wasLiked = is_liked;
+        const newIsLiked = !wasLiked;
+
+        // 1. Actualización optimista de los Sets (Color del icono)
+        setLikedCapsules(prev => {
+            const n = new Set(prev);
+            // Agregamos tanto el ID de la actividad como el de la cápsula para seguridad
+            if (newIsLiked) {
+                n.add(activityId);
+                n.add(targetCapsuleId);
+            } else {
+                n.delete(activityId);
+                n.delete(targetCapsuleId);
+            }
+            return n;
+        });
+
+        // 2. Actualización optimista de la lista (Sincronizar todas las tarjetas de esta cápsula)
+        setCapsules(prev => prev.map(c => {
+            if (c.id === activityId || c.capsule_id === targetCapsuleId) {
+                const currentCount = c.likes_count || 0;
+                return {
+                    ...c,
+                    is_liked: newIsLiked,
+                    likes_count: newIsLiked ? currentCount + 1 : Math.max(0, currentCount - 1)
+                };
+            }
+            return c;
+        }));
+
+        try {
+            if (wasLiked) {
+                await supabase.from('likes').delete().eq('capsule_id', targetCapsuleId).eq('user_id', currentUserId);
+            } else {
+                const { error } = await supabase.from('likes').insert({ capsule_id: targetCapsuleId, user_id: currentUserId });
+                
+                // Si la DB dice que ya existe, simplemente lo ignoramos (ya está Likeado)
+                if (error && error.code !== '23505') throw error;
+                
+                // Notificación al dueño
+                if (activity && activity.owner_id !== currentUserId) {
+                    const { data: existing } = await supabase.from('notifications')
+                        .select('id').eq('user_id', activity.owner_id).eq('sender_id', currentUserId).eq('type', 'like').eq('capsule_id', targetCapsuleId).maybeSingle();
+                    
+                    if (existing) {
+                        await supabase.from('notifications').update({ created_at: new Date().toISOString(), is_read: false }).eq('id', existing.id);
+                    } else {
+                        await supabase.from('notifications').insert({ user_id: activity.owner_id, sender_id: currentUserId, type: 'like', capsule_id: targetCapsuleId, message: 'liked your capsule' });
+                    }
                 }
             }
+        } catch (err) {
+            console.error('Feed like error:', err);
+            // Revertir estado si es un error real
+            setLikedCapsules(prev => { const n = new Set(prev); if (wasLiked) n.add(activityId); else n.delete(activityId); return n; });
         }
-    }, [currentUserId]);
+    }, [currentUserId, capsules]);
 
     // ─── renderItem ────────────────────────────────────────────────────────────
     const renderItem = useCallback(({ item }: { item: any }) => {
         const isFollowed = followingSet.has(item.owner_id);
-        const isLiked = likedCapsules.has(item.id);
+        const isLiked = likedCapsules.has(item.id) || likedCapsules.has(item.capsule_id);
         const hasAccess = item.is_public
             || item.owner_id === currentUserId
-            || participantCapsules.has(item.id);
+            || participantCapsules.has(item.id)
+            || (item.capsule_id && participantCapsules.has(item.capsule_id));
 
         return (
             <CapsuleCard
@@ -736,9 +803,9 @@ export default function FeedScreen() {
                 userId={currentUserId}
                 isFollowed={isFollowed}
                 isLiked={isLiked}
-                likeCount={item.likes_count}
-                commentCount={item.comments_count}
-                postsCount={item.posts_count}
+                likeCount={item.likes_count || 0}
+                commentCount={item.comments_count || 0}
+                postsCount={item.posts_count || 0}
                 isLocked={!hasAccess}
                 onFollow={handleGlobalFollow}
                 onLike={handleGlobalLike}
@@ -749,7 +816,7 @@ export default function FeedScreen() {
                 }}
             />
         );
-    }, [currentUserId, followingSet, likedCapsules, participantCapsules, handleGlobalFollow, handleGlobalLike]);
+    }, [currentUserId, followingSet, likedCapsules, participantCapsules, handleGlobalFollow, handleGlobalLike, capsules]);
 
     // ─── List Header ───────────────────────────────────────────────────────────
     const ListHeader = useMemo(() => (
@@ -874,7 +941,8 @@ export default function FeedScreen() {
             </Animated.View>
 
             {/* ── Feed List ── */}
-            <FlashList
+            <AnyFlashList
+                estimatedItemSize={450}
                 key={`feed-${activeTab}`}
                 ref={flatListRef}
                 data={capsules}
@@ -888,8 +956,8 @@ export default function FeedScreen() {
                 onEndReachedThreshold={0.5}
                 ListHeaderComponent={ListHeader}
                 renderItem={renderItem}
-                // @ts-ignore
-                estimatedItemSize={360}
+                extraData={[likedCapsules, capsules, followingSet]}
+                drawDistance={height}
                 ListFooterComponent={() =>
                     loadingMore ? (
                         <View style={s.loadMoreWrap}>
