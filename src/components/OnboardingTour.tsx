@@ -41,16 +41,16 @@ const TOUR_STEPS = (t: any) => [
         color: Colors.legacyCap,
     },
     {
+        title: t('onboarding.step5_title'),
+        description: t('onboarding.step5_desc'),
+        icon: 'calendar',
+        color: Colors.primary,
+    },
+    {
         title: t('onboarding.step4_title'),
         description: t('onboarding.step4_desc'),
         icon: 'flash',
         color: Colors.accent,
-    },
-    {
-        title: t('onboarding.step5_title'),
-        description: t('onboarding.step5_desc'),
-        icon: 'chatbubbles',
-        color: Colors.primary,
     }
 ];
 

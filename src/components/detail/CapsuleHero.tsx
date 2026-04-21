@@ -84,6 +84,7 @@ export const CapsuleHero = React.memo(({
                 <View style={s.statRow}>
                     <StatPill icon="people-outline" label={`${totalMembers}`} />
                     <StatPill icon="heart-outline" label={`${likeCount}`} />
+                    <StatPill icon="notifications-outline" label={`${followerCount}`} />
                     <View style={s.statPill}>
                         <Ionicons name={isSealed ? "lock-closed" : "lock-open"} size={16} color={isSealed ? "#EF4444" : "#10B981"} />
                     </View>

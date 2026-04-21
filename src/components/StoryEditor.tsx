@@ -4,6 +4,7 @@ import {
     TextInput, Modal, ScrollView, Dimensions, Pressable,
     PanResponder, Animated, Platform
 } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -22,12 +23,12 @@ const TRASH_HIT_SIZE = 70;
 const TRASH_BOTTOM_OFFSET = 60;
 
 const FILTERS = [
-    { id: 'none', label: 'Original', color: 'transparent' },
-    { id: 'vintage', label: 'Vintage', color: 'rgba(230,190,120,0.25)' },
-    { id: 'warm', label: 'Warm', color: 'rgba(255,150,50,0.18)' },
-    { id: 'cool', label: 'Cool', color: 'rgba(0,150,255,0.18)' },
-    { id: 'dark', label: 'Dark', color: 'rgba(0,0,0,0.4)' },
-    { id: 'noir', label: 'B&W', color: 'rgba(0,0,0,0.3)', grayscale: true },
+    { id: 'none', label: 'flashes.original', color: 'transparent' },
+    { id: 'vintage', label: 'flashes.vintage', color: 'rgba(230,190,120,0.25)' },
+    { id: 'warm', label: 'flashes.warm', color: 'rgba(255,150,50,0.18)' },
+    { id: 'cool', label: 'flashes.cool', color: 'rgba(0,150,255,0.18)' },
+    { id: 'dark', label: 'flashes.dark', color: 'rgba(0,0,0,0.4)' },
+    { id: 'noir', label: 'flashes.noir', color: 'rgba(0,0,0,0.3)', grayscale: true },
 ];
 
 // ── Fuentes con nombres originales ────────────────────────────────────────────
@@ -45,10 +46,10 @@ const TEXT_STYLES = [
 ];
 
 const TEXT_BG_OPTIONS = [
-    { id: 'none', label: 'None', value: 'transparent' },
-    { id: 'dark', label: 'Dark', value: 'rgba(0,0,0,0.55)' },
-    { id: 'white', label: 'White', value: 'rgba(255,255,255,0.75)' },
-    { id: 'blur', label: 'Blur', value: 'rgba(30,20,60,0.6)' },
+    { id: 'none', label: 'flashes.bg_none', value: 'transparent' },
+    { id: 'dark', label: 'flashes.bg_dark', value: 'rgba(0,0,0,0.55)' },
+    { id: 'white', label: 'flashes.bg_white', value: 'rgba(255,255,255,0.75)' },
+    { id: 'blur', label: 'flashes.bg_blur', value: 'rgba(30,20,60,0.6)' },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -207,6 +208,7 @@ export default function StoryEditor({
     onCancel: () => void;
     onConfirm: (metadata: any) => void;
 }) {
+    const { t } = useTranslation();
     const insets = useSafeAreaInsets();
 
     const [filter, setFilter] = useState('none');
@@ -247,7 +249,7 @@ export default function StoryEditor({
         const id = Date.now().toString();
         const newText = {
             id,
-            text: 'Escribe algo...',
+            text: t('flashes.write_something'),
             x: 0.5, y: 0.4,
             color: '#ffffff',
             bgId: 'dark',
@@ -479,18 +481,18 @@ export default function StoryEditor({
                         setFilter(FILTERS[(idx + 1) % FILTERS.length].id);
                     }}>
                         <Ionicons name="color-filter-outline" size={20} color="#fff" />
-                        <Text style={st.toolLabel}>Filter</Text>
-                        <Text style={st.toolValue}>{filter}</Text>
+                        <Text style={st.toolLabel}>{t('flashes.filter')}</Text>
+                        <Text style={st.toolValue}>{t(FILTERS.find(f => f.id === filter)?.label || 'flashes.original')}</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity style={st.toolBtn} onPress={handleAddText}>
                         <Ionicons name="text-outline" size={20} color="#fff" />
-                        <Text style={st.toolLabel}>Text</Text>
+                        <Text style={st.toolLabel}>{t('flashes.text')}</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity style={st.toolBtn} onPress={() => setGiphyVisible(true)}>
                         <Ionicons name="happy-outline" size={20} color="#fff" />
-                        <Text style={st.toolLabel}>Stickers</Text>
+                        <Text style={st.toolLabel}>{t('flashes.stickers')}</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity style={st.toolBtn} onPress={() => {
@@ -498,17 +500,17 @@ export default function StoryEditor({
                         setLocationModalVisible(true);
                     }}>
                         <Ionicons name="location-outline" size={20} color="#fff" />
-                        <Text style={st.toolLabel}>Location</Text>
+                        <Text style={st.toolLabel}>{t('flashes.location')}</Text>
                     </TouchableOpacity>
                 </ScrollView>
 
                 <View style={st.actions}>
                     <TouchableOpacity style={st.cancelBtn} onPress={onCancel}>
-                        <Text style={st.cancelText}>Cancel</Text>
+                        <Text style={st.cancelText}>{t('flashes.cancel')}</Text>
                     </TouchableOpacity>
                     <TouchableOpacity style={st.confirmBtn} onPress={handleConfirm}>
                         <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={st.confirmGrad}>
-                            <Text style={st.confirmText}>Share Now</Text>
+                            <Text style={st.confirmText}>{t('flashes.share_now')}</Text>
                         </LinearGradient>
                     </TouchableOpacity>
                 </View>
@@ -526,7 +528,7 @@ export default function StoryEditor({
                                 <Ionicons name="close" size={28} color="#fff" />
                             </TouchableOpacity>
                             <TouchableOpacity onPress={handleConfirmText} style={[st.modalNav, { width: 60 }]}>
-                                <Text style={st.modalDone}>Listo</Text>
+                                <Text style={st.modalDone}>{t('flashes.done')}</Text>
                             </TouchableOpacity>
                         </View>
 
@@ -552,7 +554,7 @@ export default function StoryEditor({
                                         style={[st.bgPill, { backgroundColor: b.value === 'transparent' ? 'rgba(255,255,255,0.08)' : b.value }, textBgId === b.id && st.bgPillActive]}
                                         onPress={() => setTextBgId(b.id)}
                                     >
-                                        <Text style={[st.bgPillText, textBgId === b.id && { color: '#fff' }]}>{b.label}</Text>
+                                        <Text style={[st.bgPillText, textBgId === b.id && { color: '#fff' }]}>{t(b.label)}</Text>
                                     </TouchableOpacity>
                                 ))}
                             </ScrollView>
@@ -630,9 +632,9 @@ export default function StoryEditor({
                         <TouchableOpacity onPress={() => setLocationModalVisible(false)} style={st.modalNav}>
                             <Ionicons name="close" size={24} color="#fff" />
                         </TouchableOpacity>
-                        <Text style={st.modalTitle}>Add Location</Text>
+                        <Text style={st.modalTitle}>{t('flashes.add_location')}</Text>
                         <TouchableOpacity onPress={handleConfirmLocation}>
-                            <Text style={st.modalDone}>Done</Text>
+                            <Text style={st.modalDone}>{t('flashes.done')}</Text>
                         </TouchableOpacity>
                     </View>
 
@@ -642,7 +644,7 @@ export default function StoryEditor({
                         </View>
                         <TextInput
                             autoFocus
-                            placeholder="En qué ciudad estás?"
+                            placeholder={t('flashes.city_prompt')}
                             placeholderTextColor="rgba(255,255,255,0.4)"
                             style={st.locationInput}
                             value={tempLocation}
@@ -668,7 +670,7 @@ export default function StoryEditor({
                         }}
                     >
                         <Ionicons name="navigate" size={18} color="#fff" />
-                        <Text style={st.currentLocText}>Ubicación actual</Text>
+                        <Text style={st.currentLocText}>{t('flashes.current_location')}</Text>
                     </TouchableOpacity>
                 </BlurView>
             </Modal>

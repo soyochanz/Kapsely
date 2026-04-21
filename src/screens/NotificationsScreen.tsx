@@ -51,7 +51,7 @@ function MarkAllRipple({ visible, onDone }: { visible: boolean; onDone: () => vo
     if (!visible) return null;
 
     return (
-        <View style={StyleSheet.absoluteFill} pointerEvents="none">
+        <View style={[StyleSheet.absoluteFill, { zIndex: 99999 }]} pointerEvents="none">
             <View style={rippleS.center}>
                 <Animated.View style={[rippleS.ring, { transform: [{ scale }], opacity }]} />
                 <Animated.View style={[rippleS.check, { transform: [{ scale: checkScale }], opacity: checkOpacity }]}>
@@ -207,6 +207,25 @@ export default function NotificationsScreen() {
                 .map(n => {
                     const createdDate = new Date(n.created_at);
                     const expiryDate = new Date(createdDate.getTime() + 3 * 86400000);
+                    
+                    // Dynamic message generation for language sync
+                    let displayMessage = n.message || '';
+                    const capTitle = n.capsules?.title ? `"${n.capsules.title}"` : '';
+                    
+                    if (n.type === 'follow') {
+                        displayMessage = n.capsule_id 
+                            ? `${t('detail.followed_your_capsule')} ${capTitle}`
+                            : t('common.started_following_you');
+                    } else if (n.type === 'new_item') {
+                        displayMessage = `${t('detail.added_new_memory_to')} ${capTitle}`;
+                    } else if (n.type === 'capsule_invite') {
+                        displayMessage = `${t('detail.invited_you_to_capsule', { title: '' })} ${capTitle}`.trim();
+                    } else if (n.type === 'like' || n.type === 'liked_capsule') {
+                        displayMessage = `${t('detail.liked_your_capsule')} ${capTitle}`;
+                    } else if (n.type === 'comment' || n.type === 'commented_capsule') {
+                        displayMessage = `${t('notifications.commented_capsule')} ${capTitle}`;
+                    }
+
                     return {
                         id: n.id,
                         type: n.type as any,
@@ -215,7 +234,7 @@ export default function NotificationsScreen() {
                             username: n.sender?.display_name || n.sender?.username || 'Unknown',
                             avatar: Colors.getAvatarUrl(n.sender?.avatar_url, n.sender?.display_name || n.sender?.username),
                         },
-                        message: n.message || '',
+                        message: displayMessage,
                         time: formatTime(n.created_at),
                         isRead: n.is_read,
                         capsuleId: n.capsule_id,

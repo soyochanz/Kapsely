@@ -8,11 +8,15 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTranslation } from 'react-i18next';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useNavigation } from '@react-navigation/native';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
 import { supabase } from '../lib/supabase';
 import { BlurView } from 'expo-blur';
 import { P, R, shadow } from '../theme';
+import { CAPSULE_MODELS } from '../constants/models';
+import CapsuleWithTimer from '../components/CapsuleWithTimer';
+import { timerConfigManager } from '../utils/timerConfig';
 
 const { width, height } = Dimensions.get('window');
 
@@ -35,10 +39,10 @@ const ONBOARDING_DATA = [
     },
     {
         id: '2',
-        type: 'capsule_logic',
+        type: 'drops',
         titleKey: 'onboarding.step2_title',
         descKey: 'onboarding.step2_desc',
-        icon: 'lock-open-outline',
+        icon: 'diamond-outline',
         colors: ['#7C3AED', '#C026D3'],
     },
     {
@@ -59,24 +63,45 @@ const ONBOARDING_DATA = [
     },
     {
         id: '5',
-        type: 'ready',
+        type: 'event_caps',
         titleKey: 'onboarding.step5_title',
         descKey: 'onboarding.step5_desc',
+        icon: 'calendar-outline',
+        colors: ['#2563EB', '#1D4ED8'],
+    },
+    {
+        id: '6',
+        type: 'ready',
+        titleKey: 'onboarding.step6_title',
+        descKey: 'onboarding.step6_desc',
         icon: 'rocket-outline',
         colors: ['#10B981', '#059669'],
     },
 ];
+
+const PRESET_COLORS = ['#A269FF', '#FF6B6B', '#06D6A0', '#0EA5E9', '#F72585', '#FFD166'];
+const PREVIEW_MODELS = ['flame_kap', 'unicorn_kap', 'Cartoon_kap', 'diamond_kap'];
+const EVENT_MODEL_URL = CAPSULE_MODELS.find(m => m.id === 'pioneers_cap')?.image || '';
 
 export default function OnboardingScreen() {
     const { t, i18n } = useTranslation();
     const navigation = useNavigation<any>();
     const insets = useSafeAreaInsets();
     const [activeIndex, setActiveIndex] = useState(0);
+    const [birthdate, setBirthdate] = useState<Date>(new Date(2000, 0, 1));
+    const [favoriteColor, setFavoriteColor] = useState('#A269FF');
+    const [showDatePicker, setShowDatePicker] = useState(false);
+    const [configVersion, setConfigVersion] = useState(0);
+
     const scrollX = useRef(new Animated.Value(0)).current;
     const flatListRef = useRef<any>(null);
     const floatAnim = useRef(new Animated.Value(0)).current;
 
     React.useEffect(() => {
+        // Initialize timer config manager to load models from DB
+        timerConfigManager.init();
+        const unsub = timerConfigManager.subscribe(() => setConfigVersion(v => v + 1));
+
         Animated.loop(
             Animated.sequence([
                 Animated.timing(floatAnim, {
@@ -91,6 +116,8 @@ export default function OnboardingScreen() {
                 }),
             ])
         ).start();
+
+        return unsub;
     }, []);
 
     const floatY = floatAnim.interpolate({
@@ -105,7 +132,11 @@ export default function OnboardingScreen() {
                 // Sync with account
                 await supabase
                     .from('profiles')
-                    .update({ has_completed_onboarding: true })
+                    .update({ 
+                        has_completed_onboarding: true,
+                        birthdate: birthdate.toISOString().split('T')[0],
+                        favorite_color: favoriteColor
+                    })
                     .eq('id', user.id);
             }
             await AsyncStorage.setItem('@has_seen_onboarding_v2', 'true');
@@ -135,47 +166,127 @@ export default function OnboardingScreen() {
                 };
                 return (
                     <View style={s.langSelector}>
-                        <TouchableOpacity 
-                            activeOpacity={0.8}
-                            style={[s.langBtn, i18n.language.startsWith('es') && s.langBtnActive]} 
-                            onPress={() => changeLang('es')}
-                        >
-                            <View style={s.flagCircle}><Text style={s.langEmoji}>🇪🇸</Text></View>
-                            <View style={{ flex: 1 }}>
-                                <Text style={[s.langText, i18n.language.startsWith('es') && s.langTextActive]}>Español</Text>
-                                <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>Elegir idioma español</Text>
+                        <View style={s.langRow}>
+                            <TouchableOpacity 
+                                activeOpacity={0.8}
+                                style={[s.langBtnSmall, i18n.language.startsWith('es') && s.langBtnActive]} 
+                                onPress={() => changeLang('es')}
+                            >
+                                <Text style={s.langEmoji}>🇪🇸</Text>
+                                <Text style={[s.langTextSmall, i18n.language.startsWith('es') && s.langTextActive]}>Español</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity 
+                                activeOpacity={0.8}
+                                style={[s.langBtnSmall, i18n.language.startsWith('en') && s.langBtnActive]} 
+                                onPress={() => changeLang('en')}
+                            >
+                                <Text style={s.langEmoji}>🇺🇸</Text>
+                                <Text style={[s.langTextSmall, i18n.language.startsWith('en') && s.langTextActive]}>English</Text>
+                            </TouchableOpacity>
+                        </View>
+
+                        {/* Extra info section */}
+                        <View style={s.extraInfoSection}>
+                            <Text style={s.extraLabel}>{t('onboarding.birthday')}</Text>
+                            <TouchableOpacity 
+                                style={s.extraInput} 
+                                onPress={() => setShowDatePicker(true)}
+                                activeOpacity={0.7}
+                            >
+                                <Ionicons name="calendar-outline" size={20} color="#fff" />
+                                <Text style={s.extraInputText}>
+                                    {birthdate.toLocaleDateString(i18n.language === 'es' ? 'es-ES' : 'en-US', { day: 'numeric', month: 'long', year: 'numeric' })}
+                                </Text>
+                            </TouchableOpacity>
+
+                            {showDatePicker && (
+                                <DateTimePicker
+                                    value={birthdate}
+                                    mode="date"
+                                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                                    onChange={(event, selectedDate) => {
+                                        setShowDatePicker(Platform.OS === 'ios');
+                                        if (selectedDate) setBirthdate(selectedDate);
+                                    }}
+                                    maximumDate={new Date()}
+                                    themeVariant="dark"
+                                />
+                            )}
+
+                            <Text style={s.extraLabel}>{t('onboarding.choose_color')}</Text>
+                            <View style={s.colorPalette}>
+                                {PRESET_COLORS.map(c => (
+                                    <TouchableOpacity 
+                                        key={c}
+                                        onPress={() => setFavoriteColor(c)}
+                                        style={[s.colorCircle, { backgroundColor: c }, favoriteColor === c && s.colorCircleActive]}
+                                    >
+                                        {favoriteColor === c && <Ionicons name="checkmark" size={16} color="#fff" />}
+                                    </TouchableOpacity>
+                                ))}
                             </View>
-                            {i18n.language.startsWith('es') && <Ionicons name="checkmark-circle" size={24} color="#fff" />}
-                        </TouchableOpacity>
-                        <TouchableOpacity 
-                            activeOpacity={0.8}
-                            style={[s.langBtn, i18n.language.startsWith('en') && s.langBtnActive]} 
-                            onPress={() => changeLang('en')}
-                        >
-                            <View style={s.flagCircle}><Text style={s.langEmoji}>🇺🇸</Text></View>
-                            <View style={{ flex: 1 }}>
-                                <Text style={[s.langText, i18n.language.startsWith('en') && s.langTextActive]}>English</Text>
-                                <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>Choose English language</Text>
-                            </View>
-                            {i18n.language.startsWith('en') && <Ionicons name="checkmark-circle" size={24} color="#fff" />}
-                        </TouchableOpacity>
+                        </View>
                     </View>
                 );
-            case 'capsule_logic':
+            case 'drops':
                 return (
-                    <View style={s.logicContainer}>
-                        <View style={s.logicCol}>
-                            <View style={[s.logicIcon, { backgroundColor: '#F0FDF4' }]}>
-                                <Ionicons name="lock-open" size={32} color="#22C55E" />
+                    <View style={s.dropsGallery}>
+                        {PREVIEW_MODELS.map((url, i) => {
+                            // Alternate floating animation for each item
+                            const itemFloat = floatAnim.interpolate({
+                                inputRange: [0, 1],
+                                outputRange: i % 2 === 0 ? [0, -15] : [-15, 0]
+                            });
+                            
+                            return (
+                                <Animated.View 
+                                    key={i} 
+                                    style={[
+                                        s.dropItemLarge, 
+                                        { 
+                                            transform: [
+                                                { translateY: itemFloat },
+                                                { rotate: i % 2 === 0 ? '8deg' : '-8deg' }
+                                            ],
+                                            zIndex: i === 1 || i === 2 ? 10 : 1,
+                                            marginLeft: i === 0 ? 0 : -45
+                                        }
+                                    ]}
+                                >
+                                    <CapsuleWithTimer 
+                                        modelKey={PREVIEW_MODELS[i]}
+                                        source={{ uri: timerConfigManager.getModelImage(PREVIEW_MODELS[i]) || (CAPSULE_MODELS.find(m => m.id === PREVIEW_MODELS[i])?.image) }}
+                                        style={s.dropImageLarge}
+                                        date={new Date(Date.now() + 86400000).toISOString()}
+                                        hideTimer={true}
+                                        disableAnimations={true}
+                                        isMinimal={true}
+                                    />
+                                </Animated.View>
+                            );
+                        })}
+                    </View>
+                );
+            case 'event_caps':
+                return (
+                    <View style={s.eventVisualContainer}>
+                        <Animated.View style={[s.eventModelWrap, { transform: [{ translateY: floatY }] }]}>
+                            <CapsuleWithTimer 
+                                modelKey="pioneers_cap"
+                                source={{ uri: timerConfigManager.getModelImage('pioneers_cap') || EVENT_MODEL_URL }}
+                                style={s.eventModelImg}
+                                date={new Date(Date.now() + 172800000).toISOString()}
+                                hideTimer={true}
+                                disableAnimations={true}
+                            />
+                            <LinearGradient colors={['transparent', 'rgba(0,0,0,0.3)']} style={s.eventModelOverlay} />
+                        </Animated.View>
+                        <View style={s.eventInfoBox}>
+                            <Text style={s.eventName}>{t('onboarding.current_event_name')}</Text>
+                            <View style={s.eventDateBadge}>
+                                <Ionicons name="time-outline" size={14} color="#fff" />
+                                <Text style={s.eventDateText}>{t('onboarding.current_event_date')}</Text>
                             </View>
-                            <Text style={s.logicLabel}>Abierta</Text>
-                        </View>
-                        <View style={s.logicDivider} />
-                        <View style={s.logicCol}>
-                            <View style={[s.logicIcon, { backgroundColor: '#FEF2F2' }]}>
-                                <Ionicons name="lock-closed" size={32} color="#EF4444" />
-                            </View>
-                            <Text style={s.logicLabel}>Sellada</Text>
                         </View>
                     </View>
                 );
@@ -362,20 +473,63 @@ const s = StyleSheet.create({
         position: 'absolute', width: 140, height: 140, borderRadius: 70,
         borderWidth: 2, borderColor: 'rgba(255,255,255,0.3)', opacity: 0.5,
     },
-    langSelector: { width: '100%', gap: 12, paddingHorizontal: 10 },
-    langBtn: {
-        flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.1)',
-        padding: 20, borderRadius: 24, gap: 15, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+    langSelector: { width: '100%', gap: 20, paddingHorizontal: 10 },
+    langRow: { flexDirection: 'row', gap: 12 },
+    langBtnSmall: {
+        flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        paddingVertical: 14, borderRadius: 20, gap: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
     },
     langBtnActive: {
         backgroundColor: 'rgba(255,255,255,0.25)', borderColor: 'rgba(255,255,255,0.4)',
     },
-    langEmoji: { fontSize: 24 },
-    flagCircle: {
-        width: 48, height: 48, borderRadius: 24,
+    langEmoji: { fontSize: 20 },
+    langTextSmall: { color: 'rgba(255,255,255,0.7)', fontSize: 15, fontWeight: '700' },
+    langTextActive: { color: '#fff' },
+
+    extraInfoSection: { gap: 12, marginTop: 10 },
+    extraLabel: { color: 'rgba(255,255,255,0.6)', fontSize: 13, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.5 },
+    extraInput: {
+        flexDirection: 'row', alignItems: 'center', gap: 12,
         backgroundColor: 'rgba(255,255,255,0.1)',
+        padding: 18, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+    },
+    extraInputText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+    
+    colorPalette: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, justifyContent: 'center', marginTop: 5 },
+    colorCircle: {
+        width: 44, height: 44, borderRadius: 22,
+        alignItems: 'center', justifyContent: 'center',
+        borderWidth: 2, borderColor: 'transparent',
+    },
+    colorCircleActive: { borderColor: '#fff', transform: [{ scale: 1.1 }] },
+
+    dropsGallery: {
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+        height: 200, width: '100%', marginBottom: 20
+    },
+    dropItemLarge: {
+        width: 130, height: 130,
         alignItems: 'center', justifyContent: 'center',
     },
-    langText: { flex: 1, color: 'rgba(255,255,255,0.7)', fontSize: 18, fontWeight: '700' },
-    langTextActive: { color: '#fff' },
+    dropImageLarge: { width: 130, height: 130 },
+
+    eventVisualContainer: { alignItems: 'center', gap: 20 },
+    eventModelWrap: {
+        width: 280, height: 280,
+        backgroundColor: 'rgba(255,255,255,0.08)',
+        borderRadius: 140, padding: 20,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
+        overflow: 'hidden', justifyContent: 'center', alignItems: 'center'
+    },
+    eventModelImg: { width: 220, height: 220 },
+    eventModelOverlay: { ...StyleSheet.absoluteFillObject },
+    eventInfoBox: { alignItems: 'center', gap: 6 },
+    eventName: { color: '#fff', fontSize: 24, fontWeight: '900', letterSpacing: -0.5 },
+    eventDateBadge: {
+        flexDirection: 'row', alignItems: 'center', gap: 6,
+        backgroundColor: Colors.eventCap || '#ff4d4d',
+        paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20
+    },
+    eventDateText: { color: '#fff', fontSize: 13, fontWeight: '800' },
 });

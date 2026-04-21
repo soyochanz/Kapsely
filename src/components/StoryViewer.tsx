@@ -12,6 +12,7 @@ import { BlurView } from 'expo-blur';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { Colors, Fonts } from '../theme';
+import { useTranslation } from 'react-i18next';
 import { timerConfigManager } from '../utils/timerConfig';
 import { MODEL_IMAGES } from '../constants/models';
 import { supabase } from '../lib/supabase';
@@ -21,6 +22,7 @@ const STORY_DURATION = 8000; // 8 seconds per story
 
 // ─── Expiry countdown hook ──────────────────────────────────────────────────────
 function useExpiryCountdown(expiresAt?: string | null): string | null {
+    const { t } = useTranslation();
     const [label, setLabel] = useState<string | null>(null);
 
     useEffect(() => {
@@ -28,14 +30,14 @@ function useExpiryCountdown(expiresAt?: string | null): string | null {
 
         const compute = () => {
             const diffMs = new Date(expiresAt).getTime() - Date.now();
-            if (diffMs <= 0) { setLabel('Expired'); return; }
+            if (diffMs <= 0) { setLabel(t('flashes.expired')); return; }
             const totalSecs = Math.floor(diffMs / 1000);
             const days  = Math.floor(totalSecs / 86400);
             const hours = Math.floor((totalSecs % 86400) / 3600);
             const mins  = Math.floor((totalSecs % 3600) / 60);
-            if (days > 0)  setLabel(`${days}d ${hours}h left`);
-            else if (hours > 0) setLabel(`${hours}h ${mins}m left`);
-            else           setLabel(`${mins}m left`);
+            if (days > 0)  setLabel(t('flashes.days_left', { days, hours }));
+            else if (hours > 0) setLabel(t('flashes.hours_left', { hours, mins }));
+            else           setLabel(t('flashes.mins_left', { mins }));
         };
 
         compute();
@@ -172,6 +174,7 @@ const lb = StyleSheet.create({
 
 // ─── Likers bottom sheet ──────────────────────────────────────────────────────
 function LikersSheet({ visible, onClose, storyId }: { visible: boolean; onClose: () => void; storyId: string }) {
+    const { t } = useTranslation();
     const insets = useSafeAreaInsets();
     const [likers, setLikers] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
@@ -195,14 +198,14 @@ function LikersSheet({ visible, onClose, storyId }: { visible: boolean; onClose:
             <Pressable style={ls.overlay} onPress={onClose}>
                 <Animated.View style={[ls.sheet, { paddingBottom: Math.max(insets.bottom, 20), transform: [{ translateY: slideAnim }] }]}>
                     <View style={ls.handle} />
-                    <Text style={ls.title}>Likes</Text>
+                    <Text style={ls.title}>{t('flashes.likes')}</Text>
 
                     {loading ? (
-                        <Text style={ls.emptyText}>Loading...</Text>
+                        <Text style={ls.emptyText}>{t('flashes.loading')}</Text>
                     ) : likers.length === 0 ? (
                         <View style={ls.emptyWrap}>
                             <Ionicons name="heart-outline" size={32} color={Colors.textMuted} />
-                            <Text style={ls.emptyText}>No likes yet</Text>
+                            <Text style={ls.emptyText}>{t('flashes.no_likes')}</Text>
                         </View>
                     ) : (
                         likers.map((u, i) => (
@@ -251,6 +254,7 @@ interface StoryViewerProps {
 }
 
 export default function StoryViewer({ visible, userGroup, onClose, onNextUser, onPrevUser, currentUserId, onStoryRead }: StoryViewerProps) {
+    const { t } = useTranslation();
     const insets = useSafeAreaInsets();
     const navigation = useNavigation<any>();
 
@@ -364,7 +368,7 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                 if (existing) {
                     await supabase.from('notifications').update({ created_at: new Date().toISOString(), is_read: false }).eq('id', existing.id);
                 } else {
-                    await supabase.from('notifications').insert({ user_id: ownerId, sender_id: currentUserId, type: 'story_like', message: 'ha dado like a tu Flash', is_read: false });
+                    await supabase.from('notifications').insert({ user_id: ownerId, sender_id: currentUserId, type: 'story_like', message: t('flashes.replied_flash'), is_read: false });
                 }
             }
         }
@@ -477,7 +481,7 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                                     <View style={[s.capsuleTypeDot, { backgroundColor: Colors.primary }]} />
                                     <Text style={s.capsuleRef}>{story.capsules?.title}</Text>
                                     <View style={s.dotHeader} />
-                                    <Text style={s.timeRef}>{formatTimeAgo(story.created_at)}</Text>
+                                    <Text style={s.timeRef}>{formatTimeAgo(story.created_at, t)}</Text>
                                 </View>
                             </View>
                         </TouchableOpacity>
@@ -553,8 +557,8 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                                         contentFit="contain"
                                     />
                                     <View style={s.capsuleChipText}>
-                                        <Text style={s.capsuleChipLabel} numberOfLines={1}>{story.capsules?.title || 'View Capsule'}</Text>
-                                        <Text style={s.capsuleChipSub}>Tap to open ↗</Text>
+                                        <Text style={s.capsuleChipLabel} numberOfLines={1}>{story.capsules?.title || t('detail.view_capsule')}</Text>
+                                        <Text style={s.capsuleChipSub}>{t('flashes.tap_to_open')}</Text>
                                     </View>
                                 </BlurView>
                             ) : (
@@ -565,8 +569,8 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                                         contentFit="contain"
                                     />
                                     <View style={s.capsuleChipText}>
-                                        <Text style={s.capsuleChipLabel} numberOfLines={1}>{story.capsules?.title || 'View Capsule'}</Text>
-                                        <Text style={s.capsuleChipSub}>Tap to open ↗</Text>
+                                        <Text style={s.capsuleChipLabel} numberOfLines={1}>{story.capsules?.title || t('detail.view_capsule')}</Text>
+                                        <Text style={s.capsuleChipSub}>{t('flashes.tap_to_open')}</Text>
                                     </View>
                                 </View>
                             )}
@@ -590,7 +594,7 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                             <View style={s.inputWrap}>
                                 <TextInput
                                     style={s.input}
-                                    placeholder="Reply to this Flash..."
+                                    placeholder={t('flashes.reply_placeholder')}
                                     placeholderTextColor="rgba(255,255,255,0.5)"
                                     value={currentComment}
                                     onChangeText={setCurrentComment}
@@ -612,7 +616,7 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                             // Owner sees viewer count area
                             <View style={s.ownerInfo}>
                                 <Ionicons name="eye-outline" size={16} color="rgba(255,255,255,0.7)" />
-                                <Text style={s.ownerInfoText}>{storyComments.length} replies</Text>
+                                <Text style={s.ownerInfoText}>{storyComments.length} {t('flashes.replies')}</Text>
                             </View>
                         )}
 
@@ -747,9 +751,9 @@ const s = StyleSheet.create({
     timeRef: { fontSize: 11, fontFamily: Fonts.medium, color: 'rgba(255,255,255,0.6)' },
 });
 
-function formatTimeAgo(dateStr: string) {
+function formatTimeAgo(dateStr: string, t: any) {
     const secs = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
-    if (secs < 60) return 'Just now';
+    if (secs < 60) return t('flashes.just_now');
     if (secs < 3600) return `${Math.floor(secs / 60)}m`;
     if (secs < 86400) return `${Math.floor(secs / 3600)}h`;
     return `${Math.floor(secs / 86400)}d`;

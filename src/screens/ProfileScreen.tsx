@@ -311,24 +311,6 @@ export default function ProfileScreen() {
                 const opened = viewable.filter((c: any) => c.status === 'opened');
                 const sealed = viewable.filter((c: any) => c.status === 'sealed');
                 
-                // Auto-delete empty capsules logic for own profile
-                if (own) {
-                    const nowMs = Date.now();
-                    const toDelete = opened.filter((c: any) => {
-                        const itemCount = c.capsule_items_count_val ?? (c.capsule_items_count || 0);
-                        // NEVER delete opencap types automatically if empty
-                        if (c.type === 'opencap') return false;
-                        
-                        // Only delete sealed capsules that were opened and are still empty after 24h
-                        const opensAt = new Date(c.opens_at).getTime();
-                        return c.owner_id === myId && itemCount === 0 && (nowMs - opensAt) > 86400000;
-                    });
-                    if (toDelete.length > 0) {
-                        await Promise.all(toDelete.map(async (c: any) => {
-                            await supabase.from('capsules').delete().eq('id', c.id);
-                        }));
-                    }
-                }
                 setOpenedCaps(prev => isNewPage ? [...prev, ...opened] : opened);
                 setSealedCaps(prev => isNewPage ? [...prev, ...sealed] : sealed);
                 setHasMore(capsulesData.length >= 12);

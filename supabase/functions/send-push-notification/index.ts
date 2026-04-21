@@ -1,24 +1,23 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-serve(async (req) => {
+serve(async (req: Request) => {
     try {
         const payload = await req.json()
         const { record } = payload
         
-        // Skip chat and capsule_chat notifications to prevent redundancy
-        if (record.type === 'capsule_chat' || record.type === 'chat' || record.type === 'message') {
-            return new Response(JSON.stringify({ message: 'Skipping chat/message notification' }), { status: 200 })
+        // Skip certain types to avoid push spam (in-app only)
+        if (record.type === 'capsule_chat' || record.type === 'chat' || record.type === 'message' || record.type === 'new_item') {
+            return new Response(JSON.stringify({ message: 'Skipping in-app only notification' }), { status: 200 })
         }
 
-        // record will be the new notification row:
-        // { id, user_id, sender_id, type, message, capsule_id, ... }
-
         // Initialize Supabase client
-        const supabase = createClient(
-            Deno.env.get('SUPABASE_URL') ?? '',
-            Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-        )
+        // @ts-ignore: Deno is available in Supabase Edge Functions environment
+        const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
+        // @ts-ignore
+        const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+        
+        const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
         // 1. Get the recipient's push token
         const { data: profile, error: profileError } = await supabase
@@ -39,7 +38,7 @@ serve(async (req) => {
             .single()
 
         const senderName = sender?.username ? `@${sender.username}` : 'Someone'
-        const message = `${senderName} ${record.message || 'sent you a notification'}`
+        const messageText = `${senderName} ${record.message || 'sent you a notification'}`
 
         // 3. Get unread count for badge
         const { count: unreadCount } = await supabase
@@ -59,7 +58,7 @@ serve(async (req) => {
                 to: profile.push_token,
                 sound: 'default',
                 title: 'Kapsely',
-                body: message,
+                body: messageText,
                 badge: unreadCount,
                 data: {
                     notificationId: record.id,
@@ -72,7 +71,7 @@ serve(async (req) => {
         const expoData = await expoResponse.json()
         return new Response(JSON.stringify(expoData), { headers: { 'Content-Type': 'application/json' } })
 
-    } catch (error) {
-        return new Response(JSON.stringify({ error: error.message }), { status: 500 })
+    } catch (error: any) {
+        return new Response(JSON.stringify({ error: error.message || 'Unknown error' }), { status: 500 })
     }
 })

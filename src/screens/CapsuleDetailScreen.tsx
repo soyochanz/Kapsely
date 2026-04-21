@@ -310,12 +310,16 @@ const CollaboratorsBar = React.memo(({ owner, members, invites, tint, isMember, 
     const navigation = useNavigation<any>();
 
     const allMembers = useMemo(() => {
-        const acceptedIds = new Set(members.map((m: any) => m.id));
+        if (!owner) return [];
+        const ownerProfile = { ...owner, isOwner: true };
+        const accepted = (members || []).map((m: any) => ({ ...m, isAccepted: true }));
         const pending = (invites || [])
             .filter((i: any) => i.status === 'pending' && i.profiles)
             .map((i: any) => ({ ...i.profiles, isPending: true }));
         
-        return [owner, ...members, ...pending].filter(Boolean);
+        const combined = [ownerProfile, ...accepted, ...pending];
+        const unique = Array.from(new Map(combined.map(m => [m.id, m])).values());
+        return unique;
     }, [owner, members, invites]);
 
     const handlePress = (m: any) => {
@@ -327,7 +331,6 @@ const CollaboratorsBar = React.memo(({ owner, members, invites, tint, isMember, 
         } else {
             if (timeoutRef.current) clearTimeout(timeoutRef.current);
             setActiveUser(m);
-            timeoutRef.current = setTimeout(() => setActiveUser(m), 2500); // Fixed typo: set to m not null to keep visible if clicked again? No, usually null.
             timeoutRef.current = setTimeout(() => setActiveUser(null), 2500);
         }
     };
@@ -341,31 +344,62 @@ const CollaboratorsBar = React.memo(({ owner, members, invites, tint, isMember, 
                     <Text style={ds.collabNameText}>{activeUser.display_name || activeUser.username}</Text>
                 </View>
             )}
-            <View style={ds.collabBar}>
-                {allMembers.slice(0, 5).map((m, i) => (
-                    <TouchableOpacity 
-                        key={m.id || i} 
-                        activeOpacity={m.isPending ? 1 : 0.8} 
-                        onPress={() => handlePress(m)}
-                        style={{ zIndex: 10 - i, opacity: m.isPending ? 0.45 : 1 }}
-                    >
-                        <Image 
-                            source={{ uri: m.avatar_url || 'https://via.placeholder.com/150' }} 
-                            style={[ds.collabAvatar as any, { borderColor: i === 0 ? tint + '40' : D.bg }]} 
-                        />
-                    </TouchableOpacity>
-                ))}
-                {allMembers.length > 5 && (
-                    <View style={ds.collabMore}>
-                        <Text style={ds.collabMoreText}>+{allMembers.length - 5}</Text>
+            <View style={[ds.collabBar, { gap: -10 }]}>
+                {allMembers.slice(0, 6).map((m, i) => {
+                    const size = m.isPending ? 36 : 32;
+                    return (
+                        <TouchableOpacity 
+                            key={m.id || i} 
+                            activeOpacity={m.isPending ? 1 : 0.8} 
+                            onPress={() => handlePress(m)}
+                            style={{ 
+                                zIndex: 10 - i, 
+                                marginLeft: i === 0 ? 0 : -14,
+                            }}
+                        >
+                            <View style={{ 
+                                width: size, 
+                                height: size, 
+                                borderRadius: size / 2, 
+                                borderWidth: 2, 
+                                borderColor: i === 0 ? tint + '60' : '#fff',
+                                backgroundColor: '#E5E7EB',
+                                overflow: 'hidden',
+                                justifyContent: 'center',
+                                alignItems: 'center'
+                            }}>
+                                <Image 
+                                    source={{ uri: m.avatar_url || 'https://via.placeholder.com/150' }} 
+                                    style={{ 
+                                        width: '100%', 
+                                        height: '100%',
+                                        opacity: m.isPending ? 0.6 : 1,
+                                    }}
+                                    contentFit="cover"
+                                    // Use grayscale filter for true Black & White effect
+                                    {...(m.isPending ? { filters: [{ grayscale: 1.0 }] } : {})}
+                                />
+                                {m.isPending && (
+                                    <View style={{ 
+                                        ...StyleSheet.absoluteFillObject, 
+                                        backgroundColor: 'rgba(0,0,0,0.1)', // Very subtle dimming
+                                    }} />
+                                )}
+                            </View>
+                        </TouchableOpacity>
+                    );
+                })}
+                {allMembers.length > 6 && (
+                    <View style={[ds.collabMore, { marginLeft: -14, width: 32, height: 32, borderRadius: 16 }]}>
+                        <Text style={ds.collabMoreText}>+{allMembers.length - 6}</Text>
                     </View>
                 )}
                 {isMember && (
                     <TouchableOpacity 
-                        style={[ds.collabMore, { backgroundColor: tint + '15', marginLeft: 8, borderColor: tint + '30' }]}
+                        style={[ds.collabMore, { backgroundColor: tint + '10', marginLeft: 8, borderColor: tint + '20', borderWidth: 1, width: 32, height: 32, borderRadius: 16 }]}
                         onPress={onInvite}
                     >
-                        <Ionicons name="add" size={16} color={tint} />
+                        <Ionicons name="add" size={18} color={tint} />
                     </TouchableOpacity>
                 )}
             </View>
@@ -570,6 +604,7 @@ function CapsuleDetailScreen() {
     const [isFollowedOwner, setIsFollowedOwner] = useState(false);
     const [isFollowedCapsule, setIsFollowedCapsule] = useState(false);
     const [followerCount, setFollowerCount] = useState(0);
+    const [capsuleFollowerCount, setCapsuleFollowerCount] = useState(0);
     const [showOptions, setShowOptions] = useState(false);
     const [showQRModal, setShowQRModal] = useState(false);
     const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
@@ -819,33 +854,27 @@ function CapsuleDetailScreen() {
 
         if (error || !data) {
             if (error?.message?.includes('Abort') || error?.name === 'AbortError') return;
-            console.error('RPC Error:', error);
-            // Fallback for safety if RPC doesn't exist yet
             setLoading(false);
+            if (!data && !error) {
+                Alert.alert(t('common.error'), t('detail.not_found') || 'Capsule not found or you don\'t have access.');
+                if (navigation.canGoBack()) navigation.goBack();
+            } else {
+                console.warn('RPC Error (handled):', error);
+            }
             return;
         }
 
         if (signal?.aborted) return;
 
-        const { capsule: capsuleData, items: itemsData, likes_count, is_liked, invites: invitesData, owner_followers_count, is_followed_owner } = data;
+        const { capsule: capsuleData, items: itemsData, likes_count, is_liked, invites: invitesData, owner_followers_count, is_followed_owner, capsule_followers_count } = data;
 
         if (!capsuleData) {
             setLoading(false);
             return;
         }
 
-        // Handle auto-deletion of empty capsules
-        // Rule: Only delete sealed capsules that are now opened and empty. Never delete 'opencap'.
-        if (capsuleData.status === 'opened' && capsuleData.type !== 'opencap' && (!itemsData || itemsData.length === 0)) {
-            // Check if it has been open for a bit (to avoid deleting while user is adding first item)
-            const opensAt = new Date(capsuleData.opens_at).getTime();
-            if (Date.now() - opensAt > 60000) { // 1 minute grace period if opening now
-                await supabase.rpc('delete_capsule', { p_capsule_id: capsuleId });
-                Alert.alert('Kapsely', t('detail.deleted_empty') || 'Capsule was empty and has been deleted.');
-                if (navigation.canGoBack()) navigation.goBack();
-                return;
-            }
-        }
+        // Note: Auto-deletion of empty capsules is now handled only in ProfileScreen 
+        // with a 24h grace period, and it excludes shared capsules to avoid data loss.
 
         setCapsule(capsuleData);
         const cfg = timerConfigManager.getConfig(capsuleData.model);
@@ -854,7 +883,8 @@ function CapsuleDetailScreen() {
         // Set Followers/Follow status
         setFollowerCount(owner_followers_count || 0);
         setIsFollowedOwner(is_followed_owner);
-        setIsFollowedCapsule(is_followed_owner);
+        setIsFollowedCapsule(!!data.is_followed_capsule);
+        setCapsuleFollowerCount(capsule_followers_count || 0);
 
         // Enrich items with profiles if missing (from owner or collaborators)
         const profileMap: Record<string, any> = {};
@@ -868,6 +898,14 @@ function CapsuleDetailScreen() {
         }
 
         // Filter blocked content and attach profiles
+        if (invitesData) {
+            setInvites(invitesData);
+            const accepted = invitesData
+                .filter((i: any) => i.status === 'accepted' && i.profiles)
+                .map((i: any) => i.profiles);
+            setAcceptedMembers(accepted);
+        }
+
         if (itemsData) {
             const enriched = itemsData.map((item: any) => ({
                 ...item,
@@ -938,39 +976,44 @@ function CapsuleDetailScreen() {
     }, [userId, capsule?.owner_id, t]);
 
     const handleCapsuleFollowToggle = useCallback(async () => {
-        if (!userId || !capsule?.owner_id) return;
+        if (!userId || !capsuleId) return;
+        
         const wasFollowed = isFollowedCapsule;
         const newStatus = !wasFollowed;
+        
+        // Optimistic update
         setIsFollowedCapsule(newStatus);
-        setIsFollowedOwner(newStatus);
-        setFollowerCount(prev => newStatus ? prev + 1 : Math.max(0, prev - 1));
+        setCapsuleFollowerCount(prev => newStatus ? prev + 1 : Math.max(0, prev - 1));
+        
         try {
             if (wasFollowed) {
-                const { error } = await supabase.from('follows').delete().eq('follower_id', userId).eq('following_id', capsule.owner_id);
+                const { error } = await supabase.from('capsule_followers').delete().eq('user_id', userId).eq('capsule_id', capsuleId);
                 if (error) throw error;
             } else {
-                const { error } = await supabase.from('follows').insert({ follower_id: userId, following_id: capsule.owner_id });
+                const { error } = await supabase.from('capsule_followers').insert({ user_id: userId, capsule_id: capsuleId });
                 if (error) throw error;
-                try {
-                    await supabase.from('notifications').insert({
-                        user_id: capsule.owner_id,
-                        sender_id: userId,
-                        type: 'follow',
-                        message: t('common.started_following_you')
-                    });
-                } catch (notifErr) {
-                    console.warn('Failed to send follow notification', notifErr);
+                
+                // Optional: Notify owner that someone followed their capsule
+                if (capsule?.owner_id && capsule.owner_id !== userId) {
+                    try {
+                        await supabase.from('notifications').insert({
+                            user_id: capsule.owner_id,
+                            sender_id: userId,
+                            type: 'follow',
+                            capsule_id: capsuleId,
+                            message: t('detail.followed_your_capsule') || 'followed your capsule'
+                        });
+                    } catch (e) {}
                 }
             }
         } catch (err: any) {
             if (err?.code === '23505') return;
-            console.error('Follow toggle error:', err);
+            console.error('Capsule follow toggle error:', err);
             setIsFollowedCapsule(wasFollowed);
-            setIsFollowedOwner(wasFollowed);
-            setFollowerCount(prev => wasFollowed ? prev + 1 : Math.max(0, prev - 1));
-            Alert.alert(t('common.error'), t('detail.follow_error') || 'Could not follow. Please try again.');
+            setCapsuleFollowerCount(prev => wasFollowed ? prev + 1 : Math.max(0, prev - 1));
+            Alert.alert(t('common.error'), t('detail.follow_error') || 'Could not update follow status.');
         }
-    }, [userId, capsule?.owner_id, isFollowedCapsule, t]);
+    }, [userId, capsuleId, capsule?.owner_id, isFollowedCapsule, t]);
 
     const handleSetCover = async (mediaUrl: string) => {
         if (!capsule) return;
@@ -1533,7 +1576,7 @@ function CapsuleDetailScreen() {
                 })}
                 <TouchableOpacity style={[ds.filterChip, { marginLeft: 8 }]} onPress={() => setFilterSort(p => p === 'newest' ? 'oldest' : 'newest')}>
                     <Ionicons name={filterSort === 'newest' ? 'arrow-down' : 'arrow-up'} size={12} color={D.textMuted} />
-                    <Text style={ds.filterChipText}>{filterSort === 'newest' ? t('detail.newest') : t('detail.oldest')}</Text>
+                    <Text style={[ds.filterChipText, { color: D.textMuted }]}>{filterSort === 'newest' ? t('detail.newest') : t('detail.oldest')}</Text>
                 </TouchableOpacity>
             </ScrollView>
         );
@@ -1544,7 +1587,7 @@ function CapsuleDetailScreen() {
             <CapsuleHero
                 capsule={capsule} tint={tint} isMember={isMember}
                 isSealed={isSealed} isOpening={isOpening} modelImg={modelImg}
-                totalMembers={totalMembers} likeCount={likeCount} followerCount={followerCount}
+                totalMembers={totalMembers} likeCount={likeCount} followerCount={capsuleFollowerCount}
                 isFollowedCapsule={isFollowedCapsule} handleCapsuleFollowToggle={handleCapsuleFollowToggle}
                 isOwner={isOwner} canBeOpened={canBeOpened} hasRequestedOpen={hasRequestedOpen}
                 handleRequestOpen={handleRequestOpen} reqCount={reqCount} isBornOpen={isBornOpen} userId={userId}

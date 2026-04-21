@@ -57,8 +57,8 @@ const PAGE_SIZE = 15;
 const FILTER_KEYS: FilterType[] = ['all', 'closed', 'open'];
 const FILTER_META: Record<FilterType, { icon: string; label: (t: any) => string }> = {
     all: { icon: 'apps-outline', label: t => t('feed.all') },
-    closed: { icon: 'lock-closed-outline', label: () => 'Closed' },
-    open: { icon: 'book-outline', label: () => 'Open' },
+    closed: { icon: 'lock-closed-outline', label: t => t('feed.closed') },
+    open: { icon: 'book-outline', label: t => t('feed.open') },
 };
 
 // ─── Skeleton ─────────────────────────────────────────────────────────────────

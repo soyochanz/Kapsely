@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Dimensions, Alert, Platform } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import { Image } from 'expo-image';
 
 
@@ -30,11 +31,11 @@ const MEDIA_ICONS: Record<string, string> = {
 };
 
 const MEDIA_LABELS: Record<string, string> = {
-    image:  'Photo',
-    video:  'Video',
-    audio:  'Voice Note',
-    note:   'Written Note',
-    default:'Content',
+    image:  'feed.media_types.image',
+    video:  'feed.media_types.video',
+    audio:  'feed.media_types.audio',
+    note:   'feed.media_types.note',
+    default:'feed.media_types.content',
 };
 
 // ─── Collage View (for grouped activity) ─────────────────────────────────────
@@ -95,14 +96,15 @@ const Waveform = React.memo(() => {
 });
 
 // ─── Media Type Badge ────────────────────────────────────────────────────────
-const MediaTypeBadge = React.memo(({ type }: { type: string }) => {
+const MediaTypeBadge = React.memo(({ type, t }: { type: string, t: any }) => {
     const icon = MEDIA_ICONS[type] ?? MEDIA_ICONS.default;
-    const label = MEDIA_LABELS[type] ?? MEDIA_LABELS.default;
+    const labelKey = MEDIA_LABELS[type] ?? MEDIA_LABELS.default;
+    const label = t(labelKey);
     const isVideo = type === 'video';
     return (
         <View style={[styles.mediaTypeBadge, isVideo && { backgroundColor: 'rgba(239,68,68,0.85)' }]}>
             <Ionicons name={icon as any} size={10} color="#fff" />
-            <Text style={styles.mediaTypeBadgeText}>{label}</Text>
+            <Text style={styles.mediaTypeBadgeText}>{label.toUpperCase()}</Text>
         </View>
     );
 });
@@ -126,6 +128,7 @@ export default React.memo(function TimelineActivity({
     lightweight,
     gridMode
 }: TimelineActivityProps) {
+    const { t } = useTranslation();
     const navigation = useNavigation<any>();
     const profile = item.profiles || { username: 'user', avatar_url: null };
     const capsule = Array.isArray(item.capsules) ? item.capsules[0] : (item.capsules || { title: 'Capsule', type: 'instacap', model: 'basicred_kap' });
@@ -152,7 +155,7 @@ export default React.memo(function TimelineActivity({
 
     const handlePress = () => {
         if (!hasAccessProp) {
-             Alert.alert("Private Capsule", "You haven't been invited to this capsule yet.");
+             Alert.alert(t('common.private_cap_title'), t('common.private_cap_msg'));
              return;
         }
         navigation.navigate('CapsuleDetail', { capsuleId: item.capsule_id });
@@ -206,7 +209,7 @@ export default React.memo(function TimelineActivity({
                     />
 
                     {/* Media type badge */}
-                    <MediaTypeBadge type={isGroup ? 'image' : item.media_type} />
+                    <MediaTypeBadge type={isGroup ? 'image' : item.media_type} t={t} />
 
                     {/* Video play icon */}
                     {isVideo && !isGroup && (
@@ -285,8 +288,8 @@ export default React.memo(function TimelineActivity({
                         </View>
                         <Text style={styles.activityMeta}>
                             {isGroup
-                                ? `Added ${item.count} items`
-                                : `Added ${MEDIA_LABELS[item.media_type] || 'content'}`
+                                ? t('feed.added_items', { count: item.count })
+                                : t('feed.added_media', { type: t(MEDIA_LABELS[item.media_type] || MEDIA_LABELS.default).toLowerCase() })
                             }
                         </Text>
                     </View>
@@ -300,7 +303,7 @@ export default React.memo(function TimelineActivity({
                         style={[styles.followBtn, isFollowedProp && styles.followBtnActive]}
                     >
                         <Text style={[styles.followBtnText, isFollowedProp && styles.followBtnTextActive]}>
-                            {isFollowedProp ? 'Following' : 'Follow'}
+                            {isFollowedProp ? t('common.following') : t('common.follow')}
                         </Text>
                     </TouchableOpacity>
                 )}
@@ -338,7 +341,7 @@ export default React.memo(function TimelineActivity({
                         {capsule?.status === 'sealed' ? (
                             <View style={styles.sealedNoteCenter}>
                                 <Ionicons name="lock-closed-outline" size={24} color="rgba(255,255,255,0.6)" />
-                                <Text style={styles.sealedNoteLabel}>ENCRYPTED THOUGHT</Text>
+                                <Text style={styles.sealedNoteLabel}>{t('feed.encrypted_thought')}</Text>
                             </View>
                         ) : (
                             <View style={styles.noteCenter}>
@@ -361,7 +364,7 @@ export default React.memo(function TimelineActivity({
                 )}
 
                 {/* Media type badge */}
-                <MediaTypeBadge type={isGroup ? 'image' : item.media_type} />
+                <MediaTypeBadge type={isGroup ? 'image' : item.media_type} t={t} />
 
                 {/* Sealed lock */}
                 {capsule?.status === 'sealed' && (
@@ -383,7 +386,7 @@ export default React.memo(function TimelineActivity({
                     />
                     <View style={{ flex: 1 }}>
                         <Text style={styles.capsuleTitle} numberOfLines={1}>{capsule.title}</Text>
-                        <Text style={styles.capsuleType}>{capsule.type?.replace('cap', '') ?? 'capsule'}</Text>
+                        <Text style={styles.capsuleType}>{capsule.type?.replace('cap', '') || 'capsule'}</Text>
                     </View>
                     {!hasAccessProp && (
                         <Ionicons name="lock-closed" size={12} color={Colors.error} style={{ marginLeft: 4 }} />

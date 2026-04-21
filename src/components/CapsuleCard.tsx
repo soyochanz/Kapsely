@@ -23,14 +23,15 @@ const typeConfig = {
     legacycap: { label: 'LegacyCap', color: Colors.legacyCap, icon: 'time-outline' as const },
 };
 
-function timeAgo(dateStr: string): string {
+function timeAgo(dateStr: string, t: any): string {
     const diff = Date.now() - new Date(dateStr).getTime();
     const m = Math.floor(diff / 60000);
-    if (m < 1) return 'now';
-    if (m < 60) return `${m}m`;
+    if (m < 1) return t('common.just_now');
+    if (m < 60) return t('common.m_ago', { count: m });
     const h = Math.floor(m / 60);
-    if (h < 24) return `${h}h`;
-    return `${Math.floor(h / 24)}d`;
+    if (h < 24) return t('common.h_ago', { count: h });
+    const d = Math.floor(h / 24);
+    return t('common.d_ago', { count: d });
 }
 
 const formatOpenDate = (dateStr: string): string => {
@@ -542,7 +543,7 @@ const CapsuleCard = React.memo(({
                                 {profile.is_verified && <VerifiedBadge size={13} />}
                             </View>
                             <Text style={s.authorTime}>
-                                {timeAgo(isOpened ? capsule.opens_at : capsule.created_at)}
+                                {timeAgo(isOpened ? capsule.opens_at : capsule.created_at, t)}
                             </Text>
                         </View>
                     </TouchableOpacity>
@@ -554,7 +555,7 @@ const CapsuleCard = React.memo(({
                             style={[s.followBtn, isFollowed && s.followBtnActive]}
                         >
                             <Text style={[s.followBtnText, isFollowed && s.followBtnTextActive]}>
-                                {isFollowed ? 'Following' : '+ Follow'}
+                                {isFollowed ? t('common.following') : t('common.follow_plus') || '+ Follow'}
                             </Text>
                         </TouchableOpacity>
                     )}
@@ -618,7 +619,7 @@ const CapsuleCard = React.memo(({
                                 color={isOpened ? '#4ADE80' : '#F87171'}
                             />
                             <Text style={[s.dateText, isOpened && { color: '#4ADE80', fontFamily: Fonts.bold }]}>
-                                {isOpened ? 'Unlocked ' : 'Unlocks '}{formatOpenDate(capsule.opens_at)}
+                                {isOpened ? t('common.unlocked') : t('common.unlocks')}{formatOpenDate(capsule.opens_at)}
                             </Text>
                         </View>
                     )}
