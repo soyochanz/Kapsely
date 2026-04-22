@@ -877,15 +877,14 @@ function CapsuleDetailScreen() {
 
         const { capsule: capsuleData, items: itemsData, likes_count, is_liked, invites: invitesData, owner_followers_count, is_followed_owner, capsule_followers_count } = data;
 
+
         if (!capsuleData) {
             setLoading(false);
             return;
         }
 
-        // Note: Auto-deletion of empty capsules is now handled only in ProfileScreen 
-        // with a 24h grace period, and it excludes shared capsules to avoid data loss.
-
         setCapsule(capsuleData);
+
         const cfg = timerConfigManager.getConfig(capsuleData.model);
         setModelTint(cfg?.themeColor || MODEL_TINTS[capsuleData.model] || '#7C5CBF');
 

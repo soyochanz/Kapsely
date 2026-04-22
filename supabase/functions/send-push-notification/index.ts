@@ -1,5 +1,5 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { serve } from "std/http/server.ts"
+import { createClient } from 'supabase'
 
 serve(async (req: Request) => {
     try {
@@ -12,9 +12,7 @@ serve(async (req: Request) => {
         }
 
         // Initialize Supabase client
-        // @ts-ignore: Deno is available in Supabase Edge Functions environment
         const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
-        // @ts-ignore
         const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
         
         const supabase = createClient(supabaseUrl, supabaseServiceKey)
