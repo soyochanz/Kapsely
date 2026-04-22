@@ -356,7 +356,7 @@ const LiveChat = React.forwardRef<LiveChatRef, LiveChatProps>(
                 return (
                     <View key={item.id} style={st.msgContainer}>
                         <Image
-                            source={{ uri: item.profiles?.avatar_url || 'https://via.placeholder.com/150' }}
+                            source={{ uri: Colors.getAvatarUrl(item.profiles?.avatar_url, item.profiles?.display_name || item.profiles?.username) }}
                             style={[st.msgAvatar, { opacity: 0.5 }]}
                             cachePolicy="memory-disk"
                         />
@@ -379,7 +379,7 @@ const LiveChat = React.forwardRef<LiveChatRef, LiveChatProps>(
                     style={st.msgContainer}
                 >
                     <Image
-                        source={{ uri: item.profiles?.avatar_url || 'https://via.placeholder.com/150' }}
+                        source={{ uri: Colors.getAvatarUrl(item.profiles?.avatar_url, item.profiles?.display_name || item.profiles?.username) }}
                         style={st.msgAvatar}
                         cachePolicy="memory-disk"
                     />

@@ -1,11 +1,12 @@
 import React from 'react';
 import {
-    View, Text, StyleSheet, TouchableOpacity, Image, ScrollView,
+    View, Text, StyleSheet, TouchableOpacity, ScrollView,
     ActivityIndicator, Alert, Animated, Platform
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
+import { Image } from 'expo-image';
 import { Colors, Fonts } from '../theme';
 import { multiAccountService, SavedAccount } from '../utils/multiAccount';
 import { supabase } from '../lib/supabase';
@@ -79,8 +80,10 @@ export default function AccountHub({ accounts, currentUserId, onClose, onAddAcco
                         >
                             <View style={s.avatarContainer}>
                                 <Image 
-                                    source={{ uri: acc.avatar_url || 'https://via.placeholder.com/150' }} 
+                                    source={{ uri: Colors.getAvatarUrl(acc.avatar_url, acc.username || acc.email) }} 
                                     style={s.avatar}
+                                    contentFit="cover"
+                                    cachePolicy="memory-disk"
                                 />
                                 {isCurrent && (
                                     <View style={s.activeBadge}>

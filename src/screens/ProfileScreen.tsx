@@ -713,11 +713,11 @@ export default function ProfileScreen() {
                         <Text style={s.sheetTitle}>{t('profile.settings')}</Text>
 
                         {[
-                            { icon: 'person-circle-outline', color: Colors.primary, label: 'Panel de cuenta', onPress: () => { setShowSettings(false); setShowAccountPanel(true); } },
+                            { icon: 'person-circle-outline', color: Colors.primary, label: t('profile.account_panel'), onPress: () => { setShowSettings(false); setShowAccountPanel(true); } },
                             { icon: 'sparkles-outline', color: Colors.primary, label: t('profile.personalizeProfile'), onPress: () => { setShowSettings(false); navigation.navigate('PersonalizeProfile'); } },
                             { icon: 'language-outline', color: Colors.textSecondary, label: t('profile.language'), value: i18n.language === 'es' ? 'Español' : 'English', onPress: () => { setShowSettings(false); setShowLanguageSettings(true); } },
-                            { icon: 'notifications-outline', color: Colors.textSecondary, label: t('profile.push_notifications', 'Notificaciones Push'), onPress: () => { setShowSettings(false); setShowPushSettings(true); } },
-                            { icon: 'help-buoy-outline', color: Colors.textSecondary, label: t('profile.support', 'Ayuda y Soporte'), onPress: () => { setShowSettings(false); setShowSupportModal(true); } },
+                            { icon: 'notifications-outline', color: Colors.textSecondary, label: t('profile.push_notifications', 'Notificaciones Push'), onPress: () => { setShowSettings(false); Linking.openSettings(); } },
+                            { icon: 'help-buoy-outline', color: Colors.textSecondary, label: t('profile.support'), onPress: () => { setShowSettings(false); setShowSupportModal(true); } },
                             { icon: 'shield-checkmark-outline', color: Colors.textSecondary, label: t('profile.privacyPolicy'), onPress: () => { setShowSettings(false); setShowPrivacy(true); } },
                             { icon: 'document-text-outline', color: Colors.textSecondary, label: t('profile.termsOfUse'), onPress: () => { setShowSettings(false); setShowTerms(true); } },
                             ...(profile?.is_admin ? [{ icon: 'construct-outline', color: Colors.eventCap, label: 'Admin: Calibration Tool', onPress: () => { setShowSettings(false); navigation.navigate('AdminCalibration'); } }] : []),

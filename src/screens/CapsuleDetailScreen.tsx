@@ -313,14 +313,21 @@ const CollaboratorsBar = React.memo(({ owner, members, invites, tint, isMember, 
         if (!owner) return [];
         const ownerProfile = { ...owner, isOwner: true };
         const accepted = (members || []).map((m: any) => ({ ...m, isAccepted: true }));
+        const acceptedInvites = (invites || [])
+            .filter((i: any) => i.status === 'accepted' && i.profiles)
+            .map((i: any) => ({ ...i.profiles, isAccepted: true }));
         const pending = (invites || [])
             .filter((i: any) => i.status === 'pending' && i.profiles)
             .map((i: any) => ({ ...i.profiles, isPending: true }));
         
-        const combined = [ownerProfile, ...accepted, ...pending];
+        const combined = [ownerProfile, ...accepted, ...acceptedInvites, ...pending];
         const unique = Array.from(new Map(combined.map(m => [m.id, m])).values());
         return unique;
     }, [owner, members, invites]);
+
+    const acceptedMembersCount = useMemo(() => {
+        return allMembers.filter((m: any) => m.isOwner || m.isAccepted).length;
+    }, [allMembers]);
 
     const handlePress = (m: any) => {
         if (m.isPending) return;
@@ -347,7 +354,7 @@ const CollaboratorsBar = React.memo(({ owner, members, invites, tint, isMember, 
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 6 }}>
                 <Ionicons name="people" size={14} color={D.textMuted} />
                 <Text style={{ fontSize: 13, fontFamily: Fonts.semiBold, color: D.textSec }}>
-                    {allMembers.length} {t('common.members')}
+                    {acceptedMembersCount} {t('common.members')}
                 </Text>
             </View>
 
@@ -380,19 +387,18 @@ const CollaboratorsBar = React.memo(({ owner, members, invites, tint, isMember, 
                                     style={{ 
                                         width: '100%', 
                                         height: '100%',
+                                        opacity: m.isPending ? 0.3 : 1
                                     }}
-                                    contentFit="contain" // Better for SVGs and centering initials
-                                    // Use grayscale filter for true Black & White effect
-                                    {...(m.isPending ? { 
-                                        filters: [{ grayscale: 1.0 }, { brightness: 1.1 }],
-                                        opacity: 0.9
-                                    } : {})}
+                                    contentFit="contain"
                                 />
                                 {m.isPending && (
                                     <View style={{ 
                                         ...StyleSheet.absoluteFillObject, 
-                                        backgroundColor: 'rgba(255,255,255,0.05)', // Very light white overlay to "clean" the B&W
-                                    }} />
+                                        justifyContent: 'center',
+                                        alignItems: 'center'
+                                    }}>
+                                         <ActivityIndicator size="small" color={D.textMuted} />
+                                    </View>
                                 )}
                             </View>
                         </TouchableOpacity>
@@ -1414,7 +1420,7 @@ function CapsuleDetailScreen() {
                                                         </View>
                                                     )}
                                                     {pi.profiles && isSharedCapsule && (
-                                                        <Image source={{ uri: pi.profiles.avatar_url || 'https://via.placeholder.com/150' }} style={[ds.itemAuthorOverlay as any, { borderColor: tint + '40' }]} />
+                                                        <Image source={{ uri: Colors.getAvatarUrl(pi.profiles.avatar_url, pi.profiles.display_name || pi.profiles.username) }} style={[ds.itemAuthorOverlay as any, { borderColor: tint + '40' }]} />
                                                     )}
                                                     <Ionicons name="lock-closed" size={20} color={tint + '50'} />
                                                     <View style={ds.itemDateTag}>
@@ -1463,7 +1469,7 @@ function CapsuleDetailScreen() {
                                                         <Text style={ds.itemDateText}>{new Date(pi.created_at).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: '2-digit' })}</Text>
                                                     </View>
                                                     {pi.profiles && isSharedCapsule && (
-                                                        <Image source={{ uri: pi.profiles.avatar_url || 'https://via.placeholder.com/150' }} style={[ds.itemAuthorOverlay as any, { borderColor: '#fff' }]} />
+                                                        <Image source={{ uri: Colors.getAvatarUrl(pi.profiles.avatar_url, pi.profiles.display_name || pi.profiles.username) }} style={[ds.itemAuthorOverlay as any, { borderColor: '#fff' }]} />
                                                     )}
                                                     {pi.location_name && (
                                                         <View style={{ position: 'absolute', bottom: 6, right: 6 }}>
@@ -1537,7 +1543,7 @@ function CapsuleDetailScreen() {
                 >
                     <BlurView intensity={25} tint="extraLight" style={[ds.commentCard, { borderColor: highlightedCommentId === c.id ? tint + '60' : D.border, marginBottom: 10 }, highlightedCommentId === c.id && { borderLeftWidth: 3, borderLeftColor: tint }]}>
                         <TouchableOpacity onPress={() => navigation.navigate('UserProfile', { targetUserId: c.user_id })}>
-                            <Image source={{ uri: c.profiles?.avatar_url || 'https://via.placeholder.com/150' }} style={[ds.commentAvatar as any, { borderColor: D.border }]} cachePolicy="memory-disk" contentFit="cover" />
+                            <Image source={{ uri: Colors.getAvatarUrl(c.profiles?.avatar_url, c.profiles?.display_name || c.profiles?.username) }} style={[ds.commentAvatar as any, { borderColor: D.border }]} cachePolicy="memory-disk" contentFit="cover" />
                         </TouchableOpacity>
                         <View style={{ flex: 1 }}>
                             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>
@@ -1671,7 +1677,7 @@ function CapsuleDetailScreen() {
                 </TouchableOpacity>
                 {totalMembers <= 1 ? (
                     <TouchableOpacity style={ds.headerCenter} activeOpacity={0.78} onPress={() => navigation.navigate('UserProfile', { targetUserId: capsule.owner_id })}>
-                        <Image source={{ uri: capsule.profiles?.avatar_url || 'https://via.placeholder.com/150' }} style={[ds.headerAvatar as any, { borderColor: tint + '40' }]} cachePolicy="memory-disk" contentFit="cover" transition={200} />
+                        <Image source={{ uri: Colors.getAvatarUrl(capsule.profiles?.avatar_url, capsule.profiles?.display_name || capsule.profiles?.username) }} style={[ds.headerAvatar as any, { borderColor: tint + '40' }]} cachePolicy="memory-disk" contentFit="cover" transition={200} />
                         <View style={{ flexShrink: 1 }}>
                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                                 <Text style={ds.headerName} numberOfLines={1}>{capsule.profiles?.display_name || capsule.profiles?.username}</Text>
@@ -1848,20 +1854,42 @@ function CapsuleDetailScreen() {
                             showsVerticalScrollIndicator={false}
                             keyboardDismissMode="on-drag"
                             contentContainerStyle={{ paddingBottom: 20 }}
-                            renderItem={({ item: u }) => (
-                                <TouchableOpacity style={ds.modernUserCard} activeOpacity={0.7} onPress={() => toggleInviteUser(u)}>
+                            renderItem={({ item: u }) => {
+                                const isRejected = invites?.some(i => i.user_id === u.id && i.status === 'rejected');
+                                const isPending = invites?.some(i => i.user_id === u.id && i.status === 'pending');
+                                const isAccepted = invites?.some(i => i.user_id === u.id && i.status === 'accepted');
+                                const isMember = capsule?.owner_id === u.id || isAccepted;
+                                
+                                const statusText = isRejected ? (t('common.rejected') || 'Rechazado') 
+                                                : isMember ? (t('common.member') || 'Miembro')
+                                                : isPending ? (t('common.pending') || 'Pendiente')
+                                                : null;
+
+                                return (
+                                <TouchableOpacity 
+                                    style={[ds.modernUserCard, { opacity: statusText ? 0.6 : 1 }]} 
+                                    activeOpacity={0.7} 
+                                    onPress={() => { if (!statusText) toggleInviteUser(u); }}
+                                >
                                     <View style={ds.modernUserAvatarWrap}>
-                                        <Image source={{ uri: u.avatar_url || 'https://via.placeholder.com/150' }} style={ds.modernUserAvatar as any} />
+                                        <Image source={{ uri: Colors.getAvatarUrl(u.avatar_url, u.display_name || u.username) }} style={ds.modernUserAvatar as any} />
                                     </View>
                                     <View style={{ flex: 1 }}>
                                         <Text style={ds.modernUserName} numberOfLines={1}>{u.display_name || u.username}</Text>
                                         <Text style={ds.modernUserTag} numberOfLines={1}>@{u.username}</Text>
                                     </View>
-                                    <View style={[ds.modernInviteBtn, { backgroundColor: tint + '15', borderWidth: 1, borderColor: tint + '30' }]}>
-                                        <Ionicons name="add" size={16} color={tint} />
-                                    </View>
+                                    {statusText ? (
+                                        <View style={[ds.modernInviteBtn, { backgroundColor: isRejected ? '#EF444415' : D.card, borderWidth: 1, borderColor: isRejected ? '#EF444430' : D.border, paddingHorizontal: 8, width: 'auto' }]}>
+                                            <Text style={{ fontSize: 10, fontFamily: Fonts.bold, color: isRejected ? '#EF4444' : D.textSec, textTransform: 'uppercase' }}>{statusText}</Text>
+                                        </View>
+                                    ) : (
+                                        <View style={[ds.modernInviteBtn, { backgroundColor: tint + '15', borderWidth: 1, borderColor: tint + '30' }]}>
+                                            <Ionicons name="add" size={16} color={tint} />
+                                        </View>
+                                    )}
                                 </TouchableOpacity>
-                            )}
+                                )
+                            }}
                             ListEmptyComponent={() => (
                                 <View style={{ alignItems: 'center', marginTop: 40 }}>
                                     {searchQuery.length < 2 && invitedUsers.length === 0 ? (
@@ -1903,7 +1931,7 @@ function CapsuleDetailScreen() {
                         renderItem={({ item: vi, index }) => (
                             <View style={{ width, height, alignItems: 'center', justifyContent: 'center' }}>
                                 {vi.profiles && isSharedCapsule && (
-                                    <Image source={{ uri: vi.profiles.avatar_url || 'https://via.placeholder.com/150' }} style={[ds.itemAuthorOverlay as any, { top: insets.top + 50, left: 20, width: 32, height: 32, borderRadius: 16, borderColor: '#fff', borderWidth: 2 }]} />
+                                    <Image source={{ uri: Colors.getAvatarUrl(vi.profiles.avatar_url, vi.profiles.display_name || vi.profiles.username) }} style={[ds.itemAuthorOverlay as any, { top: insets.top + 50, left: 20, width: 32, height: 32, borderRadius: 16, borderColor: '#fff', borderWidth: 2 }]} />
                                 )}
                                 {vi.media_type === 'note' ? (
                                     <View style={ds.viewerNote}><Text style={ds.viewerNoteText}>{vi.content}</Text></View>

@@ -203,9 +203,21 @@ export default function TabBar(props: any) {
     }, []);
 
     const loadAccounts = React.useCallback(async () => {
-        await multiAccountService.saveCurrentAccount();
-        const accs = await multiAccountService.getAccounts();
-        setAccounts(accs);
+        // 1. Show cached accounts immediately
+        const cachedAccs = await multiAccountService.getAccounts();
+        if (cachedAccs.length > 0) {
+            setAccounts(cachedAccs);
+        }
+        
+        // 2. Sync current account and refresh in background
+        try {
+            await multiAccountService.saveCurrentAccount();
+            const accs = await multiAccountService.getAccounts();
+            setAccounts(accs);
+        } catch (err) {
+            console.log("[TabBar] Error syncing account:", err);
+            // If sync fails, we still have the cached accounts shown
+        }
     }, []);
 
     const onProfileLongPress = React.useCallback(() => {

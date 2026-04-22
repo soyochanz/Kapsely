@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts, Spacing, BorderRadius } from '../theme';
 import { Conversation } from '../data/mockChats';
@@ -19,7 +20,12 @@ export default function ChatRow({ conversation, onPress }: ChatRowProps) {
     return (
         <TouchableOpacity style={styles.row} onPress={onPress} activeOpacity={0.7}>
             <View style={styles.avatarContainer}>
-                <Image source={{ uri: Colors.getAvatarUrl(conversation.user.avatar, conversation.user.username) }} style={styles.avatar} />
+                <Image 
+                    source={{ uri: Colors.getAvatarUrl(conversation.user.avatar, conversation.user.username) }} 
+                    style={styles.avatar}
+                    contentFit="cover"
+                    cachePolicy="memory-disk"
+                />
                 {conversation.user.isOnline && <View style={styles.onlineDot} />}
             </View>
             <View style={styles.content}>

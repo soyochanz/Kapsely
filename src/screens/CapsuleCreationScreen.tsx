@@ -982,12 +982,13 @@ export default function CapsuleCreationScreen() {
 
     const openingDate = useMemo(() => {
         if (selectedType === 'eventcap' && activeEvent) return activeEvent.event_end;
+        if (selectedMode === 'open' || selectedType === 'opencap') return new Date().toISOString();
         if (finalDays) {
             const d = new Date(); d.setSeconds(0, 0);
             return new Date(d.getTime() + finalDays * 86400000).toISOString();
         }
         return new Date(Date.now() + 365 * 86400000).toISOString();
-    }, [selectedType, activeEvent, finalDays]);
+    }, [selectedType, selectedMode, activeEvent, finalDays]);
 
     const onDateChange = (event: any, date?: Date) => {
         if (Platform.OS === 'android') setShowDatePicker(false);
@@ -1861,6 +1862,7 @@ export default function CapsuleCreationScreen() {
                                 chainId={selectedChainId}
                                 capsuleType={selectedType || undefined}
                                 style={{ width: 175, height: 175 }}
+                                hideTimer={selectedType === 'opencap'}
                             />
                             <View style={[s.reviewBadge, { backgroundColor: accent + '18', borderColor: accent + '40' }]}>
                                 <Ionicons name={cfg?.icon as any} size={11} color={accent} />

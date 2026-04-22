@@ -47,10 +47,21 @@ export const Colors = {
 
     // Helpers
     getAvatarUrl: (url?: string | null, name?: string | null) => {
-        if (url) return url;
-        const seed = name || 'U';
-        // Using Dicebear for better centering and aesthetics
-        return `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(seed)}&backgroundColor=a66eff&fontFamily=Arial&fontWeight=bold`;
+        if (url && url.startsWith('http')) return url;
+        
+        // If no URL, generate a colorful initials avatar
+        const seed = name || 'User';
+        const colors = ['a66eff', '7938ff', '00f2ff', 'ff4d4d', 'ffb300', '10b981', '0ea5e9'];
+        
+        // Simple hash for deterministic color choice
+        let hash = 0;
+        for (let i = 0; i < seed.length; i++) {
+            hash = seed.charCodeAt(i) + ((hash << 5) - hash);
+        }
+        const colorIndex = Math.abs(hash) % colors.length;
+        const bgColor = colors[colorIndex];
+
+        return `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(seed)}&backgroundColor=${bgColor}&fontFamily=Arial&fontWeight=bold&fontSize=45&chars=1`;
     }
 };
 

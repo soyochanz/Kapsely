@@ -17,7 +17,7 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
 import { Image } from 'expo-image';
-import { supabase, Profile } from '../lib/supabase';
+import { supabase, Profile, SUPABASE_URL } from '../lib/supabase';
 
 
 // ── Color palette ─────────────────────────────────────────────────────────────
@@ -84,7 +84,7 @@ export default function EditProfileScreen({ onClose, initialData }: Props) {
                 setInitialDisplayName(initialData.display_name ?? '');
                 setInitialUsername(initialData.username ?? '');
                 setDisplayNameHistory(initialData.display_name_history ?? []);
-                setUsernameHistory(initialData.username_history ?? []);
+                // setUsernameHistory(initialData.username_history ?? []);
                 setUserId(initialData.id);
                 setLoading(false);
                 return;
@@ -99,7 +99,7 @@ export default function EditProfileScreen({ onClose, initialData }: Props) {
             setUserId(user.id);
             const { data } = await supabase
                 .from('profiles')
-                .select('id, username, display_name, avatar_url, bio, favorite_color, favorite_movie, favorite_song, birthdate, display_name_history, username_history')
+                .select('id, username, display_name, avatar_url, bio, favorite_color, favorite_movie, favorite_song, birthdate, display_name_history')
                 .eq('id', user.id)
                 .single();
 
@@ -119,7 +119,7 @@ export default function EditProfileScreen({ onClose, initialData }: Props) {
                 setInitialDisplayName(data.display_name ?? '');
                 setInitialUsername(data.username ?? '');
                 setDisplayNameHistory(data.display_name_history ?? []);
-                setUsernameHistory(data.username_history ?? []);
+                // setUsernameHistory(data.username_history ?? []);
             }
             setLoading(false);
         })();
@@ -157,14 +157,15 @@ export default function EditProfileScreen({ onClose, initialData }: Props) {
         try {
             const fileName = `avatar_${uid}_${Date.now()}.webp`;
 
-
             let body: any;
             if (Platform.OS === 'web') {
                 const res = await fetch(uri);
                 body = await res.blob();
             } else {
                 // For mobile, we use base64 to avoid fetch(file://) issues
-                const base64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' as any });
+                const base64 = await FileSystem.readAsStringAsync(uri, { 
+                    encoding: 'base64' 
+                });
                 body = decode(base64);
             }
 
@@ -173,13 +174,12 @@ export default function EditProfileScreen({ onClose, initialData }: Props) {
                 upsert: true,
             });
 
-
             if (error) throw error;
 
             const { data } = supabase.storage.from('avatars').getPublicUrl(fileName);
             return data.publicUrl;
         } catch (e: any) {
-            console.error('Upload error:', e);
+            console.error('Upload error details:', e);
             Alert.alert('Upload Error', e.message || 'Could not upload image');
             return null;
         } finally {
@@ -199,7 +199,7 @@ export default function EditProfileScreen({ onClose, initialData }: Props) {
                 // Delete old avatar if it exists to save space
                 if (initialAvatarUrl) {
                     try {
-                        const baseUrl = "https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/avatars/";
+                        const baseUrl = `${SUPABASE_URL}/storage/v1/object/public/avatars/`;
                         if (initialAvatarUrl.startsWith(baseUrl)) {
                             const oldFileName = initialAvatarUrl.replace(baseUrl, "").split('?')[0];
                             if (oldFileName) {
@@ -269,7 +269,7 @@ export default function EditProfileScreen({ onClose, initialData }: Props) {
                     : null,
                 avatar_url: finalAvatarUrl,
                 display_name_history: newNameHistory,
-                username_history: newUsernameHistory,
+                // username_history: newUsernameHistory,
                 updated_at: new Date().toISOString(),
             }).eq('id', userId);
 
@@ -399,18 +399,13 @@ export default function EditProfileScreen({ onClose, initialData }: Props) {
                 <View style={styles.avatarSection}>
                     <TouchableOpacity onPress={pickAvatar} activeOpacity={0.8} style={styles.avatarWrapper}>
                         <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.avatarRing}>
-                        {avatarUri
-                                ? <Image 
-                                    source={{ uri: avatarUri }} 
-                                    style={styles.avatar} 
-                                    contentFit="cover" 
-                                    cachePolicy="memory-disk"
-                                    transition={200} 
-                                />
-                                : <View style={[styles.avatar, styles.avatarPlaceholder]}>
-                                    <Ionicons name="person" size={36} color={Colors.primary} />
-                                </View>
-                        }
+                        <Image 
+                            source={{ uri: avatarUri ? avatarUri : Colors.getAvatarUrl(null, displayName || username) }} 
+                            style={styles.avatar} 
+                            contentFit="cover" 
+                            cachePolicy="memory-disk"
+                            transition={200} 
+                        />
 
 
                         </LinearGradient>

@@ -83,7 +83,7 @@ export const ProfileHeader = React.memo(({
                             opacity: 0.9,
                         } : [s.bannerSticker, pos, { width: size, height: size, transform: [{ rotate: rotation }], opacity: 0.8 }];
 
-                        return ps.stickers?.image_url && (
+                        return !!ps.stickers?.image_url && (
                             <Image key={ps.id} source={{ uri: ps.stickers.image_url }} style={style} contentFit="contain" transition={300} />
                         );
                     })}
@@ -159,10 +159,10 @@ export const ProfileHeader = React.memo(({
                 <View style={s.nameSection}>
                     <View style={s.nameRow}>
                         <Text style={s.displayName}>{profile?.display_name ?? '—'}</Text>
-                        {profile?.is_verified && <VerifiedBadge size={17} style={{ marginLeft: 4 }} />}
+                        {!!profile?.is_verified && <VerifiedBadge size={17} style={{ marginLeft: 4 }} />}
                     </View>
                     <Text style={s.username}>@{profile?.username ?? '—'}</Text>
-                    {profile?.bio && <Text style={s.bio}>{profile.bio}</Text>}
+                    {!!profile?.bio && <Text style={s.bio}>{profile.bio}</Text>}
 
                     <View style={s.metaRow}>
                         <View style={s.metaChip}>

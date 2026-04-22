@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
@@ -76,7 +77,13 @@ export default function NotificationItem({ notification, onMarkRead, onAcceptInv
                     </View>
                 ) : (
                     <>
-                        <Image source={{ uri: notification.user.avatar }} style={styles.avatar} />
+                        <Image 
+                            source={{ uri: Colors.getAvatarUrl(notification.user.avatar, notification.user.username) }} 
+                            style={styles.avatar} 
+                            contentFit="cover"
+                            cachePolicy="memory-disk"
+                            transition={200}
+                        />
                         <View style={[styles.iconBadge, { backgroundColor: iconCfg.color }]}>
                             <Ionicons name={iconCfg.name as any} size={10} color="#fff" />
                         </View>

@@ -29,7 +29,7 @@ const DotGrid = ({ rows = 5, cols = 8, opacity = 0.12 }: { rows?: number; cols?:
         {Array.from({ length: rows }).map((_, r) => (
             <View key={r} style={{ flexDirection: 'row', gap: 10 }}>
                 {Array.from({ length: cols }).map((_, c) => (
-                    <View key={c} style={{ width: 2.5, height: 2.5, borderRadius: 1.5, backgroundColor: '#fff' }} />
+                    <View key={c} style={{ width: 2.5, height: 2.5, borderRadius: 1.5, backgroundColor: '#7C5CBF' }} />
                 ))}
             </View>
         ))}
@@ -100,6 +100,8 @@ export default function InstagramShareScreen() {
         ? Math.max(0, Math.ceil((new Date(capsuleOpensAt).getTime() - Date.now()) / 86400000))
         : 0;
 
+    const cleanDesc = capsule.description ? capsule.description.replace(/\[STYLE:(OPEN|CLOSED)\]/gi, '').trim() : '';
+
     const modelImg = isSealed
         ? timerConfigManager.getModelImage(capsule.model) || (MODEL_IMAGES as any)[capsule.model]
         : timerConfigManager.getModelImageOpen(capsule.model) || (MODEL_IMAGES_OPEN as any)[capsule.model] || (MODEL_IMAGES as any)[capsule.model];
@@ -166,9 +168,9 @@ export default function InstagramShareScreen() {
                     options={{ format: 'jpg', quality: 1.0 }}
                     style={s.canvas}
                 >
-                    {/* Deep dark background */}
+                    {/* Light background with purple touches */}
                     <LinearGradient
-                        colors={['#09090f', '#111122', '#0d0d1a']}
+                        colors={['#ffffff', '#fcfcff', '#f5f5fa']}
                         style={StyleSheet.absoluteFill}
                         start={{ x: 0, y: 0 }}
                         end={{ x: 1, y: 1 }}
@@ -215,7 +217,8 @@ export default function InstagramShareScreen() {
                             style={s.capsuleImg}
                             hideParticles={true}
                             isOpened={!isSealed}
-                            hideTimer={true}
+                            hideTimer={!isSealed}
+                            lightweight={true}
                         />
                     </View>
 
@@ -224,25 +227,10 @@ export default function InstagramShareScreen() {
                         {/* Thin accent line */}
                         <View style={s.accentLine} />
                         <Text style={s.capsuleTitle} numberOfLines={2}>{capsule.title}</Text>
-                        {capsule.description ? (
-                            <Text style={s.capsuleDesc} numberOfLines={2}>{capsule.description}</Text>
+                        {cleanDesc ? (
+                            <Text style={s.capsuleDesc} numberOfLines={2}>{cleanDesc}</Text>
                         ) : null}
                     </View>
-
-                    {/* ── Countdown / status pill ── */}
-                    {isSealed && daysUntil > 0 ? (
-                        <View style={s.countdownPill}>
-                            <View style={s.countdownDot} />
-                            <Text style={s.countdownLabel}>OPENS IN</Text>
-                            <Text style={s.countdownDays}>{daysUntil}</Text>
-                            <Text style={s.countdownUnit}>DAYS</Text>
-                        </View>
-                    ) : !isSealed ? (
-                        <View style={[s.countdownPill, s.openPill]}>
-                            <View style={[s.countdownDot, { backgroundColor: '#4ade80' }]} />
-                            <Text style={[s.countdownLabel, { color: '#4ade80' }]}>NOW OPEN</Text>
-                        </View>
-                    ) : null}
 
                     {/* ── Blurred photo strip ── */}
                     <View style={s.photoStrip}>
@@ -256,15 +244,15 @@ export default function InstagramShareScreen() {
                                 {/* Blur overlay (only if sealed) */}
                                 {isSealed && (
                                     Platform.OS === 'ios' ? (
-                                        <BlurView intensity={22} tint="dark" style={StyleSheet.absoluteFill as any} />
+                                        <BlurView intensity={22} tint="light" style={StyleSheet.absoluteFill as any} />
                                     ) : (
-                                        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]} />
+                                        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255,255,255,0.6)' }]} />
                                     )
                                 )}
                                 {/* Lock icon (only if sealed) */}
                                 {isSealed && (
                                     <View style={s.photoLock}>
-                                        <Ionicons name="lock-closed" size={10} color="rgba(255,255,255,0.7)" />
+                                        <Ionicons name="lock-closed" size={10} color="rgba(0,0,0,0.4)" />
                                     </View>
                                 )}
                             </View>
@@ -276,15 +264,15 @@ export default function InstagramShareScreen() {
                         {/* QR */}
                         <View style={s.qrWrap}>
                             <View style={s.qrInner}>
-                                <QRCode value={qrUrl} size={34} color="#0d0d1a" backgroundColor="#fff" />
+                                <QRCode value={qrUrl} size={34} color="#111" backgroundColor="#fff" />
                             </View>
-                            <Text style={s.qrLabel}>SCAN TO OPEN</Text>
+                            <Text style={s.qrLabel}>SCAN TO VIEW CONTENT</Text>
                         </View>
 
                         {/* CTA text */}
                         <View style={s.ctaBlock}>
-                            <Text style={s.ctaHeadline}>What's{'\n'}inside? 🔒</Text>
-                            <Text style={s.ctaSub}>kapsely.com</Text>
+                            <Text style={s.ctaHeadline}>What's{'\n'}inside? ✨</Text>
+                            <Text style={s.ctaSub}>Kapsely.com</Text>
                         </View>
                     </View>
 
@@ -314,7 +302,7 @@ export default function InstagramShareScreen() {
                 </View>
 
                 {/* Hint */}
-                <Text style={s.hint}>Share to Instagram Stories and tag @kapsely</Text>
+                <Text style={s.hint}>Share to Instagram Stories and tag @kapsely.app</Text>
             </ScrollView>
         </View>
     );
@@ -352,109 +340,79 @@ const s = StyleSheet.create({
     glowTopLeft: {
         position: 'absolute', top: -60, left: -60,
         width: 200, height: 200, borderRadius: 100,
-        backgroundColor: 'rgba(120, 80, 255, 0.18)',
+        backgroundColor: 'rgba(124, 92, 191, 0.08)',
     },
     glowBottomRight: {
         position: 'absolute', bottom: -40, right: -40,
         width: 160, height: 160, borderRadius: 80,
-        backgroundColor: 'rgba(255, 100, 150, 0.12)',
+        backgroundColor: 'rgba(225, 48, 108, 0.06)',
     },
 
     // Top bar
     topBar: {
         flexDirection: 'row', alignItems: 'center',
-        paddingHorizontal: 16, paddingTop: 18, gap: 6,
+        paddingHorizontal: 16, paddingTop: 22, gap: 8,
     },
-    logoImg: { width: 18, height: 18 },
+    logoImg: { width: 22, height: 22 },
     appName: {
-        fontSize: 13, fontFamily: Fonts.bold, color: '#fff',
+        fontSize: 16, fontFamily: Fonts.bold, color: '#111',
         letterSpacing: 0.5, opacity: 0.9,
     },
     topBarDivider: {
-        width: 1, height: 10, backgroundColor: 'rgba(255,255,255,0.2)', marginHorizontal: 2,
+        width: 1, height: 12, backgroundColor: 'rgba(0,0,0,0.15)', marginHorizontal: 4,
     },
     topBarType: {
-        fontSize: 9, fontFamily: Fonts.bold, color: 'rgba(255,255,255,0.4)',
+        fontSize: 10, fontFamily: Fonts.bold, color: 'rgba(0,0,0,0.35)',
         letterSpacing: 1.5,
     },
 
     // Capsule hero
     capsuleHero: {
         alignItems: 'center', justifyContent: 'center',
-        marginTop: 8, flex: 1,
+        marginTop: 12, flex: 1,
     },
     capsuleGlow: {
         position: 'absolute',
-        width: 160, height: 160, borderRadius: 80,
-        backgroundColor: 'rgba(150, 100, 255, 0.15)',
+        width: 180, height: 180, borderRadius: 90,
+        backgroundColor: 'rgba(124, 92, 191, 0.1)',
         ...Platform.select({
-            ios: { shadowColor: '#9966ff', shadowOpacity: 0.6, shadowRadius: 50, shadowOffset: { width: 0, height: 0 } },
+            ios: { shadowColor: '#7C5CBF', shadowOpacity: 0.3, shadowRadius: 40, shadowOffset: { width: 0, height: 0 } },
         }),
     },
-    capsuleImg: { width: 160, height: 160 },
+    capsuleImg: { width: 180, height: 180 },
 
     // Title block
     titleBlock: {
-        paddingHorizontal: 18, marginTop: 10, gap: 5,
+        paddingHorizontal: 18, marginTop: 14, gap: 6,
     },
     accentLine: {
-        width: 28, height: 2, borderRadius: 1,
-        backgroundColor: 'rgba(255,255,255,0.3)', marginBottom: 4,
+        width: 32, height: 3, borderRadius: 1.5,
+        backgroundColor: '#7C5CBF', marginBottom: 4,
     },
     capsuleTitle: {
-        fontSize: 22, fontFamily: Fonts.bold, color: '#fff',
-        letterSpacing: -0.5, lineHeight: 27,
+        fontSize: 26, fontFamily: Fonts.bold, color: '#111',
+        letterSpacing: -0.5, lineHeight: 30,
     },
     capsuleDesc: {
-        fontSize: 11, fontFamily: Fonts.regular,
-        color: 'rgba(255,255,255,0.45)', lineHeight: 16,
-    },
-
-    // Countdown pill
-    countdownPill: {
-        flexDirection: 'row', alignItems: 'center',
-        alignSelf: 'flex-start', gap: 6,
-        marginHorizontal: 18, marginTop: 10,
-        backgroundColor: 'rgba(255,255,255,0.07)',
-        paddingHorizontal: 12, paddingVertical: 6,
-        borderRadius: 20,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: 'rgba(255,255,255,0.1)',
-    },
-    openPill: { backgroundColor: 'rgba(74, 222, 128, 0.08)' },
-    countdownDot: {
-        width: 5, height: 5, borderRadius: 2.5,
-        backgroundColor: '#c084fc',
-    },
-    countdownLabel: {
-        fontSize: 8, fontFamily: Fonts.bold,
-        color: 'rgba(255,255,255,0.45)', letterSpacing: 1.2,
-    },
-    countdownDays: {
-        fontSize: 14, fontFamily: Fonts.bold, color: '#fff',
-        marginLeft: 2,
-    },
-    countdownUnit: {
-        fontSize: 8, fontFamily: Fonts.bold,
-        color: 'rgba(255,255,255,0.4)', letterSpacing: 1,
-        marginTop: 2,
+        fontSize: 13, fontFamily: Fonts.regular,
+        color: '#666', lineHeight: 18,
     },
 
     // Photo strip
     photoStrip: {
         flexDirection: 'row', gap: 6,
-        paddingHorizontal: 16, marginTop: 14,
+        paddingHorizontal: 16, marginTop: 16,
     },
     photoCell: {
-        flex: 1, height: 54, borderRadius: 10,
-        overflow: 'hidden', backgroundColor: 'rgba(255,255,255,0.05)',
+        flex: 1, height: 56, borderRadius: 10,
+        overflow: 'hidden', backgroundColor: 'rgba(0,0,0,0.03)',
         alignItems: 'center', justifyContent: 'center',
         borderWidth: StyleSheet.hairlineWidth,
-        borderColor: 'rgba(255,255,255,0.08)',
+        borderColor: 'rgba(0,0,0,0.06)',
     },
     photoLock: {
         width: 20, height: 20, borderRadius: 10,
-        backgroundColor: 'rgba(0,0,0,0.35)',
+        backgroundColor: 'rgba(0,0,0,0.15)',
         alignItems: 'center', justifyContent: 'center',
     },
 
@@ -462,26 +420,27 @@ const s = StyleSheet.create({
     bottomRow: {
         flexDirection: 'row', alignItems: 'center',
         paddingHorizontal: 16, paddingBottom: 16,
-        marginTop: 14, gap: 12,
+        marginTop: 18, gap: 14,
     },
     qrWrap: { alignItems: 'center', gap: 5 },
     qrInner: {
         padding: 5, backgroundColor: '#fff', borderRadius: 10,
-        ...Platform.select({ ios: { shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } } }),
+        borderWidth: 1, borderColor: 'rgba(124, 92, 191, 0.1)',
+        ...Platform.select({ ios: { shadowColor: '#7C5CBF', shadowOpacity: 0.15, shadowRadius: 8, shadowOffset: { width: 0, height: 3 } } }),
     },
     qrLabel: {
-        fontSize: 7, fontFamily: Fonts.bold,
-        color: 'rgba(255,255,255,0.3)', letterSpacing: 1.2,
+        fontSize: 8, fontFamily: Fonts.bold,
+        color: '#7C5CBF', letterSpacing: 1.2, marginTop: 2,
     },
-    ctaBlock: { flex: 1 },
+    ctaBlock: { flex: 1, paddingLeft: 6 },
     ctaHeadline: {
-        fontSize: 18, fontFamily: Fonts.bold, color: '#fff',
-        lineHeight: 22, letterSpacing: -0.3,
+        fontSize: 22, fontFamily: Fonts.bold, color: '#111',
+        lineHeight: 26, letterSpacing: -0.3,
     },
     ctaSub: {
-        fontSize: 10, fontFamily: Fonts.regular,
-        color: 'rgba(255,255,255,0.35)', marginTop: 4,
-        letterSpacing: 0.3,
+        fontSize: 12, fontFamily: Fonts.semiBold,
+        color: '#7C5CBF', marginTop: 4,
+        letterSpacing: 0.5, textTransform: 'uppercase'
     },
 
     // Action buttons

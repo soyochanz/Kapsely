@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Image, SafeAreaView, StatusBar, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, SafeAreaView, StatusBar, ActivityIndicator } from 'react-native';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useTranslation } from 'react-i18next';
@@ -51,6 +52,9 @@ export default function UserListScreen() {
             <Image 
                 source={{ uri: Colors.getAvatarUrl(item.avatar_url, item.display_name || item.username) }} 
                 style={styles.avatar} 
+                contentFit="cover"
+                cachePolicy="memory-disk"
+                transition={200}
             />
             <View style={styles.userInfo}>
                 <View style={styles.nameRow}>

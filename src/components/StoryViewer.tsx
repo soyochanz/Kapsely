@@ -210,7 +210,7 @@ function LikersSheet({ visible, onClose, storyId }: { visible: boolean; onClose:
                     ) : (
                         likers.map((u, i) => (
                             <View key={i} style={ls.row}>
-                                <Image source={{ uri: u.avatar_url || 'https://via.placeholder.com/150' }} style={ls.avatar} />
+                                <Image source={{ uri: Colors.getAvatarUrl(u.avatar_url, u.display_name || u.username) }} style={ls.avatar} />
                                 <View style={{ flex: 1 }}>
                                     <Text style={ls.name}>{u.display_name || u.username}</Text>
                                     <Text style={ls.handleText}>@{u.username}</Text>
@@ -473,7 +473,7 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                             onPress={() => { progress.stopAnimation(); onClose(); navigation.navigate('UserProfile', { targetUserId: ownerId }); }}
                         >
                             <View style={s.avatarRing}>
-                                <Image source={{ uri: userGroup.avatar_url || 'https://via.placeholder.com/150' }} style={s.avatar} />
+                                <Image source={{ uri: Colors.getAvatarUrl(userGroup.avatar_url, userGroup.display_name || userGroup.username) }} style={s.avatar} />
                             </View>
                             <View>
                                 <Text style={s.username}>{userGroup.display_name || userGroup.username}</Text>
@@ -580,7 +580,7 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                     {/* Live comment bubble — above input */}
                     {activeComment && (
                         <Animated.View style={[s.commentBubble, { opacity: commentFadeAnim }]}>
-                            <Image source={{ uri: activeComment.profiles?.avatar_url || 'https://via.placeholder.com/150' }} style={s.commentBubbleAvatar} />
+                            <Image source={{ uri: Colors.getAvatarUrl(activeComment.profiles?.avatar_url, activeComment.profiles?.display_name || activeComment.profiles?.username) }} style={s.commentBubbleAvatar} />
                             <View style={s.commentBubbleBody}>
                                 <Text style={s.commentBubbleUser}>@{activeComment.profiles?.username}</Text>
                                 <Text style={s.commentBubbleText} numberOfLines={2}>{activeComment.content}</Text>
