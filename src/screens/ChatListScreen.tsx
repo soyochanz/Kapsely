@@ -4,6 +4,7 @@ import {
     StatusBar, Modal, TextInput, Alert, Platform, ScrollView
 } from 'react-native';
 import { Image } from 'expo-image';
+import { FlashList } from '@shopify/flash-list';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -19,6 +20,8 @@ export default function ChatListScreen() {
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<any[]>([]);
     const [searching, setSearching] = useState(false);
+    const [archivedConvIds, setArchivedConvIds] = useState<string[]>([]);
+    const [showArchived, setShowArchived] = useState(false);
 
     // Group creation states
     const [showGroupModal, setShowGroupModal] = useState(false);
@@ -81,7 +84,7 @@ export default function ChatListScreen() {
         const otherUserIds = Object.values(otherUserIdMap);
         let profiles: any[] = [];
         if (otherUserIds.length > 0) {
-            const { data: profs } = await supabase.from('profiles').select('id, username, avatar_url, display_name').in('id', otherUserIds);
+            const { data: profs } = await supabase.from('profiles').select('id, username, avatar_url, display_name, favorite_color').in('id', otherUserIds);
             profiles = profs || [];
         }
 
@@ -144,6 +147,11 @@ export default function ChatListScreen() {
             const user = session?.user;
             if (!user) return;
             setCurrentUserId(user.id);
+
+            // Load archived chats
+            const stored = await AsyncStorage.getItem(`archived_chats_${user.id}`);
+            if (stored) setArchivedConvIds(JSON.parse(stored));
+
             await loadConversations(user.id);
 
             channelRef.current = supabase
@@ -192,7 +200,7 @@ export default function ChatListScreen() {
         if (!user) return;
         const { data } = await supabase
             .from('profiles')
-            .select('*')
+            .select('id, username, avatar_url, display_name, favorite_color')
             .ilike('username', `%${query}%`)
             .neq('id', user.id)
             .limit(10);
@@ -209,7 +217,7 @@ export default function ChatListScreen() {
         if (!user) return;
         const { data } = await supabase
             .from('profiles')
-            .select('*')
+            .select('id, username, avatar_url, display_name, favorite_color')
             .ilike('username', `%${query}%`)
             .neq('id', user.id)
             .limit(10);
@@ -346,13 +354,43 @@ export default function ChatListScreen() {
         }
     };
 
+    const handleArchiveConversation = async (conversationId: string) => {
+        try {
+            const uid = currentUserId;
+            if (!uid) return;
+            const newArchived = [...archivedConvIds, conversationId];
+            setArchivedConvIds(newArchived);
+            await AsyncStorage.setItem(`archived_chats_${uid}`, JSON.stringify(newArchived));
+        } catch (error) {
+            Alert.alert('Error', 'No se pudo archivar el chat.');
+        }
+    };
+
+    const handleUnarchiveConversation = async (conversationId: string) => {
+        try {
+            const uid = currentUserId;
+            if (!uid) return;
+            const newArchived = archivedConvIds.filter(id => id !== conversationId);
+            setArchivedConvIds(newArchived);
+            await AsyncStorage.setItem(`archived_chats_${uid}`, JSON.stringify(newArchived));
+        } catch (error) {
+            Alert.alert('Error', 'No se pudo desarchivar el chat.');
+        }
+    };
+
     const renderItem = ({ item }: any) => (
         <SwipeableChatRow
             item={item}
             onDelete={handleDeleteConversation}
+            onArchive={showArchived ? handleUnarchiveConversation : handleArchiveConversation}
             onPress={() => navigation.navigate('ChatDetail', { conversationId: item.conversation_id })}
             onAvatarPress={() => !item.is_group && (navigation as any).navigate('UserProfile', { targetUserId: item.otherUser.id })}
+            isArchived={showArchived}
         />
+    );
+
+    const filteredConversations = conversations.filter(c => 
+        showArchived ? archivedConvIds.includes(c.conversation_id) : !archivedConvIds.includes(c.conversation_id)
     );
 
     return (
@@ -375,21 +413,41 @@ export default function ChatListScreen() {
                 </View>
             </View>
 
+            {archivedConvIds.length > 0 && !loading && (
+                <TouchableOpacity 
+                    style={styles.archivedToggle} 
+                    onPress={() => setShowArchived(!showArchived)}
+                >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                        <Ionicons name={showArchived ? "chevron-up" : "archive-outline"} size={20} color={Colors.primary} />
+                        <Text style={styles.archivedToggleText}>
+                            {showArchived ? 'Volver a Mensajes' : `Archivados (${archivedConvIds.length})`}
+                        </Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={16} color={Colors.primary} />
+                </TouchableOpacity>
+            )}
+
             {loading ? (
                 <View style={styles.centered}><ActivityIndicator color={Colors.primary} /></View>
             ) : (
-                <FlatList
-                    data={conversations}
-                    keyExtractor={(item) => item.conversation_id}
+                <FlashList
+                    data={filteredConversations}
+                    keyExtractor={(item: any) => item.conversation_id}
                     renderItem={renderItem}
+                    {...({ estimatedItemSize: 88 } as any)}
                     contentContainerStyle={styles.list}
                     ListEmptyComponent={
                         <View style={styles.empty}>
                             <Ionicons name="chatbubbles-outline" size={64} color={Colors.textMuted} />
-                            <Text style={styles.emptyText}>No messages yet</Text>
-                            <TouchableOpacity style={styles.startBtn} activeOpacity={0.8} onPress={() => setShowSearch(true)}>
-                                <Text style={styles.startBtnText}>Start a conversation</Text>
-                            </TouchableOpacity>
+                            <Text style={styles.emptyText}>
+                                {showArchived ? 'No tienes chats archivados' : 'No messages yet'}
+                            </Text>
+                            {!showArchived && (
+                                <TouchableOpacity style={styles.startBtn} activeOpacity={0.8} onPress={() => setShowSearch(true)}>
+                                    <Text style={styles.startBtnText}>Start a conversation</Text>
+                                </TouchableOpacity>
+                            )}
                         </View>
                     }
                 />
@@ -432,7 +490,7 @@ export default function ChatListScreen() {
                                     disabled={!!startingChatId}
                                 >
                                     <Image 
-                                        source={{ uri: Colors.getAvatarUrl(item.avatar_url, item.display_name || item.username) }} 
+                                        source={{ uri: Colors.getAvatarUrl(item.avatar_url, item.display_name || item.username, item.favorite_color) }} 
                                         style={styles.userAvatar} 
                                         contentFit="cover"
                                         cachePolicy="memory-disk"
@@ -508,7 +566,7 @@ export default function ChatListScreen() {
                                     activeOpacity={0.7}
                                 >
                                     <Image 
-                                        source={{ uri: Colors.getAvatarUrl(u.avatar_url, u.display_name || u.username) }} 
+                                        source={{ uri: Colors.getAvatarUrl(u.avatar_url, u.display_name || u.username, u.favorite_color) }} 
                                         style={styles.chipAvatar} 
                                         contentFit="cover"
                                         cachePolicy="memory-disk"
@@ -550,7 +608,7 @@ export default function ChatListScreen() {
                                         onPress={() => toggleGroupUser(item)}
                                     >
                                         <Image 
-                                            source={{ uri: Colors.getAvatarUrl(item.avatar_url, item.display_name || item.username) }} 
+                                            source={{ uri: Colors.getAvatarUrl(item.avatar_url, item.display_name || item.username, item.favorite_color) }} 
                                             style={styles.userAvatar} 
                                             contentFit="cover"
                                             cachePolicy="memory-disk"
@@ -665,4 +723,23 @@ const styles = StyleSheet.create({
         ...Shadow.subtle
     },
     unreadBadgeText: { color: '#fff', fontSize: 11, fontFamily: Fonts.bold },
+
+    archivedToggle: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: 20,
+        paddingVertical: 14,
+        backgroundColor: Colors.primary + '08',
+        marginHorizontal: 16,
+        marginTop: 12,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: Colors.primary + '15',
+    },
+    archivedToggleText: {
+        fontSize: 14,
+        fontFamily: Fonts.bold,
+        color: Colors.primary,
+    },
 });

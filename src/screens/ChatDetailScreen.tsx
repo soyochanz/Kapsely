@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
 import {
     View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, Modal, Alert,
-    KeyboardAvoidingView, Platform, StatusBar, ActivityIndicator, Image, Keyboard,
-    ScrollView, Linking
+    KeyboardAvoidingView, Platform, StatusBar, ActivityIndicator, Keyboard,
+    ScrollView, Linking, Animated as RNAnimated
 } from 'react-native';
+import { Image } from 'expo-image';
+import { FlashList } from '@shopify/flash-list';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useIsFocused, useNavigation, useRoute } from '@react-navigation/native';
-import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
+import { Colors, Fonts, Spacing, BorderRadius, Shadow, PALETTE } from '../theme';
 import * as ExpoLocation from 'expo-location';
 import { supabase } from '../lib/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -18,50 +20,9 @@ import { Audio, Video } from 'expo-av';
 import { optimizeImageForUpload } from '../utils/mediaOptimization';
 import { MODEL_IMAGES, MODEL_TINTS, MODEL_IMAGES_OPEN } from '../constants/models';
 import { timerConfigManager } from '../utils/timerConfig';
+import SwipeableMessage from '../components/SwipeableMessage';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
-// ─── Design tokens ───────────────────────────────────────────────────────────
-const PALETTE = {
-    // Soft lavender — replaces the harsh #7C3AED
-    myBubble: '#9B7FD4',       // muted violet
-    myBubbleLight: '#B39DE0',       // highlight tint
-    myText: '#FFFFFF',
-    myTimestamp: 'rgba(255,255,255,0.62)',
-    myCheckmark: 'rgba(255,255,255,0.55)',
-    myCheckmarkRead: '#FFFFFF',
-
-    theirBubble: '#F0EDF8',       // very pale lavender-white
-    theirBorder: '#E4DFF2',
-    theirText: '#2D2541',
-    theirTimestamp: '#A39BB8',
-
-    inputBg: '#F7F5FB',
-    inputBorder: '#E4DFF2',
-    inputText: '#2D2541',
-    inputPlaceholder: '#B0A8C8',
-
-    sendBtn: '#9B7FD4',
-    recordBtn: '#9B7FD4',
-    recordActive: '#E57373',
-
-    headerBg: '#FFFFFF',
-    headerBorder: '#EDE9F6',
-
-    replyBar: '#EDE9F6',
-    replyAccent: '#9B7FD4',
-    replyText: '#2D2541',
-    replyMuted: '#7A6D8E',
-
-    deletedBubble: '#F3F0FA',
-    deletedBorder: '#D9D3EC',
-    deletedText: '#A89EC0',
-
-    locationCard: '#FFFFFF',
-    locationIcon: '#9B7FD4',
-    locationBg: '#F0EDF8',
-
-    toolbarIcon: '#A89EC0',
-    toolbarIconActive: '#9B7FD4',
-};
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
@@ -549,6 +510,7 @@ export default function ChatDetailScreen() {
     const [loadingMore, setLoadingMore] = useState(false);
     const PAGE_SIZE = 30;
     const [newMessage, setNewMessage] = useState('');
+    const [isInputFocused, setIsInputFocused] = useState(false);
     const [currentUserId, setCurrentUserId] = useState<string | null>(null);
     const [otherUser, setOtherUser] = useState<any>(null);
     const insets = useSafeAreaInsets();
@@ -556,6 +518,16 @@ export default function ChatDetailScreen() {
     const route = useRoute<any>();
     const { conversationId } = route.params;
     const [isKeyboardVisible, setKeyboardVisible] = useState(false);
+    const inputAnimation = useRef(new RNAnimated.Value(0)).current; // 0: buttons visible, 1: expanded
+
+    useEffect(() => {
+        RNAnimated.timing(inputAnimation, {
+            toValue: (newMessage.trim() || isInputFocused) ? 1 : 0,
+            duration: 250,
+            useNativeDriver: false,
+        }).start();
+    }, [newMessage, isInputFocused, inputAnimation]);
+
     const [isRecordingAudio, setIsRecordingAudio] = useState(false);
     const [myUserProfile, setMyUserProfile] = useState<any>(null);
     const [pendingMedia, setPendingMedia] = useState<string | null>(null);
@@ -584,6 +556,28 @@ export default function ChatDetailScreen() {
     const [userCapsules, setUserCapsules] = useState<any[]>([]);
     const [loadingCapsules, setLoadingCapsules] = useState(false);
     const isFocused = useIsFocused();
+    const isSubscribedRef = useRef(true);
+
+    useEffect(() => {
+        isSubscribedRef.current = true;
+        const updateActiveStatus = async (id: string | null) => {
+            if (!currentUserId) return;
+            try {
+                await supabase.from('profiles').update({ active_conversation_id: id }).eq('id', currentUserId);
+            } catch (e) { /* ignore if column doesn't exist yet */ }
+        };
+
+        if (isFocused && conversationId && conversationId !== 'new') {
+            updateActiveStatus(conversationId);
+        } else {
+            updateActiveStatus(null);
+        }
+
+        return () => {
+            isSubscribedRef.current = false;
+            updateActiveStatus(null);
+        };
+    }, [isFocused, conversationId, currentUserId]);
 
     // Keyboard listeners
     useEffect(() => {
@@ -620,7 +614,7 @@ export default function ChatDetailScreen() {
 
         if (convData?.is_group) {
             if (allParts?.length) {
-                const { data: profs } = await supabase.from('profiles').select('id, username, display_name, avatar_url').in('id', allParts.map((p: any) => p.user_id));
+                const { data: profs } = await supabase.from('profiles').select('id, username, display_name, avatar_url, favorite_color').in('id', allParts.map((p: any) => p.user_id));
                 if (profs) setGroupParticipants(profs);
             }
         } else {
@@ -737,33 +731,7 @@ export default function ChatDetailScreen() {
         };
     }, [conversationId, loadData]);
 
-    // Fallback polling
-    useEffect(() => {
-        if (!isFocused || !conversationId || conversationId === 'new') return;
-        const pollLatest = async () => {
-            const since = latestMessageAtRef.current;
-            let q = supabase.from('messages').select('*').eq('conversation_id', conversationId).order('created_at', { ascending: false }).limit(25);
-            if (since) q = q.gt('created_at', since);
-            const { data } = await q;
-            if (!data?.length) return;
-            const newMsgs = data.filter((m: any) =>
-                !deletedIdsRef.current.includes(m.id) &&
-                (!chatDeletionTimeRef.current || new Date(m.created_at) > new Date(chatDeletionTimeRef.current))
-            );
-            if (!newMsgs.length) return;
-            setMessages(prev => {
-                const seen = new Set(prev.map(m => m.id));
-                const merged = [...newMsgs.filter((m: any) => !seen.has(m.id)), ...prev];
-                return merged.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-            });
-            const newest = newMsgs[0]?.created_at;
-            if (newest && (!latestMessageAtRef.current || new Date(newest) > new Date(latestMessageAtRef.current)))
-                latestMessageAtRef.current = newest;
-        };
-        const timer = setInterval(pollLatest, 2500);
-        pollLatest();
-        return () => clearInterval(timer);
-    }, [conversationId, isFocused]);
+
 
     const uploadFile = useCallback(async (uri: string, type: string, userId: string) => {
         const normalized = type === 'image' ? await optimizeImageForUpload(uri) : uri;
@@ -802,7 +770,7 @@ export default function ChatDetailScreen() {
         }
 
         const tempId = `temp_${Date.now()}`;
-        const tempMsg = { id: tempId, conversation_id: activeConvId, sender_id: currentUserId, content: msg, mediaUrl: mediaSave, media_url: mediaToUpload ? 'local://' : null, created_at: new Date().toISOString(), is_read: false };
+        const tempMsg = { id: tempId, conversation_id: activeConvId, sender_id: currentUserId, content: msg, mediaUrl: mediaSave, media_url: mediaToUpload ? 'local://' : null, media_type: mediaType, created_at: new Date().toISOString(), is_read: false };
         setMessages(prev => [tempMsg, ...prev]);
         setIsUploading(true);
 
@@ -977,7 +945,7 @@ export default function ChatDetailScreen() {
         setCapsuleSearchQuery(query);
         if (query.length < 2) { setCapsuleSearchResults([]); return; }
         setCapsuleSearching(true);
-        const { data } = await supabase.from('profiles').select('id, username, display_name, avatar_url').ilike('username', `%${query}%`).limit(5);
+        const { data } = await supabase.from('profiles').select('id, username, display_name, avatar_url, favorite_color').ilike('username', `%${query}%`).limit(5);
         setCapsuleSearchResults(data || []);
         setCapsuleSearching(false);
     }, []);
@@ -999,26 +967,7 @@ export default function ChatDetailScreen() {
     }, [sendMessage]);
 
     // ── Long press menu ───────────────────────────────────────────────────────
-    const handleLongPressMessage = useCallback((item: any) => {
-        const isMe = item.sender_id === currentUserId;
-        if (item.is_deleted) return;
-        Alert.alert('Opciones', '¿Qué deseas hacer?', [
-            { text: '↩️ Responder', onPress: () => setReplyingTo(item) },
-            {
-                text: '🗑 Eliminar', style: 'destructive',
-                onPress: () => {
-                    if (isMe) {
-                        Alert.alert('Eliminar mensaje', '¿Para quién?', [
-                            { text: 'Para todos', style: 'destructive', onPress: () => deleteMessageEveryone(item.id) },
-                            { text: 'Solo para mí', style: 'destructive', onPress: () => deleteMessageForMe(item.id) },
-                            { text: 'Cancelar', style: 'cancel' },
-                        ]);
-                    } else { deleteMessageForMe(item.id); }
-                },
-            },
-            { text: 'Cancelar', style: 'cancel' },
-        ]);
-    }, [currentUserId, deleteMessageEveryone, deleteMessageForMe]);
+
 
     const formatMessageTime = useCallback((dateStr: string) => {
         if (!dateStr) return '';
@@ -1033,6 +982,19 @@ export default function ChatDetailScreen() {
     }, []);
 
     // ── Render message ────────────────────────────────────────────────────────
+    const handleSwipeDelete = useCallback((item: any) => {
+        const isMe = item.sender_id === currentUserId;
+        if (isMe) {
+            Alert.alert('Eliminar mensaje', '¿Para quién?', [
+                { text: 'Para todos', style: 'destructive', onPress: () => deleteMessageEveryone(item.id) },
+                { text: 'Solo para mí', style: 'destructive', onPress: () => deleteMessageForMe(item.id) },
+                { text: 'Cancelar', style: 'cancel' },
+            ]);
+        } else {
+            deleteMessageForMe(item.id);
+        }
+    }, [currentUserId, deleteMessageEveryone, deleteMessageForMe]);
+
     const renderMessage = useCallback(({ item, index }: any) => {
         const isMe = item.sender_id === currentUserId;
         const prevMsg = index < messages.length - 1 ? messages[index + 1] : null;
@@ -1045,152 +1007,167 @@ export default function ChatDetailScreen() {
         if (deletedIdsRef.current.includes(item.id)) return null;
 
         return (
-            <View style={[
-                styles.msgWrapper,
-                senderChanged && styles.msgWrapperSpaced,
-                isMe ? styles.myMsg : styles.theirMsg,
-            ]}>
-                <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 6 }}>
-                    {/* Their avatar */}
-                    {!isMe && (
-                        <View style={styles.bubbleAvatarSlot}>
-                            {nextDiff ? (
-                                <Image
-                                    source={{ uri: Colors.getAvatarUrl(otherUser?.avatar_url, otherUser?.display_name || otherUser?.username) }}
-                                    style={styles.bubbleAvatar}
-                                />
-                            ) : <View style={styles.bubbleAvatarSpacer} />}
-                        </View>
-                    )}
-
-                    {/* Bubble */}
-                    <TouchableOpacity
-                        activeOpacity={0.88}
-                        style={[
-                            styles.bubble,
-                            isMe ? styles.myBubble : styles.theirBubble,
-                            isDeleted && styles.deletedBubble,
-                        ]}
-                        onLongPress={() => handleLongPressMessage(item)}
-                    >
-                        {isDeleted ? (
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                                <Ionicons name="ban-outline" size={13} color={PALETTE.deletedText} />
-                                <Text style={styles.deletedText}>Mensaje eliminado</Text>
+            <SwipeableMessage
+                isMe={isMe}
+                isDeleted={isDeleted}
+                onReply={() => setReplyingTo(item)}
+                onDelete={() => handleSwipeDelete(item)}
+            >
+                <View style={[
+                    styles.msgWrapper,
+                    senderChanged && styles.msgWrapperSpaced,
+                    isMe ? styles.myMsg : styles.theirMsg,
+                ]}>
+                    <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 6 }}>
+                        {/* Their avatar */}
+                        {!isMe && (
+                            <View style={styles.bubbleAvatarSlot}>
+                                {nextDiff ? (
+                                    <Image
+                                        source={{ uri: Colors.getAvatarUrl(otherUser?.avatar_url, otherUser?.display_name || otherUser?.username, otherUser?.favorite_color) }}
+                                        style={styles.bubbleAvatar}
+                                    />
+                                ) : <View style={styles.bubbleAvatarSpacer} />}
                             </View>
-                        ) : (
-                            <>
-                                {/* Reply preview */}
-                                {repliedMsg && (
-                                    <View style={[styles.replyInBubble, isMe ? styles.myReplyInBubble : styles.theirReplyInBubble]}>
-                                        <Text style={{ fontSize: 11, fontFamily: Fonts.bold, color: isMe ? 'rgba(255,255,255,0.9)' : PALETTE.myBubble, marginBottom: 2 }}>
-                                            {repliedMsg.sender_id === currentUserId ? 'Tú' : (otherUser?.display_name || 'User')}
-                                        </Text>
-                                        <Text style={{ fontSize: 12, color: isMe ? 'rgba(255,255,255,0.8)' : PALETTE.theirText }} numberOfLines={2}>
-                                            {repliedMsg.content}
-                                        </Text>
-                                    </View>
-                                )}
-
-                                {/* Image */}
-                                {item.media_type === 'image' && (item.mediaUrl || item.media_url) && (
-                                    <TouchableOpacity activeOpacity={0.9} onPress={() => { setViewerUrl(item.mediaUrl || item.media_url); setViewerVisible(true); }}>
-                                        <Image source={{ uri: item.mediaUrl || item.media_url }} style={{ width: 215, height: 215, borderRadius: 14, marginBottom: 4 }} resizeMode="cover" />
-                                    </TouchableOpacity>
-                                )}
-
-                                {/* Video */}
-                                {item.media_type === 'video' && (item.mediaUrl || item.media_url) && (
-                                    <View style={{ width: 215, height: 215, borderRadius: 14, marginBottom: 4, overflow: 'hidden' }}>
-                                        <Video source={{ uri: item.mediaUrl || item.media_url }} style={{ width: '100%', height: '100%' }} useNativeControls isLooping resizeMode={"cover" as any} />
-                                    </View>
-                                )}
-
-                                {/* Audio */}
-                                {item.media_type === 'audio' && (item.mediaUrl || item.media_url) && (
-                                    <AudioMessageBubble uri={item.mediaUrl || item.media_url} isMe={isMe} />
-                                )}
-
-                                {/* Location */}
-                                {item.media_type === 'location' && item.content && (() => {
-                                    const [lat, lng] = item.content.split(',');
-                                    const mapUrl = `https://static-maps.yandex.ru/1.x/?ll=${lng},${lat}&z=14&l=map&size=450,250&pt=${lng},${lat},pm2rdm`;
-                                    return (
-                                        <TouchableOpacity 
-                                            activeOpacity={0.88}
-                                            onPress={() => Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${lat},${lng}`)}
-                                            style={{
-                                                width: 235,
-                                                borderRadius: 20,
-                                                overflow: 'hidden',
-                                                backgroundColor: isMe ? 'rgba(255,255,255,0.15)' : '#FFFFFF',
-                                                borderWidth: 1,
-                                                borderColor: isMe ? 'rgba(255,255,255,0.25)' : PALETTE.theirBorder,
-                                            }}
-                                        >
-                                            <View style={{ height: 120, backgroundColor: isMe ? 'rgba(255,255,255,0.05)' : '#F0F0F0' }}>
-                                                <Image source={{ uri: mapUrl }} style={{ flex: 1 }} />
-                                                <View style={{ position: 'absolute', top: 10, right: 10, width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(255,255,255,0.9)', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 4, elevation: 3 }}>
-                                                    <Ionicons name="location" size={18} color="#9B7FD4" />
-                                                </View>
-                                            </View>
-                                            <View style={{ padding: 12, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                                                <View style={{ flex: 1 }}>
-                                                    <Text style={{ fontSize: 14, fontFamily: Fonts.bold, color: isMe ? '#fff' : '#2D2541' }}>Ubicación Compartida</Text>
-                                                    <Text style={{ fontSize: 11, color: isMe ? 'rgba(255,255,255,0.7)' : PALETTE.theirTimestamp, marginTop: 1 }}>Ver en Google Maps</Text>
-                                                </View>
-                                                <Ionicons name="chevron-forward" size={15} color={isMe ? 'rgba(255,255,255,0.6)' : '#9B7FD4'} />
-                                            </View>
-                                        </TouchableOpacity>
-                                    );
-                                })()}
-
-                                {/* Capsule */}
-                                {item.media_type === 'capsule' && item.content && (
-                                    <ChatCapsuleCard capsuleId={item.content} isMe={isMe} />
-                                )}
-
-                                {/* Text */}
-                                {(!item.media_type || item.media_type === 'text' || (item.content?.trim() && !['capsule', 'location'].includes(item.media_type))) && (
-                                    <Text style={[styles.msgText, isMe ? styles.myMsgText : styles.theirMsgText]}>{item.content}</Text>
-                                )}
-                            </>
                         )}
 
-                        {/* Footer */}
-                        <View style={styles.msgFooter}>
-                            <Text style={[isMe ? styles.myMsgTime : styles.msgTime]}>{formatMessageTime(item.created_at)}</Text>
-                            {isMe && !isDeleted && (
-                                <Ionicons
-                                    name={item.is_read ? 'checkmark-done' : 'checkmark'}
-                                    size={13}
-                                    color={item.is_read ? PALETTE.myCheckmarkRead : PALETTE.myCheckmark}
-                                />
-                            )}
-                        </View>
-                    </TouchableOpacity>
+                        {/* Bubble */}
+                        <TouchableOpacity
+                            activeOpacity={0.88}
+                            style={[
+                                styles.bubble,
+                                isMe ? styles.myBubble : styles.theirBubble,
+                                isDeleted && styles.deletedBubble,
+                                {
+                                    shadowColor: isMe ? PALETTE.myBubble : '#000',
+                                    shadowOffset: { width: 0, height: 2 },
+                                    shadowOpacity: isMe ? 0.2 : 0.05,
+                                    shadowRadius: 4,
+                                    elevation: 2,
+                                }
+                            ]}
+                        >
+                            {isDeleted ? (
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                    <Ionicons name="ban-outline" size={13} color={PALETTE.deletedText} />
+                                    <Text style={styles.deletedText}>Mensaje eliminado</Text>
+                                </View>
+                            ) : (
+                                <>
+                                    {/* Reply preview */}
+                                    {repliedMsg && (
+                                        <View style={[styles.replyInBubble, isMe ? styles.myReplyInBubble : styles.theirReplyInBubble]}>
+                                            <Text style={{ fontSize: 11, fontFamily: Fonts.bold, color: isMe ? 'rgba(255,255,255,0.9)' : PALETTE.myBubble, marginBottom: 2 }}>
+                                                {repliedMsg.sender_id === currentUserId ? 'Tú' : (otherUser?.display_name || 'User')}
+                                            </Text>
+                                            <Text style={{ fontSize: 12, color: isMe ? 'rgba(255,255,255,0.8)' : PALETTE.theirText }} numberOfLines={2}>
+                                                {repliedMsg.content}
+                                            </Text>
+                                        </View>
+                                    )}
 
-                    {/* My avatar */}
-                    {isMe && (
-                        <View style={styles.bubbleAvatarSlot}>
-                            {nextDiff ? (
-                                <Image
-                                    source={{ uri: Colors.getAvatarUrl(myUserProfile?.avatar_url, myUserProfile?.display_name || myUserProfile?.username) }}
-                                    style={[styles.bubbleAvatar, styles.myBubbleAvatar]}
-                                />
-                            ) : <View style={styles.bubbleAvatarSpacer} />}
-                        </View>
-                    )}
+                                    {/* Image */}
+                                    {item.media_type === 'image' && (item.mediaUrl || item.media_url) && (
+                                        <TouchableOpacity activeOpacity={0.9} onPress={() => { setViewerUrl(item.mediaUrl || item.media_url); setViewerVisible(true); }}>
+                                            <Image source={{ uri: item.mediaUrl || item.media_url }} style={{ width: 215, height: 215, borderRadius: 14, marginBottom: 4 }} resizeMode="cover" />
+                                        </TouchableOpacity>
+                                    )}
+
+                                    {/* Video */}
+                                    {item.media_type === 'video' && (item.mediaUrl || item.media_url) && (
+                                        <View style={{ width: 215, height: 215, borderRadius: 14, marginBottom: 4, overflow: 'hidden' }}>
+                                            <Video source={{ uri: item.mediaUrl || item.media_url }} style={{ width: '100%', height: '100%' }} useNativeControls isLooping resizeMode={"cover" as any} />
+                                        </View>
+                                    )}
+
+                                    {/* Audio */}
+                                    {item.media_type === 'audio' && (item.mediaUrl || item.media_url) && (
+                                        <AudioMessageBubble uri={item.mediaUrl || item.media_url} isMe={isMe} />
+                                    )}
+
+                                    {/* Location */}
+                                    {item.media_type === 'location' && item.content && (() => {
+                                        const [lat, lng] = item.content.split(',');
+                                        const mapUrl = `https://static-maps.yandex.ru/1.x/?ll=${lng},${lat}&z=14&l=map&size=450,250&pt=${lng},${lat},pm2rdm`;
+                                        return (
+                                            <TouchableOpacity 
+                                                activeOpacity={0.88}
+                                                onPress={() => Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${lat},${lng}`)}
+                                                style={{
+                                                    width: 235,
+                                                    borderRadius: 20,
+                                                    overflow: 'hidden',
+                                                    backgroundColor: isMe ? 'rgba(255,255,255,0.15)' : '#FFFFFF',
+                                                    borderWidth: 1,
+                                                    borderColor: isMe ? 'rgba(255,255,255,0.25)' : PALETTE.theirBorder,
+                                                }}
+                                            >
+                                                <View style={{ height: 120, backgroundColor: isMe ? 'rgba(255,255,255,0.05)' : '#F0F0F0' }}>
+                                                    <Image source={{ uri: mapUrl }} style={{ flex: 1 }} />
+                                                    <View style={{ position: 'absolute', top: 10, right: 10, width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(255,255,255,0.9)', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 4, elevation: 3 }}>
+                                                        <Ionicons name="location" size={18} color="#9B7FD4" />
+                                                    </View>
+                                                </View>
+                                                <View style={{ padding: 12, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                                    <View style={{ flex: 1 }}>
+                                                        <Text style={{ fontSize: 14, fontFamily: Fonts.bold, color: isMe ? '#fff' : '#2D2541' }}>Ubicación Compartida</Text>
+                                                        <Text style={{ fontSize: 11, color: isMe ? 'rgba(255,255,255,0.7)' : PALETTE.theirTimestamp, marginTop: 1 }}>Ver en Google Maps</Text>
+                                                    </View>
+                                                    <Ionicons name="chevron-forward" size={15} color={isMe ? 'rgba(255,255,255,0.6)' : '#9B7FD4'} />
+                                                </View>
+                                            </TouchableOpacity>
+                                        );
+                                    })()}
+
+                                    {/* Capsule */}
+                                    {item.media_type === 'capsule' && item.content && (
+                                        <ChatCapsuleCard capsuleId={item.content} isMe={isMe} />
+                                    )}
+
+                                    {/* Text */}
+                                    {(!item.media_type || item.media_type === 'text' || (item.content?.trim() && !['capsule', 'location'].includes(item.media_type))) && (
+                                        <Text style={[styles.msgText, isMe ? styles.myMsgText : styles.theirMsgText]}>{item.content}</Text>
+                                    )}
+                                </>
+                            )}
+
+                            {/* Footer */}
+                            <View style={styles.msgFooter}>
+                                <Text style={[isMe ? styles.myMsgTime : styles.msgTime]}>{formatMessageTime(item.created_at)}</Text>
+                                {isMe && !isDeleted && (
+                                    <Ionicons
+                                        name={item.is_read ? 'checkmark-done' : 'checkmark'}
+                                        size={13}
+                                        color={item.is_read ? PALETTE.myCheckmarkRead : PALETTE.myCheckmark}
+                                    />
+                                )}
+                            </View>
+                        </TouchableOpacity>
+
+                        {/* My avatar */}
+                        {isMe && (
+                            <View style={styles.bubbleAvatarSlot}>
+                                {nextDiff ? (
+                                    <Image
+                                        source={{ uri: Colors.getAvatarUrl(myUserProfile?.avatar_url, myUserProfile?.display_name || myUserProfile?.username, myUserProfile?.favorite_color) }}
+                                        style={[styles.bubbleAvatar, styles.myBubbleAvatar]}
+                                    />
+                                ) : <View style={styles.bubbleAvatarSpacer} />}
+                            </View>
+                        )}
+                    </View>
                 </View>
-            </View>
+            </SwipeableMessage>
         );
-    }, [currentUserId, messages, otherUser, myUserProfile, formatMessageTime, handleLongPressMessage]);
+
+    }, [currentUserId, messages, otherUser, myUserProfile, formatMessageTime, handleSwipeDelete]);
 
     const keyExtractor = useCallback((item: any) => item.id, []);
 
     // ── Render ────────────────────────────────────────────────────────────────
     return (
-        <View style={styles.container}>
+        <GestureHandlerRootView style={{ flex: 1 }}>
+            <View style={styles.container}>
             <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
             {/* Header */}
@@ -1214,7 +1191,7 @@ export default function ChatDetailScreen() {
                                 <Ionicons name="people-outline" size={16} color={PALETTE.myBubble} />
                             </View>
                     ) : (
-                        <Image source={{ uri: Colors.getAvatarUrl(otherUser?.avatar_url, otherUser?.display_name || otherUser?.username) }} style={styles.headerAvatar} />
+                        <Image source={{ uri: Colors.getAvatarUrl(otherUser?.avatar_url, otherUser?.display_name || otherUser?.username, otherUser?.favorite_color) }} style={styles.headerAvatar} />
                     )}
                     <View>
                         <Text style={styles.headerTitle}>
@@ -1250,14 +1227,17 @@ export default function ChatDetailScreen() {
                 {loading ? (
                     <View style={styles.centered}><ActivityIndicator color={PALETTE.myBubble} /></View>
                 ) : (
-                    <FlatList
-                        data={messages}
-                        keyExtractor={keyExtractor}
-                        renderItem={renderMessage}
+                    <FlashList
+                        data={messages as any}
+                        keyExtractor={keyExtractor as any}
+                        renderItem={renderMessage as any}
                         contentContainerStyle={styles.list}
                         showsVerticalScrollIndicator={false}
                         removeClippedSubviews
-                        inverted
+                        {...({
+                            inverted: true,
+                            estimatedItemSize: 80
+                        } as any)}
                         onEndReached={loadMoreMessages}
                         onEndReachedThreshold={0.5}
                         ListFooterComponent={loadingMore
@@ -1268,22 +1248,41 @@ export default function ChatDetailScreen() {
 
                 {/* Input row */}
                 <View style={[styles.inputRow, { paddingBottom: isKeyboardVisible ? 6 : Math.max(insets.bottom || 16, Spacing.md) }]}>
-                    {/* Camera */}
-                    <TouchableOpacity style={styles.toolbarBtn} onPress={handleCamera} activeOpacity={0.7}>
-                        <Ionicons name="camera-outline" size={22} color={PALETTE.toolbarIcon} />
-                    </TouchableOpacity>
-                    {/* Gallery */}
-                    <TouchableOpacity style={styles.toolbarBtn} onPress={handleGallery} activeOpacity={0.7}>
-                        <Ionicons name="image-outline" size={22} color={PALETTE.toolbarIcon} />
-                    </TouchableOpacity>
-                    {/* Location */}
-                    <TouchableOpacity style={styles.toolbarBtn} onPress={handleLocation} activeOpacity={0.7}>
-                        <Ionicons name="location-outline" size={22} color={PALETTE.toolbarIcon} />
-                    </TouchableOpacity>
-                    {/* Capsule */}
-                    <TouchableOpacity style={styles.toolbarBtn} onPress={() => setCapsuleSelectorVisible(true)} activeOpacity={0.7}>
-                        <Ionicons name="layers-outline" size={22} color={PALETTE.toolbarIconActive} />
-                    </TouchableOpacity>
+                    {/* Toolbar Buttons */}
+                    <RNAnimated.View style={{ 
+                        flexDirection: 'row', 
+                        overflow: 'hidden',
+                        width: inputAnimation.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [160, 0] // 4 buttons * ~40px
+                        }),
+                        opacity: inputAnimation.interpolate({
+                            inputRange: [0, 0.5, 1],
+                            outputRange: [1, 0, 0]
+                        })
+                    }}>
+                        <TouchableOpacity style={styles.toolbarBtn} onPress={handleCamera} activeOpacity={0.7}>
+                            <Ionicons name="camera-outline" size={22} color={PALETTE.toolbarIcon} />
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.toolbarBtn} onPress={handleGallery} activeOpacity={0.7}>
+                            <Ionicons name="image-outline" size={22} color={PALETTE.toolbarIcon} />
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.toolbarBtn} onPress={handleLocation} activeOpacity={0.7}>
+                            <Ionicons name="location-outline" size={22} color={PALETTE.toolbarIcon} />
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.toolbarBtn} onPress={() => setCapsuleSelectorVisible(true)} activeOpacity={0.7}>
+                            <Ionicons name="layers-outline" size={22} color={PALETTE.toolbarIconActive} />
+                        </TouchableOpacity>
+                    </RNAnimated.View>
+
+                    {/* Expandable spacer if buttons are hidden */}
+                    {newMessage.trim() === '' && (
+                        <TouchableOpacity 
+                            style={{ paddingHorizontal: 12 }} 
+                            onPress={() => {}}
+                        >
+                        </TouchableOpacity>
+                    )}
 
                     {/* Text input / recording indicator */}
                     <View style={{ flex: 1 }}>
@@ -1306,6 +1305,8 @@ export default function ChatDetailScreen() {
                                     placeholder="Escribe un mensaje..."
                                     placeholderTextColor={PALETTE.inputPlaceholder}
                                     multiline
+                                    onFocus={() => setIsInputFocused(true)}
+                                    onBlur={() => setIsInputFocused(false)}
                                 />
                             </View>
                         )}
@@ -1484,5 +1485,6 @@ export default function ChatDetailScreen() {
                 </View>
             </Modal>
         </View>
+    </GestureHandlerRootView>
     );
 }

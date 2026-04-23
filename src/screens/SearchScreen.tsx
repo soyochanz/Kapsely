@@ -45,7 +45,7 @@ export default function SearchScreen() {
 
         const { data, error } = await supabase
             .from('profiles')
-            .select('id, username, display_name, avatar_url')
+            .select('id, username, display_name, avatar_url, favorite_color')
             .or(`username.ilike.%${query}%,display_name.ilike.%${query}%`)
             .limit(20);
 
@@ -64,7 +64,7 @@ export default function SearchScreen() {
             onPress={() => (navigation as any).navigate('UserProfile', { targetUserId: item.id })}
         >
             <Image
-                source={{ uri: Colors.getAvatarUrl(item.avatar_url, item.display_name || item.username) }}
+                source={{ uri: Colors.getAvatarUrl(item.avatar_url, item.display_name || item.username, item.favorite_color) }}
                 style={styles.avatar}
                 contentFit="cover"
                 cachePolicy="memory-disk"

@@ -36,6 +36,7 @@ function FeedStackNavigator() {
     return (
         <FeedStack.Navigator screenOptions={{ headerShown: false }}>
             <FeedStack.Screen name="FeedMain" component={FeedScreen} />
+            {CommonScreens(FeedStack)}
         </FeedStack.Navigator>
     );
 }
@@ -45,6 +46,7 @@ function SearchStackNavigator() {
     return (
         <SearchStack.Navigator screenOptions={{ headerShown: false }}>
             <SearchStack.Screen name="SearchMain" component={SearchScreen} />
+            {CommonScreens(SearchStack)}
         </SearchStack.Navigator>
     );
 }
@@ -54,6 +56,7 @@ function NotifStackNavigator() {
     return (
         <NotifStack.Navigator screenOptions={{ headerShown: false }}>
             <NotifStack.Screen name="NotifMain" component={NotificationsScreen} />
+            {CommonScreens(NotifStack)}
         </NotifStack.Navigator>
     );
 }
@@ -63,8 +66,23 @@ function ProfileStackNavigator() {
     return (
         <ProfileStack.Navigator screenOptions={{ headerShown: false }}>
             <ProfileStack.Screen name="ProfileMain" component={ProfileScreen} />
+            <ProfileStack.Screen name="UserProfile" component={ProfileScreen} />
             <ProfileStack.Screen name="EditProfile" component={EditProfileScreen} />
+            <ProfileStack.Screen name="CapsuleDetail" component={CapsuleDetailScreen} />
+            <ProfileStack.Screen name="UserList" component={UserListScreen} />
+            <ProfileStack.Screen name="ChatList" component={ChatListScreen} options={{ gestureEnabled: false }} />
         </ProfileStack.Navigator>
+    );
+}
+
+function CommonScreens(S: any) {
+    return (
+        <>
+            <S.Screen name="ChatList" component={ChatListScreen} options={{ gestureEnabled: false }} />
+            <S.Screen name="UserProfile" component={ProfileScreen} />
+            <S.Screen name="CapsuleDetail" component={CapsuleDetailScreen} />
+            <S.Screen name="UserList" component={UserListScreen} />
+        </>
     );
 }
 
@@ -145,18 +163,14 @@ export default function AppNavigator() {
             >
                 <Stack.Screen name="Onboarding" component={OnboardingScreen} />
                 <Stack.Screen name="Main" component={TabNavigator} />
-                <Stack.Screen name="CapsuleDetail" component={CapsuleDetailScreen} />
-                <Stack.Screen name="UserProfile" component={ProfileScreen} />
-                <Stack.Screen name="ChatList" component={ChatListScreen} />
-                <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />
                 <Stack.Screen name="CreateSelection" component={CreateSelectionScreen} />
                 <Stack.Screen name="CapsuleCreation" component={CapsuleCreationScreen} />
                 <Stack.Screen name="CapsuleSelector" component={CapsuleSelectorScreen} />
                 <Stack.Screen name="AddItem" component={AddItemScreen} />
-                <Stack.Screen name="UserList" component={UserListScreen} />
                 <Stack.Screen name="PersonalizeProfile" component={PersonalizeProfileScreen} />
                 <Stack.Screen name="AdminCalibration" component={AdminCalibrationScreen} />
                 <Stack.Screen name="InstagramShare" component={require('../screens/InstagramShareScreen').default} />
+                <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />
             </Stack.Navigator>
         </View>
     );

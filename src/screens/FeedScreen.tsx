@@ -55,10 +55,10 @@ const IMPRESSION_FLUSH_MS = 8000;
 const PAGE_SIZE = 15;
 
 const FILTER_KEYS: FilterType[] = ['all', 'closed', 'open'];
-const FILTER_META: Record<FilterType, { icon: string; label: (t: any) => string }> = {
-    all: { icon: 'apps-outline', label: t => t('feed.all') },
-    closed: { icon: 'lock-closed-outline', label: t => t('feed.closed') },
-    open: { icon: 'book-outline', label: t => t('feed.open') },
+const FILTER_META: Record<FilterType, { icon: string; label: (t: any) => string; iconColor?: string }> = {
+    all: { icon: 'apps', label: t => t('feed.all') },
+    closed: { icon: 'lock-closed', label: t => t('feed.closed'), iconColor: '#FF4D4D' }, // Electric Red
+    open: { icon: 'lock-open', label: t => t('feed.open'), iconColor: '#10B981' },   // Emerald Green
 };
 
 // ─── Skeleton ─────────────────────────────────────────────────────────────────
@@ -867,6 +867,7 @@ export default function FeedScreen() {
                             t={t}
                             icon={meta.icon}
                             label={meta.label(t)}
+                            iconColor={meta.iconColor}
                         />
                     );
                 })}

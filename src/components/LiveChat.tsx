@@ -34,7 +34,7 @@ interface ChatMessage {
     user_id: string;
     message: string;
     created_at: string;
-    profiles?: { username: string; avatar_url: string | null; is_verified?: boolean };
+    profiles?: { username: string; avatar_url: string | null; is_verified?: boolean; display_name?: string };
 }
 
 const REACTION_EMOJIS = ['❤️', '😂', '🔥', '🎉', '💯', '😍', '😲', '👏'];

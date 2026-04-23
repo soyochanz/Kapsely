@@ -78,7 +78,7 @@ BEGIN
             (act.f_type || '_' || act.capsule_id::text || '_' || act.batch_group) AS id,
             act.f_type AS feed_type, act.a_date AS activity_date,
             bc.title, bc.clean_description as description, bc.status, bc.opens_at, bc.type, bc.model, bc.chain_id, bc.is_public, bc.cover_url, bc.created_at, bc.id as capsule_id, bc.owner_id,
-            (SELECT jsonb_build_object('username', p.username, 'display_name', p.display_name, 'avatar_url', p.avatar_url, 'is_verified', p.is_verified) FROM profiles p WHERE p.id = bc.owner_id) AS profiles,
+            (SELECT jsonb_build_object('username', p.username, 'display_name', p.display_name, 'avatar_url', p.avatar_url, 'is_verified', p.is_verified, 'favorite_color', p.favorite_color) FROM profiles p WHERE p.id = bc.owner_id) AS profiles,
             (SELECT count(*) FROM likes WHERE capsule_id = bc.id) AS likes_count,
             (SELECT count(*) FROM comments WHERE capsule_id = bc.id) AS comments_count,
             (SELECT count(*) FROM capsule_items WHERE capsule_id = bc.id AND media_type IN ('image','video') AND NOT is_story) AS posts_count,

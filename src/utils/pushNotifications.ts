@@ -121,12 +121,18 @@ export async function sendPushNotification(targetUserId: string, title: string, 
         // 1. Fetch user setting and token
         const { data: profile, error } = await supabase
             .from('profiles')
-            .select('push_token, push_notifications_enabled')
+            .select('push_token, push_notifications_enabled, active_conversation_id')
             .eq('id', targetUserId)
             .maybeSingle();
 
         if (error || !profile?.push_token) return;
         if (profile.push_notifications_enabled === false) return; // User disabled all
+
+        // Suppress if the user is currently in this chat conversation
+        if (data?.params?.conversationId && profile.active_conversation_id === data.params.conversationId) {
+            console.log(`[PushNotifications] Suppressing push to ${targetUserId}: User is active in chat ${data.params.conversationId}`);
+            return;
+        }
 
         console.log(`[PushNotifications] attempt send to ${targetUserId}. Token: ${profile.push_token}`);
 

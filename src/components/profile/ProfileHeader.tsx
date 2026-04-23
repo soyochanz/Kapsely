@@ -123,7 +123,7 @@ export const ProfileHeader = React.memo(({
                                 style={s.storyRing}
                             >
                                 <Image 
-                                    source={{ uri: Colors.getAvatarUrl(profile?.avatar_url, profile?.display_name || profile?.username) }} 
+                                    source={{ uri: Colors.getAvatarUrl(profile?.avatar_url, profile?.display_name || profile?.username, profile?.favorite_color) }} 
                                     style={s.avatar} 
                                     contentFit="cover" 
                                     cachePolicy="memory-disk" 
@@ -132,7 +132,7 @@ export const ProfileHeader = React.memo(({
                         ) : (
                             <View style={[s.storyRing, { borderColor: Colors.border, borderWidth: 2, padding: 2.5 }]}>
                                 <Image 
-                                    source={{ uri: Colors.getAvatarUrl(profile?.avatar_url, profile?.display_name || profile?.username) }} 
+                                    source={{ uri: Colors.getAvatarUrl(profile?.avatar_url, profile?.display_name || profile?.username, profile?.favorite_color) }} 
                                     style={s.avatar} 
                                     contentFit="cover" 
                                     cachePolicy="memory-disk" 

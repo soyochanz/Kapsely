@@ -383,13 +383,14 @@ const CollaboratorsBar = React.memo(({ owner, members, invites, tint, isMember, 
                                 alignItems: 'center'
                             }}>
                                 <Image 
-                                    source={{ uri: m.avatar_url || Colors.getAvatarUrl(null, m.display_name || m.username) }} 
+                                    source={{ uri: Colors.getAvatarUrl(m.avatar_url, m.display_name || m.username, m.favorite_color) }} 
                                     style={{ 
                                         width: '100%', 
                                         height: '100%',
                                         opacity: m.isPending ? 0.3 : 1
                                     }}
                                     contentFit="contain"
+                                    recyclingKey={`collab-${m.id}`}
                                 />
                                 {m.isPending && (
                                     <View style={{ 
@@ -608,6 +609,24 @@ function CapsuleDetailScreen() {
     const [invites, setInvites] = useState<any[]>([]);
     const [acceptedMembers, setAcceptedMembers] = useState<any[]>([]);
 
+    useEffect(() => {
+        const updateActiveStatus = async (id: string | null) => {
+            if (!userId) return;
+            try {
+                // Using maybeSingle() or catching error to be safe
+                await supabase.from('profiles').update({ active_conversation_id: id }).eq('id', userId);
+            } catch (e) { /* ignore */ }
+        };
+
+        if (capsuleId) {
+            updateActiveStatus(capsuleId);
+        }
+
+        return () => {
+            updateActiveStatus(null);
+        };
+    }, [capsuleId, userId]);
+
     const [viewerVisible, setViewerVisible] = useState(false);
     const [initialIndex, setInitialIndex] = useState(0);
     const [activeViewerIndex, setActiveViewerIndex] = useState(0);
@@ -697,6 +716,8 @@ function CapsuleDetailScreen() {
     const hasRequestedOpen = capsule?.open_requests?.includes(userId || '') || false;
     const reqCount = capsule?.open_requests?.length || 0;
     const isSharedCapsule = capsule?.is_shared === true || totalMembers > 1 || (invites && invites.length > 0);
+    // Ensure visibility for public shared capsules regardless of membership
+    const showCollaborators = isSharedCapsule;
     const [canBeOpened, setCanBeOpened] = useState(false);
     useEffect(() => {
         const checkReady = () => setCanBeOpened(capsule?.opens_at ? new Date(capsule.opens_at) <= new Date() : true);
@@ -947,12 +968,12 @@ function CapsuleDetailScreen() {
         const { data: commentsData } = await (signal
             ? supabase.from('comments').select(`
                 id, capsule_id, user_id, content, created_at,
-                profiles:user_id(id, display_name, username, avatar_url, is_verified),
+                profiles:user_id(id, display_name, username, avatar_url, is_verified, favorite_color),
                 comment_likes(user_id)
               `).eq('capsule_id', capsuleId).order('created_at', { ascending: false }).limit(50).abortSignal(signal)
             : supabase.from('comments').select(`
                 id, capsule_id, user_id, content, created_at,
-                profiles:user_id(id, display_name, username, avatar_url, is_verified),
+                profiles:user_id(id, display_name, username, avatar_url, is_verified, favorite_color),
                 comment_likes(user_id)
               `).eq('capsule_id', capsuleId).order('created_at', { ascending: false }).limit(50)
         );
@@ -1061,7 +1082,7 @@ function CapsuleDetailScreen() {
         if (q.length < 2) { setSearchResults([]); return; }
         setIsSearching(true);
         try {
-            const { data } = await supabase.from('profiles').select('id, username, display_name, avatar_url')
+            const { data } = await supabase.from('profiles').select('id, username, display_name, avatar_url, favorite_color')
                 .or(`username.ilike.%${q}%,display_name.ilike.%${q}%`).limit(10);
             
             const filtered = (data || []).filter(u => 
@@ -1420,7 +1441,11 @@ function CapsuleDetailScreen() {
                                                         </View>
                                                     )}
                                                     {pi.profiles && isSharedCapsule && (
-                                                        <Image source={{ uri: Colors.getAvatarUrl(pi.profiles.avatar_url, pi.profiles.display_name || pi.profiles.username) }} style={[ds.itemAuthorOverlay as any, { borderColor: tint + '40' }]} />
+                                                        <Image 
+                                                            source={{ uri: Colors.getAvatarUrl(pi.profiles.avatar_url, pi.profiles.display_name || pi.profiles.username) }} 
+                                                            style={[ds.itemAuthorOverlay as any, { borderColor: tint + '40' }]} 
+                                                            recyclingKey={`item-avatar-${pi.profiles.id}`}
+                                                        />
                                                     )}
                                                     <Ionicons name="lock-closed" size={20} color={tint + '50'} />
                                                     <View style={ds.itemDateTag}>
@@ -1469,7 +1494,11 @@ function CapsuleDetailScreen() {
                                                         <Text style={ds.itemDateText}>{new Date(pi.created_at).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: '2-digit' })}</Text>
                                                     </View>
                                                     {pi.profiles && isSharedCapsule && (
-                                                        <Image source={{ uri: Colors.getAvatarUrl(pi.profiles.avatar_url, pi.profiles.display_name || pi.profiles.username) }} style={[ds.itemAuthorOverlay as any, { borderColor: '#fff' }]} />
+                                                        <Image 
+                                                            source={{ uri: Colors.getAvatarUrl(pi.profiles.avatar_url, pi.profiles.display_name || pi.profiles.username, pi.profiles.favorite_color) }} 
+                                                            style={[ds.itemAuthorOverlay as any, { borderColor: '#fff' }]} 
+                                                            recyclingKey={`item-avatar-v-${pi.profiles.id}`}
+                                                        />
                                                     )}
                                                     {pi.location_name && (
                                                         <View style={{ position: 'absolute', bottom: 6, right: 6 }}>
@@ -1543,7 +1572,13 @@ function CapsuleDetailScreen() {
                 >
                     <BlurView intensity={25} tint="extraLight" style={[ds.commentCard, { borderColor: highlightedCommentId === c.id ? tint + '60' : D.border, marginBottom: 10 }, highlightedCommentId === c.id && { borderLeftWidth: 3, borderLeftColor: tint }]}>
                         <TouchableOpacity onPress={() => navigation.navigate('UserProfile', { targetUserId: c.user_id })}>
-                            <Image source={{ uri: Colors.getAvatarUrl(c.profiles?.avatar_url, c.profiles?.display_name || c.profiles?.username) }} style={[ds.commentAvatar as any, { borderColor: D.border }]} cachePolicy="memory-disk" contentFit="cover" />
+                            <Image 
+                                source={{ uri: Colors.getAvatarUrl(c.profiles?.avatar_url, c.profiles?.display_name || c.profiles?.username, c.profiles?.favorite_color) }} 
+                                style={[ds.commentAvatar as any, { borderColor: D.border }]} 
+                                cachePolicy="memory-disk" 
+                                contentFit="cover" 
+                                recyclingKey={`comment-avatar-${c.profiles?.id}`}
+                            />
                         </TouchableOpacity>
                         <View style={{ flex: 1 }}>
                             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>
@@ -1607,7 +1642,7 @@ function CapsuleDetailScreen() {
                 handleRequestOpen={handleRequestOpen} reqCount={reqCount} isBornOpen={isBornOpen} userId={userId}
                 setCapsule={setCapsule} t={t}
                 onAddContent={() => navigation.navigate('CreateSelection', { capsuleId: capsule.id })}
-                collaborators={isSharedCapsule ? (
+                collaborators={showCollaborators ? (
                     <CollaboratorsBar 
                         owner={capsule.profiles} 
                         members={acceptedMembers} 
@@ -1677,7 +1712,14 @@ function CapsuleDetailScreen() {
                 </TouchableOpacity>
                 {totalMembers <= 1 ? (
                     <TouchableOpacity style={ds.headerCenter} activeOpacity={0.78} onPress={() => navigation.navigate('UserProfile', { targetUserId: capsule.owner_id })}>
-                        <Image source={{ uri: Colors.getAvatarUrl(capsule.profiles?.avatar_url, capsule.profiles?.display_name || capsule.profiles?.username) }} style={[ds.headerAvatar as any, { borderColor: tint + '40' }]} cachePolicy="memory-disk" contentFit="cover" transition={200} />
+                        <Image 
+                            source={{ uri: Colors.getAvatarUrl(capsule.profiles?.avatar_url, capsule.profiles?.display_name || capsule.profiles?.username, capsule.profiles?.favorite_color) }} 
+                            style={[ds.headerAvatar as any, { borderColor: tint + '40' }]} 
+                            cachePolicy="memory-disk" 
+                            contentFit="cover" 
+                            transition={200} 
+                            recyclingKey={`header-avatar-${capsule.profiles?.id}`}
+                        />
                         <View style={{ flexShrink: 1 }}>
                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                                 <Text style={ds.headerName} numberOfLines={1}>{capsule.profiles?.display_name || capsule.profiles?.username}</Text>
@@ -1872,14 +1914,18 @@ function CapsuleDetailScreen() {
                                     onPress={() => { if (!statusText) toggleInviteUser(u); }}
                                 >
                                     <View style={ds.modernUserAvatarWrap}>
-                                        <Image source={{ uri: Colors.getAvatarUrl(u.avatar_url, u.display_name || u.username) }} style={ds.modernUserAvatar as any} />
+                                        <Image 
+                                            source={{ uri: Colors.getAvatarUrl(u.avatar_url, u.display_name || u.username, u.favorite_color) }} 
+                                            style={ds.modernUserAvatar as any} 
+                                            recyclingKey={`search-user-${u.id}`}
+                                        />
                                     </View>
                                     <View style={{ flex: 1 }}>
                                         <Text style={ds.modernUserName} numberOfLines={1}>{u.display_name || u.username}</Text>
                                         <Text style={ds.modernUserTag} numberOfLines={1}>@{u.username}</Text>
                                     </View>
                                     {statusText ? (
-                                        <View style={[ds.modernInviteBtn, { backgroundColor: isRejected ? '#EF444415' : D.card, borderWidth: 1, borderColor: isRejected ? '#EF444430' : D.border, paddingHorizontal: 8, width: 'auto' }]}>
+                                        <View style={[ds.modernInviteBtn, { backgroundColor: isRejected ? '#EF444415' : D.surface, borderWidth: 1, borderColor: isRejected ? '#EF444430' : D.border, paddingHorizontal: 8, width: 'auto' }]}>
                                             <Text style={{ fontSize: 10, fontFamily: Fonts.bold, color: isRejected ? '#EF4444' : D.textSec, textTransform: 'uppercase' }}>{statusText}</Text>
                                         </View>
                                     ) : (
@@ -1931,7 +1977,11 @@ function CapsuleDetailScreen() {
                         renderItem={({ item: vi, index }) => (
                             <View style={{ width, height, alignItems: 'center', justifyContent: 'center' }}>
                                 {vi.profiles && isSharedCapsule && (
-                                    <Image source={{ uri: Colors.getAvatarUrl(vi.profiles.avatar_url, vi.profiles.display_name || vi.profiles.username) }} style={[ds.itemAuthorOverlay as any, { top: insets.top + 50, left: 20, width: 32, height: 32, borderRadius: 16, borderColor: '#fff', borderWidth: 2 }]} />
+                                    <Image 
+                                        source={{ uri: Colors.getAvatarUrl(vi.profiles.avatar_url, vi.profiles.display_name || vi.profiles.username, vi.profiles.favorite_color) }} 
+                                        style={[ds.itemAuthorOverlay as any, { top: insets.top + 50, left: 20, width: 32, height: 32, borderRadius: 16, borderColor: '#fff', borderWidth: 2 }]} 
+                                        recyclingKey={`viewer-avatar-${vi.profiles.id}`}
+                                    />
                                 )}
                                 {vi.media_type === 'note' ? (
                                     <View style={ds.viewerNote}><Text style={ds.viewerNoteText}>{vi.content}</Text></View>

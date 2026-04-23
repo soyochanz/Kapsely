@@ -22,7 +22,7 @@ export const StoryBubble = React.memo(({ user, isOwn, onPress }: StoryBubbleProp
         onPress();
     };
     
-    const avatarUri = Colors.getAvatarUrl(user?.avatar_url, user?.display_name || user?.username);
+    const avatarUri = Colors.getAvatarUrl(user?.avatar_url, user?.display_name || user?.username, user?.favorite_color);
     const label = isOwn ? 'Flash' : (user?.display_name || user?.username || 'user');
     const hasUnread = !user?.all_read;
 
@@ -41,13 +41,13 @@ export const StoryBubble = React.memo(({ user, isOwn, onPress }: StoryBubbleProp
                         style={st.ring} start={{ x: 0, y: 1 }} end={{ x: 1, y: 0 }}
                     >
                         <View style={st.avatarWrap}>
-                            <Image source={{ uri: avatarUri }} style={st.avatar} cachePolicy="memory-disk" transition={200} />
+                            <Image source={{ uri: avatarUri }} style={st.avatar} cachePolicy="memory-disk" transition={200} recyclingKey={`story-${user?.username || label}`} />
                         </View>
                     </LinearGradient>
                 ) : (
                     <View style={[st.ring, st.ringRead, isOwn && { borderColor: Colors.primary + '80', borderStyle: 'dashed' }]}>
                         <View style={st.avatarWrap}>
-                            <Image source={{ uri: avatarUri }} style={st.avatar} cachePolicy="memory-disk" transition={200} />
+                            <Image source={{ uri: avatarUri }} style={st.avatar} cachePolicy="memory-disk" transition={200} recyclingKey={`story-${user?.username || label}`} />
                         </View>
                     </View>
                 )}

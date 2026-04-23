@@ -601,7 +601,9 @@
     "step6_desc": "Bienvenido al futuro de los recuerdos. ¡Empieza a sellar tu primer momento ahora!",
     "fav_color": "Color Favorito",
     "birthday": "Cumpleaños",
-    "choose_color": "Elige tu color favorito"
+    "choose_color": "Elige tu color favorito",
+    "step_banner_title": "Personaliza tu Perfil",
+    "step_banner_desc": "¡Hazlo tuyo! Puedes añadir stickers y personalizar tu banner arrastrándolos desde tu colección."
   },
   "flashes": {
     "filter": "Filtro",

@@ -400,7 +400,7 @@ export default function EditProfileScreen({ onClose, initialData }: Props) {
                     <TouchableOpacity onPress={pickAvatar} activeOpacity={0.8} style={styles.avatarWrapper}>
                         <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.avatarRing}>
                         <Image 
-                            source={{ uri: avatarUri ? avatarUri : Colors.getAvatarUrl(null, displayName || username) }} 
+                            source={{ uri: avatarUri ? avatarUri : Colors.getAvatarUrl(null, displayName || username, favoriteColor) }} 
                             style={styles.avatar} 
                             contentFit="cover" 
                             cachePolicy="memory-disk"

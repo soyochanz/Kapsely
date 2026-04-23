@@ -57,6 +57,7 @@ const CollageView = React.memo(({ items, isOpened, themeColor, s }: { items: any
                     blurRadius={!isOpened ? (Platform.OS === 'ios' ? 50 : 20) : 0}
                     contentFit="cover"
                     cachePolicy="memory-disk"
+                    recyclingKey={`collage-${item.id}`}
                 />
                 {!isOpened && (
                     <View style={[StyleSheet.absoluteFill, { backgroundColor: Platform.OS === 'ios' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.7)' }]} />
@@ -332,7 +333,7 @@ const CapsuleCard = React.memo(({
                                             blurRadius={!isOpened ? (Platform.OS === 'ios' ? 35 : 15) : 0}
                                             contentFit="cover"
                                             cachePolicy="memory-disk"
-                                            recyclingKey={`gp-${capsule.id}-${idx}`}
+                                            recyclingKey={`explore-thumb-${pi.id}`}
                                         />
                                     ) : (
                                         <View style={[StyleSheet.absoluteFill, { backgroundColor: Colors.cardAlt, alignItems: 'center', justifyContent: 'center' }]}>
@@ -362,7 +363,7 @@ const CapsuleCard = React.memo(({
                         <Text style={s.gridTitle} numberOfLines={1}>{capsule.title}</Text>
                     </View>
                     <View style={s.gridAuthorRow}>
-                        <Image source={{ uri: Colors.getAvatarUrl(profile.avatar_url, profile.display_name || profile.username) }} style={s.gridAvatar} contentFit="cover" cachePolicy="memory-disk" />
+                        <Image source={{ uri: Colors.getAvatarUrl(profile.avatar_url, profile.display_name || profile.username, profile.favorite_color) }} style={s.gridAvatar} contentFit="cover" cachePolicy="memory-disk" recyclingKey={`explore-avatar-${profile.username}`} />
                         <Text style={s.gridAuthorName} numberOfLines={1}>
                             {profile.display_name || profile.username}
                         </Text>
@@ -399,7 +400,7 @@ const CapsuleCard = React.memo(({
                             blurRadius={!isOpened ? (Platform.OS === 'ios' ? 50 : 20) : 0} 
                             contentFit="cover" 
                             cachePolicy="memory-disk"
-                            recyclingKey={`card-vid-${capsule.id}`}
+                            recyclingKey={`card-vid-blur-${capsule.id}`}
                         />
                         <View style={[StyleSheet.absoluteFill, { backgroundColor: !isOpened ? (Platform.OS === 'ios' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.7)') : 'transparent' }]} />
                     </View>
@@ -436,7 +437,7 @@ const CapsuleCard = React.memo(({
                                         ]}
                                         contentFit="cover"
                                         cachePolicy="memory-disk"
-                                        recyclingKey={`cap-collage-${item.id || i}`}
+                                        recyclingKey={`cap-collage-${item.id}`}
                                     />
                                 ))}
                                 </View>
@@ -531,10 +532,11 @@ const CapsuleCard = React.memo(({
                         onPress={() => navigation.navigate('UserProfile', { targetUserId: capsule.owner_id })}
                     >
                         <Image 
-                            source={{ uri: Colors.getAvatarUrl(profile.avatar_url, profile.display_name || profile.username) }} 
+                            source={{ uri: Colors.getAvatarUrl(profile.avatar_url, profile.display_name || profile.username, profile.favorite_color) }} 
                             style={s.avatar} 
                             contentFit="cover" 
                             cachePolicy="memory-disk"
+                            recyclingKey={`avatar-${profile.id}`}
                         />
 
                         <View style={{ flex: 1, minWidth: 0 }}>

@@ -2,7 +2,7 @@
   "expo": {
     "name": "Kapsely",
     "slug": "kapsely",
-    "version": "2.1.2",
+    "version": "2.1.3",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",

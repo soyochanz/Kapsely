@@ -11,9 +11,10 @@ interface FilterChipProps {
     t: any;
     icon: string;
     label: string;
+    iconColor?: string;
 }
 
-export const FilterChip = React.memo(({ filterKey, isActive, onPress, t, icon, label }: FilterChipProps) => {
+export const FilterChip = React.memo(({ filterKey, isActive, onPress, t, icon, label, iconColor }: FilterChipProps) => {
     return (
         <TouchableOpacity
             activeOpacity={0.8}
@@ -30,7 +31,7 @@ export const FilterChip = React.memo(({ filterKey, isActive, onPress, t, icon, l
             <Ionicons
                 name={(isActive ? icon.replace('-outline', '') : icon) as any}
                 size={13}
-                color={isActive ? '#fff' : Colors.textSecondary}
+                color={isActive ? '#fff' : (iconColor || Colors.textSecondary)}
             />
             <Text style={[fc.label, isActive && fc.labelActive]}>{label}</Text>
         </TouchableOpacity>

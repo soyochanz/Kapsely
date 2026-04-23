@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import {
     View, Text, StyleSheet, FlatList, Dimensions, 
-    TouchableOpacity, Animated, StatusBar, Platform, Image
+    TouchableOpacity, Animated, StatusBar, Platform, Image, Easing
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -77,9 +77,25 @@ const ONBOARDING_DATA = [
         icon: 'rocket-outline',
         colors: ['#10B981', '#059669'],
     },
+    {
+        id: '7',
+        type: 'banner_stickers',
+        titleKey: 'onboarding.step_banner_title',
+        descKey: 'onboarding.step_banner_desc',
+        icon: 'brush-outline',
+        colors: ['#8B5CF6', '#EC4899'],
+    },
 ];
 
-const PRESET_COLORS = ['#A269FF', '#FF6B6B', '#06D6A0', '#0EA5E9', '#F72585', '#FFD166'];
+const PRESET_COLORS = [
+    '#A269FF', '#FF6B6B', '#06D6A0', '#0EA5E9', '#F72585', '#FFD166',
+    '#3A86FF', '#FB5607', '#8338EC', '#FF006E', '#2EC4B6', '#E71D36',
+    '#FF9F1C', '#2A9D8F', '#E9C46A', '#F4A261', '#E76F51', '#264653',
+    '#606C38', '#283618', '#FEFAE0', '#DDA15E', '#BC6C25', '#003049',
+    '#D62828', '#F77F00', '#FCBF49', '#EAE2B7', '#5F0F40', '#9A031E',
+    '#FB8B24', '#E36414', '#0F4C5C', '#540B0E', '#6A4C93', '#1982C4',
+    '#8AC926', '#FFCA3A', '#FF595E', '#2D6A4F', '#40916C', '#52B788'
+];
 const PREVIEW_MODELS = ['flame_kap', 'unicorn_kap', 'Cartoon_kap', 'diamond_kap'];
 const EVENT_MODEL_URL = CAPSULE_MODELS.find(m => m.id === 'pioneers_cap')?.image || '';
 
@@ -96,6 +112,45 @@ export default function OnboardingScreen() {
     const scrollX = useRef(new Animated.Value(0)).current;
     const flatListRef = useRef<any>(null);
     const floatAnim = useRef(new Animated.Value(0)).current;
+    const stickerPos = useRef(new Animated.ValueXY({ x: 0, y: 150 })).current;
+
+    React.useEffect(() => {
+        if (ONBOARDING_DATA[activeIndex]?.type === 'banner_stickers') {
+            startStickerAnim();
+        } else {
+            stickerPos.setValue({ x: 0, y: 150 });
+        }
+    }, [activeIndex]);
+
+    const startStickerAnim = () => {
+        stickerPos.setValue({ x: 0, y: 150 });
+        Animated.loop(
+            Animated.sequence([
+                Animated.delay(800),
+                // Dragging to banner
+                Animated.timing(stickerPos, {
+                    toValue: { x: 50, y: -40 },
+                    duration: 1800,
+                    useNativeDriver: true,
+                    easing: Easing.bezier(0.4, 0, 0.2, 1),
+                }),
+                // "Drop" effect (small bounce)
+                Animated.spring(stickerPos, {
+                    toValue: { x: 50, y: -45 },
+                    friction: 4,
+                    useNativeDriver: true,
+                }),
+                Animated.delay(1500),
+                // Reset
+                Animated.timing(stickerPos, {
+                    toValue: { x: 0, y: 150 },
+                    duration: 400,
+                    useNativeDriver: true,
+                    easing: Easing.in(Easing.ease),
+                }),
+            ])
+        ).start();
+    };
 
     React.useEffect(() => {
         // Initialize timer config manager to load models from DB
@@ -299,6 +354,46 @@ export default function OnboardingScreen() {
                             </LinearGradient>
                         </View>
                         <View style={s.pulseOrb} />
+                    </View>
+                );
+            case 'banner_stickers':
+                return (
+                    <View style={s.bannerSimContainer}>
+                        {/* Fake Banner */}
+                        <View style={s.fakeBanner}>
+                            <LinearGradient 
+                                colors={['#1F2937', '#111827']} 
+                                style={s.fakeBannerGrad}
+                            />
+                            {/* Target Zone */}
+                            <View style={[s.targetZone, { transform: [{ translateX: 50 }, { translateY: -40 }] }]}>
+                                <View style={s.targetDashed} />
+                            </View>
+                        </View>
+
+                        {/* Hand/Sticker dragging simulation */}
+                        <Animated.View style={[
+                            s.draggingSticker,
+                            {
+                                transform: [
+                                    { translateX: stickerPos.x },
+                                    { translateY: stickerPos.y }
+                                ]
+                            }
+                        ]}>
+                            <View style={s.stickerVisual}>
+                                <Ionicons name="star" size={30} color="#FFD166" />
+                            </View>
+                            <View style={s.handPointer}>
+                                <Ionicons name="hand-right" size={40} color="rgba(255,255,255,0.8)" />
+                            </View>
+                        </Animated.View>
+
+                        <View style={s.stickerShelf}>
+                            <View style={s.shelfItem}><Ionicons name="heart" size={24} color="#FF6B6B" /></View>
+                            <View style={[s.shelfItem, { opacity: 0.3 }]}><Ionicons name="star" size={24} color="#FFD166" /></View>
+                            <View style={s.shelfItem}><Ionicons name="flash" size={24} color="#0EA5E9" /></View>
+                        </View>
                     </View>
                 );
             default:
@@ -532,4 +627,46 @@ const s = StyleSheet.create({
         paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20
     },
     eventDateText: { color: '#fff', fontSize: 13, fontWeight: '800' },
+
+    // Banner Sticker Simulation
+    bannerSimContainer: {
+        width: 300, height: 300, alignItems: 'center', justifyContent: 'center',
+    },
+    fakeBanner: {
+        width: 280, height: 100, borderRadius: 15, overflow: 'hidden',
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
+        ...shadow.medium,
+    },
+    fakeBannerGrad: { flex: 1 },
+    targetZone: {
+        position: 'absolute', width: 50, height: 50,
+        alignItems: 'center', justifyContent: 'center',
+    },
+    targetDashed: {
+        width: 44, height: 44, borderRadius: 8,
+        borderWidth: 2, borderColor: 'rgba(255,255,255,0.3)',
+        borderStyle: 'dashed',
+    },
+    draggingSticker: {
+        position: 'absolute', alignItems: 'center', justifyContent: 'center',
+    },
+    stickerVisual: {
+        width: 50, height: 50, borderRadius: 25,
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        alignItems: 'center', justifyContent: 'center',
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)',
+    },
+    handPointer: {
+        position: 'absolute', bottom: -30, right: -20,
+    },
+    stickerShelf: {
+        flexDirection: 'row', gap: 15, marginTop: 100,
+        backgroundColor: 'rgba(255,255,255,0.05)',
+        padding: 15, borderRadius: 25, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+    },
+    shelfItem: {
+        width: 50, height: 50, borderRadius: 15,
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        alignItems: 'center', justifyContent: 'center',
+    },
 });

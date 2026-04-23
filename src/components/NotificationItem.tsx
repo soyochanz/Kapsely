@@ -78,7 +78,7 @@ export default function NotificationItem({ notification, onMarkRead, onAcceptInv
                 ) : (
                     <>
                         <Image 
-                            source={{ uri: Colors.getAvatarUrl(notification.user.avatar, notification.user.username) }} 
+                            source={{ uri: notification.user.avatar }} 
                             style={styles.avatar} 
                             contentFit="cover"
                             cachePolicy="memory-disk"

@@ -1,3 +1,5 @@
+/// <reference lib="deno.ns" />
+
 import { serve } from "std/http/server.ts"
 import { createClient } from 'supabase'
 
@@ -20,12 +22,19 @@ serve(async (req: Request) => {
         // 1. Get the recipient's push token
         const { data: profile, error: profileError } = await supabase
             .from('profiles')
-            .select('push_token, username')
+            .select('push_token, username, active_conversation_id')
             .eq('id', record.user_id)
             .single()
 
         if (profileError || !profile?.push_token) {
             return new Response(JSON.stringify({ message: 'No push token found' }), { status: 200 })
+        }
+
+        // Suppress if user is active in this conversation
+        const notificationData = record.data || {}
+        const conversationId = record.conversation_id || notificationData.conversationId
+        if (conversationId && profile.active_conversation_id === conversationId) {
+            return new Response(JSON.stringify({ message: 'User is active in this conversation, skipping push' }), { status: 200 })
         }
 
         // 2. Get sender info for a better message

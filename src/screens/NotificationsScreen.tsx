@@ -196,7 +196,7 @@ export default function NotificationsScreen() {
         const blocked = await safetyService.getAllSafetyUserIds(user.id);
         const { data } = await supabase
             .from('notifications')
-            .select('*, sender:sender_id(username, display_name, avatar_url), capsules(title, type, model, chain_id, opens_at, owner_id)')
+            .select('*, sender:sender_id(username, display_name, avatar_url, favorite_color), capsules(title, type, model, chain_id, opens_at, owner_id)')
             .eq('user_id', user.id)
             .order('created_at', { ascending: false })
             .limit(50);
@@ -232,7 +232,7 @@ export default function NotificationsScreen() {
                         user: {
                             id: n.sender_id,
                             username: n.sender?.display_name || n.sender?.username || 'Unknown',
-                            avatar: Colors.getAvatarUrl(n.sender?.avatar_url, n.sender?.display_name || n.sender?.username),
+                            avatar: Colors.getAvatarUrl(n.sender?.avatar_url, n.sender?.display_name || n.sender?.username, n.sender?.favorite_color),
                         },
                         message: displayMessage,
                         time: formatTime(n.created_at),

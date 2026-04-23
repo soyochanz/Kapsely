@@ -46,22 +46,20 @@ export const Colors = {
     divider: 'rgba(166, 110, 255, 0.08)',
 
     // Helpers
-    getAvatarUrl: (url?: string | null, name?: string | null) => {
-        if (url && url.startsWith('http')) return url;
+    getAvatarUrl: (url?: string | null, name?: string | null, favoriteColor?: string | null) => {
+        if (url && url.length > 5 && url.startsWith('http')) return url;
         
         // If no URL, generate a colorful initials avatar
-        const seed = name || 'User';
-        const colors = ['a66eff', '7938ff', '00f2ff', 'ff4d4d', 'ffb300', '10b981', '0ea5e9'];
+        const seed = (name && typeof name === 'string' && name.trim()) ? name.trim() : 'User';
         
-        // Simple hash for deterministic color choice
-        let hash = 0;
-        for (let i = 0; i < seed.length; i++) {
-            hash = seed.charCodeAt(i) + ((hash << 5) - hash);
+        // Use user's favorite color if available, otherwise pick a deterministic one
+        let bgColor = 'a66eff'; // Default morado (brand purple)
+        if (favoriteColor && favoriteColor.startsWith('#')) {
+            bgColor = favoriteColor.replace('#', '');
         }
-        const colorIndex = Math.abs(hash) % colors.length;
-        const bgColor = colors[colorIndex];
 
-        return `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(seed)}&backgroundColor=${bgColor}&fontFamily=Arial&fontWeight=bold&fontSize=45&chars=1`;
+        // Improved centering with balanced fontSize and slight translateY
+        return `https://api.dicebear.com/7.x/initials/png?seed=${encodeURIComponent(seed)}&backgroundColor=${bgColor}&fontFamily=Arial,sans-serif&fontWeight=700&fontSize=44&chars=1&translateY=-2`;
     }
 };
 
@@ -147,6 +145,40 @@ export const Shadow = Platform.select({
         lg: {}
     }
 }) as any;
+
+export const PALETTE = {
+    myBubble: '#9B7FD4',
+    myBubbleLight: '#B39DE0',
+    myText: '#FFFFFF',
+    myTimestamp: 'rgba(255,255,255,0.62)',
+    myCheckmark: 'rgba(255,255,255,0.55)',
+    myCheckmarkRead: '#FFFFFF',
+    theirBubble: '#F0EDF8',
+    theirBorder: '#E4DFF2',
+    theirText: '#2D2541',
+    theirTimestamp: '#A39BB8',
+    inputBg: '#F7F5FB',
+    inputBorder: '#E4DFF2',
+    inputText: '#2D2541',
+    inputPlaceholder: '#B0A8C8',
+    sendBtn: '#9B7FD4',
+    recordBtn: '#9B7FD4',
+    recordActive: '#E57373',
+    headerBg: '#FFFFFF',
+    headerBorder: '#EDE9F6',
+    replyBar: '#EDE9F6',
+    replyAccent: '#9B7FD4',
+    replyText: '#2D2541',
+    replyMuted: '#7A6D8E',
+    deletedBubble: '#F3F0FA',
+    deletedBorder: '#D9D3EC',
+    deletedText: '#A89EC0',
+    locationCard: '#FFFFFF',
+    locationIcon: '#9B7FD4',
+    locationBg: '#F0EDF8',
+    toolbarIcon: '#A89EC0',
+    toolbarIconActive: '#9B7FD4',
+};
 
 export * from './DesignTokens';
 

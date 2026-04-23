@@ -158,6 +158,40 @@ export default function App() {
     },
   };
 
+  const linking = {
+    prefixes: ['kapsely://', 'https://kapsely.com', 'http://kapsely.com'],
+    config: {
+      screens: {
+        Main: {
+          screens: {
+            Feed: 'feed',
+            Search: 'search',
+            Notifications: 'notifications',
+            Profile: 'profile',
+          },
+        },
+        CapsuleDetail: {
+          path: 'capsules/:capsuleId',
+          parse: {
+            capsuleId: (id: string) => id.replace(/\/$/, ''), // Remove trailing slash
+          },
+        },
+        ChatDetail: {
+          path: 'chat/:conversationId',
+          parse: {
+            conversationId: (id: string) => id.replace(/\/$/, ''),
+          },
+        },
+        UserProfile: {
+          path: 'user/:userId',
+          parse: {
+            userId: (id: string) => id.replace(/\/$/, ''),
+          },
+        },
+      },
+    },
+  };
+
   return (
     <SafeAreaProvider>
       <View
@@ -167,7 +201,11 @@ export default function App() {
         ]}
       >
         <StatusBar style="dark" backgroundColor={Colors.background} />
-        <NavigationContainer ref={navigationRef} theme={navTheme}>
+        <NavigationContainer 
+          ref={navigationRef} 
+          theme={navTheme}
+          linking={linking}
+        >
           <View style={{ flex: 1 }}>
             {session ? <AppNavigator key={session.user.id} /> : <AuthNavigator />}
           </View>

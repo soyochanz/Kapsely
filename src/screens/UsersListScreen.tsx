@@ -50,7 +50,7 @@ export default function UserListScreen() {
             onPress={() => navigation.push('UserProfile', { targetUserId: item.id })}
         >
             <Image 
-                source={{ uri: Colors.getAvatarUrl(item.avatar_url, item.display_name || item.username) }} 
+                source={{ uri: Colors.getAvatarUrl(item.avatar_url, item.display_name || item.username, item.favorite_color) }} 
                 style={styles.avatar} 
                 contentFit="cover"
                 cachePolicy="memory-disk"
