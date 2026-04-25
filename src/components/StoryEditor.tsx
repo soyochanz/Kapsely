@@ -86,6 +86,15 @@ const DraggableItem = ({
     const initialScale = useRef(1);
     const initialAngle = useRef(0);
     const initialRot = useRef(0);
+    const lastProps = useRef({ initialX, initialY });
+
+    useEffect(() => {
+        if (initialX !== lastProps.current.initialX || initialY !== lastProps.current.initialY) {
+            pan.setValue({ x: 0, y: 0 });
+            pan.setOffset({ x: 0, y: 0 });
+            lastProps.current = { initialX, initialY };
+        }
+    }, [initialX, initialY]);
 
     const panResponder = useRef(
         PanResponder.create({
@@ -156,9 +165,10 @@ const DraggableItem = ({
                     onDelete?.(item.id);
                 } else {
                     pan.flattenOffset();
-                    // Guarda posición relativa para persistencia
-                    item.x = (initialX + (pan.x as any)._value) / width;
-                    item.y = (initialY + (pan.y as any)._value) / height;
+                    // ✅ Actualizamos el estado formalmente a través de un callback
+                    const newX = (initialX + (pan.x as any)._value) / width;
+                    const newY = (initialY + (pan.y as any)._value) / height;
+                    item.onUpdatePosition?.(item.id, newX, newY);
                 }
             },
 
@@ -232,8 +242,8 @@ export default function StoryEditor({
     const [tempLocation, setTempLocation] = useState('');
     const [giphyVisible, setGiphyVisible] = useState(false);
 
-    // ✅ Layout del canvas (coordenadas absolutas en pantalla)
-    const [canvasLayout, setCanvasLayout] = useState({ x: 0, y: 0, width, height: height * 0.78 });
+    // ✅ Usamos siempre el height total de la pantalla para coordenadas 1:1 con el visor
+    const canvasLayout = { x: 0, y: 0, width, height };
 
     const handleDragStateChange = (isDragging: boolean, coords: { x: number; y: number }) => {
         setDraggingAny(isDragging);
@@ -257,6 +267,9 @@ export default function StoryEditor({
             styleId: 'titan',
             scale: new Animated.Value(1),
             rotation: new Animated.Value(0),
+            onUpdatePosition: (id: string, x: number, y: number) => {
+                setTexts(prev => prev.map(tx => tx.id === id ? { ...tx, x, y } : tx));
+            }
         };
         setTexts(prev => [...prev, newText]);
         setSelectedTextId(id);
@@ -300,6 +313,9 @@ export default function StoryEditor({
             x: 0.5, y: 0.5,
             scale: new Animated.Value(1),
             rotation: new Animated.Value(0),
+            onUpdatePosition: (id: string, x: number, y: number) => {
+                setStickers(prev => prev.map(st => st.id === id ? { ...st, x, y } : st));
+            }
         }]);
         setGiphyVisible(false);
     };
@@ -313,6 +329,9 @@ export default function StoryEditor({
                 x: 0.5, y: 0.2,
                 scale: new Animated.Value(1),
                 rotation: new Animated.Value(0),
+                onUpdatePosition: (_id: string, x: number, y: number) => {
+                    setLocation((prev: any) => prev ? { ...prev, x, y } : null);
+                }
             });
         } else {
             setLocation(null);
@@ -350,16 +369,7 @@ export default function StoryEditor({
 
     return (
         <View style={st.container}>
-            {/* ── Canvas ──────────────────────────────────────────────────── */}
-            <View
-                style={st.canvas}
-                onLayout={e => {
-                    e.target.measure((_x, _y, w, h, pageX, pageY) => {
-                        // measure() nos da coordenadas absolutas en pantalla ✅
-                        setCanvasLayout({ x: pageX, y: pageY, width: w, height: h });
-                    });
-                }}
-            >
+            <View style={st.canvas}>
                 <Image
                     source={{ uri: item.media_url }}
                     style={st.preview}
@@ -389,7 +399,7 @@ export default function StoryEditor({
                             onDragStateChange={handleDragStateChange}
                             onDelete={(id: string) => setTexts(prev => prev.filter(x => x.id !== id))}
                             initialX={(t.x || 0.5) * width}
-                            initialY={(t.y || 0.4) * (canvasLayout.height || height * 0.78)}
+                            initialY={(t.y || 0.4) * height}
                         >
                             <TouchableOpacity activeOpacity={0.9} onPress={() => openTextEdit(t)}>
                                 <View style={[
@@ -422,11 +432,11 @@ export default function StoryEditor({
                         onDragStateChange={handleDragStateChange}
                         onDelete={(id: string) => setStickers(prev => prev.filter(x => x.id !== id))}
                         initialX={(s.x || 0.5) * width}
-                        initialY={(s.y || 0.5) * (canvasLayout.height || height * 0.78)}
+                        initialY={(s.y || 0.5) * height}
                     >
-                        <TouchableOpacity activeOpacity={0.9}>
-                            <Image source={{ uri: s.url }} style={{ width: 120, height: 120 }} contentFit="contain" />
-                        </TouchableOpacity>
+                        <View pointerEvents="none">
+                            <Image source={{ uri: s.url }} style={{ width: 140, height: 140 }} contentFit="contain" />
+                        </View>
                     </DraggableItem>
                 ))}
 
@@ -438,7 +448,7 @@ export default function StoryEditor({
                         onDragStateChange={handleDragStateChange}
                         onDelete={() => setLocation(null)}
                         initialX={(location.x || 0.5) * width}
-                        initialY={(location.y || 0.2) * (canvasLayout.height || height * 0.78)}
+                        initialY={(location.y || 0.2) * height}
                     >
                         <TouchableOpacity
                             activeOpacity={0.9}
@@ -686,8 +696,8 @@ export default function StoryEditor({
 
 // ─────────────────────────────────────────────────────────────────────────────
 const st = StyleSheet.create({
-    container: { flex: 1, backgroundColor: '#000', ...StyleSheet.absoluteFillObject },
-    canvas: { flex: 1, position: 'relative', overflow: 'hidden', backgroundColor: '#000' },
+    container: { flex: 1, backgroundColor: '#000' },
+    canvas: { ...StyleSheet.absoluteFillObject, backgroundColor: '#000' },
     preview: { width: '100%', height: '100%' },
 
     draggable: { position: 'absolute', alignItems: 'center' },
@@ -725,7 +735,12 @@ const st = StyleSheet.create({
     deleteGrad: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
     // ── Toolbar ────────────────────────────────────────────────────────────
-    toolbar: { backgroundColor: 'rgba(0,0,0,0.88)', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: 10 },
+    toolbar: { 
+        position: 'absolute', bottom: 0, left: 0, right: 0,
+        backgroundColor: 'rgba(0,0,0,0.7)', 
+        borderTopLeftRadius: 24, borderTopRightRadius: 24, 
+        paddingBottom: 10 
+    },
     toolsContent: { padding: 20, gap: 15 },
     toolBtn: { alignItems: 'center', gap: 4, width: 70 },
     toolLabel: { color: 'rgba(255,255,255,0.6)', fontSize: 11, fontFamily: Fonts.medium },

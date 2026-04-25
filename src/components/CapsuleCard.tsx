@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
     View, Text, TouchableOpacity, StyleSheet,
-    Dimensions, Platform, Alert, Animated
+    Dimensions, Platform, Alert, Animated, Share
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
@@ -14,6 +14,7 @@ import VerifiedBadge from './VerifiedBadge';
 import { timerConfigManager } from '../utils/timerConfig';
 import { Image } from 'expo-image';
 import CapsuleWithTimer from './CapsuleWithTimer';
+import PatternOverlay from './PatternOverlay';
 
 const { width } = Dimensions.get('window');
 
@@ -50,7 +51,7 @@ const CollageView = React.memo(({ items, isOpened, themeColor, s }: { items: any
         const isLast = idx === 3 && hasMore;
 
         return (
-            <View key={item.id || idx} style={[s.collageItem, style, { height: '100%' }]}>
+            <View key={item.id || idx} style={[s.collageItem, style, { width: undefined, height: undefined }]}>
                 <Image 
                     source={{ uri: src }}
                     style={StyleSheet.absoluteFill}
@@ -85,11 +86,13 @@ const CollageView = React.memo(({ items, isOpened, themeColor, s }: { items: any
                 </View>
             )}
             {displayItems.length === 3 && (
-                <View style={s.collageRow}>
-                    {renderItem(displayItems[0], { flex: 2 }, 0)}
-                    <View style={{ flex: 1, marginLeft: 2, gap: 2 }}>
+                <View style={{ flex: 1, gap: 2 }}>
+                    <View style={s.collageRow}>
+                        {renderItem(displayItems[0], { flex: 1 }, 0)}
+                    </View>
+                    <View style={s.collageRow}>
                         {renderItem(displayItems[1], { flex: 1 }, 1)}
-                        {renderItem(displayItems[2], { flex: 1 }, 2)}
+                        {renderItem(displayItems[2], { flex: 1, marginLeft: 2 }, 2)}
                     </View>
                 </View>
             )}
@@ -167,6 +170,21 @@ const CapsuleCard = React.memo(({
     const themeColor = useMemo(() => {
         return timerConfigManager.getConfig(capsule.model)?.themeColor || '#a269ff';
     }, [capsule.model]);
+
+    const handleShare = async () => {
+        try {
+            // Simulated short link for "kaps.ly" aesthetic
+            const shortId = capsule.id.split('-')[0]; // Using first segment for short-link feel
+            const shareUrl = `https://kaps.ly/${shortId}`;
+            
+            await Share.share({
+                message: `${t('detail.share_text') || '¡Mira esta cápsula en Kapsely!'} ✦\n\n${shareUrl}`,
+                url: shareUrl, // iOS only
+            });
+        } catch (error) {
+            console.log('Error sharing:', error);
+        }
+    };
 
     const heartScale = React.useRef(new Animated.Value(1)).current;
     const bounceHeart = () => {
@@ -286,9 +304,13 @@ const CapsuleCard = React.memo(({
                 {/* ── Top: Capsule model zone ── */}
                 <View style={s.gridTopZone}>
                     <LinearGradient
-                        colors={[Colors.cardAlt, Colors.background]}
+                        colors={[themeColor + '20', themeColor + '05', Colors.background]}
                         style={StyleSheet.absoluteFill}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0.8 }}
                     />
+                    <PatternOverlay color="rgba(0,0,0,0.12)" opacity={1} gap={14} size={2} />
+
                     {/* Subtle radial glow */}
                     <View style={[s.gridGlow, { backgroundColor: themeColor + '12' }]} />
 
@@ -380,8 +402,19 @@ const CapsuleCard = React.memo(({
 
             {/* ── VISUAL ZONE ──────────────────────────────────────────── */}
             <View style={s.visual}>
-                {/* Tinted bg */}
-                <View style={[StyleSheet.absoluteFill, { backgroundColor: themeColor + '10' }]} />
+                {/* Enhanced Gradient Background */}
+                <LinearGradient
+                    colors={[themeColor + '20', themeColor + '08', Colors.background]}
+                    style={StyleSheet.absoluteFill}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                />
+
+                {/* Elegant Pattern Overlay */}
+                                <PatternOverlay color="rgba(0,0,0,0.12)" opacity={1} gap={20} size={2.2} />
+
+                {/* Soft Aura Spotlight behind the model */}
+                <View style={[s.spotlight, { backgroundColor: themeColor + '18' }]} />
 
                 {isSealed && (
                     <LinearGradient
@@ -611,6 +644,14 @@ const CapsuleCard = React.memo(({
                         <Text style={s.actionNum}>{postsCount}</Text>
                     </View>
 
+                    <TouchableOpacity 
+                        style={[s.actionBtn, { marginLeft: 12 }]} 
+                        onPress={handleShare}
+                        activeOpacity={0.7}
+                    >
+                        <Ionicons name="share-social-outline" size={14} color={Colors.textMuted} />
+                    </TouchableOpacity>
+
                     <View style={{ flex: 1 }} />
 
                     {capsule.opens_at && (
@@ -662,6 +703,14 @@ const s = StyleSheet.create({
         position: 'relative',
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    spotlight: {
+        position: 'absolute',
+        width: '80%',
+        height: '80%',
+        borderRadius: 100,
+        opacity: 0.7,
+        transform: [{ scale: 1.2 }],
     },
     blurBg: { ...StyleSheet.absoluteFillObject, opacity: 0.55 },
 

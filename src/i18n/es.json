@@ -580,7 +580,9 @@
     "invited_push_body": "Te han invitado a la cápsula \"{{title}}\"",
     "invites_sent": "¡Invitaciones enviadas!",
     "send_invites": "Enviar invitaciones",
-    "invite_error": "No se pudieron enviar las invitaciones."
+    "invite_error": "No se pudieron enviar las invitaciones.",
+    "share_link": "Compartir enlace corto",
+    "share_text": "¡Mira esta cápsula en Kapsely!"
   },
   "onboarding": {
     "step0_title": "Elige tu idioma",

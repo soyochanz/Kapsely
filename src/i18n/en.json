@@ -578,7 +578,9 @@
     "invited_push_body": "You've been invited to the capsule \"{{title}}\"",
     "invites_sent": "Invitations sent!",
     "send_invites": "Send Invitations",
-    "invite_error": "Could not send invitations."
+    "invite_error": "Could not send invitations.",
+    "share_link": "Share short link",
+    "share_text": "Check out this capsule on Kapsely!"
   },
   "onboarding": {
     "step0_title": "Choose your language",

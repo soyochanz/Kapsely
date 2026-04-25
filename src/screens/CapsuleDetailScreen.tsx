@@ -3,7 +3,7 @@ import {
     View, Text, StyleSheet, ScrollView, TouchableOpacity,
     TextInput, Dimensions, Animated, Easing, StatusBar, Alert, ActivityIndicator,
     Modal, FlatList, KeyboardAvoidingView, Platform, Pressable, SectionList, Keyboard, InteractionManager,
-    DeviceEventEmitter, Vibration
+    DeviceEventEmitter, Vibration, Share
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -28,6 +28,7 @@ import FloatingEmojis from '../components/FloatingEmojis';
 import AestheticLocation from '../components/AestheticLocation';
 import { EpicOpening } from '../components/detail/EpicOpening';
 import { CapsuleHero } from '../components/detail/CapsuleHero';
+import ZoomableImage from '../components/ZoomableImage';
 
 const { width, height } = Dimensions.get('window');
 const GRID_COLS = 3;
@@ -648,6 +649,7 @@ function CapsuleDetailScreen() {
     const [searchResults, setSearchResults] = useState<any[]>([]);
     const [isSearching, setIsSearching] = useState(false);
     const [scrollEnabled, setScrollEnabled] = useState(true);
+    const [viewerScrollEnabled, setViewerScrollEnabled] = useState(true);
     const [showBigHeart, setShowBigHeart] = useState(false);
     const [invitedUsers, setInvitedUsers] = useState<any[]>([]);
     const bigHeartScale = useRef(new Animated.Value(0)).current;
@@ -701,6 +703,19 @@ function CapsuleDetailScreen() {
             await supabase.from('capsules').update({ description: newDesc }).eq('id', capsuleId);
         } catch (err) {
             console.error('Error updating design:', err);
+        }
+    };
+
+    const handleShareLink = async () => {
+        try {
+            const shortId = capsuleId.split('-')[0];
+            const shareUrl = `https://kaps.ly/${shortId}`;
+            await Share.share({
+                message: `${t('detail.share_text') || '¡Mira esta cápsula en Kapsely!'} ✦\n\n${shareUrl}`,
+                url: shareUrl,
+            });
+        } catch (error) {
+            console.log('Error sharing:', error);
         }
     };
 
@@ -1028,7 +1043,6 @@ function CapsuleDetailScreen() {
                 const { error } = await supabase.from('capsule_followers').insert({ user_id: userId, capsule_id: capsuleId });
                 if (error) throw error;
                 
-                // Optional: Notify owner that someone followed their capsule
                 if (capsule?.owner_id && capsule.owner_id !== userId) {
                     try {
                         await supabase.from('notifications').insert({
@@ -1797,6 +1811,7 @@ function CapsuleDetailScreen() {
                         <Text style={ds.sheetTitle}>{t('detail.options')}</Text>
                         {[
                             { icon: 'qr-code-outline', color: D.text, label: t('detail.view_qr'), onPress: () => { setShowOptions(false); setShowQRModal(true); } },
+                            { icon: 'share-social-outline', color: tint, label: t('detail.share_link') || 'Compartir enlace corto', onPress: () => { setShowOptions(false); handleShareLink(); } },
                             { icon: 'logo-instagram', color: '#E1306C', label: t('detail.share_instagram'), onPress: () => { setShowOptions(false); navigation.navigate('InstagramShare', { capsule }); } },
                             ...(!isSealed && (isOwner || totalMembers > 1) ? [{ 
                                 icon: openDesign === 'open' ? 'cube-outline' : 'cube', 
@@ -1970,6 +1985,7 @@ function CapsuleDetailScreen() {
                     <FlatList
                         data={filteredData.items}
                         horizontal pagingEnabled
+                        scrollEnabled={viewerScrollEnabled}
                         initialScrollIndex={initialIndex}
                         getItemLayout={(_, i) => ({ length: width, offset: width * i, index: i })}
                         onMomentumScrollEnd={e => setActiveViewerIndex(Math.round(e.nativeEvent.contentOffset.x / width))}
@@ -1999,7 +2015,12 @@ function CapsuleDetailScreen() {
                                 ) : vi.media_type === 'video' ? (
                                     <VideoWithTrim item={vi} isActive={activeViewerIndex === index && viewerVisible} style={{ width, height }} />
                                 ) : (
-                                    <Image source={{ uri: vi.media_url }} style={{ width, height }} contentFit="contain" cachePolicy="memory-disk" transition={300} />
+                                    <ZoomableImage 
+                                        uri={vi.media_url} 
+                                        style={{ width, height }} 
+                                        onInteractionStart={() => setViewerScrollEnabled(false)}
+                                        onInteractionEnd={() => setViewerScrollEnabled(true)}
+                                    />
                                 )}
                                 <View style={ds.viewerCaption}>
                                     {vi.caption && vi.caption.replace(/!!b:[^\s]+/g, '').trim() ? (

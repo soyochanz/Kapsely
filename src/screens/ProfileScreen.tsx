@@ -598,9 +598,9 @@ export default function ProfileScreen() {
                             isSealed={item.status === 'sealed'}
                             cfg={TYPE_CONFIG(t)[item.type] || TYPE_CONFIG(t).instacap}
                             coverUrl={coverMap[item.id]}
-                            itemsCount={item.capsule_items_count_val ?? (item.capsule_items_count || 0)}
-                            likesCount={item.likes_count_val ?? (item.likes_count || 0)}
-                            commentsCount={item.comments_count_val ?? (item.comments_count || 0)}
+                            itemsCount={item.posts_count ?? item.capsule_items_count ?? 0}
+                            likesCount={item.likes_count ?? 0}
+                            commentsCount={item.comments_count ?? 0}
                             setPickerCapsuleId={setPickerCapsuleId}
                             themeColor={accentColor}
                             capsuleMediaMap={capsuleMediaMap}

@@ -20,6 +20,7 @@ import { supabase } from '../lib/supabase';
 import { CAPSULE_MODELS, MODEL_IMAGES } from '../constants/models';
 import CapsuleWithTimer from '../components/CapsuleWithTimer';
 import { timerConfigManager } from '../utils/timerConfig';
+import { sendPushNotification } from '../utils/pushNotifications';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const { width, height } = Dimensions.get('window');
@@ -1151,6 +1152,10 @@ export default function CapsuleCreationScreen() {
                 return;
             }
 
+            // Fetch current user profile for notifications
+            const { data: profile } = await supabase.from('profiles').select('username, display_name').eq('id', user.id).single();
+            const ownerName = profile?.display_name || profile?.username || 'Someone';
+
             if (!title.trim()) {
                 Alert.alert('Missing Title', 'Please give your capsule a name');
                 setSealing(false);
@@ -1212,10 +1217,24 @@ export default function CapsuleCreationScreen() {
                     sender_id: user.id,
                     type: 'capsule_invite',
                     capsule_id: newCapsule.id,
-                    message: `invited you to collaborate on the capsule "${title || 'New Capsule'}"`,
+                    message: `${ownerName} ${t('notifications.invited_you_msg') || 'invited you to collaborate on a capsule'}`,
                     is_read: false
                 }));
                 await supabase.from('notifications').insert(notificationData);
+
+                // Send Push Notifications
+                for (const u of invitedUsers) {
+                    try {
+                        sendPushNotification(
+                            u.id, 
+                            t('notifications.invitation_title') || 'New Invitation!', 
+                            `${ownerName} ${t('notifications.invited_you_body') || 'invited you to join a capsule.'}`,
+                            { screen: 'CapsuleDetail', params: { capsuleId: newCapsule.id } }
+                        );
+                    } catch (pushErr) {
+                        console.error('[SealCapsule] Push error:', pushErr);
+                    }
+                }
             }
 
             setTimeout(() => {

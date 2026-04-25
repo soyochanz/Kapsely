@@ -429,23 +429,82 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
 
                 {/* Text overlays */}
                 {story.metadata?.texts?.map((t: any) => (
-                    <View key={t.id} style={[{ position: 'absolute', top: t.y * height, left: t.x * width - 50 }, { pointerEvents: 'none' } as any]}>
-                        <View style={{ backgroundColor: t.bg || 'rgba(0,0,0,0.5)', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }}>
-                            <Text style={{ color: t.color || '#fff', fontSize: 18, fontFamily: Fonts.bold }}>{t.text}</Text>
+                    <View 
+                        key={t.id} 
+                        style={[
+                            { 
+                                position: 'absolute', 
+                                top: (t.y || 0.4) * height, 
+                                left: (t.x || 0.5) * width,
+                                transform: [
+                                    { scale: t.scale || 1 },
+                                    { rotate: `${t.rotation || 0}deg` }
+                                ]
+                            }, 
+                            { pointerEvents: 'none' } as any
+                        ]}
+                    >
+                        <View style={{ 
+                            backgroundColor: t.bgId === 'none' ? 'transparent' : (t.bgId === 'white' ? 'rgba(255,255,255,0.75)' : 'rgba(0,0,0,0.55)'), 
+                            paddingHorizontal: 12, 
+                            paddingVertical: 6, 
+                            borderRadius: 12 
+                        }}>
+                            <Text style={{ 
+                                color: t.color || '#fff', 
+                                fontSize: t.fontSize || 26, 
+                                fontFamily: Fonts.bold,
+                                textAlign: 'center'
+                            }}>
+                                {t.text}
+                            </Text>
                         </View>
+                    </View>
+                ))}
+                {/* Stickers / GIFs */}
+                {story.metadata?.stickers?.map((s: any) => (
+                    <View 
+                        key={s.id} 
+                        style={[
+                            { 
+                                position: 'absolute', 
+                                top: (s.y || 0.5) * height, 
+                                left: (s.x || 0.5) * width,
+                                transform: [
+                                    { scale: s.scale || 1 },
+                                    { rotate: `${s.rotation || 0}deg` }
+                                ]
+                            }, 
+                            { pointerEvents: 'none' } as any
+                        ]}
+                    >
+                        <Image source={{ uri: s.url }} style={{ width: 140, height: 140 }} contentFit="contain" />
                     </View>
                 ))}
                 {story.metadata?.emojis?.map((e: any) => (
                     <Text key={e.id} style={[{ position: 'absolute', top: e.y * height, left: e.x * width, fontSize: 32 }, { pointerEvents: 'none' } as any]}>{e.emoji}</Text>
                 ))}
                 {story.metadata?.location && (
-                    <View style={[{ position: 'absolute', top: story.metadata.location.y * height, left: story.metadata.location.x * width - 60 }, { pointerEvents: 'none' } as any]}>
+                    <View 
+                        style={[
+                            { 
+                                position: 'absolute', 
+                                top: (story.metadata.location.y || 0.2) * height, 
+                                left: (story.metadata.location.x || 0.5) * width,
+                                transform: [
+                                    { scale: story.metadata.location.scale || 1 },
+                                    { rotate: `${story.metadata.location.rotation || 0}deg` }
+                                ]
+                            }, 
+                            { pointerEvents: 'none' } as any
+                        ]}
+                    >
                         <LinearGradient
                             colors={[Colors.primary, Colors.primaryDark]}
                             start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
                             style={svs.locationPill}
                         >
-                            <Ionicons name="location" size={12} color="#fff" />
+                            <Ionicons name="location" size={14} color="#fff" />
                             <Text style={svs.locationText}>{story.metadata.location.text}</Text>
                         </LinearGradient>
                     </View>

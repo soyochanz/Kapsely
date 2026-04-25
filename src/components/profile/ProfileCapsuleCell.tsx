@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, Platform } from 'react-native';
+import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts } from '../../theme';
+import PatternOverlay from '../PatternOverlay';
 import { MODEL_IMAGES, MODEL_IMAGES_OPEN } from '../../constants/models';
 import CapsuleWithTimer from '../CapsuleWithTimer';
 import { timerConfigManager } from '../../utils/timerConfig';
@@ -51,6 +54,10 @@ export const ProfileCapsuleCell = React.memo(({
         return d.toDateString() === now.toDateString();
     }, [cap.opens_at, isSealed]);
 
+    const modelThemeColor = React.useMemo(() => {
+        return timerConfigManager.getConfig(cap.model)?.themeColor || cfg.color || Colors.primary;
+    }, [cap.model, cfg.color]);
+
     return (
         <TouchableOpacity
             style={[s.capsuleCell, !cap.isAccessible && { opacity: 0.85 }, isToday && { borderWidth: 2, borderColor: '#A855F7' }]}
@@ -64,6 +71,18 @@ export const ProfileCapsuleCell = React.memo(({
             }}
         >
             <View style={s.capsuleVisual}>
+                <LinearGradient
+                    colors={[modelThemeColor + '25', modelThemeColor + '08', Colors.cardAlt]}
+                    style={StyleSheet.absoluteFill}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                />
+                
+                {/* Elegant Pattern Overlay */}
+                <PatternOverlay color="rgba(0,0,0,0.15)" opacity={1} gap={14} size={2} />
+                
+                {/* Dynamic Spotlight */}
+                <View style={[s.visualGlow, { backgroundColor: modelThemeColor + '20' }]} />
                 {isSealed ? (
                     <CapsuleWithTimer
                         modelKey={cap.model}
@@ -78,7 +97,7 @@ export const ProfileCapsuleCell = React.memo(({
                 ) : (
                     <Image source={{ uri: modelImg }} style={s.capsuleModelImg} contentFit="contain" cachePolicy="memory-disk" />
                 )}
-
+                
                 {/* Status Badges */}
                 <View style={s.badgeContainer}>
                     <View style={[s.miniBadge, { backgroundColor: cfg.color }]}>
@@ -91,7 +110,7 @@ export const ProfileCapsuleCell = React.memo(({
                     )}
                 </View>
 
-                {/* Lock Status */}
+                {/* Lock Status - kept subtle on image */}
                 <View style={[s.lockStatus, { backgroundColor: isSealed ? '#F87171' : '#4ADE80' }]}>
                     <Ionicons name={isSealed ? "lock-closed" : "lock-open"} size={10} color="#fff" />
                 </View>
@@ -100,23 +119,23 @@ export const ProfileCapsuleCell = React.memo(({
             <View style={s.capsuleMeta}>
                 <Text style={s.capsuleTitle} numberOfLines={1}>{cap.title || 'Untitled'}</Text>
                 
-                <View style={s.statsRow}>
+                <View style={s.statsGroup}>
                     <View style={s.statItem}>
-                        <Ionicons name="heart" size={10} color={Colors.textMuted} />
-                        <Text style={s.statText}>{likesCount}</Text>
+                        <Ionicons name="heart" size={10} color="#F43F5E" />
+                        <Text style={[s.statText, { color: '#F43F5E' }]}>{likesCount}</Text>
                     </View>
                     <View style={s.statItem}>
-                        <Ionicons name="chatbubble" size={10} color={Colors.textMuted} />
-                        <Text style={s.statText}>{commentsCount}</Text>
+                        <Ionicons name="chatbubble" size={10} color="#0EA5E9" />
+                        <Text style={[s.statText, { color: '#0EA5E9' }]}>{commentsCount}</Text>
                     </View>
                     <View style={s.statItem}>
-                        <Ionicons name="images" size={10} color={Colors.textMuted} />
-                        <Text style={s.statText}>{itemsCount}</Text>
+                        <Ionicons name="images" size={10} color="#A855F7" />
+                        <Text style={[s.statText, { color: '#A855F7' }]}>{itemsCount}</Text>
                     </View>
                 </View>
 
                 <View style={s.timeRow}>
-                    <Ionicons name="time-outline" size={10} color={Colors.textMuted} />
+                    <Ionicons name="calendar-outline" size={10} color={Colors.textMuted} />
                     <Text style={s.timeText} numberOfLines={1}>
                         {isSealed ? (cap.opens_at ? new Date(cap.opens_at).toLocaleDateString() : t('detail.sealed')) : t('detail.opened')}
                     </Text>
@@ -135,9 +154,18 @@ const s = StyleSheet.create({
         shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2,
     },
     capsuleVisual: {
-        aspectRatio: 1, backgroundColor: Colors.cardAlt,
+        aspectRatio: 1,
         alignItems: 'center', justifyContent: 'center',
         position: 'relative',
+        overflow: 'hidden',
+    },
+    visualGlow: {
+        position: 'absolute',
+        width: '120%',
+        height: '120%',
+        borderRadius: 100,
+        opacity: 0.8,
+        transform: [{ scale: 1.2 }],
     },
     capsuleModelImg: { width: '90%', height: '90%' },
     capsuleCoverImg: { width: '100%', height: '100%' },
@@ -157,13 +185,13 @@ const s = StyleSheet.create({
         borderWidth: 1.5, borderColor: Colors.surface,
     },
 
-    capsuleMeta: { padding: 8, gap: 2 },
-    capsuleTitle: { fontSize: 10, fontFamily: Fonts.bold, color: Colors.textPrimary },
+    capsuleMeta: { paddingHorizontal: 10, paddingVertical: 10, gap: 4 },
+    capsuleTitle: { fontSize: 12, fontFamily: Fonts.bold, color: Colors.textPrimary, letterSpacing: -0.3 },
     
-    statsRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginVertical: 2 },
+    statsGroup: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 2 },
     statItem: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-    statText: { fontSize: 9, fontFamily: Fonts.medium, color: Colors.textMuted },
-    
-    timeRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-    timeText: { fontSize: 9, fontFamily: Fonts.regular, color: Colors.textMuted },
+    statText: { fontSize: 10, fontFamily: Fonts.bold, opacity: 0.9 },
+
+    timeRow: { flexDirection: 'row', alignItems: 'center', gap: 3, opacity: 0.6 },
+    timeText: { fontSize: 9, fontFamily: Fonts.medium, color: Colors.textMuted },
 });
