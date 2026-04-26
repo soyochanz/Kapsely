@@ -16,6 +16,7 @@ import { useTranslation } from 'react-i18next';
 import { timerConfigManager } from '../utils/timerConfig';
 import { MODEL_IMAGES } from '../constants/models';
 import { supabase } from '../lib/supabase';
+import { TEXT_STYLES, TEXT_BG_OPTIONS } from '../constants/flashes';
 
 const { width, height } = Dimensions.get('window');
 const STORY_DURATION = 8000; // 8 seconds per story
@@ -242,6 +243,85 @@ const ls = StyleSheet.create({
     handleText: { fontSize: 12, fontFamily: Fonts.medium, color: Colors.textMuted, marginTop: 1 },
 });
 
+// ─── Viewers bottom sheet ──────────────────────────────────────────────────────
+function ViewersSheet({ visible, onClose, storyId }: { visible: boolean; onClose: () => void; storyId: string }) {
+    const { t } = useTranslation();
+    const insets = useSafeAreaInsets();
+    const [viewers, setViewers] = useState<any[]>([]);
+    const [loading, setLoading] = useState(true);
+    const slideAnim = useRef(new Animated.Value(300)).current;
+
+    useEffect(() => {
+        if (!visible) return;
+        setLoading(true);
+        Animated.spring(slideAnim, { toValue: 0, friction: 9, tension: 50, useNativeDriver: true }).start();
+        supabase.from('story_views')
+            .select('user_id, viewed_at, profiles:user_id(id, username, display_name, avatar_url)')
+            .eq('story_id', storyId)
+            .order('viewed_at', { ascending: false })
+            .then(({ data }) => { if (data) setViewers(data.map((d: any) => ({ ...d.profiles, viewed_at: d.viewed_at }))); setLoading(false); });
+    }, [visible, storyId]);
+
+    if (!visible) return null;
+
+    return (
+        <Modal visible={visible} transparent animationType="fade">
+            <Pressable style={ls.overlay} onPress={onClose}>
+                <Animated.View style={[ls.sheet, { paddingBottom: Math.max(insets.bottom, 20), transform: [{ translateY: slideAnim }] }]}>
+                    <View style={ls.handle} />
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+                        <Text style={ls.title}>👁 {viewers.length} vistas</Text>
+                    </View>
+
+                    {loading ? (
+                        <Text style={ls.emptyText}>{t('flashes.loading')}</Text>
+                    ) : viewers.length === 0 ? (
+                        <View style={ls.emptyWrap}>
+                            <Ionicons name="eye-outline" size={32} color={Colors.textMuted} />
+                            <Text style={ls.emptyText}>Nadie ha visto este flash aún</Text>
+                        </View>
+                    ) : (
+                        viewers.map((u, i) => (
+                            <View key={i} style={ls.row}>
+                                <Image source={{ uri: Colors.getAvatarUrl(u.avatar_url, u.display_name || u.username) }} style={ls.avatar} />
+                                <View style={{ flex: 1 }}>
+                                    <Text style={ls.name}>{u.display_name || u.username}</Text>
+                                    <Text style={ls.handleText}>@{u.username}</Text>
+                                </View>
+                                <Ionicons name="eye" size={16} color={Colors.textMuted} />
+                            </View>
+                        ))
+                    )}
+                </Animated.View>
+            </Pressable>
+        </Modal>
+    );
+}
+
+
+// ─── Animated Sticker ────────────────────────────────────────────────────────
+function AnimatedSticker({ uri, isPaused }: { uri: string; isPaused: boolean }) {
+    const imageRef = useRef<any>(null);
+
+    useEffect(() => {
+        if (isPaused) {
+            imageRef.current?.stopAnimating?.();
+        } else {
+            imageRef.current?.startAnimating?.();
+        }
+    }, [isPaused]);
+
+    return (
+        <Image 
+            ref={imageRef}
+            source={{ uri }} 
+            style={{ width: 140, height: 140 }} 
+            contentFit="contain"
+            autoplay={!isPaused}
+        />
+    );
+}
+
 // ─── Main StoryViewer ─────────────────────────────────────────────────────────
 interface StoryViewerProps {
     visible: boolean;
@@ -263,9 +343,12 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
     const [isPaused, setIsPaused] = useState(false);
 
     const [likesData, setLikesData] = useState<Record<string, { count: number; hasLiked: boolean }>>({});
+    const [viewsData, setViewsData] = useState<Record<string, number>>({});
     const [showLikersId, setShowLikersId] = useState<string | null>(null);
+    const [showViewersId, setShowViewersId] = useState<string | null>(null);
     const pressStartTime = useRef<number>(0);
     const isActuallyHolding = useRef(false);
+    const trackedViewsRef = useRef<Set<string>>(new Set());
 
     const [storyComments, setStoryComments] = useState<any[]>([]);
     const [activeComment, setActiveComment] = useState<any>(null);
@@ -300,7 +383,11 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
         const story = userGroup.stories[activeIndex];
         if (story) {
             if (!likesData[story.id]) fetchLikes(story.id);
+            if (isOwner && viewsData[story.id] === undefined) fetchViews(story.id);
             fetchComments(story.id);
+            // Track view after a short delay (user actually saw this story)
+            const timer = setTimeout(() => trackView(story.id), 1500);
+            return () => clearTimeout(timer);
         }
     }, [activeIndex, userGroup, visible]);
 
@@ -308,7 +395,7 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
 
     // Progress timer
     useEffect(() => {
-        if (!visible || !userGroup || isPaused || !!showLikersId || inputFocused) {
+        if (!visible || !userGroup || isPaused || !!showLikersId || !!showViewersId || inputFocused) {
             progress.stopAnimation(); return;
         }
         const remaining = STORY_DURATION * (1 - progressRef.current);
@@ -317,7 +404,7 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
         const story = userGroup.stories[activeIndex];
         if (story && !story.is_read && onStoryRead) onStoryRead(story.id);
         return () => anim.stop();
-    }, [visible, userGroup, activeIndex, isPaused, showLikersId, inputFocused]);
+    }, [visible, userGroup, activeIndex, isPaused, showLikersId, showViewersId, inputFocused]);
 
     // Rotate comments
     useEffect(() => {
@@ -344,6 +431,24 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
             hasLiked = !!data;
         }
         setLikesData(p => ({ ...p, [sid]: { count: count || 0, hasLiked } }));
+    };
+
+    const fetchViews = async (sid: string) => {
+        const { count } = await supabase.from('story_views').select('*', { count: 'exact', head: true }).eq('story_id', sid);
+        setViewsData(p => ({ ...p, [sid]: count || 0 }));
+    };
+
+    const trackView = async (sid: string) => {
+        if (!currentUserId || trackedViewsRef.current.has(sid)) return;
+        trackedViewsRef.current.add(sid);
+        // Don't track your own views
+        if (ownerId && ownerId === currentUserId) return;
+        await supabase.from('story_views').upsert(
+            { story_id: sid, user_id: currentUserId, viewed_at: new Date().toISOString() },
+            { onConflict: 'story_id,user_id' }
+        );
+        // Refresh count
+        fetchViews(sid);
     };
 
     const fetchComments = async (sid: string) => {
@@ -428,39 +533,46 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                 )}
 
                 {/* Text overlays */}
-                {story.metadata?.texts?.map((t: any) => (
-                    <View 
-                        key={t.id} 
-                        style={[
-                            { 
-                                position: 'absolute', 
-                                top: (t.y || 0.4) * height, 
-                                left: (t.x || 0.5) * width,
-                                transform: [
-                                    { scale: t.scale || 1 },
-                                    { rotate: `${t.rotation || 0}deg` }
-                                ]
-                            }, 
-                            { pointerEvents: 'none' } as any
-                        ]}
-                    >
-                        <View style={{ 
-                            backgroundColor: t.bgId === 'none' ? 'transparent' : (t.bgId === 'white' ? 'rgba(255,255,255,0.75)' : 'rgba(0,0,0,0.55)'), 
-                            paddingHorizontal: 12, 
-                            paddingVertical: 6, 
-                            borderRadius: 12 
-                        }}>
-                            <Text style={{ 
-                                color: t.color || '#fff', 
-                                fontSize: t.fontSize || 26, 
-                                fontFamily: Fonts.bold,
-                                textAlign: 'center'
+                {story.metadata?.texts?.map((t: any) => {
+                    const styleInfo = TEXT_STYLES.find(s => s.id === t.styleId);
+                    const bgOption = TEXT_BG_OPTIONS.find(b => b.id === t.bgId);
+                    const bgVal = bgOption ? bgOption.value : (t.bgId === 'none' ? 'transparent' : 'rgba(0,0,0,0.55)');
+
+                    return (
+                        <View 
+                            key={t.id} 
+                            style={[
+                                { 
+                                    position: 'absolute', 
+                                    top: (t.y || 0.4) * height, 
+                                    left: (t.x || 0.5) * width,
+                                    transform: [
+                                        { scale: t.scale || 1 },
+                                        { rotate: `${t.rotation || 0}deg` }
+                                    ]
+                                }, 
+                                { pointerEvents: 'none' } as any
+                            ]}
+                        >
+                            <View style={{ 
+                                backgroundColor: bgVal, 
+                                paddingHorizontal: 12, 
+                                paddingVertical: 6, 
+                                borderRadius: 12 
                             }}>
-                                {t.text}
-                            </Text>
+                                <Text style={{ 
+                                    color: t.color || '#fff', 
+                                    fontSize: t.fontSize || 26, 
+                                    fontFamily: styleInfo?.fontFamily || Fonts.bold,
+                                    fontStyle: styleInfo?.italic ? 'italic' : 'normal',
+                                    textAlign: 'center'
+                                }}>
+                                    {t.text}
+                                </Text>
+                            </View>
                         </View>
-                    </View>
-                ))}
+                    );
+                })}
                 {/* Stickers / GIFs */}
                 {story.metadata?.stickers?.map((s: any) => (
                     <View 
@@ -478,9 +590,34 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                             { pointerEvents: 'none' } as any
                         ]}
                     >
-                        <Image source={{ uri: s.url }} style={{ width: 140, height: 140 }} contentFit="contain" />
+                        <AnimatedSticker uri={s.url} isPaused={isPaused} />
                     </View>
                 ))}
+
+                {/* Draggable Capsule Design */}
+                {story.metadata?.capsuleDesign && (
+                    <TouchableOpacity
+                        activeOpacity={0.9}
+                        onPress={() => { progress.stopAnimation(); onClose(); navigation.navigate('CapsuleDetail', { capsuleId }); }}
+                        style={[
+                            { 
+                                position: 'absolute', 
+                                top: (story.metadata.capsuleDesign.y || 0.8) * height, 
+                                left: (story.metadata.capsuleDesign.x || 0.5) * width,
+                                transform: [
+                                    { scale: story.metadata.capsuleDesign.scale || 1 },
+                                    { rotate: `${story.metadata.capsuleDesign.rotation || 0}deg` }
+                                ]
+                            }
+                        ]}
+                    >
+                        <Image 
+                            source={{ uri: timerConfigManager.getModelImage(story.metadata.capsuleDesign.model) || MODEL_IMAGES[story.metadata.capsuleDesign.model] }} 
+                            style={{ width: 120, height: 120 }} 
+                            contentFit="contain" 
+                        />
+                    </TouchableOpacity>
+                )}
                 {story.metadata?.emojis?.map((e: any) => (
                     <Text key={e.id} style={[{ position: 'absolute', top: e.y * height, left: e.x * width, fontSize: 32 }, { pointerEvents: 'none' } as any]}>{e.emoji}</Text>
                 ))}
@@ -601,40 +738,6 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                 {/* ── BOTTOM AREA ── */}
                 <View style={[s.bottomArea, { paddingBottom: Math.max(insets.bottom + 10, 24) }]}>
 
-                    {/* Capsule chip — bottom left, always visible */}
-                    {capsuleId && (
-                        <TouchableOpacity
-                            style={s.capsuleChip}
-                            activeOpacity={0.9}
-                            onPress={() => { progress.stopAnimation(); onClose(); navigation.navigate('CapsuleDetail', { capsuleId }); }}
-                        >
-                            {Platform.OS === 'ios' ? (
-                                <BlurView intensity={40} tint="dark" style={s.capsuleChipBlur}>
-                                    <Image
-                                        source={{ uri: timerConfigManager.getModelImage(story.capsules?.model) || MODEL_IMAGES[story.capsules?.model] }}
-                                        style={s.capsuleModel}
-                                        contentFit="contain"
-                                    />
-                                    <View style={s.capsuleChipText}>
-                                        <Text style={s.capsuleChipLabel} numberOfLines={1}>{story.capsules?.title || t('detail.view_capsule')}</Text>
-                                        <Text style={s.capsuleChipSub}>{t('flashes.tap_to_open')}</Text>
-                                    </View>
-                                </BlurView>
-                            ) : (
-                                <View style={[s.capsuleChipBlur, { backgroundColor: 'rgba(0,0,0,0.6)' }]}>
-                                    <Image
-                                        source={{ uri: timerConfigManager.getModelImage(story.capsules?.model) || MODEL_IMAGES[story.capsules?.model] }}
-                                        style={s.capsuleModel}
-                                        contentFit="contain"
-                                    />
-                                    <View style={s.capsuleChipText}>
-                                        <Text style={s.capsuleChipLabel} numberOfLines={1}>{story.capsules?.title || t('detail.view_capsule')}</Text>
-                                        <Text style={s.capsuleChipSub}>{t('flashes.tap_to_open')}</Text>
-                                    </View>
-                                </View>
-                            )}
-                        </TouchableOpacity>
-                    )}
 
                     {/* Live comment bubble — above input */}
                     {activeComment && (
@@ -672,9 +775,20 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                                 )}
                             </View>
                         ) : (
-                            // Owner sees viewer count area
+                            // Owner sees viewer count + replies
                             <View style={s.ownerInfo}>
-                                <Ionicons name="eye-outline" size={16} color="rgba(255,255,255,0.7)" />
+                                <TouchableOpacity
+                                    style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+                                    onPress={() => { setShowViewersId(story.id); setIsPaused(true); }}
+                                    activeOpacity={0.8}
+                                >
+                                    <Ionicons name="eye" size={17} color="rgba(255,255,255,0.85)" />
+                                    <Text style={[s.ownerInfoText, { color: '#fff', fontFamily: Fonts.bold }]}>
+                                        {viewsData[story.id] ?? 0}
+                                    </Text>
+                                </TouchableOpacity>
+                                <View style={{ width: 1, height: 16, backgroundColor: 'rgba(255,255,255,0.25)', marginHorizontal: 8 }} />
+                                <Ionicons name="chatbubble-outline" size={15} color="rgba(255,255,255,0.7)" />
                                 <Text style={s.ownerInfoText}>{storyComments.length} {t('flashes.replies')}</Text>
                             </View>
                         )}
@@ -698,6 +812,13 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                 visible={!!showLikersId}
                 onClose={() => { setShowLikersId(null); setIsPaused(false); }}
                 storyId={showLikersId || ''}
+            />
+
+            {/* Viewers sheet */}
+            <ViewersSheet
+                visible={!!showViewersId}
+                onClose={() => { setShowViewersId(null); setIsPaused(false); }}
+                storyId={showViewersId || ''}
             />
         </Modal>
     );

@@ -30,9 +30,9 @@ BEGIN
                    regexp_replace(c.description, '\[STYLE:[A-Z]+\]', '', 'g') as clean_description,
                    -- Puntuación de afinidad (Amigos directos tienen prioridad máxima)
                    CASE 
-                     WHEN c.owner_id = p_user_id THEN 100 -- TUS PROPIOS POSTS
-                     WHEN c.owner_id = ANY(v_following_ids) THEN 40 -- TUS AMIGOS
-                     WHEN c.owner_id IN (SELECT following_id FROM follows WHERE follower_id = ANY(v_following_ids)) THEN 15 -- AMIGOS DE AMIGOS
+                     WHEN c.owner_id = p_user_id THEN 30 -- TUS PROPIOS POSTS (Bajado de 100)
+                     WHEN c.owner_id = ANY(v_following_ids) THEN 100 -- TUS AMIGOS (Subido de 40)
+                     WHEN c.owner_id IN (SELECT following_id FROM follows WHERE follower_id = ANY(v_following_ids)) THEN 50 -- AMIGOS DE AMIGOS (Subido de 15)
                      ELSE 0 
                    END as affinity_score,
                    -- Puntuación de urgencia (Se abre en < 48h)
@@ -64,10 +64,9 @@ BEGIN
         ),
         activity_scored AS (
             SELECT act.*,
-                   -- PENALIZACIÓN POR YA VISTO (solo si no es tu propio post o si ya es viejo)
+                   -- PENALIZACIÓN POR YA VISTO (Siempre penaliza si ya se vio)
                    CASE 
                      WHEN EXISTS(SELECT 1 FROM feed_impressions WHERE user_id = p_user_id AND capsule_id = act.capsule_id) 
-                          AND (act.owner_id <> p_user_id OR act.a_date < (now() - interval '24 hours'))
                      THEN -500 
                      ELSE 0 
                    END as seen_penalty,

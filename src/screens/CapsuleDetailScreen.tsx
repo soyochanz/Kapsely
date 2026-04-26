@@ -29,6 +29,8 @@ import AestheticLocation from '../components/AestheticLocation';
 import { EpicOpening } from '../components/detail/EpicOpening';
 import { CapsuleHero } from '../components/detail/CapsuleHero';
 import ZoomableImage from '../components/ZoomableImage';
+import SwipeableComment from '../components/SwipeableComment';
+import * as NavigationBar from 'expo-navigation-bar';
 
 const { width, height } = Dimensions.get('window');
 const GRID_COLS = 3;
@@ -302,6 +304,34 @@ const ds = StyleSheet.create({
         fontSize: 13,
         fontFamily: Fonts.bold,
     },
+    referencePreview: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        backgroundColor: D.surfaceAlt,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: 12,
+        marginBottom: 8,
+        marginHorizontal: 4,
+        borderWidth: 1,
+        borderColor: D.border,
+    },
+    referenceInfo: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    referenceLabel: { fontSize: 12, fontFamily: Fonts.bold, color: D.textSec },
+    referenceClose: { padding: 2 },
+    commentRefTag: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        backgroundColor: '#F3EEFF',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 8,
+        marginBottom: 6,
+        alignSelf: 'flex-start',
+    },
+    commentRefText: { fontSize: 10, fontFamily: Fonts.bold, color: '#7C5CBF' },
 });
 
 // ── Collaborators Component ──────────────────────────────────────────────────
@@ -497,7 +527,7 @@ const StatPill = React.memo(({ icon, label, color, bg }: { icon: any; label: str
 // ─── Interaction Bar component (isolated) ──────────────────────────────────
 const InteractionBar = React.memo(({ 
     showChat, setShowChat, isChatAvailable, comment, setComment, tint, 
-    handleSendComment, liveChatRef, scrollToChat, localEmojiTriggerRef 
+    handleSendComment, liveChatRef, scrollToChat, localEmojiTriggerRef
 }: any) => {
     const { t } = useTranslation();
     const insets = useSafeAreaInsets();
@@ -505,6 +535,7 @@ const InteractionBar = React.memo(({
     return (
         <BlurView intensity={70} tint="extraLight" style={[ds.commentBar, { paddingBottom: Math.max(insets.bottom, 14) }]}>
             <View style={[ds.commentBarBorderTop, { backgroundColor: tint + '20' }]} />
+            
             {showChat && (
                 <View style={ds.emojiRow}>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, gap: 10 }}>
@@ -611,6 +642,20 @@ function CapsuleDetailScreen() {
     const [acceptedMembers, setAcceptedMembers] = useState<any[]>([]);
 
     useEffect(() => {
+        if (Platform.OS === 'android') {
+            NavigationBar.setVisibilityAsync('hidden');
+            NavigationBar.setBehaviorAsync('inset-touch');
+        }
+        const parent = navigation.getParent();
+        if (parent) parent.setOptions({ tabBarStyle: { display: 'none' } });
+        navigation.setOptions?.({ tabBarStyle: { display: 'none' } });
+        return () => {
+            if (Platform.OS === 'android') NavigationBar.setVisibilityAsync('visible');
+            if (parent) parent.setOptions({ tabBarStyle: undefined });
+        };
+    }, [navigation]);
+
+    useEffect(() => {
         const updateActiveStatus = async (id: string | null) => {
             if (!userId) return;
             try {
@@ -629,6 +674,7 @@ function CapsuleDetailScreen() {
     }, [capsuleId, userId]);
 
     const [viewerVisible, setViewerVisible] = useState(false);
+    const viewerFlatListRef = useRef<FlatList>(null);
     const [initialIndex, setInitialIndex] = useState(0);
     const [activeViewerIndex, setActiveViewerIndex] = useState(0);
 
@@ -708,8 +754,7 @@ function CapsuleDetailScreen() {
 
     const handleShareLink = async () => {
         try {
-            const shortId = capsuleId.split('-')[0];
-            const shareUrl = `https://kaps.ly/${shortId}`;
+            const shareUrl = `https://kapsely.com/capsules/${capsuleId}`;
             await Share.share({
                 message: `${t('detail.share_text') || '¡Mira esta cápsula en Kapsely!'} ✦\n\n${shareUrl}`,
                 url: shareUrl,
@@ -894,12 +939,10 @@ function CapsuleDetailScreen() {
         // NEW: Single RPC call replacing 11 requests
         const { data, error } = await (signal
             ? supabase.rpc('get_capsule_detail_unified', { 
-                p_capsule_id: capsuleId, 
-                p_user_id: myId 
+                p_capsule_id: capsuleId
               }).abortSignal(signal)
             : supabase.rpc('get_capsule_detail_unified', { 
-                p_capsule_id: capsuleId, 
-                p_user_id: myId 
+                p_capsule_id: capsuleId
               })
         );
 
@@ -1078,7 +1121,15 @@ function CapsuleDetailScreen() {
     const handleSendComment = async () => {
         if (!comment.trim() || !userId) return;
         Keyboard.dismiss();
-        const { data } = await supabase.from('comments').insert({ capsule_id: capsuleId, user_id: userId, content: comment.trim() }).select('*, profiles:user_id(*)').maybeSingle();
+        
+        const contentWithRef = comment.trim();
+            
+        const { data } = await supabase.from('comments').insert({ 
+            capsule_id: capsuleId, 
+            user_id: userId, 
+            content: contentWithRef 
+        }).select('*, profiles:user_id(*)').maybeSingle();
+        
         if (data) {
             setComments([{ ...data, myLike: false, likeCount: 0 }, ...comments]);
             setComment('');
@@ -1208,12 +1259,55 @@ function CapsuleDetailScreen() {
         const optionsTitle = t('common.options');
         const setCoverText = t('profile.setAsCover');
         const reportText = t('common.report');
+        const deleteText = t('common.delete');
         const cancelText = t('common.cancel');
-        Alert.alert(optionsTitle, '', [
-            { text: setCoverText, onPress: () => handleSetCover(item.media_url) },
-            { text: reportText, onPress: () => handleReportItem(item.id) },
-            { text: cancelText, style: 'cancel' },
-        ]);
+        
+        const options = [];
+
+        // Permite eliminar si la cápsula nació abierta y el usuario es el dueño del item
+        if (isBornOpen && userId === item.owner_id) {
+            options.push({ 
+                text: deleteText, 
+                style: 'destructive', 
+                onPress: () => handleDeleteItem(item) 
+            } as any);
+        }
+
+        if (isOwner && !isSharedCapsule) {
+            options.push({ text: setCoverText, onPress: () => handleSetCover(item.media_url) });
+        }
+        options.push({ text: reportText, onPress: () => handleReportItem(item.id) });
+        options.push({ text: cancelText, style: 'cancel' });
+
+        Alert.alert(optionsTitle, '', options);
+    };
+
+    const handleDeleteItem = async (item: any) => {
+        Alert.alert(
+            t('detail.delete_content_title') || 'Eliminar contenido',
+            t('detail.delete_content_msg') || '¿Estás seguro de que quieres eliminar este contenido? Esta acción no se puede deshacer.',
+            [
+                { text: t('common.cancel'), style: 'cancel' },
+                { 
+                    text: t('common.delete'), 
+                    style: 'destructive', 
+                    onPress: async () => {
+                        try {
+                            setLoading(true);
+                            const { error } = await supabase.from('capsule_items').delete().eq('id', item.id);
+                            if (error) throw error;
+                            
+                            setItems(prev => prev.filter(i => i.id !== item.id));
+                            Alert.alert(t('common.ready'), t('detail.content_deleted') || 'Contenido eliminado correctamente.');
+                        } catch (err: any) {
+                            Alert.alert(t('common.error'), err.message);
+                        } finally {
+                            setLoading(false);
+                        }
+                    }
+                }
+            ]
+        );
     };
 
     const handleRequestOpen = useCallback(async () => {
@@ -1222,17 +1316,28 @@ function CapsuleDetailScreen() {
         if (error) { console.error(error); return; }
         if (data) {
             setCapsule((p: any) => ({ ...p, open_requests: data.open_requests, is_opening: data.is_opening, opening_at: data.opening_at }));
+            
+            const members = [capsule.owner_id, ...(invites?.filter(i => i.status === 'accepted').map(i => i.user_id) || [])];
+            
+            if (data.is_first_vote) {
+                for (const m of members) {
+                    if (m !== userId) {
+                        await supabase.from('notifications').insert({ user_id: m, sender_id: userId, type: 'capsule_open_vote', capsule_id: capsuleId, message: t('detail.voted_to_open') });
+                        try { sendPushNotification(m, t('detail.vote_received_title'), t('detail.vote_received_body'), { screen: 'CapsuleDetail', params: { capsuleId } }); } catch {}
+                    }
+                }
+            }
+
             if (data.is_opening && data.opening_at) {
                 startEpicOpening(data.opening_at);
                 if (!capsule.is_opening) {
-                    const members = [capsule.owner_id, ...(invites?.filter(i => i.status === 'accepted').map(i => i.user_id) || [])];
                     for (const m of members) {
                         if (m !== userId) await supabase.from('notifications').insert({ user_id: m, sender_id: userId, type: 'capsule_opened', capsule_id: capsuleId, message: t('detail.opening_now') });
                     }
                 }
             }
         }
-    }, [userId, capsule, capsuleId, startEpicOpening, invites, t]);
+    }, [userId, capsule, capsuleId, invites, t, startEpicOpening]);
 
     const triggerBigHeart = () => {
         setShowBigHeart(true);
@@ -1340,6 +1445,7 @@ function CapsuleDetailScreen() {
             { text: t('detail.report_types.inappropriate'), onPress: () => submitReport(cid, 'comment', 'inappropriate') },
             { text: t('detail.report_types.spam'), onPress: () => submitReport(cid, 'comment', 'spam') },
             { text: t('detail.report_types.harassment'), onPress: () => submitReport(cid, 'comment', 'harassment') },
+            { text: t('detail.report_types.other'), onPress: () => submitReport(cid, 'comment', 'other') },
             { text: t('common.cancel'), style: 'cancel' },
         ]);
     };
@@ -1349,6 +1455,8 @@ function CapsuleDetailScreen() {
         Alert.alert(t('detail.report_content'), t('detail.report_reason'), [
             { text: t('detail.report_types.inappropriate'), onPress: () => submitReport(itemId, 'capsule_item', 'inappropriate') },
             { text: t('detail.report_types.spam'), onPress: () => submitReport(itemId, 'capsule_item', 'spam') },
+            { text: t('detail.report_types.harassment'), onPress: () => submitReport(itemId, 'capsule_item', 'harassment') },
+            { text: t('detail.report_types.other'), onPress: () => submitReport(itemId, 'capsule_item', 'other') },
             { text: t('common.cancel'), style: 'cancel' },
         ]);
     };
@@ -1359,6 +1467,8 @@ function CapsuleDetailScreen() {
         Alert.alert(t('common.ready'), t('detail.report_submitted'));
         setShowOptions(false);
     };
+
+
 
 
     const openViewer = (index: number) => { setInitialIndex(index); setActiveViewerIndex(index); setViewerVisible(true); };
@@ -1579,44 +1689,44 @@ function CapsuleDetailScreen() {
         if (typeof item === 'object' && item.id) {
             const c = item;
             return (
-                <TouchableOpacity 
-                    activeOpacity={0.8}
-                    onLongPress={() => handleReportComment(c.id)}
-                    style={{ paddingHorizontal: 22 }}
+                <SwipeableComment 
+                    canDelete={c.user_id === userId || isOwner || (isSharedCapsule && isMember)} 
+                    onDelete={() => handleDeleteComment(c.id)}
                 >
-                    <BlurView intensity={25} tint="extraLight" style={[ds.commentCard, { borderColor: highlightedCommentId === c.id ? tint + '60' : D.border, marginBottom: 10 }, highlightedCommentId === c.id && { borderLeftWidth: 3, borderLeftColor: tint }]}>
-                        <TouchableOpacity onPress={() => navigation.navigate('UserProfile', { targetUserId: c.user_id })}>
-                            <Image 
-                                source={{ uri: Colors.getAvatarUrl(c.profiles?.avatar_url, c.profiles?.display_name || c.profiles?.username, c.profiles?.favorite_color) }} 
-                                style={[ds.commentAvatar as any, { borderColor: D.border }]} 
-                                cachePolicy="memory-disk" 
-                                contentFit="cover" 
-                                recyclingKey={`comment-avatar-${c.profiles?.id}`}
-                            />
-                        </TouchableOpacity>
-                        <View style={{ flex: 1 }}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>
-                                <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }} onPress={() => navigation.navigate('UserProfile', { targetUserId: c.user_id })}>
-                                    <Text style={ds.commentName}>{c.profiles?.display_name || c.profiles?.username}</Text>
-                                    {c.profiles?.is_verified && <VerifiedBadge size={9} />}
-                                </TouchableOpacity>
-                                <Text style={ds.commentTime}>{formatTime(c.created_at)}</Text>
-                            </View>
-                            <Text style={ds.commentText}>{c.content}</Text>
-                        </View>
-                        <View style={{ alignItems: 'center', gap: 8, paddingLeft: 6 }}>
-                            <TouchableOpacity onPress={() => handleLikeComment(c.id)} style={{ alignItems: 'center', gap: 2 }}>
-                                <Ionicons name={c.myLike ? 'heart' : 'heart-outline'} size={13} color={c.myLike ? '#F43F5E' : D.textMuted} />
-                                {c.likeCount > 0 && <Text style={[ds.commentLikeCount, c.myLike && { color: '#F43F5E' }]}>{c.likeCount}</Text>}
+                    <TouchableOpacity 
+                        activeOpacity={0.8}
+                        onLongPress={() => handleReportComment(c.id)}
+                        style={{ paddingHorizontal: 22 }}
+                    >
+                        <BlurView intensity={25} tint="extraLight" style={[ds.commentCard, { borderColor: highlightedCommentId === c.id ? tint + '60' : D.border, marginBottom: 10 }, highlightedCommentId === c.id && { borderLeftWidth: 3, borderLeftColor: tint }]}>
+                            <TouchableOpacity onPress={() => navigation.navigate('UserProfile', { targetUserId: c.user_id })}>
+                                <Image 
+                                    source={{ uri: Colors.getAvatarUrl(c.profiles?.avatar_url, c.profiles?.display_name || c.profiles?.username, c.profiles?.favorite_color) }} 
+                                    style={[ds.commentAvatar as any, { borderColor: D.border }]} 
+                                    cachePolicy="memory-disk" 
+                                    contentFit="cover" 
+                                    recyclingKey={`comment-avatar-${c.profiles?.id}`}
+                                />
                             </TouchableOpacity>
-                            {(c.user_id === userId || isOwner) && (
-                                <TouchableOpacity onPress={() => handleDeleteComment(c.id)} style={{ padding: 2 }}>
-                                    <Ionicons name="trash-outline" size={12} color={D.textMuted} />
+                            <View style={{ flex: 1 }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>
+                                    <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }} onPress={() => navigation.navigate('UserProfile', { targetUserId: c.user_id })}>
+                                        <Text style={ds.commentName}>{c.profiles?.display_name || c.profiles?.username}</Text>
+                                        {c.profiles?.is_verified && <VerifiedBadge size={9} />}
+                                    </TouchableOpacity>
+                                    <Text style={ds.commentTime}>{formatTime(c.created_at)}</Text>
+                                </View>
+                                <Text style={ds.commentText}>{c.content}</Text>
+                            </View>
+                            <View style={{ alignItems: 'center', gap: 8, paddingLeft: 6 }}>
+                                <TouchableOpacity onPress={() => handleLikeComment(c.id)} style={{ alignItems: 'center', gap: 2 }}>
+                                    <Ionicons name={c.myLike ? 'heart' : 'heart-outline'} size={13} color={c.myLike ? '#F43F5E' : D.textMuted} />
+                                    {c.likeCount > 0 && <Text style={[ds.commentLikeCount, c.myLike && { color: '#F43F5E' }]}>{c.likeCount}</Text>}
                                 </TouchableOpacity>
-                            )}
-                        </View>
-                    </BlurView>
-                </TouchableOpacity>
+                            </View>
+                        </BlurView>
+                    </TouchableOpacity>
+                </SwipeableComment>
             );
         }
         return null;
@@ -1760,7 +1870,11 @@ function CapsuleDetailScreen() {
                 </TouchableOpacity>
             </View>
 
-            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }} keyboardVerticalOffset={0}>
+            <KeyboardAvoidingView 
+                behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
+                style={{ flex: 1 }} 
+                keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+            >
                 <SectionList
                     ref={sectionListRef}
                     sections={[
@@ -1983,6 +2097,7 @@ function CapsuleDetailScreen() {
                         <Ionicons name="close" size={24} color="#fff" />
                     </TouchableOpacity>
                     <FlatList
+                        ref={viewerFlatListRef}
                         data={filteredData.items}
                         horizontal pagingEnabled
                         scrollEnabled={viewerScrollEnabled}
@@ -2018,6 +2133,7 @@ function CapsuleDetailScreen() {
                                     <ZoomableImage 
                                         uri={vi.media_url} 
                                         style={{ width, height }} 
+                                        simultaneousGesture={viewerFlatListRef}
                                         onInteractionStart={() => setViewerScrollEnabled(false)}
                                         onInteractionEnd={() => setViewerScrollEnabled(true)}
                                     />

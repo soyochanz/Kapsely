@@ -91,7 +91,7 @@ function TabNavigator() {
         <Tab.Navigator
             tabBar={(props: any) => <TabBar {...props} />}
             tabBarPosition="bottom"
-            screenOptions={{}}
+            screenOptions={{ swipeEnabled: false }}
         >
             <Tab.Screen name="Feed" component={FeedStackNavigator} />
             <Tab.Screen name="Search" component={SearchStackNavigator} />
@@ -170,7 +170,7 @@ export default function AppNavigator() {
                 <Stack.Screen name="PersonalizeProfile" component={PersonalizeProfileScreen} />
                 <Stack.Screen name="AdminCalibration" component={AdminCalibrationScreen} />
                 <Stack.Screen name="InstagramShare" component={require('../screens/InstagramShareScreen').default} />
-                <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />
+                <Stack.Screen name="ChatDetail" component={ChatDetailScreen} options={{ gestureEnabled: false }} />
             </Stack.Navigator>
         </View>
     );

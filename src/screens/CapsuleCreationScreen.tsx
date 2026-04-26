@@ -24,7 +24,7 @@ import { sendPushNotification } from '../utils/pushNotifications';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const { width, height } = Dimensions.get('window');
-const MIN_DAYS = 7;
+const MIN_DAYS = 1;
 const MAX_DAYS = 365 * 5;
 type Step = 'mode' | 'design' | 'identity' | 'timing' | 'review';
 const CLOSED_STEPS: Step[] = ['mode', 'design', 'identity', 'timing', 'review'];
@@ -73,7 +73,7 @@ const TYPE_CFG = {
         limitIcon: 'alert-circle-outline' as const,
         rules: [
             'Only one LegacyCap at a time',
-            'Duration: 1 year → 5 years',
+            'Duration: 24h → 5 years',
             'Cannot change settings after sealing',
         ],
         groupOk: true,
@@ -92,7 +92,7 @@ const TYPE_CFG = {
         limitIcon: 'albums-outline' as const,
         rules: [
             'Up to 5 active at once',
-            'Duration: 2 weeks → 1 year',
+            'Duration: 24h → 5 years',
             'The only type that supports group capsules',
         ],
         groupOk: true,
@@ -846,7 +846,7 @@ function DurationSlider({ days, onChange, accent, daysToLabel, setScrollEnabled 
                 thumbTintColor={accent}
             />
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 2 }}>
-                <Text style={{ fontSize: 10, color: L.textMuted, fontFamily: Fonts.regular }}>1 week</Text>
+                <Text style={{ fontSize: 10, color: L.textMuted, fontFamily: Fonts.regular }}>24h</Text>
                 <Text style={{ fontSize: 13, color: accent, fontFamily: Fonts.bold }}>{daysToLabel(days)}</Text>
                 <Text style={{ fontSize: 10, color: L.textMuted, fontFamily: Fonts.regular }}>5 years</Text>
             </View>
@@ -934,12 +934,12 @@ export default function CapsuleCreationScreen() {
     );
 
     const PRESETS = [
-        { label: 'common.1_week', days: 7, emoji: '⚡' },
-        { label: 'common.1_month', days: 30, emoji: '🌙' },
-        { label: 'common.1_year', days: 365, emoji: '🔮' },
-        { label: 'common.2_years', days: 365 * 2, emoji: '🕰️' },
-        { label: 'common.5_years', days: 365 * 5, emoji: '⏳' },
-        { label: 'common.custom', days: -1, emoji: '🎛️' },
+        { label: 'common.timing_1_night', days: 1, emoji: '🌙' },
+        { label: 'common.timing_flash', days: 7, emoji: '⚡' },
+        { label: 'common.timing_lunar', days: 30, emoji: '🌑' },
+        { label: 'common.timing_solar', days: 365, emoji: '☀️' },
+        { label: 'common.timing_legacy', days: 365 * 5, emoji: '🏺' },
+        { label: 'common.timing_custom', days: -1, emoji: '🎛️' },
     ];
 
     const daysToLabel = (d: number) => {

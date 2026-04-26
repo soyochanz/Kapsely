@@ -11,12 +11,13 @@ import { BlurView } from 'expo-blur';
 import { useTranslation } from 'react-i18next';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
-import { Colors, Fonts } from '../theme';
+import { Colors, Fonts, Spacing } from '../theme';
 import { MODEL_IMAGES } from '../constants/models';
 import { timerConfigManager } from '../utils/timerConfig';
 import StoryEditor from './StoryEditor';
 
 const { width, height } = Dimensions.get('window');
+const ITEM_SIZE = width / 3;
 
 interface FlashPickerProps {
     visible: boolean;
@@ -189,24 +190,30 @@ export const FlashPicker = React.memo(({
     return (
         <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
             <View style={s.pickerOverlay}>
-                <View style={[s.pickerSheet, (pickerStep === 'edit' || pickerStep === 'animation' || pickerStep === 'select') && { height: height * 0.85 }]}>
-                    <View style={s.pickerHandle} />
-                    <View style={s.pickerHeader}>
-                        {pickerStep !== 'list' && (
-                            <TouchableOpacity onPress={() => pickerStep === 'animation' ? rejectRandomStory() : setPickerStep('list')} style={s.pickerNavBtn} activeOpacity={0.7}>
-                                <Ionicons name="chevron-back" size={22} color={Colors.textPrimary} />
+                <View style={[
+                    s.pickerSheet, 
+                    (pickerStep === 'edit' || pickerStep === 'animation' || pickerStep === 'select' || pickerStep === 'list') && { height: height * (pickerStep === 'edit' ? 1 : 0.85) },
+                    pickerStep === 'edit' && { borderTopLeftRadius: 0, borderTopRightRadius: 0 }
+                ]}>
+                    {pickerStep !== 'edit' && <View style={s.pickerHandle} />}
+                    {pickerStep !== 'edit' && (
+                        <View style={s.pickerHeader}>
+                            {pickerStep !== 'list' && (
+                                <TouchableOpacity onPress={() => pickerStep === 'animation' ? rejectRandomStory() : setPickerStep('list')} style={s.pickerNavBtn} activeOpacity={0.7}>
+                                    <Ionicons name="chevron-back" size={22} color={Colors.textPrimary} />
+                                </TouchableOpacity>
+                            )}
+                            <Text style={s.pickerTitle}>
+                                {pickerStep === 'list' ? t('feed.share_flash') : pickerStep === 'select' ? t('feed.choose_image') : t('feed.discovering')}
+                            </Text>
+                            <TouchableOpacity onPress={() => pickerStep === 'animation' ? rejectRandomStory() : onClose()} style={s.pickerNavBtn} activeOpacity={0.7}>
+                                <Ionicons name="close" size={22} color={Colors.textMuted} />
                             </TouchableOpacity>
-                        )}
-                        <Text style={s.pickerTitle}>
-                            {pickerStep === 'list' ? t('feed.share_flash') : pickerStep === 'select' ? t('feed.choose_image') : pickerStep === 'edit' ? t('feed.edit_flash') : t('feed.discovering')}
-                        </Text>
-                        <TouchableOpacity onPress={() => pickerStep === 'animation' ? rejectRandomStory() : onClose()} style={s.pickerNavBtn} activeOpacity={0.7}>
-                            <Ionicons name="close" size={22} color={Colors.textMuted} />
-                        </TouchableOpacity>
-                    </View>
+                        </View>
+                    )}
 
                     {pickerStep === 'list' && (
-                        <ScrollView>
+                        <ScrollView style={{ flex: 1 }}>
                             {userCapsules.map(cap => (
                                 <TouchableOpacity key={cap.id} style={s.pickerItem} activeOpacity={0.8} onPress={() => handleSelectCapsuleForPicker(cap)}>
                                     <View style={s.pickerModelWrap}>
@@ -225,17 +232,20 @@ export const FlashPicker = React.memo(({
                     )}
 
                     {pickerStep === 'select' && (
-                        <FlashList
-                            data={pickerItems}
-                            numColumns={3}
-                            keyExtractor={i => i.id}
-                            renderItem={({ item }) => (
-                                <TouchableOpacity style={s.pickerGridCell} activeOpacity={0.8} onPress={() => { setEditingItem(item); setPickerStep('edit'); }}>
-                                    <Image source={{ uri: item.media_url }} style={s.pickerGridImg} cachePolicy="memory-disk" transition={200} />
-                                </TouchableOpacity>
-                            )}
-                            contentContainerStyle={{ gap: 2 }}
-                        />
+                        <View style={{ flex: 1 }}>
+                            <FlashList
+                                data={pickerItems}
+                                numColumns={3}
+                                keyExtractor={i => i.id}
+                                estimatedItemSize={ITEM_SIZE}
+                                renderItem={({ item }) => (
+                                    <TouchableOpacity style={s.pickerGridCell} activeOpacity={0.8} onPress={() => { setEditingItem(item); setPickerStep('edit'); }}>
+                                        <Image source={{ uri: item.media_url }} style={s.pickerGridImg} cachePolicy="memory-disk" transition={200} />
+                                    </TouchableOpacity>
+                                )}
+                                contentContainerStyle={{ gap: 2 }}
+                            />
+                        </View>
                     )}
 
                     {pickerStep === 'animation' && (

@@ -14,6 +14,7 @@ import Animated, {
     interpolate,
     Extrapolate
 } from 'react-native-reanimated';
+import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Shadow } from '../theme';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -31,6 +32,7 @@ interface Props {
 export default function SwipeableChatRow({
     item, onDelete, onArchive, onPress, onAvatarPress, isArchived
 }: Props) {
+    const { t } = useTranslation();
     const translateX = useSharedValue(0);
     const itemHeight = useSharedValue(88);
     const opacity = useSharedValue(1);
@@ -58,8 +60,8 @@ export default function SwipeableChatRow({
     };
 
     const gesture = Gesture.Pan()
-        .activeOffsetX([-20, 20]) // Increased threshold to avoid accidental trigger during scroll/nav
-        .failOffsetY([-10, 10])   // Fail pan if vertical movement is significant
+        .activeOffsetX([-10, 10])   // Activate quickly once clearly horizontal
+        .failOffsetY([-15, 15])     // Allow a bit more vertical tolerance before failing
         .onUpdate((event) => {
             translateX.value = event.translationX;
         })
@@ -98,13 +100,13 @@ export default function SwipeableChatRow({
             {/* Delete backdrop (swipe left) */}
             <Animated.View style={[styles.backdrop, styles.deleteBackdrop, rDeleteBackdropStyle]}>
                 <Ionicons name="trash" size={24} color="#fff" />
-                <Text style={styles.backdropLabel}>Eliminar</Text>
+                <Text style={styles.backdropLabel}>{t('common.delete')}</Text>
             </Animated.View>
 
             {/* Archive/Unarchive backdrop (swipe right) */}
             <Animated.View style={[styles.backdrop, styles.archiveBackdrop, rArchiveBackdropStyle]}>
                 <Ionicons name={isArchived ? "chatbox-ellipses" : "archive"} size={24} color="#fff" />
-                <Text style={styles.backdropLabel}>{isArchived ? 'Desarchivar' : 'Archivar'}</Text>
+                <Text style={styles.backdropLabel}>{isArchived ? t('common.unarchive') : t('common.archive')}</Text>
             </Animated.View>
 
             <GestureDetector gesture={gesture}>
@@ -132,12 +134,12 @@ export default function SwipeableChatRow({
                             <Text style={[styles.lastMessage, hasUnread && styles.lastMessageUnread]} numberOfLines={1}>
                                 {(() => {
                                     const msg = item.lastMessage;
-                                    if (!msg) return 'Sin mensajes';
-                                    if (msg.media_type === 'capsule') return '🎁 Envió una cápsula';
-                                    if (msg.media_type === 'image') return '📷 Envió una foto';
-                                    if (msg.media_type === 'video') return '🎥 Envió un video';
-                                    if (msg.media_type === 'audio') return '🎵 Envió un audio';
-                                    return msg.content || 'Sin mensajes';
+                                    if (!msg) return t('common.no_messages') || 'Sin mensajes';
+                                    if (msg.media_type === 'capsule') return `🎁 ${t('detail.sent_capsule') || 'Envió una cápsula'}`;
+                                    if (msg.media_type === 'image') return `📷 ${t('feed.media_types.image') || 'Envió una foto'}`;
+                                    if (msg.media_type === 'video') return `🎥 ${t('feed.media_types.video') || 'Envió un video'}`;
+                                    if (msg.media_type === 'audio') return `🎵 ${t('feed.media_types.audio') || 'Envió un audio'}`;
+                                    return msg.content || t('common.no_messages') || 'Sin mensajes';
                                 })()}
                             </Text>
                         </View>

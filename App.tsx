@@ -1,8 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import * as SplashScreen from 'expo-splash-screen';
 import { useFonts, Inter_300Light, Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold } from '@expo-google-fonts/inter';
 import { Poppins_400Regular, Poppins_600SemiBold, Poppins_700Bold, Poppins_800ExtraBold } from '@expo-google-fonts/poppins';
+import { TitanOne_400Regular } from '@expo-google-fonts/titan-one';
+import { Outfit_400Regular, Outfit_700Bold } from '@expo-google-fonts/outfit';
+import { Lobster_400Regular } from '@expo-google-fonts/lobster';
+import { SpaceMono_400Regular } from '@expo-google-fonts/space-mono';
+import { PermanentMarker_400Regular } from '@expo-google-fonts/permanent-marker';
+import { Bangers_400Regular } from '@expo-google-fonts/bangers';
+import { Caveat_400Regular, Caveat_700Bold } from '@expo-google-fonts/caveat';
 import { NavigationContainer, DefaultTheme, createNavigationContainerRef } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
 
@@ -13,6 +21,8 @@ import { Colors } from './src/theme';
 import AppNavigator from './src/navigation/AppNavigator';
 import AuthNavigator from './src/navigation/AuthNavigator';
 import { multiAccountService } from './src/utils/multiAccount';
+import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
+import { queryClient, asyncStoragePersister } from './src/lib/QueryClient';
 
 import { timerConfigManager } from './src/utils/timerConfig';
 
@@ -31,7 +41,9 @@ setupNotificationHandlers();
 export default function App() {
   const [fontsLoaded] = useFonts({ 
     Inter_300Light, Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold,
-    Poppins_400Regular, Poppins_600SemiBold, Poppins_700Bold, Poppins_800ExtraBold
+    Poppins_400Regular, Poppins_600SemiBold, Poppins_700Bold, Poppins_800ExtraBold,
+    TitanOne_400Regular, Outfit_400Regular, Outfit_700Bold, Lobster_400Regular, SpaceMono_400Regular,
+    PermanentMarker_400Regular, Bangers_400Regular, Caveat_400Regular, Caveat_700Bold
   });
   const [session, setSession] = useState<Session | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
@@ -193,25 +205,32 @@ export default function App() {
   };
 
   return (
-    <SafeAreaProvider>
-      <View
-        style={[
-          { flex: 1, backgroundColor: Colors.background },
-          Platform.OS === 'web' && ({ height: '100vh', width: '100vw' } as any)
-        ]}
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <PersistQueryClientProvider
+        client={queryClient}
+        persistOptions={{ persister: asyncStoragePersister }}
       >
-        <StatusBar style="dark" backgroundColor={Colors.background} />
-        <NavigationContainer 
-          ref={navigationRef} 
-          theme={navTheme}
-          linking={linking}
-        >
-          <View style={{ flex: 1 }}>
-            {session ? <AppNavigator key={session.user.id} /> : <AuthNavigator />}
+        <SafeAreaProvider>
+          <View
+            style={[
+              { flex: 1, backgroundColor: Colors.background },
+              Platform.OS === 'web' && ({ height: '100vh', width: '100vw' } as any)
+            ]}
+          >
+            <StatusBar style="dark" backgroundColor={Colors.background} />
+            <NavigationContainer 
+              ref={navigationRef} 
+              theme={navTheme}
+              linking={linking}
+            >
+              <View style={{ flex: 1 }}>
+                {session ? <AppNavigator key={session.user.id} /> : <AuthNavigator />}
+              </View>
+            </NavigationContainer>
           </View>
-        </NavigationContainer>
-      </View>
-    </SafeAreaProvider>
+        </SafeAreaProvider>
+      </PersistQueryClientProvider>
+    </GestureHandlerRootView>
   );
 }
 

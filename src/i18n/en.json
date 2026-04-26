@@ -41,6 +41,14 @@
     "5_years": "5 Years",
     "1_week": "1 Week",
     "custom": "Custom",
+    "any_range": "Any range",
+    "timing_1_night": "One Night Capsule",
+    "timing_flash": "Quick Flash",
+    "timing_lunar": "Lunar Cycle",
+    "timing_solar": "Solar Voyage",
+    "timing_bridge": "Memory Bridge",
+    "timing_legacy": "Legacy Vault",
+    "timing_custom": "Time Bender",
     "shared": "Shared",
     "member": "member",
     "members": "members",
@@ -511,6 +519,9 @@
     "delete_confirm_msg": "This cannot be undone.",
     "opening_soon": "Opening in {{timer}}s...",
     "opening_now": "capsule is opening now!",
+    "voted_to_open": "voted to open the capsule.",
+    "vote_received_title": "New Vote! 🗳️",
+    "vote_received_body": "Someone voted to open the capsule.",
     "followed_capsule": "followed your capsule \"{{title}}\"",
     "followed_your_capsule": "followed your capsule",
     "added_new_memory_to": "added a new memory to",
@@ -545,6 +556,10 @@
     "report_message": "Report Message",
     "report_reason": "Why are you reporting this?",
     "report_submitted": "Report submitted. Thank you for helping us keep Kapsely safe.",
+    "delete_message": "Delete Message",
+    "delete_confirm": "Are you sure you want to delete this message?",
+    "delete_content_title": "Delete Content",
+    "delete_content_msg": "Are you sure you want to delete this content? This action cannot be undone.",
     "block_confirm": "Are you sure you want to block this user? They will no longer be able to interact with you.",
     "blocked_success": "User blocked.",
     "unblocked_success": "User unblocked.",
@@ -580,7 +595,8 @@
     "send_invites": "Send Invitations",
     "invite_error": "Could not send invitations.",
     "share_link": "Share short link",
-    "share_text": "Check out this capsule on Kapsely!"
+    "share_text": "Check out this capsule on Kapsely!",
+    "content_deleted": "Content successfully deleted."
   },
   "onboarding": {
     "step0_title": "Choose your language",
@@ -636,7 +652,8 @@
     "bg_none": "None",
     "bg_dark": "Dark",
     "bg_white": "White",
-    "bg_blur": "Blur"
+    "bg_blur": "Blur",
+    "search_stickers": "Search stickers..."
   },
   "add": {
     "new_memory": "New memory",

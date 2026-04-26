@@ -173,9 +173,7 @@ const CapsuleCard = React.memo(({
 
     const handleShare = async () => {
         try {
-            // Simulated short link for "kaps.ly" aesthetic
-            const shortId = capsule.id.split('-')[0]; // Using first segment for short-link feel
-            const shareUrl = `https://kaps.ly/${shortId}`;
+            const shareUrl = `https://kapsely.com/capsules/${capsule.id}`;
             
             await Share.share({
                 message: `${t('detail.share_text') || '¡Mira esta cápsula en Kapsely!'} ✦\n\n${shareUrl}`,

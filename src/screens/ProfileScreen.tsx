@@ -18,6 +18,7 @@ import Constants from 'expo-constants';
 import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
 import { supabase } from '../lib/supabase';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ProfileCapsuleCell } from '../components/profile/ProfileCapsuleCell';
 import { ProfileHeader } from '../components/profile/ProfileHeader';
 import { Image } from 'expo-image';
@@ -68,11 +69,8 @@ export default function ProfileScreen() {
     const [currentUserId, setCurrentUserId] = useState<string | null>(null);
     const [isOwnProfile, setIsOwnProfileState] = useState(true);
     const [activeTab, setActiveTab] = useState<ProfileTab>('all');
-    const [profile, setProfile] = useState<any>(null);
-    const [openedCaps, setOpenedCaps] = useState<any[]>([]);
-    const [sealedCaps, setSealedCaps] = useState<any[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [refreshing, setRefreshing] = useState(false);
+    
+    // Auxiliary states
     const [showEdit, setShowEdit] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
     const [showLanguageSettings, setShowLanguageSettings] = useState(false);
@@ -91,6 +89,61 @@ export default function ProfileScreen() {
     const [confirmNewPassword, setConfirmNewPassword] = useState('');
     const [oldPassword, setOldPassword] = useState('');
     const [savedAccounts, setSavedAccounts] = useState<SavedAccount[]>([]);
+
+    const queryClient = useQueryClient();
+
+    // ─── Fetch Function ──────────────────────────────────────────────────────
+    const fetchProfile = async () => {
+        const { data: { session } } = await supabase.auth.getSession();
+        const myId = session?.user?.id;
+        if (myId && !currentUserId) setCurrentUserId(myId);
+
+        const idToLoad = targetUserId || myId;
+        if (!idToLoad) throw new Error('No user ID to load');
+
+        const { data, error } = await supabase.rpc('get_profile_data_unified', {
+            p_target_id: idToLoad
+        });
+
+        if (error) throw error;
+        return data;
+    };
+
+    // ─── useQuery ────────────────────────────────────────────────────────────
+    const {
+        data: profileDataUnified,
+        isLoading,
+        isRefetching,
+        refetch,
+        status
+    } = useQuery({
+        queryKey: ['profile', targetUserId || currentUserId],
+        queryFn: fetchProfile,
+        enabled: !!(targetUserId || currentUserId),
+    });
+
+    const profile = profileDataUnified?.profile;
+    const isFollowingValue = profileDataUnified?.is_following || false;
+    const capsulesData = profileDataUnified?.capsules || [];
+    const storiesData = profileDataUnified?.stories || [];
+    const stickersData = profileDataUnified?.stickers || [];
+    const readIds = new Set(profileDataUnified?.my_reads || []);
+    const myAcceptedCaps = new Set(profileDataUnified?.my_accepted_invites || []);
+
+    useEffect(() => {
+        if (profileDataUnified) {
+            setFollowersCount(profileDataUnified.profile?.followers_count || 0);
+            setFollowingCount(profileDataUnified.profile?.following_count || 0);
+            setIsFollowing(profileDataUnified.is_following || false);
+            setProfileStickers(profileDataUnified.stickers || []);
+            if (profileDataUnified.stories?.length > 0) {
+                const prof = profileDataUnified.profile;
+                setUserStories({ ...prof, owner_id: prof.id, stories: profileDataUnified.stories });
+            } else {
+                setUserStories(null);
+            }
+        }
+    }, [profileDataUnified]);
 
     useEffect(() => {
         if (showAccountPanel) {
@@ -222,144 +275,19 @@ export default function ProfileScreen() {
         if (error) Alert.alert('Error', error.message);
     };
 
-    const [page, setPage] = useState(0);
-    const [hasMore, setHasMore] = useState(true);
-    const [loadingMore, setLoadingMore] = useState(false);
+    const openedCaps = useMemo(() => capsulesData.filter((c: any) => c.status === 'opened').map((c: any) => ({
+        ...c,
+        isAccessible: isOwnProfile || c.is_public || c.owner_id === currentUserId || myAcceptedCaps.has(c.id) || (c.invited_user_id === currentUserId && c.invite_status === 'accepted')
+    })), [capsulesData, isOwnProfile, currentUserId, myAcceptedCaps]);
 
-    const loadData = async (isNewPage = false, signal?: AbortSignal) => {
-        try {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (signal?.aborted) return;
-            const user = session?.user;
-            if (!user) {
-                setLoading(false);
-                return;
-            }
-            const myId = user.id;
-            setCurrentUserId(myId);
-            const idToLoad = targetUserId || myId;
-            setProfileId(idToLoad);
-            const own = idToLoad === myId;
-            setIsOwnProfileState(own);
-
-            if (isNewPage) setLoadingMore(true);
-            else if (!refreshing) setLoading(true);
-
-            // NEW: Single RPC call replacing 7 requests
-            const { data, error } = await (signal 
-                ? supabase.rpc('get_profile_data_unified', {
-                    p_target_id: idToLoad,
-                    p_viewer_id: myId
-                  }).abortSignal(signal)
-                : supabase.rpc('get_profile_data_unified', {
-                    p_target_id: idToLoad,
-                    p_viewer_id: myId
-                  })
-            );
-
-            if (error || !data) {
-                if (error?.message?.includes('Abort') || error?.name === 'AbortError') return;
-                console.error('Profile RPC Error:', error);
-                setLoading(false);
-                return;
-            }
-
-            if (signal?.aborted) return;
-
-            const { 
-                profile: profileData, 
-                is_following, 
-                stories: storiesData, 
-                capsules: capsulesData,
-                my_reads,
-                my_accepted_invites
-            } = data;
-
-            if (profileData) {
-                setProfile(profileData);
-                setFollowersCount(profileData.followers_count || 0);
-                setFollowingCount(profileData.following_count || 0);
-            }
-            setIsFollowing(is_following);
-
-            // Handle Stories
-            const readIds = new Set(my_reads || []);
-            if (storiesData && storiesData.length > 0) {
-                const sw = storiesData.map((s: any) => ({ ...s, is_read: readIds.has(s.id) }));
-                setUserStories({ 
-                    owner_id: idToLoad, 
-                    username: profileData?.username, 
-                    avatar_url: profileData?.avatar_url, 
-                    stories: sw, 
-                    all_read: sw.every((s: any) => s.is_read) 
-                });
-            } else setUserStories(null);
-
-            const myAcceptedCaps = new Set(my_accepted_invites || []);
-
-            // Handle Capsules
-            if (capsulesData) {
-                const viewable = capsulesData.map((c: any) => ({
-                    ...c,
-                    isAccessible: own || c.is_public || c.owner_id === myId || myAcceptedCaps.has(c.id) || (c.invited_user_id === myId && c.invite_status === 'accepted')
-                }));
-                
-                const initialCovers: Record<string, string> = {};
-                viewable.forEach((c: any) => { if (c.cover_url) initialCovers[c.id] = c.cover_url; });
-                setCoverMap(prev => ({ ...prev, ...initialCovers }));
-
-                const opened = viewable.filter((c: any) => c.status === 'opened');
-                const sealed = viewable.filter((c: any) => c.status === 'sealed');
-                
-                setOpenedCaps(prev => isNewPage ? [...prev, ...opened] : opened);
-                setSealedCaps(prev => isNewPage ? [...prev, ...sealed] : sealed);
-                setHasMore(capsulesData.length >= 12);
-                
-                // Fetch covers logic
-                const { data: mediaItems } = await (signal
-                    ? supabase.from('capsule_items').select('id, capsule_id, media_url, media_type, created_at').in('capsule_id', opened.map((c: any) => c.id)).in('media_type', ['image', 'video']).order('created_at', { ascending: true }).abortSignal(signal)
-                    : supabase.from('capsule_items').select('id, capsule_id, media_url, media_type, created_at').in('capsule_id', opened.map((c: any) => c.id)).in('media_type', ['image', 'video']).order('created_at', { ascending: true })
-                );
-                    const mediaMap: Record<string, any[]> = {};
-                    (mediaItems || []).forEach((item: any) => {
-                        if (!mediaMap[item.capsule_id]) mediaMap[item.capsule_id] = [];
-                        mediaMap[item.capsule_id].push(item);
-                    });
-                    setCapsuleMediaMap(prev => isNewPage ? { ...prev, ...mediaMap } : mediaMap);
-                
-                const defaultCovers: Record<string, string> = {};
-                Object.entries(mediaMap).forEach(([capId, items]) => {
-                    if (!initialCovers[capId] && (items as any[])[0]?.media_url) {
-                        defaultCovers[capId] = (items as any[])[0].media_url;
-                    }
-                });
-                setCoverMap(prev => ({ ...prev, ...defaultCovers }));
-            }
-
-            const { data: stks } = await supabase.from('profile_stickers').select('*, stickers(*)').eq('user_id', idToLoad);
-            if (stks) setProfileStickers(stks);
-        } catch (error) {
-            console.error('[ProfileScreen] Error loading data:', error);
-        } finally {
-            setLoading(false);
-            setRefreshing(false);
-            setLoadingMore(false);
-        }
-    };
+    const sealedCaps = useMemo(() => capsulesData.filter((c: any) => c.status === 'sealed').map((c: any) => ({
+        ...c,
+        isAccessible: isOwnProfile || c.is_public || c.owner_id === currentUserId || myAcceptedCaps.has(c.id) || (c.invited_user_id === currentUserId && c.invite_status === 'accepted')
+    })), [capsulesData, isOwnProfile, currentUserId, myAcceptedCaps]);
 
     useEffect(() => {
-        const sub = DeviceEventEmitter.addListener('CAPSULE_UPDATED', (payload: any) => {
-            if (payload.id && payload.cover_url) {
-                setCoverMap(prev => ({ ...prev, [payload.id]: payload.cover_url }));
-            }
-            if (payload.id) {
-                const updateFn = (prev: any[]) => prev.map(c => 
-                    c.id === payload.id ? { ...c, ...payload } : c
-                );
-                setOpenedCaps(updateFn);
-                setSealedCaps(updateFn);
-            }
-            loadData();
+        const sub = DeviceEventEmitter.addListener('CAPSULE_UPDATED', () => {
+            queryClient.invalidateQueries({ queryKey: ['profile', targetUserId || currentUserId] });
         });
         return () => sub.remove();
     }, [targetUserId, currentUserId]);
@@ -371,29 +299,15 @@ export default function ProfileScreen() {
         const channel = supabase.channel(`profile-${idToLoad}`)
             .on('postgres_changes', 
                 { event: 'UPDATE', schema: 'public', table: 'capsules', filter: `owner_id=eq.${idToLoad}` }, 
-                () => loadData()
+                () => queryClient.invalidateQueries({ queryKey: ['profile', idToLoad] })
             )
             .subscribe();
         return () => { supabase.removeChannel(channel); };
     }, [targetUserId, currentUserId]);
 
-    useFocusEffect(useCallback(() => {
-        const controller = new AbortController();
-        if (Platform.OS === 'web') {
-            loadData(false, controller.signal);
-        } else {
-            const task = InteractionManager.runAfterInteractions(() => {
-                loadData(false, controller.signal);
-            });
-            return () => {
-                task.cancel();
-                controller.abort();
-            };
-        }
-        return () => controller.abort();
-    }, [targetUserId, currentUserId]));
-
-    const onRefresh = () => { setRefreshing(true); loadData(); };
+    const onRefresh = () => {
+        refetch();
+    };
 
     const handleLogout = async () => {
         if (Platform.OS === 'web') {
@@ -482,7 +396,7 @@ export default function ProfileScreen() {
         const adminId = admins?.[0]?.id;
         if (adminId) await supabase.from('notifications').insert({ user_id: adminId, sender_id: currentUserId, type: 'system', message: `@${profile?.username || 'User'} requested verification.` });
         await supabase.from('profiles').update({ verification_status: 'pending' }).eq('id', currentUserId);
-        setProfile({ ...profile, verification_status: 'pending' });
+        queryClient.invalidateQueries({ queryKey: ['profile', currentUserId] });
     };
 
     const navigateToConversation = async () => {
@@ -548,7 +462,7 @@ export default function ProfileScreen() {
         openedCaps.length, sealedCaps.length, isOwnProfile, isFollowing, activeTab, insets, t, i18n, joinYear, profileId, navigation
     ]);
 
-    if (loading) {
+    if (isLoading) {
         return (
             <View style={[s.root, s.centered]}>
                 <ActivityIndicator size="large" color={Colors.primary} />
@@ -576,7 +490,7 @@ export default function ProfileScreen() {
             {/* Edit Modal */}
             <Modal visible={showEdit} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowEdit(false)}>
                 <EditProfileScreen 
-                    onClose={() => { setShowEdit(false); loadData(); }} 
+                    onClose={() => { setShowEdit(false); refetch(); }} 
                     initialData={profile}
                 />
             </Modal>
@@ -619,10 +533,8 @@ export default function ProfileScreen() {
                         </Text>
                     </View>
                 }
-                onEndReached={() => { if (!loadingMore && hasMore) loadData(true); }}
                 onEndReachedThreshold={0.5}
-                ListFooterComponent={loadingMore ? <ActivityIndicator size="small" color={accentColor} style={{ padding: 20 }} /> : null}
-                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
+                refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={onRefresh} tintColor={Colors.primary} />}
             />
 
             {/* ── MODALS ───────────────────────────────────────────────── */}
@@ -1000,6 +912,7 @@ export default function ProfileScreen() {
             <StoryViewer
                 visible={activeStoryViewer}
                 userGroup={userStories}
+                currentUserId={currentUserId || undefined}
                 onClose={() => setActiveStoryViewer(false)}
                 onStoryRead={async (storyId) => {
                     if (!currentUserId) return;

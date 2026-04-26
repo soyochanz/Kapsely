@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kapsely | Auditoría de Rendimiento y Seguridad</title>
+    <style>
+        :root {
+            --primary: #a66eff;
+            --primary-dark: #7938ff;
+            --accent: #00f2ff;
+            --bg: #f8f9ff;
+            --surface: #ffffff;
+            --text-main: #0f0a1d;
+            --text-muted: #6b638a;
+            --error: #ef4444;
+            --success: #10b981;
+            --warning: #f59e0b;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg);
+            color: var(--text-main);
+            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+        header {
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+            color: white;
+            padding: 60px 20px;
+            text-align: center;
+            border-bottom-left-radius: 40px;
+            border-bottom-right-radius: 40px;
+            box-shadow: 0 10px 30px rgba(121, 56, 255, 0.2);
+        }
+        h1 { margin: 0; font-size: 2.5em; letter-spacing: -1px; }
+        .subtitle { opacity: 0.9; font-size: 1.1em; margin-top: 10px; }
+        
+        .card {
+            background: var(--surface);
+            border-radius: 24px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.03);
+            border: 1px solid rgba(166, 110, 255, 0.1);
+        }
+        h2 { color: var(--primary-dark); border-bottom: 2px solid var(--bg); padding-bottom: 10px; margin-top: 0; }
+        h3 { color: var(--text-main); margin-top: 25px; }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+        .critical { background: #fee2e2; color: var(--error); }
+        .improved { background: #dcfce7; color: var(--success); }
+        .observation { background: #fef9c3; color: var(--warning); }
+
+        ul { padding-left: 20px; }
+        li { margin-bottom: 10px; }
+        code {
+            background: #eee;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } }
+
+        .metric {
+            text-align: center;
+            padding: 20px;
+            background: var(--bg);
+            border-radius: 16px;
+        }
+        .metric-value { font-size: 2em; font-weight: bold; color: var(--primary); }
+        .metric-label { font-size: 0.9em; color: var(--text-muted); }
+
+        /* Sprints Timeline */
+        .sprint-container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            margin-top: 30px;
+        }
+        .sprint-card {
+            display: flex;
+            background: var(--bg);
+            border-radius: 20px;
+            padding: 20px;
+            border-left: 6px solid var(--primary);
+            position: relative;
+        }
+        .sprint-number {
+            background: var(--primary);
+            color: white;
+            width: 40px;
+            height: 40px;
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            margin-right: 20px;
+            flex-shrink: 0;
+            box-shadow: 0 4px 10px rgba(166, 110, 255, 0.3);
+        }
+        .sprint-content { flex: 1; }
+        .sprint-title { font-weight: bold; font-size: 1.1em; color: var(--primary-dark); margin-bottom: 5px; }
+        .sprint-desc { font-size: 0.9em; color: var(--text-muted); }
+        .sprint-tags { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+        .tag { padding: 2px 10px; border-radius: 10px; font-size: 0.75em; background: rgba(166, 110, 255, 0.1); color: var(--primary); font-weight: bold; }
+
+        footer { text-align: center; padding: 40px; color: var(--text-muted); font-size: 0.9em; }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>Auditoría Técnica Kapsely</h1>
+    <p class="subtitle">Análisis Integral de Rendimiento, Seguridad y Experiencia de Usuario</p>
+</header>
+
+<div class="container">
+
+    <div class="card">
+        <h2>1. Resumen Ejecutivo</h2>
+        <p>Kapsely presenta una arquitectura sólida basada en React Native y Supabase. Sin embargo, para alcanzar el nivel de fluidez de aplicaciones como <strong>Instagram</strong>, es necesario evolucionar de un modelo de "Carga bajo demanda" a uno de <strong>"Anticipación de Datos"</strong>. Actualmente, el rendimiento se ve limitado por la falta de una capa de caché persistente agresiva y por cuellos de botella en las funciones SQL del servidor.</p>
+    </div>
+
+    <div class="card">
+        <h2>2. Plan de Acción: Sprints de Implementación</h2>
+        <p>He organizado las mejoras en 3 sprints lógicos para asegurar estabilidad y resultados visibles inmediatos.</p>
+        
+        <div class="sprint-container">
+            <div class="sprint-card">
+                <div class="sprint-number">1</div>
+                <div class="sprint-content">
+                    <div class="sprint-title">Cimientos: Seguridad y Optimización SQL</div>
+                    <div class="sprint-desc">Eliminación de vulnerabilidades críticas y aceleración del motor de datos.</div>
+                    <div class="sprint-tags">
+                        <span class="tag">Seguridad</span>
+                        <span class="tag">SQL</span>
+                        <span class="tag">Backend</span>
+                    </div>
+                    <ul style="font-size: 0.85em; margin-top: 10px; color: var(--text-main);">
+                        <li>Sustituir parámetros <code>p_user_id</code> por <code>auth.uid()</code> en todos los RPCs.</li>
+                        <li>Refactorizar <code>get_combined_feed_data</code> usando <code>LATERAL JOIN</code> para eliminar subconsultas lentas.</li>
+                        <li>Unificar stickers y items en el RPC del Perfil para evitar peticiones múltiples.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="sprint-card" style="border-left-color: var(--accent);">
+                <div class="sprint-number" style="background: var(--accent); box-shadow: 0 4px 10px rgba(0, 242, 255, 0.3);">2</div>
+                <div class="sprint-content">
+                    <div class="sprint-title">La Experiencia "Instagram": Caché y Persistencia</div>
+                    <div class="sprint-desc">Implementación de carga instantánea mediante datos cacheados y sincronización offline.</div>
+                    <div class="sprint-tags">
+                        <span class="tag">React Query</span>
+                        <span class="tag">SWR</span>
+                        <span class="tag">AsyncStorage</span>
+                    </div>
+                    <ul style="font-size: 0.85em; margin-top: 10px; color: var(--text-main);">
+                        <li>Configurar TanStack Query con persistencia en el almacenamiento local del teléfono.</li>
+                        <li>Implementar lógica "Stale-While-Revalidate" en el Feed y el Perfil (datos antiguos al abrir, refresco en background).</li>
+                        <li>Optimistic UI: Los likes y comentarios se reflejan en la UI en 0ms.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="sprint-card" style="border-left-color: var(--success);">
+                <div class="sprint-number" style="background: var(--success); box-shadow: 0 4px 10px rgba(16, 185, 129, 0.3);">3</div>
+                <div class="sprint-content">
+                    <div class="sprint-title">Pulido de Medios y UX Visual</div>
+                    <div class="sprint-desc">Optimización de carga de imágenes y fluidez en la navegación de contenido.</div>
+                    <div class="sprint-tags">
+                        <span class="tag">Media</span>
+                        <span class="tag">Blurhash</span>
+                        <span class="tag">Prefetch</span>
+                    </div>
+                    <ul style="font-size: 0.85em; margin-top: 10px; color: var(--text-main);">
+                        <li>Integración de <code>blurhash</code> en las miniaturas del feed para evitar huecos en blanco.</li>
+                        <li>Prefetching de imágenes de cápsulas cuando el usuario desplaza el feed.</li>
+                        <li>Uso de transformaciones de Supabase para descargar tamaños optimizados según el dispositivo.</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>3. Auditoría de Rendimiento</h2>
+        <div class="grid">
+            <div class="metric">
+                <div class="metric-value">B+</div>
+                <div class="metric-label">Eficiencia de Consultas</div>
+            </div>
+            <div class="metric">
+                <div class="metric-value">C</div>
+                <div class="metric-label">Latencia de Percepción</div>
+            </div>
+        </div>
+        <h3>Cuellos de Botella Identificados</h3>
+        <ul>
+            <li><span class="status-badge critical">Crítico</span> <strong>Subconsultas en el Feed:</strong> Ejecución de conteos por cada fila.</li>
+            <li><span class="status-badge observation">Observación</span> <strong>InteractionManager:</strong> Retraso artificial de cargas.</li>
+        </ul>
+    </div>
+
+    <div class="card">
+        <h2>4. Auditoría de Seguridad</h2>
+        <h3>Vulnerabilidades Potenciales</h3>
+        <ul>
+            <li><span class="status-badge critical">Crítico</span> <strong>Inseguridad en RPCs:</strong> Confianza en el ID del cliente.</li>
+            <li><span class="status-badge observation">Observación</span> <strong>Exposición de Datos:</strong> Necesidad de filtrar columnas sensibles en perfiles.</li>
+        </ul>
+    </div>
+
+</div>
+
+<footer>
+    <p>Reporte generado por Antigravity AI | Kapsely Project Audit</p>
+</footer>
+
+</body>
+</html>

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { RefObject } from 'react';
 import { StyleSheet, Dimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
@@ -16,9 +16,10 @@ interface ZoomableImageProps {
   style?: any;
   onInteractionStart?: () => void;
   onInteractionEnd?: () => void;
+  simultaneousGesture?: RefObject<any>;
 }
 
-const ZoomableImage = ({ uri, style, onInteractionStart, onInteractionEnd }: ZoomableImageProps) => {
+const ZoomableImage = ({ uri, style, onInteractionStart, onInteractionEnd, simultaneousGesture }: ZoomableImageProps) => {
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
   const translateX = useSharedValue(0);
@@ -52,13 +53,19 @@ const ZoomableImage = ({ uri, style, onInteractionStart, onInteractionEnd }: Zoo
         savedTranslateX.value = translateX.value;
         savedTranslateY.value = translateY.value;
       }
-      if (onInteractionEnd) runOnJS(onInteractionEnd)();
+      if (scale.value <= 1 && onInteractionEnd) {
+        runOnJS(onInteractionEnd)();
+      }
     });
 
   const panGesture = Gesture.Pan()
     .minPointers(1)
+    .activeOffsetX([-15, 15])
+    .activeOffsetY([-15, 15])
     .onStart(() => {
-        if (onInteractionStart) runOnJS(onInteractionStart)();
+      if (scale.value > 1 && onInteractionStart) {
+        runOnJS(onInteractionStart)();
+      }
     })
     .onUpdate((event) => {
       if (scale.value > 1) {
@@ -71,7 +78,9 @@ const ZoomableImage = ({ uri, style, onInteractionStart, onInteractionEnd }: Zoo
         savedTranslateX.value = translateX.value;
         savedTranslateY.value = translateY.value;
       }
-      if (onInteractionEnd) runOnJS(onInteractionEnd)();
+      if (scale.value <= 1 && onInteractionEnd) {
+        runOnJS(onInteractionEnd)();
+      }
     });
 
   const doubleTapGesture = Gesture.Tap()
@@ -84,9 +93,11 @@ const ZoomableImage = ({ uri, style, onInteractionStart, onInteractionEnd }: Zoo
         savedScale.value = 1;
         savedTranslateX.value = 0;
         savedTranslateY.value = 0;
+        if (onInteractionEnd) runOnJS(onInteractionEnd)();
       } else {
         scale.value = withTiming(2);
         savedScale.value = 2;
+        if (onInteractionStart) runOnJS(onInteractionStart)();
       }
     });
 
@@ -98,9 +109,12 @@ const ZoomableImage = ({ uri, style, onInteractionStart, onInteractionEnd }: Zoo
     ],
   }));
 
+  const pinch = simultaneousGesture ? pinchGesture.simultaneousWithExternalGesture(simultaneousGesture) : pinchGesture;
+  const pan = simultaneousGesture ? panGesture.simultaneousWithExternalGesture(simultaneousGesture) : panGesture;
+
   const composed = Gesture.Race(
     doubleTapGesture,
-    Gesture.Simultaneous(pinchGesture, panGesture)
+    Gesture.Simultaneous(pinch, pan)
   );
 
   return (
