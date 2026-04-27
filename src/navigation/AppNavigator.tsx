@@ -163,6 +163,7 @@ export default function AppNavigator() {
             >
                 <Stack.Screen name="Onboarding" component={OnboardingScreen} />
                 <Stack.Screen name="Main" component={TabNavigator} />
+                <Stack.Screen name="CapsuleDetail" component={CapsuleDetailScreen} />
                 <Stack.Screen name="CreateSelection" component={CreateSelectionScreen} />
                 <Stack.Screen name="CapsuleCreation" component={CapsuleCreationScreen} />
                 <Stack.Screen name="CapsuleSelector" component={CapsuleSelectorScreen} />

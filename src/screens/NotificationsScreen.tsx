@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     Platform, View, Text, StyleSheet, ScrollView, TouchableOpacity,
-    StatusBar, ActivityIndicator, Animated, PanResponder, Easing,
+    StatusBar, ActivityIndicator, Animated, Easing,
     Dimensions, RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTranslation } from 'react-i18next';
@@ -16,9 +17,6 @@ import { clearBadgeCount } from '../utils/pushNotifications';
 import { safetyService } from '../utils/safety';
 
 const { width, height } = Dimensions.get('window');
-
-// ─── Pull-Up Threshold ────────────────────────────────────────────────────────
-const PULL_THRESHOLD = 90;
 
 // ─── Ripple success animation component ──────────────────────────────────────
 function MarkAllRipple({ visible, onDone }: { visible: boolean; onDone: () => void }) {
@@ -79,76 +77,6 @@ const rippleS = StyleSheet.create({
     },
 });
 
-// ─── Pull-up indicator ────────────────────────────────────────────────────────
-function PullUpIndicator({ pullY, threshold }: { pullY: Animated.Value; threshold: number }) {
-    const { t } = useTranslation();
-    const progress = pullY.interpolate({
-        inputRange: [0, threshold],
-        outputRange: [0, 1],
-        extrapolate: 'clamp',
-    });
-    const indicatorOpacity = pullY.interpolate({
-        inputRange: [0, 20, threshold],
-        outputRange: [0, 0.6, 1],
-        extrapolate: 'clamp',
-    });
-    const indicatorTranslate = pullY.interpolate({
-        inputRange: [0, threshold],
-        outputRange: [20, 0],
-        extrapolate: 'clamp',
-    });
-    const arrowRotate = pullY.interpolate({
-        inputRange: [0, threshold],
-        outputRange: ['0deg', '180deg'],
-        extrapolate: 'clamp',
-    });
-
-    return (
-        <Animated.View style={[pullS.wrap, { opacity: indicatorOpacity, transform: [{ translateY: indicatorTranslate }] }]}>
-            <View style={pullS.pill}>
-                <Animated.View style={{ transform: [{ rotate: arrowRotate }] }}>
-                    <Ionicons name="arrow-up" size={14} color={Colors.primary} />
-                </Animated.View>
-                <Text style={pullS.pillText}>{t('notifications.mark_all_read')}</Text>
-                {/* Progress arc */}
-                <View style={pullS.progressWrap}>
-                    <Animated.View style={[pullS.progressFill, {
-                        width: progress.interpolate({ inputRange: [0, 1], outputRange: [0, 28] }),
-                        opacity: progress,
-                    }]} />
-                </View>
-            </View>
-        </Animated.View>
-    );
-}
-
-const pullS = StyleSheet.create({
-    wrap: {
-        alignItems: 'center',
-        paddingBottom: 12,
-        paddingTop: 4,
-    },
-    pill: {
-        flexDirection: 'row', alignItems: 'center', gap: 7,
-        paddingHorizontal: 16, paddingVertical: 8,
-        backgroundColor: Colors.instaCapLight,
-        borderRadius: 30, borderWidth: 1.5,
-        borderColor: Colors.primary + '33',
-        shadowColor: Colors.primary,
-        shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 2 },
-        elevation: 2,
-    },
-    pillText: { fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.primary },
-    progressWrap: {
-        width: 28, height: 3, borderRadius: 2,
-        backgroundColor: Colors.primary + '20', overflow: 'hidden',
-    },
-    progressFill: {
-        height: '100%', borderRadius: 2,
-        backgroundColor: Colors.primary,
-    },
-});
-
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 export default function NotificationsScreen() {
     const insets = useSafeAreaInsets();
@@ -159,12 +87,7 @@ export default function NotificationsScreen() {
     const [showRipple, setShowRipple] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
 
-    // Pull-up gesture state
-    const pullY = useRef(new Animated.Value(0)).current;
     const scrollRef = useRef<ScrollView>(null);
-    const isAtBottom = useRef(false);
-    const isPulling = useRef(false);
-    const pulledEnough = useRef(false);
 
     // Header fade-in on mount
     const headerFade = useRef(new Animated.Value(0)).current;
@@ -333,39 +256,6 @@ export default function NotificationsScreen() {
         setShowRipple(true);
     };
 
-    // ─── Pull-up to mark all read ─────────────────────────────────────────
-    const panResponder = useRef(
-        PanResponder.create({
-            onMoveShouldSetPanResponder: (_, g) => {
-                // Only capture upward drags when at bottom of scroll
-                return isAtBottom.current && g.dy < -5 && Math.abs(g.dy) > Math.abs(g.dx);
-            },
-            onPanResponderGrant: () => {
-                isPulling.current = true;
-                pulledEnough.current = false;
-            },
-            onPanResponderMove: (_, g) => {
-                if (!isPulling.current) return;
-                const pull = Math.max(0, -g.dy);
-                pullY.setValue(pull);
-                pulledEnough.current = pull >= PULL_THRESHOLD;
-            },
-            onPanResponderRelease: () => {
-                isPulling.current = false;
-                const didPull = pulledEnough.current;
-                Animated.spring(pullY, { toValue: 0, friction: 7, tension: 80, useNativeDriver: false }).start();
-                if (didPull) {
-                    setShowRipple(true);
-                    handleMarkAllRead();
-                }
-            },
-            onPanResponderTerminate: () => {
-                isPulling.current = false;
-                Animated.spring(pullY, { toValue: 0, friction: 7, tension: 80, useNativeDriver: false }).start();
-            },
-        })
-    ).current;
-
     const unreadCount = notifications.filter(n => !n.isRead).length;
 
     // ─── Grouped notifications ─────────────────────────────────────────────
@@ -391,7 +281,8 @@ export default function NotificationsScreen() {
     }
 
     return (
-        <View style={s.root} {...panResponder.panHandlers}>
+        <GestureHandlerRootView style={{ flex: 1 }}>
+        <View style={s.root}>
             <StatusBar barStyle="dark-content" backgroundColor={Colors.background} />
 
             {/* Ripple overlay */}
@@ -422,12 +313,16 @@ export default function NotificationsScreen() {
                     )}
                 </View>
 
-                {/* Pull-up hint — only when there are unread */}
+                {/* Mark all read button */}
                 {unreadCount > 0 && (
-                    <View style={s.swipeHint}>
-                        <Ionicons name="arrow-down-outline" size={11} color={Colors.textMuted} />
-                        <Text style={s.swipeHintText}>{t('notifications.swipe_all_read')}</Text>
-                    </View>
+                    <TouchableOpacity
+                        style={s.markAllBtn}
+                        activeOpacity={0.7}
+                        onPress={() => { setShowRipple(true); handleMarkAllRead(); }}
+                    >
+                        <Ionicons name="checkmark-done" size={13} color={Colors.primary} />
+                        <Text style={s.markAllBtnText}>{t('notifications.mark_all_read')}</Text>
+                    </TouchableOpacity>
                 )}
 
                 <View style={s.headerDivider} />
@@ -440,10 +335,6 @@ export default function NotificationsScreen() {
                 scrollEnabled={scrollEnabled}
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={[s.scrollContent, { paddingBottom: insets.bottom + 110 }]}
-                onScroll={e => {
-                    const { layoutMeasurement, contentOffset, contentSize } = e.nativeEvent;
-                    isAtBottom.current = layoutMeasurement.height + contentOffset.y >= contentSize.height - 30;
-                }}
                 scrollEventThrottle={16}
                 refreshControl={
                     <RefreshControl
@@ -513,14 +404,10 @@ export default function NotificationsScreen() {
                         ))}
                     </>)}
 
-                    {/* Pull-up indicator — floats at the very bottom of list */}
-                    {unreadCount > 0 && (
-                        <PullUpIndicator pullY={pullY} threshold={PULL_THRESHOLD} />
-                    )}
-
                 </>)}
             </ScrollView>
         </View>
+        </GestureHandlerRootView>
     );
 }
 
@@ -558,11 +445,11 @@ const s = StyleSheet.create({
     },
     unreadBadgeText: { fontSize: 13, fontFamily: Fonts.bold, color: '#fff' },
 
-    swipeHint: {
+    markAllBtn: {
         flexDirection: 'row', alignItems: 'center', gap: 5,
-        paddingBottom: 10, paddingTop: 2,
+        paddingBottom: 10, paddingTop: 2, alignSelf: 'flex-start',
     },
-    swipeHintText: { fontSize: 11, fontFamily: Fonts.regular, color: Colors.textMuted },
+    markAllBtnText: { fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.primary },
 
     headerDivider: { height: 1, backgroundColor: Colors.divider, marginBottom: 4 },
 

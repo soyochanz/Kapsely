@@ -268,6 +268,8 @@ export default function FeedScreen() {
             return lastPage.feed?.length >= PAGE_SIZE ? allPages.length : undefined;
         },
         initialPageParam: 0,
+        staleTime: 2 * 60 * 1000,
+        gcTime: 15 * 60 * 1000,
     });
 
     const capsules = useMemo(() => {
@@ -298,25 +300,9 @@ export default function FeedScreen() {
 
     const onViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: any[] }) => {
         if (!currentUserId) return;
-        
-        const newImpressions = viewableItems
+        viewableItems
             .filter(v => v.isViewable && v.item?.id && !trackedImpressions.current.has(v.item.id))
-            .map(v => ({ activityId: v.item.id, capsuleId: v.item.capsule_id || v.item.id }));
-            
-        if (newImpressions.length > 0) {
-            newImpressions.forEach(i => trackedImpressions.current.add(i.activityId));
-            
-            const insertPayload = newImpressions.map(i => ({
-                user_id: currentUserId,
-                capsule_id: i.capsuleId,
-                viewed_at: new Date().toISOString()
-            }));
-
-            // Fire and forget, ignore 23505 (unique violation)
-            supabase.from('feed_impressions').insert(insertPayload).then(({error}) => {
-                if (error && error.code !== '23505') console.log('Impression error:', error.message);
-            });
-        }
+            .forEach(v => trackedImpressions.current.add(v.item.id));
     }, [currentUserId]);
 
     const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -422,6 +408,24 @@ export default function FeedScreen() {
             flushImpressions();
         };
     }, [currentUserId]);
+
+    // ─── Capsule real-time sync ───────────────────────────────────────────────
+    useEffect(() => {
+        const subDel = DeviceEventEmitter.addListener('capsule_deleted', () => refetch());
+        const subNew = DeviceEventEmitter.addListener('capsule_created', () => refetch());
+        return () => { subDel.remove(); subNew.remove(); };
+    }, [refetch]);
+
+    // SWR: refetch when screen regains focus (max once per 30s)
+    const lastFocusFetchRef = useRef(0);
+    useEffect(() => {
+        if (!isFocused) return;
+        const now = Date.now();
+        if (now - lastFocusFetchRef.current > 30_000) {
+            lastFocusFetchRef.current = now;
+            refetch();
+        }
+    }, [isFocused, refetch]);
 
     // ─── Stories ──────────────────────────────────────────────────────────────
     const processStoriesData = (data: any[], currentId: string, blocked: string[]) => {

@@ -5,7 +5,6 @@ import {
     ScrollView, Linking, Animated as RNAnimated
 } from 'react-native';
 import { Image } from 'expo-image';
-import { FlashList } from '@shopify/flash-list';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useIsFocused, useNavigation, useRoute } from '@react-navigation/native';
@@ -435,6 +434,14 @@ const ChatCapsuleCard = memo(({ capsuleId, isMe }: { capsuleId: string; isMe: bo
     const tint = (MODEL_TINTS as any)[capsule.model] || PALETTE.myBubble;
     const modelImg = (MODEL_IMAGES as any)[capsule.model] || (MODEL_IMAGES as any).basicred_kap;
 
+    const isSealed = capsule.status === 'sealed';
+    const blurAmt = Platform.OS === 'ios' ? 50 : 20;
+    const sealedOverlay = isSealed ? (
+        <View style={{ ...StyleSheet.absoluteFillObject, backgroundColor: Platform.OS === 'ios' ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.65)', alignItems: 'center', justifyContent: 'center' }}>
+            <Ionicons name="lock-closed" size={22} color="rgba(0,0,0,0.35)" />
+        </View>
+    ) : null;
+
     const renderCollage = () => {
         if (collage.length === 0) {
             return (
@@ -444,21 +451,28 @@ const ChatCapsuleCard = memo(({ capsuleId, isMe }: { capsuleId: string; isMe: bo
             );
         }
         if (collage.length === 1) {
-            return <Image source={{ uri: collage[0].thumbnail_url || collage[0].media_url }} style={{ flex: 1 }} />;
+            return (
+                <View style={{ flex: 1 }}>
+                    <Image source={{ uri: collage[0].thumbnail_url || collage[0].media_url }} style={{ flex: 1 }} blurRadius={isSealed ? blurAmt : 0} contentFit="cover" />
+                    {sealedOverlay}
+                </View>
+            );
         }
         if (collage.length === 2) {
             return (
                 <View style={{ flex: 1, flexDirection: 'row', gap: 2 }}>
-                    <Image source={{ uri: collage[0].thumbnail_url || collage[0].media_url }} style={{ flex: 1 }} />
-                    <Image source={{ uri: collage[1].thumbnail_url || collage[1].media_url }} style={{ flex: 1 }} />
+                    <Image source={{ uri: collage[0].thumbnail_url || collage[0].media_url }} style={{ flex: 1 }} blurRadius={isSealed ? blurAmt : 0} contentFit="cover" />
+                    <Image source={{ uri: collage[1].thumbnail_url || collage[1].media_url }} style={{ flex: 1 }} blurRadius={isSealed ? blurAmt : 0} contentFit="cover" />
+                    {sealedOverlay}
                 </View>
             );
         }
         return (
             <View style={{ flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: 2, padding: 2 }}>
                 {collage.map((item: any, i: number) => (
-                    <Image key={item.id ?? i} source={{ uri: item.thumbnail_url || item.media_url }} style={{ width: '49%', height: '48.5%', borderRadius: 4 }} />
+                    <Image key={item.id ?? i} source={{ uri: item.thumbnail_url || item.media_url }} style={{ width: '49%', height: '48.5%', borderRadius: 4 }} blurRadius={isSealed ? blurAmt : 0} contentFit="cover" />
                 ))}
+                {sealedOverlay}
             </View>
         );
     };
@@ -1227,17 +1241,14 @@ export default function ChatDetailScreen() {
                 {loading ? (
                     <View style={styles.centered}><ActivityIndicator color={PALETTE.myBubble} /></View>
                 ) : (
-                    <FlashList
-                        data={messages as any}
-                        keyExtractor={keyExtractor as any}
-                        renderItem={renderMessage as any}
+                    <FlatList
+                        data={messages}
+                        keyExtractor={keyExtractor}
+                        renderItem={renderMessage}
                         contentContainerStyle={styles.list}
                         showsVerticalScrollIndicator={false}
                         removeClippedSubviews
-                        {...({
-                            inverted: true,
-                            estimatedItemSize: 80
-                        } as any)}
+                        inverted
                         onEndReached={loadMoreMessages}
                         onEndReachedThreshold={0.5}
                         ListFooterComponent={loadingMore

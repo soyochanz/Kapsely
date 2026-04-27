@@ -301,21 +301,10 @@ function ViewersSheet({ visible, onClose, storyId }: { visible: boolean; onClose
 
 // ─── Animated Sticker ────────────────────────────────────────────────────────
 function AnimatedSticker({ uri, isPaused }: { uri: string; isPaused: boolean }) {
-    const imageRef = useRef<any>(null);
-
-    useEffect(() => {
-        if (isPaused) {
-            imageRef.current?.stopAnimating?.();
-        } else {
-            imageRef.current?.startAnimating?.();
-        }
-    }, [isPaused]);
-
     return (
-        <Image 
-            ref={imageRef}
-            source={{ uri }} 
-            style={{ width: 140, height: 140 }} 
+        <Image
+            source={{ uri }}
+            style={{ width: 140, height: 140 }}
             contentFit="contain"
             autoplay={!isPaused}
         />
@@ -357,6 +346,7 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
     const commentFadeAnim = useRef(new Animated.Value(0)).current;
     const progressRef = useRef(0);
     const lastGroupRef = useRef<any>(null);
+    const [metadataMap, setMetadataMap] = useState<Record<string, any>>({});
 
     const ownerId = userGroup?.owner_id || userGroup?.id;
     const isOwner = ownerId === currentUserId;
@@ -392,6 +382,23 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
     }, [activeIndex, userGroup, visible]);
 
     useEffect(() => { if (!visible) lastGroupRef.current = null; }, [visible]);
+
+    // Bulk-fetch metadata for all stories in the group when viewer opens.
+    // Runs whenever userGroup changes so it always gets fresh data regardless of source (feed vs profile).
+    useEffect(() => {
+        if (!visible || !userGroup?.stories?.length) return;
+        const ids = userGroup.stories.map((s: any) => s.id);
+        supabase
+            .from('capsule_items')
+            .select('id, metadata')
+            .in('id', ids)
+            .then(({ data }) => {
+                if (!data?.length) return;
+                const updates: Record<string, any> = {};
+                data.forEach((d: any) => { updates[d.id] = d.metadata; });
+                setMetadataMap(prev => ({ ...prev, ...updates }));
+            });
+    }, [visible, userGroup]);
 
     // Progress timer
     useEffect(() => {
@@ -504,6 +511,11 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
     const story = userGroup.stories[activeIndex];
     if (!story) return null;
 
+    // metadataMap (direct DB fetch) takes priority; fallback to story.metadata from RPC
+    const meta = metadataMap.hasOwnProperty(story.id)
+        ? metadataMap[story.id]
+        : story.metadata ?? null;
+
     const capsuleId = story.capsule_id || story.capsules?.id;
 
     return (
@@ -522,18 +534,18 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                 />
 
                 {/* Filter overlay */}
-                {story.metadata?.filter && story.metadata.filter !== 'none' && (
+                {meta?.filter && meta.filter !== 'none' && (
                     <View style={[StyleSheet.absoluteFill, {
-                        backgroundColor: story.metadata.filter === 'vintage' ? 'rgba(230,190,120,0.25)' :
-                            story.metadata.filter === 'warm' ? 'rgba(255,150,50,0.18)' :
-                                story.metadata.filter === 'cool' ? 'rgba(0,150,255,0.18)' :
-                                    story.metadata.filter === 'dark' ? 'rgba(0,0,0,0.4)' : 'transparent',
+                        backgroundColor: meta.filter === 'vintage' ? 'rgba(230,190,120,0.25)' :
+                            meta.filter === 'warm' ? 'rgba(255,150,50,0.18)' :
+                                meta.filter === 'cool' ? 'rgba(0,150,255,0.18)' :
+                                    meta.filter === 'dark' ? 'rgba(0,0,0,0.4)' : 'transparent',
                         pointerEvents: 'none'
                     } as any]} />
                 )}
 
                 {/* Text overlays */}
-                {story.metadata?.texts?.map((t: any) => {
+                {meta?.texts?.map((t: any) => {
                     const styleInfo = TEXT_STYLES.find(s => s.id === t.styleId);
                     const bgOption = TEXT_BG_OPTIONS.find(b => b.id === t.bgId);
                     const bgVal = bgOption ? bgOption.value : (t.bgId === 'none' ? 'transparent' : 'rgba(0,0,0,0.55)');
@@ -574,7 +586,7 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                     );
                 })}
                 {/* Stickers / GIFs */}
-                {story.metadata?.stickers?.map((s: any) => (
+                {meta?.stickers?.map((s: any) => (
                     <View 
                         key={s.id} 
                         style={[
@@ -595,42 +607,42 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                 ))}
 
                 {/* Draggable Capsule Design */}
-                {story.metadata?.capsuleDesign && (
+                {meta?.capsuleDesign && (
                     <TouchableOpacity
                         activeOpacity={0.9}
                         onPress={() => { progress.stopAnimation(); onClose(); navigation.navigate('CapsuleDetail', { capsuleId }); }}
                         style={[
                             { 
                                 position: 'absolute', 
-                                top: (story.metadata.capsuleDesign.y || 0.8) * height, 
-                                left: (story.metadata.capsuleDesign.x || 0.5) * width,
+                                top: (meta.capsuleDesign.y || 0.8) * height, 
+                                left: (meta.capsuleDesign.x || 0.5) * width,
                                 transform: [
-                                    { scale: story.metadata.capsuleDesign.scale || 1 },
-                                    { rotate: `${story.metadata.capsuleDesign.rotation || 0}deg` }
+                                    { scale: meta.capsuleDesign.scale || 1 },
+                                    { rotate: `${meta.capsuleDesign.rotation || 0}deg` }
                                 ]
                             }
                         ]}
                     >
                         <Image 
-                            source={{ uri: timerConfigManager.getModelImage(story.metadata.capsuleDesign.model) || MODEL_IMAGES[story.metadata.capsuleDesign.model] }} 
+                            source={{ uri: timerConfigManager.getModelImage(meta.capsuleDesign.model) || MODEL_IMAGES[meta.capsuleDesign.model] }} 
                             style={{ width: 120, height: 120 }} 
                             contentFit="contain" 
                         />
                     </TouchableOpacity>
                 )}
-                {story.metadata?.emojis?.map((e: any) => (
+                {meta?.emojis?.map((e: any) => (
                     <Text key={e.id} style={[{ position: 'absolute', top: e.y * height, left: e.x * width, fontSize: 32 }, { pointerEvents: 'none' } as any]}>{e.emoji}</Text>
                 ))}
-                {story.metadata?.location && (
+                {meta?.location && (
                     <View 
                         style={[
                             { 
                                 position: 'absolute', 
-                                top: (story.metadata.location.y || 0.2) * height, 
-                                left: (story.metadata.location.x || 0.5) * width,
+                                top: (meta.location.y || 0.2) * height, 
+                                left: (meta.location.x || 0.5) * width,
                                 transform: [
-                                    { scale: story.metadata.location.scale || 1 },
-                                    { rotate: `${story.metadata.location.rotation || 0}deg` }
+                                    { scale: meta.location.scale || 1 },
+                                    { rotate: `${meta.location.rotation || 0}deg` }
                                 ]
                             }, 
                             { pointerEvents: 'none' } as any
@@ -642,7 +654,7 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                             style={svs.locationPill}
                         >
                             <Ionicons name="location" size={14} color="#fff" />
-                            <Text style={svs.locationText}>{story.metadata.location.text}</Text>
+                            <Text style={svs.locationText}>{meta.location.text}</Text>
                         </LinearGradient>
                     </View>
                 )}

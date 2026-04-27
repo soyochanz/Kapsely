@@ -120,6 +120,8 @@ export default function ProfileScreen() {
         queryKey: ['profile', targetUserId || currentUserId],
         queryFn: fetchProfile,
         enabled: !!(targetUserId || currentUserId),
+        staleTime: 3 * 60 * 1000,
+        gcTime: 30 * 60 * 1000,
     });
 
     const profile = profileDataUnified?.profile;
@@ -150,6 +152,23 @@ export default function ProfileScreen() {
             multiAccountService.getAccounts().then(setAccounts);
         }
     }, [showAccountPanel]);
+
+    useEffect(() => {
+        const subDel = DeviceEventEmitter.addListener('capsule_deleted', () => refetch());
+        const subNew = DeviceEventEmitter.addListener('capsule_created', () => refetch());
+        return () => { subDel.remove(); subNew.remove(); };
+    }, [refetch]);
+
+    const lastFocusFetchRef = useRef(0);
+    useFocusEffect(
+        useCallback(() => {
+            const now = Date.now();
+            if (now - lastFocusFetchRef.current > 30_000) {
+                lastFocusFetchRef.current = now;
+                refetch();
+            }
+        }, [refetch])
+    );
 
     const handleSwitchAccount = async (accountId: string) => {
         try {
@@ -292,6 +311,29 @@ export default function ProfileScreen() {
         return () => sub.remove();
     }, [targetUserId, currentUserId]);
 
+    // Batch-fetch first media item for open capsules that have no cover_url
+    useEffect(() => {
+        const needsMedia = openedCaps.filter((c: any) => !c.cover_url);
+        if (!needsMedia.length) return;
+        const ids = needsMedia.map((c: any) => c.id);
+        supabase
+            .from('capsule_items')
+            .select('capsule_id, media_url, thumbnail_url, media_type')
+            .in('capsule_id', ids)
+            .in('media_type', ['image', 'video'])
+            .order('created_at', { ascending: true })
+            .limit(ids.length * 4)
+            .then(({ data }) => {
+                if (!data?.length) return;
+                const map: Record<string, any[]> = {};
+                data.forEach((item: any) => {
+                    if (!map[item.capsule_id]) map[item.capsule_id] = [];
+                    map[item.capsule_id].push(item);
+                });
+                setCapsuleMediaMap(prev => ({ ...prev, ...map }));
+            });
+    }, [openedCaps]);
+
     useEffect(() => {
         const idToLoad = targetUserId || currentUserId;
         if (!idToLoad) return;
@@ -421,6 +463,24 @@ export default function ProfileScreen() {
 
     const accentColor = profile?.favorite_color || Colors.primary;
     const joinYear = profile?.created_at ? new Date(profile.created_at).getFullYear() : '—';
+
+    // Extracted so FlashList header always gets the latest closure (not a stale cached version)
+    const handleShowStories = useCallback(async () => {
+        if (!userStories) return;
+        try {
+            const ownerId = userStories.owner_id;
+            const { data: fullStories } = await supabase
+                .from('stories')
+                .select('*, capsules:capsule_id(id, title, type, model)')
+                .eq('owner_id', ownerId)
+                .gt('expires_at', new Date().toISOString())
+                .order('created_at', { ascending: true });
+            if (fullStories?.length) {
+                setUserStories(prev => prev ? { ...prev, stories: fullStories } : prev);
+            }
+        } catch (_) {}
+        setActiveStoryViewer(true);
+    }, [userStories]);
     const tabData = activeTab === 'all'
         ? [...openedCaps, ...sealedCaps].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
         : activeTab === 'sealed' ? sealedCaps : openedCaps;
@@ -446,7 +506,7 @@ export default function ProfileScreen() {
             onShowEdit={() => setShowEdit(true)}
             onShowSettings={() => setShowSettings(true)}
             onShowUserOptions={() => setShowUserOptions(true)}
-            onShowStories={() => setActiveStoryViewer(true)}
+            onShowStories={handleShowStories}
             onBack={() => navigation.goBack()}
             activeTab={activeTab}
             setActiveTab={setActiveTab}
@@ -459,7 +519,8 @@ export default function ProfileScreen() {
         />
     ), [
         profile, accentColor, profileStickers, userStories, followersCount, followingCount,
-        openedCaps.length, sealedCaps.length, isOwnProfile, isFollowing, activeTab, insets, t, i18n, joinYear, profileId, navigation
+        openedCaps.length, sealedCaps.length, isOwnProfile, isFollowing, activeTab, insets, t, i18n, joinYear, profileId, navigation,
+        handleShowStories
     ]);
 
     if (isLoading) {

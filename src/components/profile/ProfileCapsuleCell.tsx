@@ -92,11 +92,18 @@ export const ProfileCapsuleCell = React.memo(({
                         isMinimal
                         style={{ width: '90%', height: '90%' }}
                     />
-                ) : coverUrl ? (
-                    <Image source={{ uri: coverUrl }} style={s.capsuleCoverImg} contentFit="cover" cachePolicy="memory-disk" transition={250} />
-                ) : (
-                    <Image source={{ uri: modelImg }} style={s.capsuleModelImg} contentFit="contain" cachePolicy="memory-disk" />
-                )}
+                ) : (() => {
+                    const effectiveCover = coverUrl || cap.cover_url;
+                    if (effectiveCover) {
+                        return <Image source={{ uri: effectiveCover }} style={s.capsuleCoverImg} contentFit="cover" cachePolicy="memory-disk" transition={250} recyclingKey={`prof-cover-${cap.id}`} />;
+                    }
+                    const firstItem = cap.collage_items?.[0] || cap.latest_item || capsuleMediaMap[cap.id]?.[0];
+                    const mediaUrl = firstItem?.thumbnail_url || firstItem?.media_url;
+                    if (mediaUrl && !mediaUrl.startsWith('text://')) {
+                        return <Image source={{ uri: mediaUrl }} style={s.capsuleCoverImg} contentFit="cover" cachePolicy="memory-disk" transition={250} recyclingKey={`prof-media-${cap.id}`} />;
+                    }
+                    return <Image source={{ uri: modelImg }} style={s.capsuleModelImg} contentFit="contain" cachePolicy="memory-disk" />;
+                })()}
                 
                 {/* Status Badges */}
                 <View style={s.badgeContainer}>

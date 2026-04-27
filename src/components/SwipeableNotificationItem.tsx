@@ -1,14 +1,23 @@
-import React, { useRef, useState } from 'react';
-import {
-    View, Text, StyleSheet, Animated, PanResponder, Dimensions, Vibration,
-} from 'react-native';
+import React from 'react';
+import { View, Text, StyleSheet, Dimensions, Vibration, LayoutChangeEvent } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { GestureDetector, Gesture } from 'react-native-gesture-handler';
+import Animated, {
+    useAnimatedStyle,
+    useSharedValue,
+    withSpring,
+    withTiming,
+    runOnJS,
+    interpolate,
+    Extrapolate,
+} from 'react-native-reanimated';
 import { Colors, Fonts } from '../theme';
 import { Notification } from '../data/mockNotifications';
 import NotificationItem from './NotificationItem';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const TRIGGER_THRESHOLD = SCREEN_WIDTH * 0.32;
+const TRIGGER_DELETE = SCREEN_WIDTH * 0.28;
+const TRIGGER_READ   = SCREEN_WIDTH * 0.22;
 
 interface Props {
     notification: Notification;
@@ -21,118 +30,131 @@ interface Props {
 }
 
 export default function SwipeableNotificationItem({
-    notification, onDelete, onMarkRead, onAcceptInvite, onRejectInvite, onSwipeStart, onSwipeEnd
+    notification, onDelete, onMarkRead, onAcceptInvite, onRejectInvite, onSwipeStart, onSwipeEnd,
 }: Props) {
-    const translateX = useRef(new Animated.Value(0)).current;
-    const heightAnim = useRef(new Animated.Value(0)).current; // 0 to 1
-    const [isMeasured, setIsMeasured] = useState(false);
-    const measuredH = useRef(0);
+    const translateX  = useSharedValue(0);
+    const itemHeight  = useSharedValue(-1);   // -1 = not yet measured; collapses to 0 on delete
+    const itemOpacity = useSharedValue(1);
 
-    const springBack = () => {
-        Animated.spring(translateX, {
-            toValue: 0, useNativeDriver: true, tension: 180, friction: 18,
-        }).start(() => {
-            if (onSwipeEnd) onSwipeEnd();
+    // ── Actions ──────────────────────────────────────────────────────────────
+    const doDelete = (id: string) => {
+        if (onSwipeEnd) onSwipeEnd();
+        Vibration.vibrate(20);
+        onDelete(id);
+    };
+
+    const doMarkRead = (id: string) => {
+        if (onSwipeEnd) onSwipeEnd();
+        Vibration.vibrate(10);
+        onMarkRead(id);
+    };
+
+    const triggerDelete = () => {
+        'worklet';
+        translateX.value = withTiming(-SCREEN_WIDTH, { duration: 230 }, () => {
+            itemOpacity.value = withTiming(0, { duration: 150 }, () => {
+                itemHeight.value = withTiming(0, { duration: 200 }, () => {
+                    runOnJS(doDelete)(notification.id);
+                });
+            });
         });
     };
 
-    const collapseAndDelete = (id: string) => {
-        Animated.sequence([
-            Animated.timing(translateX, { toValue: -SCREEN_WIDTH, duration: 250, useNativeDriver: true }),
-            Animated.timing(heightAnim, { toValue: 1, duration: 250, useNativeDriver: false }),
-        ]).start(() => {
-            if (onSwipeEnd) onSwipeEnd();
-            onDelete(id);
+    const triggerRead = () => {
+        'worklet';
+        translateX.value = withSpring(0, { damping: 18, stiffness: 200 }, () => {
+            runOnJS(doMarkRead)(notification.id);
         });
     };
 
-    const springToRead = (id: string) => {
-        Animated.spring(translateX, {
-            toValue: 0, useNativeDriver: true, tension: 150, friction: 12,
-        }).start(() => {
-            if (onSwipeEnd) onSwipeEnd();
-            Vibration.vibrate(10);
-            onMarkRead(id);
-        });
-    };
-
-    const panResponder = useRef(
-        PanResponder.create({
-            onStartShouldSetPanResponder: () => false,
-            onMoveShouldSetPanResponder: (_, g) => {
-                const isHorizontal = Math.abs(g.dx) > 15;
-                const isVerticalSignificant = Math.abs(g.dy) > 30;
-                return isHorizontal && !isVerticalSignificant;
-            },
-            onMoveShouldSetPanResponderCapture: (_, g) => {
-                // Capture more aggressively to allow swipe even if slightly vertical
-                return Math.abs(g.dx) > 15 && Math.abs(g.dy) < 50;
-            },
-            onPanResponderGrant: () => {
-                (translateX as any).stopAnimation();
-                if (onSwipeStart) onSwipeStart();
-            },
-            onPanResponderMove: (_, g) => {
-                // Don't swipe too far right or left beyond screen
-                if (g.dx > 0) {
-                    translateX.setValue(g.dx * 0.7); // resist swiping right too much
-                } else {
-                    translateX.setValue(g.dx);
-                }
-            },
-            onPanResponderRelease: (_, g) => {
-                const dx = g.dx;
-                if (dx < -TRIGGER_THRESHOLD * 0.8) { // Delete threshold (left)
-                    collapseAndDelete(notification.id);
-                } else if (dx > TRIGGER_THRESHOLD * 0.5) { // Mark read threshold (right)
-                    springToRead(notification.id);
-                } else {
-                    springBack();
-                }
-            },
-            onPanResponderTerminate: () => springBack(),
+    // ── Gesture ───────────────────────────────────────────────────────────────
+    const gesture = Gesture.Pan()
+        .activeOffsetX([-12, 12])
+        .failOffsetY([-12, 12])
+        .onBegin(() => {
+            if (onSwipeStart) runOnJS(onSwipeStart)();
         })
-    ).current;
+        .onUpdate((e) => {
+            // Resist right swipe slightly
+            if (e.translationX > 0) {
+                translateX.value = e.translationX * 0.65;
+            } else {
+                translateX.value = e.translationX;
+            }
+        })
+        .onEnd((e) => {
+            const dx = e.translationX;
+            if (dx < -TRIGGER_DELETE) {
+                triggerDelete();
+            } else if (dx > TRIGGER_READ) {
+                triggerRead();
+            } else {
+                translateX.value = withSpring(0, { damping: 20, stiffness: 250 });
+                if (onSwipeEnd) runOnJS(onSwipeEnd)();
+            }
+        })
+        .onFinalize((_e, success) => {
+            // If gesture was cancelled / stolen by ScrollView, snap back
+            if (!success) {
+                translateX.value = withSpring(0, { damping: 22, stiffness: 260 });
+            }
+        });
 
-    const leftReveal = translateX.interpolate({ inputRange: [-SCREEN_WIDTH, 0], outputRange: [1, 0], extrapolate: 'clamp' });
-    const rightReveal = translateX.interpolate({ inputRange: [0, SCREEN_WIDTH * 0.5], outputRange: [0, 1], extrapolate: 'clamp' });
+    // ── Animated styles ───────────────────────────────────────────────────────
+    const rowStyle = useAnimatedStyle(() => ({
+        transform: [{ translateX: translateX.value }],
+    }));
 
-    const animatedHeight = heightAnim.interpolate({
-        inputRange: [0, 1],
-        outputRange: [measuredH.current || 80, 0]
+    const wrapperStyle = useAnimatedStyle(() => {
+        if (itemHeight.value < 0) return { opacity: itemOpacity.value };
+        return {
+            height: itemHeight.value,
+            opacity: itemOpacity.value,
+            overflow: 'hidden' as const,
+        };
     });
+
+    const readReveal = useAnimatedStyle(() => ({
+        opacity: interpolate(translateX.value, [0, TRIGGER_READ], [0, 1], Extrapolate.CLAMP),
+    }));
+
+    const deleteReveal = useAnimatedStyle(() => ({
+        opacity: interpolate(translateX.value, [-TRIGGER_DELETE, 0], [1, 0], Extrapolate.CLAMP),
+    }));
 
     return (
         <Animated.View
-            style={[styles.wrapper, isMeasured && { height: animatedHeight }]}
-            onLayout={(e) => {
-                if (!isMeasured) {
-                    measuredH.current = e.nativeEvent.layout.height;
-                    setIsMeasured(true);
+            style={[styles.wrapper, wrapperStyle]}
+            onLayout={(e: LayoutChangeEvent) => {
+                const h = e.nativeEvent.layout.height;
+                if (h > 0 && itemHeight.value < 0) {
+                    itemHeight.value = h;
                 }
             }}
         >
-            {/* Mark read backdrop (shows when swiping right) */}
-            <Animated.View style={[styles.backdrop, styles.readBackdrop, { opacity: rightReveal }]}>
-                <Ionicons name="checkmark-done" size={24} color="#fff" />
-                <Text style={styles.backdropLabel}>Mark Read</Text>
+            {/* Mark-read backdrop (right swipe) */}
+            <Animated.View style={[styles.backdrop, styles.readBackdrop, readReveal]}>
+                <Ionicons name="checkmark-done" size={22} color="#fff" />
+                <Text style={styles.backdropLabel}>Leído</Text>
             </Animated.View>
 
-            {/* Delete backdrop (shows when swiping left) */}
-            <Animated.View style={[styles.backdrop, styles.deleteBackdrop, { opacity: leftReveal }]}>
-                <Ionicons name="trash" size={24} color="#fff" />
-                <Text style={styles.backdropLabel}>Delete</Text>
+            {/* Delete backdrop (left swipe) */}
+            <Animated.View style={[styles.backdrop, styles.deleteBackdrop, deleteReveal]}>
+                <Ionicons name="trash" size={22} color="#fff" />
+                <Text style={styles.backdropLabel}>Eliminar</Text>
             </Animated.View>
 
-            {/* Row Content */}
-            <Animated.View style={[styles.row, { transform: [{ translateX }] }]} {...panResponder.panHandlers}>
-                <NotificationItem
-                    notification={notification}
-                    onMarkRead={onMarkRead}
-                    onAcceptInvite={onAcceptInvite}
-                    onRejectInvite={onRejectInvite}
-                />
-            </Animated.View>
+            {/* Swipeable row */}
+            <GestureDetector gesture={gesture}>
+                <Animated.View style={[styles.row, rowStyle]}>
+                    <NotificationItem
+                        notification={notification}
+                        onMarkRead={onMarkRead}
+                        onAcceptInvite={onAcceptInvite}
+                        onRejectInvite={onRejectInvite}
+                    />
+                </Animated.View>
+            </GestureDetector>
         </Animated.View>
     );
 }
@@ -142,12 +164,22 @@ const styles = StyleSheet.create({
     backdrop: {
         position: 'absolute',
         top: 0, bottom: 0,
-        alignItems: 'center', justifyContent: 'center',
-        flexDirection: 'row', gap: 10,
-        paddingHorizontal: 25,
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexDirection: 'row',
+        gap: 8,
+        paddingHorizontal: 22,
     },
-    readBackdrop: { left: 0, right: 0, backgroundColor: Colors.success, justifyContent: 'flex-start' },
-    deleteBackdrop: { left: 0, right: 0, backgroundColor: Colors.eventCap, justifyContent: 'flex-end' },
+    readBackdrop: {
+        left: 0, right: 0,
+        backgroundColor: Colors.success,
+        justifyContent: 'flex-start',
+    },
+    deleteBackdrop: {
+        left: 0, right: 0,
+        backgroundColor: Colors.eventCap,
+        justifyContent: 'flex-end',
+    },
     backdropLabel: { color: '#fff', fontSize: 13, fontFamily: Fonts.bold },
-    row: { backgroundColor: Colors.background, zIndex: 10 },
+    row: { backgroundColor: Colors.background },
 });

@@ -691,6 +691,13 @@
     "add_your_photos": "Add your photos",
     "add_your_video": "Add your video",
     "capture_moment": "Capture a unique moment",
-    "hd_ready": "HD ready to save (max. 1 min)"
+    "hd_ready": "HD ready to save (max. 1 min)",
+    "select_capsule": "Select Capsule",
+    "choose_destination": "Choose where to save this memory",
+    "no_capsules_available": "No capsules available",
+    "no_capsules_desc": "Create a Sealed or Open capsule to start storing memories",
+    "capsules_available": "{{count}} capsule(s) available",
+    "always_open": "Always open",
+    "opens_label": "Opens:"
   }
 }

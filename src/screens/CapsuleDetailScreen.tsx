@@ -1216,8 +1216,9 @@ function CapsuleDetailScreen() {
                 if (capsule?.is_shared) {
                     const { data, error } = await supabase.rpc('vote_delete_capsule', { p_capsule_id: capsuleId });
                     if (error) throw error;
-                    
+
                     if (data?.status === 'deleted') {
+                        DeviceEventEmitter.emit('capsule_deleted', { capsuleId });
                         navigation.goBack();
                     } else if (data?.status === 'voted' || data?.status === 'already_voted') {
                         setCapsule((prev: any) => ({ ...prev, delete_requests: data.delete_requests }));
@@ -1231,7 +1232,10 @@ function CapsuleDetailScreen() {
                         if (files.length) await supabase.storage.from('capsule-media').remove(files);
                     }
                     const { error } = await supabase.rpc('delete_capsule', { p_capsule_id: capsuleId });
-                    if (!error) navigation.goBack(); else throw error;
+                    if (!error) {
+                        DeviceEventEmitter.emit('capsule_deleted', { capsuleId });
+                        navigation.goBack();
+                    } else throw error;
                 }
             } catch (err) { 
                 console.error(err);

@@ -699,6 +699,13 @@
     "add_your_photos": "Añade tus fotos",
     "add_your_video": "Añade tu video",
     "capture_moment": "Captura un momento único",
-    "hd_ready": "HD listo para guardar (máx. 1 min)"
+    "hd_ready": "HD listo para guardar (máx. 1 min)",
+    "select_capsule": "Seleccionar Cápsula",
+    "choose_destination": "Elige dónde guardar este recuerdo",
+    "no_capsules_available": "No hay cápsulas disponibles",
+    "no_capsules_desc": "Crea una cápsula sellada o abierta para guardar recuerdos",
+    "capsules_available": "{{count}} cápsula(s) disponible(s)",
+    "always_open": "Siempre abierta",
+    "opens_label": "Abre:"
   }
 }

@@ -3,7 +3,7 @@ import {
     View, Text, StyleSheet, ScrollView, TouchableOpacity,
     TextInput, StatusBar, Dimensions, Switch,
     Image, Animated, Alert, ActivityIndicator,
-    Easing, Modal, Platform, Keyboard, KeyboardAvoidingView,
+    Easing, Modal, Platform, Keyboard, KeyboardAvoidingView, DeviceEventEmitter,
 } from 'react-native';
 import * as NavigationBar from 'expo-navigation-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -535,7 +535,6 @@ function SealAnimation({ accent, modelUri, modelOpenUri, onDone, isOpen }: {
     const lockOpacity = useRef(new Animated.Value(0)).current;
     const lockScale = useRef(new Animated.Value(0.4)).current;
     const doneOpacity = useRef(new Animated.Value(0)).current;
-    const bgDarken = useRef(new Animated.Value(0)).current;
     const ring1Scale = useRef(new Animated.Value(0.1)).current;
     const ring1Opacity = useRef(new Animated.Value(0)).current;
     const ring2Scale = useRef(new Animated.Value(0.1)).current;
@@ -601,7 +600,6 @@ function SealAnimation({ accent, modelUri, modelOpenUri, onDone, isOpen }: {
                     Animated.parallel(seqs),
                     Animated.delay(120),
                     Animated.parallel([
-                        Animated.timing(bgDarken, { toValue: 1, duration: 400, useNativeDriver: true }),
                         Animated.timing(capY, { toValue: -8, duration: 200, easing: Easing.out(Easing.quad), useNativeDriver: true }),
                         Animated.timing(capScale, { toValue: 1.35, duration: 350, easing: Easing.out(Easing.back(1.2)), useNativeDriver: true }),
                         Animated.timing(glowScale, { toValue: 1.6, duration: 350, useNativeDriver: true }),
@@ -665,7 +663,7 @@ function SealAnimation({ accent, modelUri, modelOpenUri, onDone, isOpen }: {
                             ]),
                         ]).start(() => {
                             Animated.timing(doneOpacity, { toValue: 1, duration: 400, useNativeDriver: true }).start();
-                            setTimeout(onDone, 1200);
+                            setTimeout(onDone, 800);
                         });
                     });
                 });
@@ -673,39 +671,62 @@ function SealAnimation({ accent, modelUri, modelOpenUri, onDone, isOpen }: {
         });
     }, []);
 
-    const ITEM_ICONS = ['image-outline', 'videocam-outline', 'musical-notes-outline'] as const;
-    const bgColor = bgDarken.interpolate({ inputRange: [0, 1], outputRange: [L.bg, '#0D0A1A'] });
-
     return (
-        <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: bgColor as any, zIndex: 3000, alignItems: 'center', justifyContent: 'center' }]}>
-            <Animated.View style={{ position: 'absolute', width: 240, height: 240, borderRadius: 120, borderWidth: 2, borderColor: accent + '60', transform: [{ scale: ring1Scale }], opacity: ring1Opacity }} />
-            <Animated.View style={{ position: 'absolute', width: 240, height: 240, borderRadius: 120, borderWidth: 1.5, borderColor: accent + '40', transform: [{ scale: ring2Scale }], opacity: ring2Opacity }} />
-            <Animated.View style={{ position: 'absolute', width: 240, height: 240, borderRadius: 120, borderWidth: 1, borderColor: accent + '30', transform: [{ scale: ring3Scale }], opacity: ring3Opacity }} />
-            <Animated.View style={{ position: 'absolute', width: 300, height: 300, borderRadius: 150, backgroundColor: accent + '18', transform: [{ scale: glowScale }], opacity: glowOpacity }} />
-            <Animated.View style={{ position: 'absolute', width: 340, height: 340, borderRadius: 170, borderWidth: 1.5, borderColor: accent + '22', transform: [{ scale: glowScale }], opacity: glowOpacity }} />
-            {/* Sealing animation logic - items behind removed as per user request */}
-            <Animated.View style={{ position: 'absolute', opacity: stage === 'sealed' ? new Animated.Value(0) : capOpacity, transform: [{ scale: Animated.multiply(capScale, breathe) }, { translateY: capY }] }}>
-                <Image source={{ uri: modelOpenUri || modelUri }} style={{ width: 230, height: 230 }} resizeMode="contain" />
+        <View style={{ flex: 1, backgroundColor: '#0D0A1A', alignItems: 'center', justifyContent: 'center' }}>
+            {/* Ambient glow */}
+            <Animated.View style={{ position: 'absolute', width: 320, height: 320, borderRadius: 160, backgroundColor: accent + '20', transform: [{ scale: glowScale }], opacity: glowOpacity }} />
+            <Animated.View style={{ position: 'absolute', width: 360, height: 360, borderRadius: 180, borderWidth: 1.5, borderColor: accent + '18', transform: [{ scale: glowScale }], opacity: glowOpacity }} />
+            {/* Seal rings */}
+            <Animated.View style={{ position: 'absolute', width: 260, height: 260, borderRadius: 130, borderWidth: 2, borderColor: accent + '70', transform: [{ scale: ring1Scale }], opacity: ring1Opacity }} />
+            <Animated.View style={{ position: 'absolute', width: 260, height: 260, borderRadius: 130, borderWidth: 1.5, borderColor: accent + '50', transform: [{ scale: ring2Scale }], opacity: ring2Opacity }} />
+            <Animated.View style={{ position: 'absolute', width: 260, height: 260, borderRadius: 130, borderWidth: 1, borderColor: accent + '30', transform: [{ scale: ring3Scale }], opacity: ring3Opacity }} />
+            {/* Open capsule — entry stage */}
+            <Animated.View style={{ position: 'absolute', opacity: capOpacity, transform: [{ scale: Animated.multiply(capScale, breathe) }, { translateY: capY }] }}>
+                <Image source={{ uri: modelOpenUri || modelUri }} style={{ width: 250, height: 250 }} resizeMode="contain" />
             </Animated.View>
+            {/* Flash */}
             <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: '#fff', opacity: flash }]} pointerEvents="none" />
-            <Animated.View style={{ position: 'absolute', opacity: sealedOpacity, transform: [{ scale: sealedScale }], alignItems: 'center' }}>
-                <Image source={{ uri: modelUri }} style={{ width: 230, height: 230 }} resizeMode="contain" />
-                <Animated.View style={{ position: 'absolute', bottom: 22, right: '12%', width: 52, height: 52, borderRadius: 26, backgroundColor: accent, alignItems: 'center', justifyContent: 'center', shadowColor: accent, shadowOpacity: 0.7, shadowRadius: 20, shadowOffset: { width: 0, height: 6 }, elevation: 12, opacity: lockOpacity, transform: [{ scale: lockScale }] }}>
-                    <Ionicons name="lock-closed" size={22} color="#fff" />
-                </Animated.View>
+            {/* Sealed capsule — final stage */}
+            <Animated.View style={{ position: 'absolute', opacity: sealedOpacity, transform: [{ scale: sealedScale }], alignItems: 'center', top: '18%' }}>
+                <View style={{ width: 260, height: 260, alignItems: 'center', justifyContent: 'center' }}>
+                    <Image source={{ uri: modelUri }} style={{ width: 260, height: 260 }} resizeMode="contain" />
+                    <Animated.View style={{
+                        position: 'absolute', bottom: 10, right: 10,
+                        width: 54, height: 54, borderRadius: 27,
+                        backgroundColor: accent,
+                        alignItems: 'center', justifyContent: 'center',
+                        shadowColor: accent, shadowOpacity: 0.9, shadowRadius: 18, shadowOffset: { width: 0, height: 4 }, elevation: 16,
+                        opacity: lockOpacity, transform: [{ scale: lockScale }],
+                    }}>
+                        <Ionicons name="lock-closed" size={24} color="#fff" />
+                    </Animated.View>
+                </View>
             </Animated.View>
+            {/* Particles */}
             {particles.map((p, i) => (
                 <Animated.View key={i} style={{ position: 'absolute', width: p.size, height: p.size, borderRadius: p.size / 2, backgroundColor: p.color, opacity: p.op, transform: [{ translateX: p.x }, { translateY: p.y }, { scale: p.sc }] }} />
             ))}
-            <Animated.View style={{ position: 'absolute', bottom: '14%', alignItems: 'center', opacity: doneOpacity }}>
-                <Text style={{ fontSize: 26, fontFamily: Fonts.bold, color: '#fff', letterSpacing: -0.5, textShadowColor: accent, textShadowRadius: 20, textShadowOffset: { width: 0, height: 0 } }}>
-                    {t('create.seal_anim_msg')}
+            {/* Final message */}
+            <Animated.View style={{ position: 'absolute', bottom: 90, alignItems: 'center', opacity: doneOpacity, width: '80%' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: accent + '22', borderRadius: 50, paddingHorizontal: 18, paddingVertical: 8, borderWidth: 1, borderColor: accent + '55', marginBottom: 20 }}>
+                    <Ionicons name="lock-closed" size={11} color={accent} />
+                    <Text style={{ fontSize: 11, color: accent, fontFamily: Fonts.bold, letterSpacing: 2.5, textTransform: 'uppercase' }}>
+                        {t('create.capsule_locked')}
+                    </Text>
+                </View>
+                <Text style={{ fontSize: 32, fontFamily: Fonts.bold, color: '#fff', letterSpacing: -0.5, textAlign: 'center', lineHeight: 38, textShadowColor: accent, textShadowRadius: 32, textShadowOffset: { width: 0, height: 0 } }}>
+                    Sellada{'\n'}para el futuro
                 </Text>
-                <Text style={{ fontSize: 14, color: '#ffffff99', fontFamily: Fonts.regular, marginTop: 6 }}>
-                    {t('create.capsule_locked')}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 18, marginBottom: 12 }}>
+                    <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,0.10)' }} />
+                    <Text style={{ fontSize: 12, color: accent + 'BB', letterSpacing: 6 }}>✦ ✦ ✦</Text>
+                    <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,0.10)' }} />
+                </View>
+                <Text style={{ fontSize: 14, color: 'rgba(255,255,255,0.50)', fontFamily: Fonts.regular, textAlign: 'center', letterSpacing: 0.3 }}>
+                    Tus recuerdos esperan el momento
                 </Text>
             </Animated.View>
-        </Animated.View>
+        </View>
     );
 }
 
@@ -798,13 +819,13 @@ function OpenCapAnimation({ accent, modelUri, onDone }: {
                 ]),
             ]).start(() => {
                 Animated.timing(doneOpacity, { toValue: 1, duration: 450, useNativeDriver: true }).start();
-                setTimeout(onDone, 1400);
+                setTimeout(onDone, 800);
             });
         });
     }, []);
 
     return (
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: '#EEF5FF', zIndex: 3000, alignItems: 'center', justifyContent: 'center' }]}>
+        <View style={{ flex: 1, backgroundColor: '#EEF5FF', alignItems: 'center', justifyContent: 'center' }}>
             <Animated.View style={{ position: 'absolute', width: 200, height: 200, borderRadius: 100, borderWidth: 3, borderColor: '#6B8FF550', transform: [{ scale: bloom1 }], opacity: bloom1Op }} />
             <Animated.View style={{ position: 'absolute', width: 200, height: 200, borderRadius: 100, borderWidth: 2, borderColor: '#74C0FC40', transform: [{ scale: bloom2 }], opacity: bloom2Op }} />
             <Animated.View style={{ position: 'absolute', width: 200, height: 200, borderRadius: 100, borderWidth: 1.5, borderColor: '#A5D8FF30', transform: [{ scale: bloom3 }], opacity: bloom3Op }} />
@@ -917,6 +938,7 @@ export default function CapsuleCreationScreen() {
     const [availableModels, setAvailableModels] = useState<any[]>(timerConfigManager.models);
     const [sealing, setSealing] = useState(false);
     const [showSealAnim, setShowSealAnim] = useState(false);
+    const newCapsuleRef = useRef<any>(null);
     const [showDatePicker, setShowDatePicker] = useState(false);
 
     const slideAnim = useRef(new Animated.Value(0)).current;
@@ -1206,6 +1228,8 @@ export default function CapsuleCreationScreen() {
             }).select().single();
 
             if (error) throw error;
+            newCapsuleRef.current = newCapsule;
+            DeviceEventEmitter.emit('capsule_created', { capsuleId: newCapsule.id });
 
             if (isShared && invitedUsers.length > 0 && newCapsule) {
                 const inviteData = invitedUsers.map(u => ({ capsule_id: newCapsule.id, user_id: u.id, status: 'pending' }));
@@ -1237,11 +1261,7 @@ export default function CapsuleCreationScreen() {
                 }
             }
 
-            setTimeout(() => {
-                setShowSealAnim(false);
-                setSealing(false);
-                navigation.reset({ index: 1, routes: [{ name: 'Main' }, { name: 'CapsuleDetail', params: { capsuleId: newCapsule.id } }] });
-            }, 5800);
+            // Navigation triggered by onDone callback from the animation
         } catch (e: any) {
             console.error('Create Capsule Error:', e);
             Alert.alert('Error', e.message ?? 'Could not create capsule');
@@ -1259,23 +1279,6 @@ export default function CapsuleCreationScreen() {
         <LinearGradient colors={bgColors} start={{ x: 0, y: 0 }} end={{ x: 0.4, y: 1 }} style={s.root}>
             <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
             <AmbientOrbs accent={accent} />
-
-            {showSealAnim && (
-                selectedType === 'opencap' ? (
-                    <OpenCapAnimation
-                        accent={accent}
-                        modelUri={activeModel?.image_open || activeModel?.image || ''}
-                        onDone={() => { }}
-                    />
-                ) : (
-                    <SealAnimation
-                        accent={accent}
-                        modelUri={activeModel?.image ?? ''}
-                        modelOpenUri={activeModel?.image_open}
-                        onDone={() => { }}
-                    />
-                )
-            )}
 
             <ModelPickerModal
                 visible={showModelPicker}
@@ -1338,7 +1341,7 @@ export default function CapsuleCreationScreen() {
                         {/* Sealed Cap */}
                         <TouchableOpacity
                             activeOpacity={0.92}
-                            onPress={() => { setSelectedMode('closed'); setSelectedType('instacap'); goNext(); }}
+                            onPress={() => { setSelectedMode('closed'); setSelectedType('instacap'); goToStep('design', 1); }}
                             style={[s.modeBigCard, selectedMode === 'closed' && s.modeBigCardActive]}
                         >
                             <LinearGradient
@@ -1372,7 +1375,7 @@ export default function CapsuleCreationScreen() {
                         {/* Open Cap */}
                         <TouchableOpacity
                             activeOpacity={0.92}
-                            onPress={() => { setSelectedMode('open'); setSelectedType('opencap' as any); goNext(); }}
+                            onPress={() => { setSelectedMode('open'); setSelectedType('opencap' as any); goToStep('design', 1); }}
                             style={[s.modeBigCard, selectedMode === 'open' && s.modeBigCardActive]}
                         >
                             <LinearGradient
@@ -1988,6 +1991,34 @@ export default function CapsuleCreationScreen() {
                     </TouchableOpacity>
                 </BlurView>
             )}
+        <Modal visible={showSealAnim} transparent={false} animationType="none" statusBarTranslucent>
+            {selectedType === 'opencap' ? (
+                <OpenCapAnimation
+                    accent={accent}
+                    modelUri={activeModel?.image_open || activeModel?.image || ''}
+                    onDone={() => {
+                        setShowSealAnim(false);
+                        setSealing(false);
+                        if (newCapsuleRef.current) {
+                            navigation.reset({ index: 1, routes: [{ name: 'Main' }, { name: 'CapsuleDetail', params: { capsuleId: newCapsuleRef.current.id } }] });
+                        }
+                    }}
+                />
+            ) : (
+                <SealAnimation
+                    accent={accent}
+                    modelUri={timerConfigManager.getModelImage(selectedModel) || activeModel?.image || ''}
+                    modelOpenUri={timerConfigManager.getModelImageOpen(selectedModel) || activeModel?.image_open || activeModel?.image || ''}
+                    onDone={() => {
+                        setShowSealAnim(false);
+                        setSealing(false);
+                        if (newCapsuleRef.current) {
+                            navigation.reset({ index: 1, routes: [{ name: 'Main' }, { name: 'CapsuleDetail', params: { capsuleId: newCapsuleRef.current.id } }] });
+                        }
+                    }}
+                />
+            )}
+        </Modal>
         </LinearGradient>
     );
 }
