@@ -396,7 +396,7 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                 if (!data?.length) return;
                 const updates: Record<string, any> = {};
                 data.forEach((d: any) => { updates[d.id] = d.metadata; });
-                setMetadataMap(prev => ({ ...prev, ...updates }));
+                setMetadataMap((prev: Record<string, any>) => ({ ...prev, ...updates }));
             });
     }, [visible, userGroup]);
 
@@ -576,7 +576,6 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                                     color: t.color || '#fff', 
                                     fontSize: t.fontSize || 26, 
                                     fontFamily: styleInfo?.fontFamily || Fonts.bold,
-                                    fontStyle: styleInfo?.italic ? 'italic' : 'normal',
                                     textAlign: 'center'
                                 }}>
                                     {t.text}

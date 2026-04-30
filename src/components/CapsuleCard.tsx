@@ -201,7 +201,7 @@ const CapsuleCard = React.memo(({
         setMediaCollage(mediaCollageProp ?? capsule.collage_items ?? []);
         setLatestItem(latestItemProp ?? capsule.latest_item ?? null);
         setLatestItemLoaded(!!(latestItemProp || capsule.latest_item));
-    }, [isFollowedProp, likeCountProp, isLikedProp, commentCountProp, postsCountProp, mediaCollageProp, latestItemProp, capsule]);
+    }, [isFollowedProp, likeCountProp, isLikedProp, commentCountProp, postsCountProp, mediaCollageProp, latestItemProp]);
 
     useEffect(() => {
         if (onViewable) {
@@ -442,41 +442,55 @@ const CapsuleCard = React.memo(({
                     <CollageView items={mediaCollage} isOpened={isOpened} themeColor={themeColor} s={s} />
                 )}
 
-                {/* ── Opened: cover_url OR collage + model (Only if NOT a specific media post event) ── */}
-                {isOpened && capsule.feed_type !== 'item' && (capsule.cover_url || mediaCollage.length > 0) ? (
+                {/* ── Opened: cover_url OR collage + model (Fallback if none) ── */}
+                {isOpened && capsule.feed_type !== 'item' ? (
                     <View style={s.openedRow}>
-                        {capsule.cover_url ? (
-                            <Image
-                                source={{ uri: capsule.cover_url }}
-                                style={StyleSheet.absoluteFill}
-                                contentFit="cover"
-                                cachePolicy="memory-disk"
-                                recyclingKey={`cap-cover-${capsule.id}`}
-                            />
-                        ) : (
-                            <View style={s.collageWrap}>
-                                <View style={s.collageGrid}>
-                                {mediaCollage.slice(0, 4).map((item, i) => (
-                                    <Image
-                                        key={item.id || i}
-                                        source={{ uri: (item.media_url && !item.media_url.startsWith('text://')) ? item.media_url : '' }}
-                                        style={[
-                                            s.collageItem,
-                                            mediaCollage.length === 1 && s.collageSingle,
-                                            mediaCollage.length === 2 && s.collageDual,
-                                            mediaCollage.slice(0, 4).length === 3 && i === 0 && s.collageTripleLarge,
-                                        ]}
-                                        contentFit="cover"
-                                        cachePolicy="memory-disk"
-                                        recyclingKey={`cap-collage-${item.id}`}
-                                    />
-                                ))}
-                                </View>
-                                <LinearGradient
-                                    colors={['rgba(255,255,255,0)', 'rgba(255,255,255,0.9)']}
-                                    start={{ x: 0.5, y: 0 }} end={{ x: 1, y: 0 }}
-                                    style={[StyleSheet.absoluteFill, { pointerEvents: 'none' } as any]}
+                        {capsule.cover_url || mediaCollage.length > 0 ? (
+                            capsule.cover_url ? (
+                                <Image
+                                    source={{ uri: capsule.cover_url }}
+                                    style={StyleSheet.absoluteFill}
+                                    contentFit="cover"
+                                    cachePolicy="memory-disk"
+                                    recyclingKey={`cap-cover-${capsule.id}`}
                                 />
+                            ) : (
+                                <View style={s.collageWrap}>
+                                    <View style={s.collageGrid}>
+                                    {mediaCollage.slice(0, 4).map((item, i) => (
+                                        <Image
+                                            key={item.id || i}
+                                            source={{ uri: (item.media_url && !item.media_url.startsWith('text://')) ? item.media_url : '' }}
+                                            style={[
+                                                s.collageItem,
+                                                mediaCollage.length === 1 && s.collageSingle,
+                                                mediaCollage.length === 2 && s.collageDual,
+                                                mediaCollage.slice(0, 4).length === 3 && i === 0 && s.collageTripleLarge,
+                                            ]}
+                                            contentFit="cover"
+                                            cachePolicy="memory-disk"
+                                            recyclingKey={`cap-collage-${item.id}`}
+                                        />
+                                    ))}
+                                    </View>
+                                    <LinearGradient
+                                        colors={['rgba(255,255,255,0)', 'rgba(255,255,255,0.9)']}
+                                        start={{ x: 0.5, y: 0 }} end={{ x: 1, y: 0 }}
+                                        style={[StyleSheet.absoluteFill, { pointerEvents: 'none' } as any]}
+                                    />
+                                </View>
+                            )
+                        ) : (
+                            /* Fallback when NO cover and NO media but IS opened */
+                            <View style={[StyleSheet.absoluteFill, { backgroundColor: themeColor + '20' }]}>
+                                <LinearGradient
+                                    colors={[themeColor + '30', 'transparent']}
+                                    style={StyleSheet.absoluteFill}
+                                />
+                                <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', opacity: 0.5 }}>
+                                    <Ionicons name="images-outline" size={40} color={themeColor} />
+                                    <Text style={{ fontSize: 10, color: themeColor, fontFamily: Fonts.bold, marginTop: 8 }}>MEMORIES INSIDE</Text>
+                                </View>
                             </View>
                         )}
                         <View style={s.modelOverlap}>

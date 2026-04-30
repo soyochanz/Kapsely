@@ -29,8 +29,7 @@ export default function SwipeableComment({
     const translateX = useSharedValue(0);
 
     const gesture = Gesture.Pan()
-        .activeOffsetX([-10, 10])
-        .failOffsetY([-5, 5])
+        .activeOffsetX([-25, 25])
         .onUpdate((event) => {
             if (!canDelete) return;
             // Only allow swiping left for deletion

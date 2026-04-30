@@ -2,7 +2,12 @@
   "expo": {
     "name": "Kapsely",
     "slug": "kapsely",
-    "version": "2.1.5",
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ],
+    "version": "2.1.6",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -51,10 +56,6 @@
       "expo-tracking-transparency",
       "expo-localization"
     ],
-    "web": {
-      "favicon": "./assets/favicon.png",
-      "bundler": "metro"
-    },
     "extra": {
       "eas": {
         "owner": "ochanz",

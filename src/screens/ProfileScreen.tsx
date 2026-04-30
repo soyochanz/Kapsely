@@ -8,6 +8,8 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { FlashList } from '@shopify/flash-list';
 
+const AnyFlashList = FlashList as any;
+
 
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
@@ -21,6 +23,7 @@ import { supabase } from '../lib/supabase';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ProfileCapsuleCell } from '../components/profile/ProfileCapsuleCell';
 import { ProfileHeader } from '../components/profile/ProfileHeader';
+import { FollowSuggestions } from '../components/profile/FollowSuggestions';
 import { Image } from 'expo-image';
 import EditProfileScreen from './EditProfileScreen';
 import { MODEL_IMAGES, MODEL_TINTS, MODEL_IMAGES_OPEN } from '../constants/models';
@@ -106,6 +109,7 @@ export default function ProfileScreen() {
         });
 
         if (error) throw error;
+
         return data;
     };
 
@@ -138,6 +142,19 @@ export default function ProfileScreen() {
             setFollowingCount(profileDataUnified.profile?.following_count || 0);
             setIsFollowing(profileDataUnified.is_following || false);
             setProfileStickers(profileDataUnified.stickers || []);
+
+            // Populate cover and media maps from RPC results to avoid secondary fetches
+            const newCoverMap: Record<string, string> = {};
+            const newMediaMap: Record<string, any[]> = {};
+            
+            (profileDataUnified.capsules || []).forEach((c: any) => {
+                if (c.effective_cover_url) newCoverMap[c.id] = c.effective_cover_url;
+                if (c.fallback_media) newMediaMap[c.id] = c.fallback_media;
+            });
+            
+            setCoverMap(prev => ({ ...prev, ...newCoverMap }));
+            setCapsuleMediaMap(prev => ({ ...prev, ...newMediaMap }));
+
             if (profileDataUnified.stories?.length > 0) {
                 const prof = profileDataUnified.profile;
                 setUserStories({ ...prof, owner_id: prof.id, stories: profileDataUnified.stories });
@@ -311,28 +328,7 @@ export default function ProfileScreen() {
         return () => sub.remove();
     }, [targetUserId, currentUserId]);
 
-    // Batch-fetch first media item for open capsules that have no cover_url
-    useEffect(() => {
-        const needsMedia = openedCaps.filter((c: any) => !c.cover_url);
-        if (!needsMedia.length) return;
-        const ids = needsMedia.map((c: any) => c.id);
-        supabase
-            .from('capsule_items')
-            .select('capsule_id, media_url, thumbnail_url, media_type')
-            .in('capsule_id', ids)
-            .in('media_type', ['image', 'video'])
-            .order('created_at', { ascending: true })
-            .limit(ids.length * 4)
-            .then(({ data }) => {
-                if (!data?.length) return;
-                const map: Record<string, any[]> = {};
-                data.forEach((item: any) => {
-                    if (!map[item.capsule_id]) map[item.capsule_id] = [];
-                    map[item.capsule_id].push(item);
-                });
-                setCapsuleMediaMap(prev => ({ ...prev, ...map }));
-            });
-    }, [openedCaps]);
+    // Redundant batch-fetch removed (now handled by RPC)
 
     useEffect(() => {
         const idToLoad = targetUserId || currentUserId;
@@ -476,7 +472,7 @@ export default function ProfileScreen() {
                 .gt('expires_at', new Date().toISOString())
                 .order('created_at', { ascending: true });
             if (fullStories?.length) {
-                setUserStories(prev => prev ? { ...prev, stories: fullStories } : prev);
+                setUserStories((prev: any) => prev ? { ...prev, stories: fullStories } : prev);
             }
         } catch (_) {}
         setActiveStoryViewer(true);
@@ -491,36 +487,47 @@ export default function ProfileScreen() {
         return 0;
     });
     const renderHeader = useCallback(() => (
-        <ProfileHeader
-            profile={profile}
-            accentColor={accentColor}
-            profileStickers={profileStickers}
-            userStories={userStories}
-            followersCount={followersCount}
-            followingCount={followingCount}
-            capsulesCount={openedCaps.length + sealedCaps.length}
-            isOwnProfile={isOwnProfile}
-            isFollowing={isFollowing}
-            onFollowToggle={handleFollowToggle}
-            onNavigateToConversation={navigateToConversation}
-            onShowEdit={() => setShowEdit(true)}
-            onShowSettings={() => setShowSettings(true)}
-            onShowUserOptions={() => setShowUserOptions(true)}
-            onShowStories={handleShowStories}
-            onBack={() => navigation.goBack()}
-            activeTab={activeTab}
-            setActiveTab={setActiveTab}
-            insets={insets}
-            t={t}
-            i18n={i18n}
-            joinYear={joinYear}
-            profileId={profileId || ''}
-            navigation={navigation}
-        />
+        <View>
+            <ProfileHeader
+                profile={profile}
+                accentColor={accentColor}
+                profileStickers={profileStickers}
+                userStories={userStories}
+                followersCount={followersCount}
+                followingCount={followingCount}
+                capsulesCount={openedCaps.length + sealedCaps.length}
+                isOwnProfile={isOwnProfile}
+                isFollowing={isFollowing}
+                onFollowToggle={handleFollowToggle}
+                onNavigateToConversation={navigateToConversation}
+                onShowEdit={() => setShowEdit(true)}
+                onShowSettings={() => setShowSettings(true)}
+                onShowUserOptions={() => setShowUserOptions(true)}
+                onShowStories={handleShowStories}
+                onBack={() => navigation.goBack()}
+                activeTab={activeTab}
+                setActiveTab={setActiveTab}
+                insets={insets}
+                t={t}
+                i18n={i18n}
+                joinYear={joinYear}
+                profileId={profileId || targetUserId || currentUserId || ''}
+                navigation={navigation}
+            />
+            {isOwnProfile && currentUserId && (
+                <FollowSuggestions 
+                    currentUserId={currentUserId} 
+                    onFollowUpdate={() => {
+                        // Optionally refetch or update state
+                        setFollowingCount(p => p + 1);
+                    }}
+                />
+            )}
+        </View>
     ), [
         profile, accentColor, profileStickers, userStories, followersCount, followingCount,
         openedCaps.length, sealedCaps.length, isOwnProfile, isFollowing, activeTab, insets, t, i18n, joinYear, profileId, navigation,
-        handleShowStories
+        handleShowStories, currentUserId
     ]);
 
     if (isLoading) {
@@ -556,15 +563,14 @@ export default function ProfileScreen() {
                 />
             </Modal>
 
-            <FlashList
+            <AnyFlashList
                 data={sortedTabData}
-                keyExtractor={item => item.id}
+                keyExtractor={(item: any) => item.id}
                 numColumns={3}
-                // @ts-ignore
                 estimatedItemSize={160}
                 contentContainerStyle={[s.gridContent, { paddingBottom: 100 }]}
                 ListHeaderComponent={renderHeader}
-                renderItem={({ item }) => (
+                renderItem={({ item }: { item: any }) => (
                     <View style={s.gridCell}>
                         <ProfileCapsuleCell
                             cap={item}
@@ -644,12 +650,21 @@ export default function ProfileScreen() {
                                         activeOpacity={0.7}
                                         onPress={async () => { 
                                             const mediaUrl = item.media_url;
-                                            setCoverMap(p => ({ ...p, [pickerCapsuleId!]: mediaUrl })); 
+                                            setCoverMap((p: Record<string, string>) => ({ ...p, [pickerCapsuleId!]: mediaUrl })); 
                                             setPickerCapsuleId(null); 
                                             
                                             // Persist to DB
                                             try {
-                                                const { error } = await supabase.from('capsules').update({ cover_url: mediaUrl }).eq('id', pickerCapsuleId);
+                                                const cap = capsulesData.find((c: any) => c.id === pickerCapsuleId);
+                                                const isOwner = cap?.owner_id === currentUserId;
+                                                let error;
+                                                if (isOwner) {
+                                                    const res = await supabase.from('capsules').update({ cover_url: mediaUrl }).eq('id', pickerCapsuleId);
+                                                    error = res.error;
+                                                } else {
+                                                    const res = await supabase.from('capsule_invites').update({ cover_url: mediaUrl }).eq('capsule_id', pickerCapsuleId).eq('user_id', currentUserId);
+                                                    error = res.error;
+                                                }
                                                 if (error) throw error;
                                                 DeviceEventEmitter.emit('CAPSULE_UPDATED', { id: pickerCapsuleId, cover_url: mediaUrl });
                                                 Alert.alert(t('common.ready'), t('profile.cover_updated'));

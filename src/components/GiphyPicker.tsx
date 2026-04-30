@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
     View, Text, StyleSheet, TextInput, FlatList, 
     TouchableOpacity, ActivityIndicator, Dimensions,
-    KeyboardAvoidingView, Platform
+    KeyboardAvoidingView, Platform, Modal
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';

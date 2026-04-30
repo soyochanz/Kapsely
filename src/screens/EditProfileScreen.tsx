@@ -40,7 +40,7 @@ interface Props {
 }
 
 export default function EditProfileScreen({ onClose, initialData }: Props) {
-    const { t } = useTranslation();
+    const { t, i18n } = useTranslation();
     const navigation = useNavigation();
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -456,6 +456,7 @@ export default function EditProfileScreen({ onClose, initialData }: Props) {
                             display={Platform.OS === 'ios' ? 'spinner' : 'default'}
                             style={Platform.OS === 'ios' ? { height: 180, width: '100%' } : {}}
                             textColor={Colors.textPrimary}
+                            locale={i18n.language.startsWith('es') ? 'es-ES' : 'en-US'}
                             onChange={(event, selectedDate) => {
                                 if (Platform.OS !== 'ios') {
                                     setShowDatePicker(false);

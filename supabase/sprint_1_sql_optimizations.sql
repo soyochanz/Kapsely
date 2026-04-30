@@ -154,6 +154,7 @@ BEGIN
         'favorite_song', p.favorite_song,
         'birthdate', p.birthdate,
         'is_verified', p.is_verified,
+        'is_admin', p.is_admin,
         'created_at', p.created_at,
         'followers_count', (SELECT count(*) FROM follows WHERE following_id = p_target_id),
         'following_count', (SELECT count(*) FROM follows WHERE follower_id = p_target_id)

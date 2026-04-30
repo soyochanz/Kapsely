@@ -24,17 +24,25 @@ export default function UserListScreen() {
     const loadUsers = async () => {
         try {
             if (type === 'followers') {
-                const { data } = await supabase
+                const { data, error } = await supabase
                     .from('follows')
-                    .select('profiles:follower_id(*)')
+                    .select('profile:follower_id(*)')
                     .eq('following_id', userId);
-                if (data) setUsers(data.map((i: any) => i.profiles));
+                
+                if (error) throw error;
+                if (data) {
+                    setUsers(data.map((i: any) => i.profile).filter(Boolean));
+                }
             } else {
-                const { data } = await supabase
+                const { data, error } = await supabase
                     .from('follows')
-                    .select('profiles:following_id(*)')
+                    .select('profile:following_id(*)')
                     .eq('follower_id', userId);
-                if (data) setUsers(data.map((i: any) => i.profiles));
+
+                if (error) throw error;
+                if (data) {
+                    setUsers(data.map((i: any) => i.profile).filter(Boolean));
+                }
             }
         } catch (error) {
             console.error('Error loading users:', error);

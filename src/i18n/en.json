@@ -87,7 +87,8 @@
     "unlocks": "Unlocks ",
     "follow_plus": "+ Follow",
     "private_cap_title": "Private Capsule",
-    "private_cap_msg": "You haven't been invited to this capsule yet."
+    "private_cap_msg": "You haven't been invited to this capsule yet.",
+    "view_more": "View more"
   },
   "profile": {
     "settings": "Settings",
@@ -427,7 +428,9 @@
     "today": "Today",
     "earlier": "Earlier",
     "accepted_your_invite": "accepted your invite to",
-    "new_invite": "New Invitation 📩"
+    "new_invite": "New Invitation 📩",
+    "load_more": "Load more",
+    "invite_expired": "Invite Expired"
   },
   "search": {
     "explore_people": "Explore People",
@@ -596,7 +599,13 @@
     "invite_error": "Could not send invitations.",
     "share_link": "Share short link",
     "share_text": "Check out this capsule on Kapsely!",
-    "content_deleted": "Content successfully deleted."
+    "content_deleted": "Content successfully deleted.",
+    "load_more_comments": "Load more comments",
+    "voting_to_delete": "Voting to Delete",
+    "agree_to_delete": "Agree to Delete",
+    "you_voted_to_delete": "You voted to delete",
+    "vote_to_delete": "Vote to Delete",
+    "delete_vote_registered": "Your vote to delete the capsule has been registered."
   },
   "onboarding": {
     "step0_title": "Choose your language",
@@ -617,7 +626,9 @@
     "step6_desc": "Welcome to the future of memories. Start sealing your first moment now!",
     "fav_color": "Favorite Color",
     "birthday": "Birthday",
-    "choose_color": "Pick your favorite color"
+    "choose_color": "Pick your favorite color",
+    "step_banner_title": "Personalize your Profile",
+    "step_banner_desc": "Make it yours! You can add stickers and personalize your banner by dragging them from your collection."
   },
   "flashes": {
     "filter": "Filter",
@@ -698,6 +709,10 @@
     "no_capsules_desc": "Create a Sealed or Open capsule to start storing memories",
     "capsules_available": "{{count}} capsule(s) available",
     "always_open": "Always open",
-    "opens_label": "Opens:"
+    "opens_label": "Opens:",
+    "undo_title": "Are you sure?",
+    "undo_sub": "Uploading content in a few seconds...",
+    "undo_btn": "UNDO UPLOAD",
+    "undo_hint": "Once the bar is complete, you can't change your mind."
   }
 }

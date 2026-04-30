@@ -10,7 +10,7 @@ import ChatDetailScreen from '../screens/ChatDetailScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import TabBar from '../components/TabBar';
 
-import { createStackNavigator } from '@react-navigation/stack';
+import { createStackNavigator, CardStyleInterpolators } from '@react-navigation/stack';
 import CapsuleDetailScreen from '../screens/CapsuleDetailScreen';
 import EditProfileScreen from '../screens/EditProfileScreen';
 import CreateSelectionScreen from '../screens/CreateSelectionScreen';
@@ -91,7 +91,7 @@ function TabNavigator() {
         <Tab.Navigator
             tabBar={(props: any) => <TabBar {...props} />}
             tabBarPosition="bottom"
-            screenOptions={{ swipeEnabled: false }}
+            screenOptions={{ swipeEnabled: true }}
         >
             <Tab.Screen name="Feed" component={FeedStackNavigator} />
             <Tab.Screen name="Search" component={SearchStackNavigator} />
@@ -171,7 +171,17 @@ export default function AppNavigator() {
                 <Stack.Screen name="PersonalizeProfile" component={PersonalizeProfileScreen} />
                 <Stack.Screen name="AdminCalibration" component={AdminCalibrationScreen} />
                 <Stack.Screen name="InstagramShare" component={require('../screens/InstagramShareScreen').default} />
-                <Stack.Screen name="ChatDetail" component={ChatDetailScreen} options={{ gestureEnabled: false }} />
+                <Stack.Screen 
+                    name="ChatDetail" 
+                    component={ChatDetailScreen} 
+                    options={{ 
+                        gestureEnabled: true,
+                        cardStyleInterpolator: CardStyleInterpolators.forHorizontalIOS
+                    }} 
+                />
+                <Stack.Screen name="ExternalProfile" component={ProfileScreen} />
+                <Stack.Screen name="ChatList" component={ChatListScreen} />
+                <Stack.Screen name="UserList" component={UserListScreen} />
             </Stack.Navigator>
         </View>
     );

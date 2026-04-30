@@ -98,6 +98,8 @@ const ds = StyleSheet.create({
     sectionCount: { fontSize: 12, fontFamily: Fonts.bold, color: D.textMuted, backgroundColor: D.surfaceAlt, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, borderWidth: 1, borderColor: D.border },
     filterChip: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: D.surface, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, borderWidth: 1.5, borderColor: D.border },
     filterChipText: { fontSize: 12, fontFamily: Fonts.semiBold, color: D.textSec },
+    loadMoreBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14, marginTop: 10, marginHorizontal: 22, borderRadius: 16, backgroundColor: D.surfaceAlt, borderStyle: 'dashed', borderWidth: 1.5, borderColor: D.border },
+    loadMoreText: { fontSize: 13, fontFamily: Fonts.bold },
     cellWrap: { width: (width - 44) / 2.4, height: (width - 44) / 2.4, borderRadius: 16, overflow: 'hidden', backgroundColor: D.surfaceAlt, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: D.border },
     cellPlaceholder: { backgroundColor: '#F9FAFB', borderColor: '#F1F0F7', borderStyle: 'dashed' },
     cellSealed: { borderStyle: 'solid' },
@@ -343,18 +345,28 @@ const CollaboratorsBar = React.memo(({ owner, members, invites, tint, isMember, 
     const allMembers = useMemo(() => {
         if (!owner) return [];
         const ownerProfile = { ...owner, isOwner: true };
-        const accepted = (members || []).map((m: any) => ({ ...m, isAccepted: true }));
-        const acceptedInvites = (invites || [])
-            .filter((i: any) => i.status === 'accepted' && i.profiles)
-            .map((i: any) => ({ ...i.profiles, isAccepted: true }));
-        const pending = (invites || [])
-            .filter((i: any) => i.status === 'pending' && i.profiles)
-            .map((i: any) => ({ ...i.profiles, isPending: true }));
         
-        const combined = [ownerProfile, ...accepted, ...acceptedInvites, ...pending];
+        const validInvites = (invites || []).filter((i: any) => {
+            if (!i.profiles) return false;
+            if (i.status === 'accepted') return true;
+            if (i.status === 'pending') {
+                // Remove expired pending invites
+                if (i.expires_at && new Date(i.expires_at) < new Date()) return false;
+                return true;
+            }
+            return false; // Exclude rejected or other statuses
+        });
+
+        const collabList = validInvites.map((i: any) => ({
+            ...i.profiles,
+            isAccepted: i.status === 'accepted',
+            isPending: i.status === 'pending'
+        }));
+        
+        const combined = [ownerProfile, ...collabList];
         const unique = Array.from(new Map(combined.map(m => [m.id, m])).values());
         return unique;
-    }, [owner, members, invites]);
+    }, [owner, invites]);
 
     const acceptedMembersCount = useMemo(() => {
         return allMembers.filter((m: any) => m.isOwner || m.isAccepted).length;
@@ -635,6 +647,10 @@ function CapsuleDetailScreen() {
     const [modelTint, setModelTint] = useState<string | null>(null);
     const [comment, setComment] = useState('');
     const [comments, setComments] = useState<any[]>([]);
+    const [commentsPage, setCommentsPage] = useState(0);
+    const [hasMoreComments, setHasMoreComments] = useState(true);
+    const [loadingMoreComments, setLoadingMoreComments] = useState(false);
+    const COMMENTS_PAGE_SIZE = 6;
     const [likeCount, setLikeCount] = useState(0);
     const [isLiked, setIsLiked] = useState(false);
     const [userId, setUserId] = useState<string | null>(null);
@@ -960,7 +976,18 @@ function CapsuleDetailScreen() {
 
         if (signal?.aborted) return;
 
-        const { capsule: capsuleData, items: itemsData, likes_count, is_liked, invites: invitesData, owner_followers_count, is_followed_owner, capsule_followers_count } = data;
+        const { 
+            capsule: capsuleData, 
+            items: itemsData, 
+            likes_count, 
+            is_liked, 
+            invites: invitesData, 
+            latest_comments,
+            delete_requests,
+            owner_followers_count, 
+            is_followed_owner, 
+            capsule_followers_count 
+        } = data;
 
 
         if (!capsuleData) {
@@ -968,7 +995,7 @@ function CapsuleDetailScreen() {
             return;
         }
 
-        setCapsule(capsuleData);
+        setCapsule({ ...capsuleData, delete_requests: delete_requests || [] });
 
         const cfg = timerConfigManager.getConfig(capsuleData.model);
         setModelTint(cfg?.themeColor || MODEL_TINTS[capsuleData.model] || '#7C5CBF');
@@ -990,14 +1017,7 @@ function CapsuleDetailScreen() {
             });
         }
 
-        // Filter blocked content and attach profiles
-        if (invitesData) {
-            setInvites(invitesData);
-            const accepted = invitesData
-                .filter((i: any) => i.status === 'accepted' && i.profiles)
-                .map((i: any) => i.profiles);
-            setAcceptedMembers(accepted);
-        }
+        // Profile map is used for items, invites are set later consolidated
 
         if (itemsData) {
             const enriched = itemsData.map((item: any) => ({
@@ -1010,9 +1030,12 @@ function CapsuleDetailScreen() {
         setLikeCount(likes_count || 0);
         setIsLiked(is_liked);
 
+        // Always set invites even if empty to avoid stale data
+        setInvites(invitesData || []);
         if (invitesData) {
-            setInvites(invitesData);
             setAcceptedMembers(invitesData.filter((i: any) => i.status === 'accepted').map((i: any) => i.profiles));
+        } else {
+            setAcceptedMembers([]);
         }
 
         // Handle epic opening state
@@ -1022,29 +1045,72 @@ function CapsuleDetailScreen() {
             else setCapsule((p: any) => ({ ...p, status: 'opened', is_opening: false }));
         }
 
-        // Load comments separately (or we could add them to RPC later)
+        // Load comments: use initial from RPC, then setup for pagination
+        if (latest_comments) {
+            const filteredCms = latest_comments.filter((c: any) => !blocked.includes(c.user_id)).map((c: any) => ({
+                ...c,
+                myLike: c.my_like,
+                likeCount: c.like_count
+            }));
+            setComments(filteredCms);
+            if (filteredCms.length < COMMENTS_PAGE_SIZE) setHasMoreComments(false);
+        } else {
+            setComments([]);
+            setHasMoreComments(false);
+        }
+        setCommentsPage(0);
+
+        setLoading(false);
+    };
+
+    const loadComments = async (page: number, signal?: AbortSignal) => {
         const { data: commentsData } = await (signal
             ? supabase.from('comments').select(`
                 id, capsule_id, user_id, content, created_at,
                 profiles:user_id(id, display_name, username, avatar_url, is_verified, favorite_color),
                 comment_likes(user_id)
-              `).eq('capsule_id', capsuleId).order('created_at', { ascending: false }).limit(50).abortSignal(signal)
+              `).eq('capsule_id', capsuleId)
+                .order('created_at', { ascending: false })
+                .range(page * COMMENTS_PAGE_SIZE, (page + 1) * COMMENTS_PAGE_SIZE - 1)
+                .abortSignal(signal)
             : supabase.from('comments').select(`
                 id, capsule_id, user_id, content, created_at,
                 profiles:user_id(id, display_name, username, avatar_url, is_verified, favorite_color),
                 comment_likes(user_id)
-              `).eq('capsule_id', capsuleId).order('created_at', { ascending: false }).limit(50)
+              `).eq('capsule_id', capsuleId)
+                .order('created_at', { ascending: false })
+                .range(page * COMMENTS_PAGE_SIZE, (page + 1) * COMMENTS_PAGE_SIZE - 1)
         );
 
         if (commentsData) {
-            setComments(commentsData.filter((c: any) => !blocked.includes(c.user_id)).map((c: any) => ({
+            const blocked = blockedUserIds; // Already fetched in loadData
+            const filtered = commentsData.filter((c: any) => !blocked.includes(c.user_id)).map((c: any) => ({
                 ...c,
-                myLike: myId ? c.comment_likes?.some((l: any) => l.user_id === myId) : false,
+                myLike: userId ? c.comment_likes?.some((l: any) => l.user_id === userId) : false,
                 likeCount: c.comment_likes?.length || 0,
-            })));
-        }
+            }));
 
-        setLoading(false);
+            if (page === 0) {
+                setComments(filtered);
+            } else {
+                setComments(prev => [...prev, ...filtered]);
+            }
+
+            if (commentsData.length < COMMENTS_PAGE_SIZE) {
+                setHasMoreComments(false);
+            }
+        } else {
+            setHasMoreComments(false);
+        }
+    };
+
+    const handleLoadMoreComments = async () => {
+        if (!hasMoreComments || loadingMoreComments || loading) return;
+        setLoadingMoreComments(true);
+        const nextPage = commentsPage + 1;
+        await loadComments(nextPage);
+        setCommentsPage(nextPage);
+        setLoadingMoreComments(false);
     };
 
     const handleFollowToggle = useCallback(async (targetId: string, isFollowed: boolean, setIsFollowed: (v: boolean) => void) => {
@@ -1052,7 +1118,6 @@ function CapsuleDetailScreen() {
         const newStatus = !isFollowed;
         setIsFollowed(newStatus);
         if (targetId === capsule?.owner_id) {
-            setIsFollowedCapsule(newStatus);
             setFollowerCount(prev => newStatus ? prev + 1 : Math.max(0, prev - 1));
         }
         if (isFollowed) {
@@ -1110,6 +1175,8 @@ function CapsuleDetailScreen() {
     const handleSetCover = async (mediaUrl: string) => {
         if (!capsule) return;
         try {
+            // For now, updating the global cover. 
+            // In the future, we could support per-user covers in a separate table.
             const { error } = await supabase.from('capsules').update({ cover_url: mediaUrl }).eq('id', capsuleId);
             if (error) throw error;
             setCapsule((p: any) => ({ ...p, cover_url: mediaUrl }));
@@ -1176,10 +1243,12 @@ function CapsuleDetailScreen() {
         setLoading(true);
         setShowInviteModal(false);
         try {
+            const expiresAt = new Date(Date.now() + 3 * 86400000).toISOString();
             const invitesToInsert = invitedUsers.map(u => ({
                 capsule_id: capsuleId,
                 user_id: u.id,
-                status: 'pending'
+                status: 'pending',
+                expires_at: expiresAt
             }));
 
             const { error } = await supabase.from('capsule_invites').insert(invitesToInsert);
@@ -1222,7 +1291,7 @@ function CapsuleDetailScreen() {
                         navigation.goBack();
                     } else if (data?.status === 'voted' || data?.status === 'already_voted') {
                         setCapsule((prev: any) => ({ ...prev, delete_requests: data.delete_requests }));
-                        Alert.alert('Kapsely', t('detail.delete_vote_registered') || 'Tu voto para eliminar la cápsula ha sido registrado.');
+                        Alert.alert('Kapsely', t('detail.delete_vote_registered'));
                     }
                 } else {
                     const { data: toDelete } = await supabase.from('capsule_items').select('media_url, thumbnail_url').eq('capsule_id', capsuleId);
@@ -1277,7 +1346,7 @@ function CapsuleDetailScreen() {
             } as any);
         }
 
-        if (isOwner && !isSharedCapsule) {
+        if (isMember) {
             options.push({ text: setCoverText, onPress: () => handleSetCover(item.media_url) });
         }
         options.push({ text: reportText, onPress: () => handleReportItem(item.id) });
@@ -1789,15 +1858,15 @@ function CapsuleDetailScreen() {
                     </View>
                     <View style={{ flex: 1 }}>
                         <Text style={[ds.countdownLabel, { color: '#F87171' }]}>
-                            {t('detail.voting_to_delete') || 'Voting to Delete'}: {capsule.delete_requests.length}/{totalMembers}
+                            {t('detail.voting_to_delete')}: {capsule.delete_requests.length}/{totalMembers}
                         </Text>
                         {!capsule.delete_requests.includes(userId) && (
                             <TouchableOpacity onPress={handleDeleteCapsule}>
-                                <Text style={{ fontSize: 13, fontFamily: Fonts.bold, color: '#F87171' }}>{t('detail.agree_to_delete') || 'Agree to Delete'}</Text>
+                                <Text style={{ fontSize: 13, fontFamily: Fonts.bold, color: '#F87171' }}>{t('detail.agree_to_delete')}</Text>
                             </TouchableOpacity>
                         )}
                         {capsule.delete_requests.includes(userId) && (
-                            <Text style={{ fontSize: 12, fontFamily: Fonts.medium, color: '#F87171', opacity: 0.8 }}>{t('detail.you_voted_to_delete') || 'You voted to delete'}</Text>
+                            <Text style={{ fontSize: 12, fontFamily: Fonts.medium, color: '#F87171', opacity: 0.8 }}>{t('detail.you_voted_to_delete')}</Text>
                         )}
                     </View>
                 </View>
@@ -1897,7 +1966,25 @@ function CapsuleDetailScreen() {
                     renderSectionHeader={() => null}
                     ListHeaderComponent={renderHero}
                     renderItem={renderItem}
-                    extraData={{ likeCount, isLiked, comments, tint, playingAudio }}
+                    onEndReached={handleLoadMoreComments}
+                    onEndReachedThreshold={0.5}
+                    ListFooterComponent={() => (
+                        <View style={{ paddingBottom: insets.bottom + 40 }}>
+                            {loadingMoreComments ? (
+                                <ActivityIndicator color={tint} size="small" style={{ marginVertical: 20 }} />
+                            ) : hasMoreComments && comments.length >= 6 ? (
+                                <TouchableOpacity 
+                                    style={ds.loadMoreBtn} 
+                                    onPress={handleLoadMoreComments}
+                                    activeOpacity={0.7}
+                                >
+                                    <Text style={[ds.loadMoreText, { color: tint }]}>{t('detail.load_more_comments') || 'Ver más comentarios'}</Text>
+                                    <Ionicons name="chevron-down" size={16} color={tint} />
+                                </TouchableOpacity>
+                            ) : null}
+                        </View>
+                    )}
+                    extraData={{ likeCount, isLiked, comments, tint, playingAudio, loadingMoreComments }}
                 />
 
                 {!showEpicOpening && (
@@ -1944,7 +2031,12 @@ function CapsuleDetailScreen() {
                                 onPress: () => { setShowOptions(false); setShowInviteModal(true); } 
                             }] : []),
                             ...(!isOwner ? [{ icon: 'alert-circle-outline', color: D.textSec, label: t('detail.report_capsule'), onPress: handleReportCapsule }] : []),
-                            ...(isOwner ? [{ icon: 'trash-outline', color: '#EF4444', label: t('detail.delete_perm'), onPress: handleDeleteCapsule }] : []),
+                            ...(isOwner || (isMember && isSharedCapsule) ? [{ 
+                                icon: 'trash-outline', 
+                                color: '#EF4444', 
+                                label: isSharedCapsule ? t('detail.vote_to_delete') : t('detail.delete_perm'), 
+                                onPress: () => { setShowOptions(false); handleDeleteCapsule(); } 
+                            }] : []),
                         ].map((opt, i) => (
                             <TouchableOpacity key={i} style={ds.sheetItem} onPress={opt.onPress} activeOpacity={0.72}>
                                 <View style={[ds.sheetItemIcon, { backgroundColor: (opt.color as string) + '14' }]}>
@@ -2031,7 +2123,11 @@ function CapsuleDetailScreen() {
                             contentContainerStyle={{ paddingBottom: 20 }}
                             renderItem={({ item: u }) => {
                                 const isRejected = invites?.some(i => i.user_id === u.id && i.status === 'rejected');
-                                const isPending = invites?.some(i => i.user_id === u.id && i.status === 'pending');
+                                const isPending = invites?.some(i => {
+                                    if (i.user_id !== u.id || i.status !== 'pending') return false;
+                                    if (i.expires_at && new Date(i.expires_at) < new Date()) return false;
+                                    return true;
+                                });
                                 const isAccepted = invites?.some(i => i.user_id === u.id && i.status === 'accepted');
                                 const isMember = capsule?.owner_id === u.id || isAccepted;
                                 

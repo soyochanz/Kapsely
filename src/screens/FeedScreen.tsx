@@ -3,7 +3,7 @@ import {
     View, Text, StyleSheet, ScrollView, TouchableOpacity,
     StatusBar, Modal, Platform, Alert,
     Dimensions, Animated, Easing, ActivityIndicator, InteractionManager,
-    DeviceEventEmitter
+    DeviceEventEmitter, AppState
 } from 'react-native';
 import { Image } from 'expo-image';
 
@@ -17,7 +17,7 @@ import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Shadow } from '../theme';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
-import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQueryClient, onlineManager } from '@tanstack/react-query';
 import { safetyService } from '../utils/safety';
 import { useWebDragScroll } from '../utils/useWebDragScroll';
 import { feedScrollBus } from '../utils/feedScrollBus';
@@ -233,6 +233,8 @@ export default function FeedScreen() {
     const [activeFilter, setActiveFilter] = useState<FilterType>('all');
     const [currentUserId, setCurrentUserId] = useState<string | null>(null);
     const [stories, setStories] = useState<any[]>([]);
+    const [shuffleSeed, setShuffleSeed] = useState(Date.now());
+    const [isOffline, setIsOffline] = useState(false);
 
     const queryClient = useQueryClient();
 
@@ -268,13 +270,31 @@ export default function FeedScreen() {
             return lastPage.feed?.length >= PAGE_SIZE ? allPages.length : undefined;
         },
         initialPageParam: 0,
-        staleTime: 2 * 60 * 1000,
-        gcTime: 15 * 60 * 1000,
+        staleTime: 5 * 60 * 1000,
+        gcTime: 30 * 60 * 1000,
     });
 
     const capsules = useMemo(() => {
-        return queryData?.pages.flatMap(page => page.feed || []) || [];
-    }, [queryData]);
+        if (!queryData?.pages) return [];
+        
+        // Shuffle each page individually so pagination works correctly without jumping
+        const shuffledPages = queryData.pages.map((page, pageIdx) => {
+            const raw = page.feed || [];
+            if (raw.length === 0) return [];
+            
+            const shuffled = [...raw];
+            let seed = shuffleSeed + pageIdx; // Seed depends on page index to be different but stable
+            for (let i = shuffled.length - 1; i > 0; i--) {
+                const x = Math.sin(seed++) * 10000;
+                const r = x - Math.floor(x);
+                const j = Math.floor(r * (i + 1));
+                [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+            }
+            return shuffled;
+        });
+
+        return shuffledPages.flat();
+    }, [queryData, shuffleSeed]);
 
     // Update auxiliary states when data changes
     useEffect(() => {
@@ -342,6 +362,53 @@ export default function FeedScreen() {
         await requestTrackingPermissionsAsync();
         await AsyncStorage.setItem('att_asked', 'true');
     };
+
+    // ─── Connectivity ─────────────────────────────────────────────────────────
+    useEffect(() => {
+        let checkInterval: NodeJS.Timeout;
+        let appStateSub: any;
+
+        const checkConnectivity = async () => {
+            if (Platform.OS === 'web') return;
+            if (AppState.currentState !== 'active') return;
+            
+            try {
+                const { error } = await supabase.from('profiles').select('id').limit(1);
+                const isOnline = !error;
+                setIsOffline(!isOnline);
+                onlineManager.setOnline(isOnline);
+            } catch (e) {
+                setIsOffline(true);
+                onlineManager.setOnline(false);
+            }
+        };
+
+        if (Platform.OS === 'web') {
+            const handleOnline = () => { setIsOffline(false); onlineManager.setOnline(true); };
+            const handleOffline = () => { setIsOffline(true); onlineManager.setOnline(false); };
+            window.addEventListener('online', handleOnline);
+            window.addEventListener('offline', handleOffline);
+            setIsOffline(!navigator.onLine);
+            onlineManager.setOnline(navigator.onLine);
+            return () => {
+                window.removeEventListener('online', handleOnline);
+                window.removeEventListener('offline', handleOffline);
+            };
+        } else {
+            appStateSub = AppState.addEventListener('change', (nextState) => {
+                if (nextState === 'active') {
+                    // Small delay after wake up to let system re-connect
+                    setTimeout(checkConnectivity, 1500);
+                }
+            });
+            checkInterval = setInterval(checkConnectivity, 15000);
+            checkConnectivity();
+            return () => {
+                clearInterval(checkInterval);
+                appStateSub.remove();
+            };
+        }
+    }, []);
 
     // ─── Entrance animations ──────────────────────────────────────────────────
     useEffect(() => {
@@ -579,9 +646,23 @@ export default function FeedScreen() {
         return () => { supabase.removeChannel(ch); };
     }, [isFocused]);
 
-    const onRefresh = useCallback(() => {
+    const flushImpressionsNow = useCallback(async () => {
+        if (!currentUserId || impressionBufferRef.current.size === 0) return;
+        const ids = Array.from(impressionBufferRef.current) as string[];
+        impressionBufferRef.current.clear();
+        try {
+            await supabase.rpc('record_feed_impressions', {
+                p_user_id: currentUserId,
+                p_capsule_ids: ids,
+            });
+        } catch (e) { /* silent fail */ }
+    }, [currentUserId]);
+
+    const onRefresh = useCallback(async () => {
+        setShuffleSeed(Date.now());
+        await flushImpressionsNow();
         refetch();
-    }, [refetch]);
+    }, [refetch, flushImpressionsNow]);
 
     const handleLoadMore = useCallback(() => {
         if (hasNextPage && !isFetchingNextPage) {
@@ -784,6 +865,15 @@ export default function FeedScreen() {
     return (
         <View style={s.root}>
             <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
+            
+            {isOffline && (
+                <View 
+                    style={[s.offlineBanner, { paddingTop: insets.top + 5 }]}
+                >
+                    <Ionicons name="cloud-offline-outline" size={14} color="#fff" />
+                    <Text style={s.offlineText}>No internet connection. Some content may not load.</Text>
+                </View>
+            )}
 
             {/* ── Header ── */}
             <Animated.View
@@ -849,7 +939,7 @@ export default function FeedScreen() {
                 refreshing={isRefreshing}
                 onRefresh={onRefresh}
                 onEndReached={handleLoadMore}
-                onEndReachedThreshold={0.5}
+                onEndReachedThreshold={0.2}
                 ListHeaderComponent={ListHeader}
                 renderItem={renderItem}
                 onViewableItemsChanged={onViewableItemsChanged}
@@ -1164,6 +1254,20 @@ const s = StyleSheet.create({
         color: '#fff',
         fontFamily: Fonts.bold,
         fontSize: 14,
+    },
+    offlineBanner: {
+        backgroundColor: '#FF4D4D',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        paddingBottom: 8,
+        zIndex: 100,
+    },
+    offlineText: {
+        color: '#fff',
+        fontSize: 12,
+        fontFamily: Fonts.medium,
     },
 });
 

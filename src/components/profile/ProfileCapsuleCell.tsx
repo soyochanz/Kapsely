@@ -62,6 +62,11 @@ export const ProfileCapsuleCell = React.memo(({
         <TouchableOpacity
             style={[s.capsuleCell, !cap.isAccessible && { opacity: 0.85 }, isToday && { borderWidth: 2, borderColor: '#A855F7' }]}
             activeOpacity={0.8}
+            onLongPress={() => {
+                if (isOwnProfile && !isSealed) {
+                    setPickerCapsuleId(cap.id);
+                }
+            }}
             onPress={() => {
                 if (!cap.isAccessible) {
                     Alert.alert(t('profile.private_capsule'), t('profile.private_capsule_msg'));
@@ -97,9 +102,25 @@ export const ProfileCapsuleCell = React.memo(({
                     if (effectiveCover) {
                         return <Image source={{ uri: effectiveCover }} style={s.capsuleCoverImg} contentFit="cover" cachePolicy="memory-disk" transition={250} recyclingKey={`prof-cover-${cap.id}`} />;
                     }
-                    const firstItem = cap.collage_items?.[0] || cap.latest_item || capsuleMediaMap[cap.id]?.[0];
-                    const mediaUrl = firstItem?.thumbnail_url || firstItem?.media_url;
-                    if (mediaUrl && !mediaUrl.startsWith('text://')) {
+                    
+                    // Search for the first media item (image or video) across all potential sources
+                    const findMedia = (itemList: any[]) => {
+                        if (!itemList || !itemList.length) return null;
+                        return itemList.find((item: any) => {
+                            const url = item?.thumbnail_url || item?.media_url;
+                            const type = item?.media_type;
+                            const isMedia = (type === 'image' || type === 'video' || type === 'photo');
+                            return url && !url.startsWith('text://') && !url.startsWith('handwriting://') && isMedia;
+                        });
+                    };
+
+                    const firstMediaItem = 
+                        findMedia(cap.collage_items) || 
+                        findMedia(cap.latest_item ? [cap.latest_item] : []) || 
+                        findMedia(capsuleMediaMap[cap.id]);
+
+                    const mediaUrl = firstMediaItem?.thumbnail_url || firstMediaItem?.media_url;
+                    if (mediaUrl) {
                         return <Image source={{ uri: mediaUrl }} style={s.capsuleCoverImg} contentFit="cover" cachePolicy="memory-disk" transition={250} recyclingKey={`prof-media-${cap.id}`} />;
                     }
                     return <Image source={{ uri: modelImg }} style={s.capsuleModelImg} contentFit="contain" cachePolicy="memory-disk" />;

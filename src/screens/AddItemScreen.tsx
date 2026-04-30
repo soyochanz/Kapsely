@@ -3,7 +3,7 @@ import * as ExpoLocation from 'expo-location';
 import {
     View, Text, StyleSheet, TouchableOpacity, TextInput,
     ActivityIndicator, SafeAreaView, ScrollView, Alert,
-    Platform, Modal, StatusBar, Dimensions, KeyboardAvoidingView
+    Platform, Modal, StatusBar, Dimensions, KeyboardAvoidingView, Animated
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -124,6 +124,12 @@ export default function AddItemScreen() {
             }
         })
     ).current;
+
+    // --- Undo Logic State ---
+    const [isUndoOverlayVisible, setIsUndoOverlayVisible] = useState(false);
+    const undoProgress = useRef(new Animated.Value(0)).current;
+    const undoTimerRef = useRef<NodeJS.Timeout | null>(null);
+    const [pendingUploadData, setPendingUploadData] = useState<any>(null);
 
     useEffect(() => {
         if (!capsuleId) {
@@ -351,7 +357,36 @@ export default function AddItemScreen() {
         } catch (err) { console.error(err); }
     };
 
+    const handleCancelUpload = () => {
+        if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+        undoTimerRef.current = null;
+        setIsUndoOverlayVisible(false);
+        undoProgress.setValue(0);
+    };
+
     const handleUpload = async () => {
+        if (loading || isUndoOverlayVisible) return;
+        if (contentType === 'note' && !text && (!isHandwriting || paths.length === 0)) return;
+        if (contentType === 'audio' && !recordedUri) return;
+        if ((contentType === 'image' || contentType === 'video') && mediaList.length === 0) return;
+
+        // Show Undo Overlay first
+        setIsUndoOverlayVisible(true);
+        undoProgress.setValue(0);
+        
+        Animated.timing(undoProgress, {
+            toValue: 1,
+            duration: 10000,
+            useNativeDriver: false,
+        }).start();
+
+        undoTimerRef.current = setTimeout(() => {
+            setIsUndoOverlayVisible(false);
+            performActualUpload();
+        }, 10000);
+    };
+
+    const performActualUpload = async () => {
         if (loading) return;
         if (contentType === 'note' && !text && (!isHandwriting || paths.length === 0)) return;
         if (contentType === 'audio' && !recordedUri) return;
@@ -1269,6 +1304,44 @@ export default function AddItemScreen() {
                     </View>
                 </View>
             </Modal>
+
+            {/* Undo Overlay */}
+            <Modal visible={isUndoOverlayVisible} transparent animationType="fade">
+                <BlurView intensity={80} tint="dark" style={s.undoOverlay}>
+                    <View style={s.undoCard}>
+                        <LinearGradient colors={['#7C3AED', '#5B21B6']} style={s.undoIconWrap}>
+                            <Ionicons name="time" size={32} color="#fff" />
+                        </LinearGradient>
+                        
+                        <Text style={s.undoTitle}>{t('add.undo_title')}</Text>
+                        <Text style={s.undoSub}>{t('add.undo_sub')}</Text>
+                        
+                        <View style={s.undoProgressBg}>
+                            <Animated.View 
+                                style={[s.undoProgressBar, { 
+                                    width: undoProgress.interpolate({
+                                        inputRange: [0, 1],
+                                        outputRange: ['0%', '100%']
+                                    }),
+                                    backgroundColor: '#A855F7'
+                                }]} 
+                            />
+                        </View>
+
+                        <TouchableOpacity 
+                            style={s.undoBtn} 
+                            onPress={handleCancelUpload}
+                            activeOpacity={0.8}
+                        >
+                            <LinearGradient colors={['#EF4444', '#DC2626']} style={s.undoBtnGrad}>
+                                <Text style={s.undoBtnText}>{t('add.undo_btn')}</Text>
+                            </LinearGradient>
+                        </TouchableOpacity>
+
+                        <Text style={s.undoHint}>{t('add.undo_hint')}</Text>
+                    </View>
+                </BlurView>
+            </Modal>
         </View>
     );
 }
@@ -1738,4 +1811,17 @@ const s = StyleSheet.create({
     toggleCircleActive: {
         alignSelf: 'flex-end',
     },
+
+    // Undo Styles
+    undoOverlay: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    undoCard: { width: width * 0.85, backgroundColor: '#fff', borderRadius: 32, padding: 24, alignItems: 'center', ...shadow.medium },
+    undoIconWrap: { width: 70, height: 70, borderRadius: 35, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
+    undoTitle: { fontSize: 24, fontWeight: '900', color: '#1F2937', marginBottom: 8 },
+    undoSub: { fontSize: 15, color: '#6B7280', textAlign: 'center', marginBottom: 24 },
+    undoProgressBg: { width: '100%', height: 10, backgroundColor: '#F3F4F6', borderRadius: 5, overflow: 'hidden', marginBottom: 32 },
+    undoProgressBar: { height: '100%' },
+    undoBtn: { width: '100%', height: 56, borderRadius: 28, overflow: 'hidden' },
+    undoBtnGrad: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    undoBtnText: { color: '#fff', fontSize: 16, fontWeight: '900', letterSpacing: 1 },
+    undoHint: { fontSize: 12, color: '#9CA3AF', textAlign: 'center', marginTop: 16, paddingHorizontal: 10 },
 });

@@ -1,7 +1,8 @@
 import React, { useState, useRef } from 'react';
 import {
     View, Text, StyleSheet, FlatList, Dimensions, 
-    TouchableOpacity, Animated, StatusBar, Platform, Image, Easing
+    TouchableOpacity, Animated, StatusBar, Platform, Image, Easing, Modal,
+    ScrollView
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -71,19 +72,19 @@ const ONBOARDING_DATA = [
     },
     {
         id: '6',
-        type: 'ready',
-        titleKey: 'onboarding.step6_title',
-        descKey: 'onboarding.step6_desc',
-        icon: 'rocket-outline',
-        colors: ['#10B981', '#059669'],
-    },
-    {
-        id: '7',
         type: 'banner_stickers',
         titleKey: 'onboarding.step_banner_title',
         descKey: 'onboarding.step_banner_desc',
         icon: 'brush-outline',
         colors: ['#8B5CF6', '#EC4899'],
+    },
+    {
+        id: '7',
+        type: 'ready',
+        titleKey: 'onboarding.step6_title',
+        descKey: 'onboarding.step6_desc',
+        icon: 'rocket-outline',
+        colors: ['#10B981', '#059669'],
     },
 ];
 
@@ -107,6 +108,7 @@ export default function OnboardingScreen() {
     const [birthdate, setBirthdate] = useState<Date>(new Date(2000, 0, 1));
     const [favoriteColor, setFavoriteColor] = useState('#A269FF');
     const [showDatePicker, setShowDatePicker] = useState(false);
+    const [showColorModal, setShowColorModal] = useState(false);
     const [configVersion, setConfigVersion] = useState(0);
 
     const scrollX = useRef(new Animated.Value(0)).current;
@@ -255,22 +257,39 @@ export default function OnboardingScreen() {
                             </TouchableOpacity>
 
                             {showDatePicker && (
-                                <DateTimePicker
-                                    value={birthdate}
-                                    mode="date"
-                                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                                    onChange={(event, selectedDate) => {
-                                        setShowDatePicker(Platform.OS === 'ios');
-                                        if (selectedDate) setBirthdate(selectedDate);
-                                    }}
-                                    maximumDate={new Date()}
-                                    themeVariant="dark"
-                                />
+                                <View style={Platform.OS === 'ios' ? s.iosPickerContainer : s.androidPickerContainer}>
+                                    <View style={s.pickerHeader}>
+                                        <View style={{ flex: 1 }} />
+                                        <TouchableOpacity 
+                                            style={s.pickerDoneBtn} 
+                                            onPress={() => setShowDatePicker(false)}
+                                        >
+                                            <Text style={s.pickerDoneText}>{t('common.done') || 'OK'}</Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                    <DateTimePicker
+                                        value={birthdate}
+                                        mode="date"
+                                        display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                                        onChange={(event, selectedDate) => {
+                                            if (Platform.OS === 'android' && event.type === 'set') {
+                                                // On Android, 'set' means OK was pressed in the system dialog
+                                                // but we also have our custom OK button now for consistency if needed
+                                                // Actually, the system dialog has its own OK.
+                                                // Let's keep our custom button for when it's NOT a dialog if possible.
+                                            }
+                                            if (selectedDate) setBirthdate(selectedDate);
+                                        }}
+                                        maximumDate={new Date()}
+                                        themeVariant="dark"
+                                        locale={i18n.language.startsWith('es') ? 'es-ES' : 'en-US'}
+                                    />
+                                </View>
                             )}
 
                             <Text style={s.extraLabel}>{t('onboarding.choose_color')}</Text>
                             <View style={s.colorPalette}>
-                                {PRESET_COLORS.map(c => (
+                                {PRESET_COLORS.slice(0, 5).map(c => (
                                     <TouchableOpacity 
                                         key={c}
                                         onPress={() => setFavoriteColor(c)}
@@ -279,7 +298,47 @@ export default function OnboardingScreen() {
                                         {favoriteColor === c && <Ionicons name="checkmark" size={16} color="#fff" />}
                                     </TouchableOpacity>
                                 ))}
+                                <TouchableOpacity 
+                                    style={s.moreColorsBtn}
+                                    onPress={() => setShowColorModal(true)}
+                                >
+                                    <Ionicons name="ellipsis-horizontal" size={20} color="#fff" />
+                                    <Text style={s.moreColorsText}>{t('common.view_more') || 'Ver más'}</Text>
+                                </TouchableOpacity>
                             </View>
+
+                            <Modal visible={showColorModal} transparent animationType="fade">
+                                <BlurView intensity={80} tint="dark" style={StyleSheet.absoluteFill}>
+                                    <TouchableOpacity 
+                                        style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}
+                                        activeOpacity={1}
+                                        onPress={() => setShowColorModal(false)}
+                                    >
+                                        <View style={s.colorModalContent} onStartShouldSetResponder={() => true}>
+                                            <View style={s.colorModalHeader}>
+                                                <Text style={s.colorModalTitle}>{t('onboarding.choose_color')}</Text>
+                                                <TouchableOpacity onPress={() => setShowColorModal(false)}>
+                                                    <Ionicons name="close-circle" size={28} color="rgba(255,255,255,0.5)" />
+                                                </TouchableOpacity>
+                                            </View>
+                                            <ScrollView contentContainerStyle={s.colorModalGrid}>
+                                                {PRESET_COLORS.map(c => (
+                                                    <TouchableOpacity 
+                                                        key={c}
+                                                        onPress={() => {
+                                                            setFavoriteColor(c);
+                                                            setShowColorModal(false);
+                                                        }}
+                                                        style={[s.colorCircleLarge, { backgroundColor: c }, favoriteColor === c && s.colorCircleActive]}
+                                                    >
+                                                        {favoriteColor === c && <Ionicons name="checkmark" size={24} color="#fff" />}
+                                                    </TouchableOpacity>
+                                                ))}
+                                            </ScrollView>
+                                        </View>
+                                    </TouchableOpacity>
+                                </BlurView>
+                            </Modal>
                         </View>
                     </View>
                 );
@@ -435,12 +494,14 @@ export default function OnboardingScreen() {
                     scaleX: scale, scaleY: scale, opacity,
                     transform: [{ translateY: floatY }]
                 }]}>
-                    {renderVisual(item, opacity)}
+                    {item.type === 'language' && renderVisual(item, opacity)}
                     
                     <View style={s.textContainer}>
                         <Text style={s.title}>{t(item.titleKey)}</Text>
                         <Text style={s.desc}>{t(item.descKey)}</Text>
                     </View>
+
+                    {item.type !== 'language' && renderVisual(item, opacity)}
                 </Animated.View>
             </View>
         );
@@ -454,7 +515,7 @@ export default function OnboardingScreen() {
                 ref={flatListRef}
                 data={ONBOARDING_DATA}
                 renderItem={renderItem}
-                keyExtractor={item => item.id}
+                keyExtractor={(item: any) => item.id}
                 horizontal
                 pagingEnabled
                 showsHorizontalScrollIndicator={false}
@@ -462,7 +523,7 @@ export default function OnboardingScreen() {
                     [{ nativeEvent: { contentOffset: { x: scrollX } } }],
                     { useNativeDriver: true }
                 )}
-                onMomentumScrollEnd={e => {
+                onMomentumScrollEnd={(e: any) => {
                     const index = Math.round(e.nativeEvent.contentOffset.x / width);
                     setActiveIndex(index);
                 }}
@@ -511,7 +572,7 @@ const s = StyleSheet.create({
     gradientBg: { ...StyleSheet.absoluteFillObject, opacity: 0.8 },
     bgOrb: { position: 'absolute', width: 300, height: 300, borderRadius: 150 },
     content: { alignItems: 'center', width: '100%', paddingHorizontal: 30 },
-    textContainer: { marginTop: 40, alignItems: 'center' },
+    textContainer: { marginBottom: 40, alignItems: 'center' },
     iconCircle: {
         width: 180, height: 180, borderRadius: 90,
         backgroundColor: 'rgba(255,255,255,0.15)',
@@ -598,6 +659,31 @@ const s = StyleSheet.create({
         borderWidth: 2, borderColor: 'transparent',
     },
     colorCircleActive: { borderColor: '#fff', transform: [{ scale: 1.1 }] },
+    moreColorsBtn: {
+        flexDirection: 'row', alignItems: 'center', gap: 6,
+        backgroundColor: 'rgba(255,255,255,0.15)',
+        paddingHorizontal: 14, paddingVertical: 10, borderRadius: 20,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
+    },
+    moreColorsText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+    
+    colorModalContent: {
+        width: '100%', backgroundColor: 'rgba(30,30,30,0.95)',
+        borderRadius: 30, padding: 25, maxHeight: '80%',
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+    },
+    colorModalHeader: {
+        flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20,
+    },
+    colorModalTitle: { color: '#fff', fontSize: 20, fontWeight: '800' },
+    colorModalGrid: {
+        flexDirection: 'row', flexWrap: 'wrap', gap: 15, justifyContent: 'center',
+    },
+    colorCircleLarge: {
+        width: 54, height: 54, borderRadius: 27,
+        alignItems: 'center', justifyContent: 'center',
+        borderWidth: 3, borderColor: 'transparent',
+    },
 
     dropsGallery: {
         flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
@@ -668,5 +754,45 @@ const s = StyleSheet.create({
         width: 50, height: 50, borderRadius: 15,
         backgroundColor: 'rgba(255,255,255,0.1)',
         alignItems: 'center', justifyContent: 'center',
+    },
+    iosPickerContainer: {
+        backgroundColor: 'rgba(255,255,255,0.05)',
+        borderRadius: 20,
+        padding: 10,
+        marginTop: 10,
+    },
+    androidPickerContainer: {
+        marginTop: 10,
+    },
+    pickerHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 10,
+        paddingVertical: 8,
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(255,255,255,0.1)',
+    },
+    pickerDoneBtn: {
+        paddingHorizontal: 15,
+        paddingVertical: 8,
+        backgroundColor: 'rgba(255,255,255,0.2)',
+        borderRadius: 12,
+    },
+    pickerDoneText: {
+        color: '#fff',
+        fontWeight: '800',
+        fontSize: 14,
+    },
+    iosPickerDone: {
+        alignSelf: 'flex-end',
+        paddingHorizontal: 15,
+        paddingVertical: 8,
+        backgroundColor: 'rgba(255,255,255,0.2)',
+        borderRadius: 12,
+    },
+    iosPickerDoneText: {
+        color: '#fff',
+        fontWeight: '800',
+        fontSize: 14,
     },
 });

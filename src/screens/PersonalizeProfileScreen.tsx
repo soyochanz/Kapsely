@@ -50,9 +50,9 @@ interface DraggableStickerProps {
     setIsDragging: (v: boolean) => void;
 }
 
-function DraggableSticker({
+const DraggableSticker = React.memo(({
     sticker, isSelected, onSelect, onUpdate, onDelete, topZ, bumpZ, setIsDragging
-}: DraggableStickerProps) {
+}: DraggableStickerProps) => {
     const posX = useRef(new Animated.Value(sticker.x)).current;
     const posY = useRef(new Animated.Value(sticker.y)).current;
     const scale = useRef(new Animated.Value(1)).current;
@@ -188,7 +188,7 @@ function DraggableSticker({
             )}
         </Animated.View>
     );
-}
+});
 
 const stickerS = StyleSheet.create({
     root: {
@@ -302,13 +302,31 @@ export default function PersonalizeProfileScreen() {
     }, []);
 
     const loadData = async (uid: string) => {
+        // Run initial heavy queries in parallel to avoid waterfalls
+        const [
+            currentRes,
+            unlockedRes,
+            profileRes,
+            capsulesRes,
+            commentsRes,
+            stksRes
+        ] = await Promise.all([
+            supabase.from('profile_stickers').select('id, sticker_id, x, y, size, rotation, stickers(image_url, name)').eq('user_id', uid),
+            supabase.from('user_stickers').select('sticker_id').eq('user_id', uid),
+            supabase.from('profiles').select('created_at').eq('id', uid).single(),
+            supabase.from('capsules').select('id, status, likes_count').eq('owner_id', uid),
+            supabase.from('comments').select('*', { count: 'exact', head: true }).eq('user_id', uid),
+            supabase.from('stickers').select('id, image_url, name, is_active, unlock_type, unlock_threshold').eq('is_active', true)
+        ]);
+
+        const current = currentRes.data;
+        const unlocked = unlockedRes.data;
+        const profile = profileRes.data;
+        const capsules = capsulesRes.data;
+        const stks = stksRes.data;
+        const totalComments = commentsRes.count || 0;
+
         // Load saved stickers
-        const { data: current } = await supabase
-            .from('profile_stickers')
-            .select('id, sticker_id, x, y, size, rotation, stickers(image_url, name)')
-            .eq('user_id', uid);
-
-
         if (current) {
             const loaded: StickerInstance[] = current.map((ps: any, i: number) => ({
                 id: `existing_${i}`,
@@ -326,28 +344,23 @@ export default function PersonalizeProfileScreen() {
         }
 
         // Unlocked stickers
-        const { data: unlocked } = await supabase.from('user_stickers').select('sticker_id').eq('user_id', uid);
         setUnlockedIds(new Set(unlocked?.map(u => u.sticker_id) || []));
 
-        // User stats
-        const { data: profile } = await supabase.from('profiles').select('created_at').eq('id', uid).single();
-
         const regDate = profile?.created_at ? new Date(profile.created_at) : new Date();
-        const { data: capsules } = await supabase.from('capsules').select('id, status').eq('owner_id', uid);
         const openedCount = capsules?.filter(c => c.status === 'opened').length || 0;
-        const { data: likes } = await supabase.from('likes').select('capsule_id');
-        const likeMap: Record<string, number> = {};
-        likes?.forEach((l: any) => { likeMap[l.capsule_id] = (likeMap[l.capsule_id] || 0) + 1; });
-        const maxLikes = Math.max(0, ...Object.values(likeMap));
-        const { data: comments } = await supabase.from('comments').select('id').eq('user_id', uid);
-        setUserStats({ maxLikes, totalComments: comments?.length || 0, openedCount, registrationDate: regDate });
+        
+        // Use denormalized likes_count from capsules
+        const counts = capsules?.map(c => c.likes_count || 0) || [];
+        const maxLikes = counts.length > 0 ? Math.max(...counts) : 0;
+
+        setUserStats({ 
+            maxLikes, 
+            totalComments, 
+            openedCount, 
+            registrationDate: regDate 
+        });
 
         // All stickers
-        const { data: stks } = await supabase
-            .from('stickers')
-            .select('id, image_url, name, is_active, unlock_type, unlock_threshold')
-            .eq('is_active', true);
-
         if (stks) setAllStickers(stks);
     };
 

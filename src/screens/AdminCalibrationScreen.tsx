@@ -53,6 +53,8 @@ export default function AdminCalibrationScreen() {
         tint: string;
         is_active: boolean;
         is_event: boolean;
+        is_trending: boolean;
+        is_new: boolean;
         event_start: string;
         event_end: string;
         event_title: string;
@@ -64,6 +66,7 @@ export default function AdminCalibrationScreen() {
     const [newModel, setNewModel] = useState<ModelState>({ 
         id: '', label: '', image: '', image_open: '',
         category: 'Vibe', tint: '#a269ff', is_active: true, is_event: false,
+        is_trending: false, is_new: false,
         event_start: '', event_end: '', event_title: '', event_description: '',
         drop_id: null
     });
@@ -428,6 +431,7 @@ export default function AdminCalibrationScreen() {
             setNewModel({ 
                 id: '', label: '', image: '', image_open: '',
                 category: 'Vibe', tint: '#a269ff', is_active: true, is_event: false,
+                is_trending: false, is_new: false,
                 event_start: '', event_end: '', event_title: '', event_description: '',
                 drop_id: null
             });
@@ -968,6 +972,7 @@ export default function AdminCalibrationScreen() {
                                     setNewModel({ 
                                         id: '', label: '', image: '', image_open: '',
                                         category: 'Vibe', tint: '#a269ff', is_active: true, is_event: false,
+                                        is_trending: false, is_new: false,
                                         event_start: '', event_end: '', event_title: '', event_description: '',
                                         drop_id: null
                                     });
@@ -1007,6 +1012,12 @@ export default function AdminCalibrationScreen() {
                                                 }
                                                 {m.is_event && 
                                                     <View style={[styles.statusTag, { backgroundColor: '#fffaf0' }]}><Text style={[styles.statusTagText, { color: '#dd6b20' }]}>Event</Text></View>
+                                                }
+                                                {m.is_trending && 
+                                                    <View style={[styles.statusTag, { backgroundColor: '#fff5f5' }]}><Text style={[styles.statusTagText, { color: '#e53e3e' }]}>Popular</Text></View>
+                                                }
+                                                {m.is_new && 
+                                                    <View style={[styles.statusTag, { backgroundColor: '#ebf8ff' }]}><Text style={[styles.statusTagText, { color: '#3182ce' }]}>New</Text></View>
                                                 }
                                             </View>
                                         </View>
@@ -1137,8 +1148,48 @@ export default function AdminCalibrationScreen() {
                                     </View>
                                     <Switch value={newModel.is_active} onValueChange={v => setNewModel(p => ({ ...p, is_active: v }))} trackColor={{ true: Colors.primary }} />
                                 </View>
+                                
+                                <View style={[styles.switchRow, { marginTop: 12 }]}>
+                                    <View>
+                                        <Text style={styles.switchLabel}>Popular (Trending)</Text>
+                                        <Text style={styles.switchSub}>Show with flame effect</Text>
+                                    </View>
+                                    <Switch value={newModel.is_trending} onValueChange={v => setNewModel(p => ({ ...p, is_trending: v }))} trackColor={{ true: '#FF8C00' }} />
+                                </View>
+
+                                <View style={[styles.switchRow, { marginTop: 12 }]}>
+                                    <View>
+                                        <Text style={styles.switchLabel}>New Model</Text>
+                                        <Text style={styles.switchSub}>Show with sparkles effect</Text>
+                                    </View>
+                                    <Switch value={newModel.is_new} onValueChange={v => setNewModel(p => ({ ...p, is_new: v }))} trackColor={{ true: '#00D2FF' }} />
+                                </View>
+
+                                <View style={[styles.switchRow, { marginTop: 12 }]}>
+                                    <View>
+                                        <Text style={styles.switchLabel}>Is Event Mode</Text>
+                                        <Text style={styles.switchSub}>Requires start/end dates</Text>
+                                    </View>
+                                    <Switch value={newModel.is_event} onValueChange={v => setNewModel(p => ({ ...p, is_event: v }))} trackColor={{ true: Colors.primary }} />
+                                </View>
 
                                 <View style={[styles.switchRow, { marginTop: 15 }]}>
+                                    <View>
+                                        <Text style={styles.switchLabel}>Popular (Trending)</Text>
+                                        <Text style={styles.switchSub}>Adds a fire badge in the picker</Text>
+                                    </View>
+                                    <Switch value={newModel.is_trending} onValueChange={v => setNewModel(p => ({ ...p, is_trending: v }))} trackColor={{ true: '#FF8A00' }} />
+                                </View>
+
+                                <View style={[styles.switchRow, { marginTop: 10 }]}>
+                                    <View>
+                                        <Text style={styles.switchLabel}>New Design</Text>
+                                        <Text style={styles.switchSub}>Adds a "New" badge in the picker</Text>
+                                    </View>
+                                    <Switch value={newModel.is_new} onValueChange={v => setNewModel(p => ({ ...p, is_new: v }))} trackColor={{ true: '#00D1FF' }} />
+                                </View>
+
+                                <View style={[styles.switchRow, { marginTop: 10 }]}>
                                     <View>
                                         <Text style={styles.switchLabel}>Event Capsule</Text>
                                         <Text style={styles.switchSub}>Automatically active for events</Text>

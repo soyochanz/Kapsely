@@ -34,8 +34,7 @@ export default function SwipeableMessage({
     const translateX = useSharedValue(0);
 
     const gesture = Gesture.Pan()
-        .activeOffsetX([-20, 20]) // Require more horizontal movement to start
-        .failOffsetY([-10, 10])   // Fail if user is mostly scrolling vertically
+        .activeOffsetX([-25, 25])
         .onUpdate((event) => {
             if (isDeleted) return;
             // Limit swipe depending on side
@@ -89,7 +88,7 @@ export default function SwipeableMessage({
             </View>
 
             <GestureDetector gesture={gesture}>
-                <Animated.View entering={FadeInUp.springify().damping(15)} style={animatedStyle}>
+                <Animated.View style={animatedStyle}>
                     {children}
                 </Animated.View>
             </GestureDetector>

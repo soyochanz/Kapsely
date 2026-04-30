@@ -69,8 +69,7 @@ export default function SwipeableNotificationItem({
 
     // ── Gesture ───────────────────────────────────────────────────────────────
     const gesture = Gesture.Pan()
-        .activeOffsetX([-12, 12])
-        .failOffsetY([-12, 12])
+        .activeOffsetX([-25, 25])
         .onBegin(() => {
             if (onSwipeStart) runOnJS(onSwipeStart)();
         })
@@ -98,6 +97,7 @@ export default function SwipeableNotificationItem({
             if (!success) {
                 translateX.value = withSpring(0, { damping: 22, stiffness: 260 });
             }
+            if (onSwipeEnd) runOnJS(onSwipeEnd)();
         });
 
     // ── Animated styles ───────────────────────────────────────────────────────

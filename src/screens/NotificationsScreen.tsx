@@ -13,10 +13,13 @@ import { Colors, Fonts, Spacing, BorderRadius } from '../theme';
 import SwipeableNotificationItem from '../components/SwipeableNotificationItem';
 import { Notification } from '../data/mockNotifications';
 import { supabase } from '../lib/supabase';
+import { FlashList } from '@shopify/flash-list';
 import { clearBadgeCount } from '../utils/pushNotifications';
 import { safetyService } from '../utils/safety';
 
 const { width, height } = Dimensions.get('window');
+
+const AnyFlashList = FlashList as any;
 
 // ─── Ripple success animation component ──────────────────────────────────────
 function MarkAllRipple({ visible, onDone }: { visible: boolean; onDone: () => void }) {
@@ -86,6 +89,7 @@ export default function NotificationsScreen() {
     const [scrollEnabled, setScrollEnabled] = useState(true);
     const [showRipple, setShowRipple] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
+    const [totalUnread, setTotalUnread] = useState(0);
 
     const scrollRef = useRef<ScrollView>(null);
 
@@ -112,17 +116,35 @@ export default function NotificationsScreen() {
         return t('common.d_ago', { count: Math.floor(hrs / 24) });
     };
 
-    const loadNotifications = async () => {
+    const [page, setPage] = useState(0);
+    const [hasMore, setHasMore] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
+    const PAGE_SIZE = 20;
+
+    const loadNotifications = async (isRefresh = false) => {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return;
 
+        const start = isRefresh ? 0 : page * PAGE_SIZE;
+        const end = start + PAGE_SIZE - 1;
+
+        if (!isRefresh) setLoadingMore(true);
+        else setLoading(true);
+
         const blocked = await safetyService.getAllSafetyUserIds(user.id);
-        const { data } = await supabase
+        const { data, error } = await supabase
             .from('notifications')
             .select('*, sender:sender_id(username, display_name, avatar_url, favorite_color), capsules(title, type, model, chain_id, opens_at, owner_id)')
             .eq('user_id', user.id)
             .order('created_at', { ascending: false })
-            .limit(50);
+            .range(start, end);
+
+        if (error) {
+            console.error('Error loading notifications:', error);
+            setLoading(false);
+            setLoadingMore(false);
+            return;
+        }
 
         if (data) {
             const mapped: Notification[] = data
@@ -131,7 +153,6 @@ export default function NotificationsScreen() {
                     const createdDate = new Date(n.created_at);
                     const expiryDate = new Date(createdDate.getTime() + 3 * 86400000);
                     
-                    // Dynamic message generation for language sync
                     let displayMessage = n.message || '';
                     const capTitle = n.capsules?.title ? `"${n.capsules.title}"` : '';
                     
@@ -173,16 +194,60 @@ export default function NotificationsScreen() {
                         expiryDate,
                     };
                 });
-            setNotifications(mapped);
+            
+            if (isRefresh) {
+                setNotifications(mapped);
+                setPage(1);
+                setHasMore(data.length === PAGE_SIZE);
+
+                // Cleanup expired invitations from DB
+                const expiredIds = mapped.filter(n => n.type === 'capsule_invite' && n.isExpired).map(n => n.capsuleId).filter(Boolean);
+                if (expiredIds.length > 0) {
+                    supabase.from('capsule_invites')
+                        .delete()
+                        .eq('user_id', user.id)
+                        .in('capsule_id', expiredIds)
+                        .eq('status', 'pending')
+                        .then(({ error }) => {
+                            if (!error) {
+                                // Also remove from UI if desired, but here we just clean DB
+                                // The next refresh will show them gone.
+                            }
+                        });
+                }
+            } else {
+                setNotifications(prev => [...prev, ...mapped]);
+                setPage(p => p + 1);
+                setHasMore(data.length === PAGE_SIZE);
+            }
         }
         setLoading(false);
+        setLoadingMore(false);
+
+        // Fetch total unread count for the +20 logic
+        if (isRefresh) {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) {
+                const { count } = await supabase
+                    .from('notifications')
+                    .select('*', { count: 'exact', head: true })
+                    .eq('user_id', user.id)
+                    .eq('is_read', false);
+                setTotalUnread(count || 0);
+            }
+        }
+    };
+
+    const handleLoadMore = () => {
+        if (!hasMore || loadingMore || loading) return;
+        loadNotifications();
     };
 
     useEffect(() => {
-        loadNotifications();
+        loadNotifications(true);
         if (Platform.OS !== 'web') clearBadgeCount();
         const channel = supabase.channel('notifications_realtime')
-            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, loadNotifications)
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, () => loadNotifications(true))
             .subscribe();
         return () => { supabase.removeChannel(channel); };
     }, []);
@@ -251,28 +316,15 @@ export default function NotificationsScreen() {
         setRefreshing(true);
         // Mark all as read and reload to ensure everything is synced
         await handleMarkAllRead();
-        await loadNotifications();
+        await loadNotifications(true);
         setRefreshing(false);
         setShowRipple(true);
     };
 
-    const unreadCount = notifications.filter(n => !n.isRead).length;
-
-    // ─── Grouped notifications ─────────────────────────────────────────────
-    const grouped = React.useMemo(() => {
-        const today: Notification[] = [];
-        const earlier: Notification[] = [];
-        const now = Date.now();
-        notifications.forEach(n => {
-            const diff = now - new Date(n.createdAt || now).getTime();
-            if (diff < 86400000) today.push(n);
-            else earlier.push(n);
-        });
-        return { today, earlier };
-    }, [notifications]);
+    const unreadCount = totalUnread;
 
     // ─── Render ────────────────────────────────────────────────────────────
-    if (loading) {
+    if (loading && page === 0) {
         return (
             <View style={[s.root, s.centered]}>
                 <ActivityIndicator color={Colors.primary} size="large" />
@@ -297,7 +349,7 @@ export default function NotificationsScreen() {
                             <View style={s.unreadRow}>
                                 <View style={s.unreadDot} />
                                 <Text style={s.unreadText}>
-                                    {unreadCount} {t('notifications.unread', { count: unreadCount })}
+                                    {unreadCount > 20 ? '+20' : unreadCount} {t('notifications.unread', { count: unreadCount })}
                                 </Text>
                             </View>
                         ) : (
@@ -308,7 +360,7 @@ export default function NotificationsScreen() {
                     {/* Unread count badge */}
                     {unreadCount > 0 && (
                         <View style={s.unreadBadge}>
-                            <Text style={s.unreadBadgeText}>{unreadCount}</Text>
+                            <Text style={s.unreadBadgeText}>{unreadCount > 20 ? '+20' : unreadCount}</Text>
                         </View>
                     )}
                 </View>
@@ -328,24 +380,9 @@ export default function NotificationsScreen() {
                 <View style={s.headerDivider} />
             </Animated.View>
 
-            {/* ── SCROLL ──────────────────────────────────────────────── */}
-            <ScrollView
-                ref={scrollRef}
-                style={s.scroll}
-                scrollEnabled={scrollEnabled}
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={[s.scrollContent, { paddingBottom: insets.bottom + 110 }]}
-                scrollEventThrottle={16}
-                refreshControl={
-                    <RefreshControl
-                        refreshing={refreshing}
-                        onRefresh={onRefresh}
-                        tintColor={Colors.primary}
-                        colors={[Colors.primary]}
-                    />
-                }
-            >
-                {notifications.length === 0 ? (
+            {/* ── LIST ────────────────────────────────────────────────── */}
+            <View style={{ flex: 1 }}>
+                {notifications.length === 0 && !loading ? (
                     <View style={s.emptyState}>
                         <View style={s.emptyIconWrap}>
                             <Ionicons name="notifications-off-outline" size={36} color={Colors.textMuted} />
@@ -353,59 +390,57 @@ export default function NotificationsScreen() {
                         <Text style={s.emptyTitle}>{t('notifications.all_clear')}</Text>
                         <Text style={s.emptySub}>{t('notifications.no_notifications')}</Text>
                     </View>
-                ) : (<>
-
-                    {/* Today */}
-                    {grouped.today.length > 0 && (<>
-                        <View style={s.sectionHeader}>
-                            <View style={[s.sectionDot, { backgroundColor: Colors.primary }]} />
-                            <Text style={s.sectionTitle}>{t('notifications.today')}</Text>
-                            <View style={s.sectionLine} />
-                        </View>
-                        {grouped.today.map((n, i) => (
+                ) : (
+                    <AnyFlashList
+                        data={notifications}
+                        estimatedItemSize={90}
+                        keyExtractor={(item: Notification) => item.id}
+                        onEndReachedThreshold={0.1}
+                        showsVerticalScrollIndicator={false}
+                        contentContainerStyle={[s.scrollContent, { paddingBottom: insets.bottom + 110 }]}
+                        refreshControl={
+                            <RefreshControl
+                                refreshing={refreshing}
+                                onRefresh={onRefresh}
+                                tintColor={Colors.primary}
+                                colors={[Colors.primary]}
+                            />
+                        }
+                        ListFooterComponent={() => (
+                            <View style={{ paddingBottom: insets.bottom + 120 }}>
+                                {loadingMore ? (
+                                    <ActivityIndicator color={Colors.primary} style={{ marginVertical: 20 }} />
+                                ) : hasMore && notifications.length >= PAGE_SIZE ? (
+                                    <TouchableOpacity 
+                                        style={s.loadMoreBtn} 
+                                        onPress={handleLoadMore}
+                                        activeOpacity={0.7}
+                                    >
+                                        <Text style={s.loadMoreText}>{t('notifications.load_more') || 'Cargar más'}</Text>
+                                        <Ionicons name="chevron-down" size={18} color={Colors.primary} />
+                                    </TouchableOpacity>
+                                ) : null}
+                            </View>
+                        )}
+                        renderItem={({ item, index }: { item: Notification; index: number }) => (
                             <Animated.View
-                                key={n.id}
                                 style={{
                                     opacity: headerFade,
-                                    transform: [{ translateY: headerSlide.interpolate({ inputRange: [-12, 0], outputRange: [-12 - i * 4, 0] }) }],
+                                    transform: [{ translateY: headerSlide.interpolate({ inputRange: [-12, 0], outputRange: [-12 - index * 4, 0] }) }],
                                 }}
                             >
                                 <SwipeableNotificationItem
-                                    notification={n}
+                                    notification={item}
                                     onDelete={handleDelete}
                                     onMarkRead={handleMarkRead}
                                     onAcceptInvite={handleAcceptInvite}
                                     onRejectInvite={handleRejectInvite}
-                                    onSwipeStart={() => setScrollEnabled(false)}
-                                    onSwipeEnd={() => setScrollEnabled(true)}
                                 />
                             </Animated.View>
-                        ))}
-                    </>)}
-
-                    {/* Earlier */}
-                    {grouped.earlier.length > 0 && (<>
-                        <View style={[s.sectionHeader, { marginTop: 12 }]}>
-                            <View style={[s.sectionDot, { backgroundColor: Colors.textMuted }]} />
-                            <Text style={[s.sectionTitle, { color: Colors.textMuted }]}>{t('notifications.earlier')}</Text>
-                            <View style={s.sectionLine} />
-                        </View>
-                        {grouped.earlier.map(n => (
-                            <SwipeableNotificationItem
-                                key={n.id}
-                                notification={n}
-                                onDelete={handleDelete}
-                                onMarkRead={handleMarkRead}
-                                onAcceptInvite={handleAcceptInvite}
-                                onRejectInvite={handleRejectInvite}
-                                onSwipeStart={() => setScrollEnabled(false)}
-                                onSwipeEnd={() => setScrollEnabled(true)}
-                            />
-                        ))}
-                    </>)}
-
-                </>)}
-            </ScrollView>
+                        )}
+                    />
+                )}
+            </View>
         </View>
         </GestureHandlerRootView>
     );
@@ -469,6 +504,26 @@ const s = StyleSheet.create({
     },
     sectionLine: {
         flex: 1, height: 1, backgroundColor: Colors.divider,
+    },
+
+    loadMoreBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        paddingVertical: 16,
+        marginTop: 20,
+        marginHorizontal: 20,
+        borderRadius: 18,
+        backgroundColor: Colors.background,
+        borderWidth: 1.5,
+        borderColor: Colors.divider,
+        borderStyle: 'dashed',
+    },
+    loadMoreText: {
+        fontSize: 14,
+        fontFamily: Fonts.bold,
+        color: Colors.primary,
     },
 
     // Empty state

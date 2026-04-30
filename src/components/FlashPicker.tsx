@@ -16,6 +16,8 @@ import { MODEL_IMAGES } from '../constants/models';
 import { timerConfigManager } from '../utils/timerConfig';
 import StoryEditor from './StoryEditor';
 
+const AnyFlashList = FlashList as any;
+
 const { width, height } = Dimensions.get('window');
 const ITEM_SIZE = width / 3;
 
@@ -233,12 +235,12 @@ export const FlashPicker = React.memo(({
 
                     {pickerStep === 'select' && (
                         <View style={{ flex: 1 }}>
-                            <FlashList
+                            <AnyFlashList
                                 data={pickerItems}
                                 numColumns={3}
-                                keyExtractor={i => i.id}
+                                keyExtractor={(i: any) => i.id}
                                 estimatedItemSize={ITEM_SIZE}
-                                renderItem={({ item }) => (
+                                renderItem={({ item }: any) => (
                                     <TouchableOpacity style={s.pickerGridCell} activeOpacity={0.8} onPress={() => { setEditingItem(item); setPickerStep('edit'); }}>
                                         <Image source={{ uri: item.media_url }} style={s.pickerGridImg} cachePolicy="memory-disk" transition={200} />
                                     </TouchableOpacity>

@@ -90,7 +90,8 @@
     "unlocks": "Se abre el ",
     "follow_plus": "+ Seguir",
     "private_cap_title": "Cápsula Privada",
-    "private_cap_msg": "Aún no has sido invitado a esta cápsula."
+    "private_cap_msg": "Aún no has sido invitado a esta cápsula.",
+    "view_more": "Ver más"
   },
   "profile": {
     "settings": "Ajustes",
@@ -429,7 +430,9 @@
     "today": "Hoy",
     "earlier": "Anteriores",
     "accepted_your_invite": "aceptó tu invitación a",
-    "new_invite": "Nueva Invitación 📩"
+    "new_invite": "Nueva Invitación 📩",
+    "load_more": "Cargar más",
+    "invite_expired": "Invitación Caducada"
   },
   "search": {
     "explore_people": "Explorar Personas",
@@ -602,7 +605,13 @@
     "sent_capsule": "Envió una cápsula",
     "referencing": "Referenciando a",
     "block_confirm": "¿Estás seguro de que quieres bloquear a este usuario? Ya no podrá interactuar contigo.",
-    "content_deleted": "Contenido eliminado correctamente."
+    "content_deleted": "Contenido eliminado correctamente.",
+    "load_more_comments": "Ver más comentarios",
+    "voting_to_delete": "Votando para eliminar",
+    "agree_to_delete": "Aceptar eliminación",
+    "you_voted_to_delete": "Ya has votado para eliminar",
+    "vote_to_delete": "Votar para eliminar",
+    "delete_vote_registered": "Tu voto para eliminar la cápsula ha sido registrado."
   },
   "onboarding": {
     "step0_title": "Elige tu idioma",
@@ -706,6 +715,10 @@
     "no_capsules_desc": "Crea una cápsula sellada o abierta para guardar recuerdos",
     "capsules_available": "{{count}} cápsula(s) disponible(s)",
     "always_open": "Siempre abierta",
-    "opens_label": "Abre:"
+    "opens_label": "Abre:",
+    "undo_title": "¿Seguro?",
+    "undo_sub": "Subiendo contenido en unos segundos...",
+    "undo_btn": "DESHACER SUBIDA",
+    "undo_hint": "Una vez completada la barra, ya no podrás arrepentirte."
   }
 }

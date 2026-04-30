@@ -5,6 +5,8 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { FlashList } from '@shopify/flash-list';
+
+const AnyFlashList = FlashList as any;
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -384,7 +386,7 @@ export default function ChatListScreen() {
             onDelete={handleDeleteConversation}
             onArchive={showArchived ? handleUnarchiveConversation : handleArchiveConversation}
             onPress={() => navigation.navigate('ChatDetail', { conversationId: item.conversation_id })}
-            onAvatarPress={() => !item.is_group && (navigation as any).navigate('UserProfile', { targetUserId: item.otherUser.id })}
+            onAvatarPress={() => !item.is_group && (navigation as any).navigate('ExternalProfile', { targetUserId: item.otherUser.id })}
             isArchived={showArchived}
         />
     );
@@ -431,11 +433,11 @@ export default function ChatListScreen() {
             {loading ? (
                 <View style={styles.centered}><ActivityIndicator color={Colors.primary} /></View>
             ) : (
-                <FlashList
+                <AnyFlashList
                     data={filteredConversations}
                     keyExtractor={(item: any) => item.conversation_id}
                     renderItem={renderItem}
-                    {...({ estimatedItemSize: 88 } as any)}
+                    estimatedItemSize={88}
                     contentContainerStyle={styles.list}
                     ListEmptyComponent={
                         <View style={styles.empty}>
