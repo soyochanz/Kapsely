@@ -9,6 +9,13 @@ interface CapsuleWithTimerProps {
   source: string;
   date: string;
   style?: React.CSSProperties;
+  modelLayout?: {
+    image_scale?: number | string | null;
+    image_scale_x?: number | string | null;
+    image_scale_y?: number | string | null;
+    image_offset_x?: number | string | null;
+    image_offset_y?: number | string | null;
+  } | null;
   chainId?: string | null;
   configOverride?: ModelTimerConfig;
   chainConfigOverride?: ModelChainConfig;
@@ -24,6 +31,7 @@ const CapsuleWithTimer: React.FC<CapsuleWithTimerProps> = ({
   source,
   date,
   style,
+  modelLayout,
   chainId,
   configOverride,
   hideTimer,
@@ -39,6 +47,7 @@ const CapsuleWithTimer: React.FC<CapsuleWithTimerProps> = ({
 
   const config = configOverride || timerConfigManager.getConfig(modelKey);
   const chainConfig = chainConfigOverride || (chainId ? timerConfigManager.getChainConfig(modelKey, chainId) : null);
+  const resolvedModelLayout = modelLayout || timerConfigManager.getModel(modelKey);
 
   useEffect(() => {
     const updateSize = () => {
@@ -64,6 +73,13 @@ const CapsuleWithTimer: React.FC<CapsuleWithTimerProps> = ({
   const chainItem = chainId ? chainLibrary.find((c: any) => c.id === chainId) : null;
 
   const baseFontSize = Math.max(8, (size.height * config.h) * 0.55);
+  const imageFrameSize = Math.max(1, Math.min(size.width || 300, size.height || 300));
+  const layoutOffsetScale = imageFrameSize / 300;
+  const imageScale = Math.max(0.5, Math.min(1.8, Number(resolvedModelLayout?.image_scale) || 1));
+  const imageScaleX = Math.max(0.5, Math.min(1.8, Number(resolvedModelLayout?.image_scale_x) || 1));
+  const imageScaleY = Math.max(0.5, Math.min(1.8, Number(resolvedModelLayout?.image_scale_y) || 1));
+  const imageOffsetX = Math.max(-80, Math.min(80, Number(resolvedModelLayout?.image_offset_x) || 0));
+  const imageOffsetY = Math.max(-80, Math.min(80, Number(resolvedModelLayout?.image_offset_y) || 0));
 
   return (
     <div 
@@ -101,7 +117,9 @@ const CapsuleWithTimer: React.FC<CapsuleWithTimerProps> = ({
           height: '100%',
           objectFit: 'contain',
           zIndex: 1,
-          pointerEvents: 'none'
+          pointerEvents: 'none',
+          transform: `translate(${imageOffsetX * layoutOffsetScale}px, ${imageOffsetY * layoutOffsetScale}px) scale(${imageScale * imageScaleX}, ${imageScale * imageScaleY})`,
+          transformOrigin: 'center center'
         }}
         animate={!disableAnimations && !lightweight ? {
           y: [0, -10, 0],

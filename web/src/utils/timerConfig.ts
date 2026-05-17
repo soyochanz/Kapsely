@@ -10,6 +10,7 @@ export interface ModelTimerConfig {
   format: 'standard' | 'days';
   font_id: string;
   curvature: number;
+  themeColor?: string;
 }
 
 export interface ModelChainConfig {
@@ -27,12 +28,14 @@ class TimerConfigManager {
   private chainLibrary: any[] = [];
   private models: any[] = [];
   private listeners: (() => void)[] = [];
+  private initialized = false;
 
   constructor() {
     this.init();
   }
 
   async init() {
+    if (this.initialized) return;
     try {
       const [timerRes, chainRes, libRes, modelRes] = await Promise.all([
         supabase.from('model_configs').select('*'),
@@ -69,6 +72,14 @@ class TimerConfigManager {
       if (libRes.data) this.chainLibrary = libRes.data;
       if (modelRes.data) this.models = modelRes.data;
 
+      supabase.channel('web_model_configs_channel')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'models' }, () => this.refresh())
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'model_configs' }, () => this.refresh())
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'model_chain_configs' }, () => this.refresh())
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'chains' }, () => this.refresh())
+        .subscribe();
+
+      this.initialized = true;
       this.notify();
     } catch (e) {
       console.error('Error initializing TimerConfigManager:', e);
@@ -78,14 +89,15 @@ class TimerConfigManager {
   getConfig(modelId: string): ModelTimerConfig {
     return this.configs[modelId] || {
       model_id: modelId,
-      x: 0.5,
-      y: 0.8,
-      w: 0.8,
+      x: 0.35,
+      y: 0.42,
+      w: 0.3,
       h: 0.1,
       color: '#ffffff',
       format: 'standard',
-      font_id: 'Inter_700Bold',
-      curvature: 0
+      font_id: 'monospace',
+      curvature: 0,
+      themeColor: '#a269ff'
     };
   }
 
@@ -127,6 +139,7 @@ class TimerConfigManager {
   }
 
   async refresh() {
+    this.initialized = false;
     await this.init();
   }
 }

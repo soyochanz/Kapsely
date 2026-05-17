@@ -1,14 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, Platform } from 'react-native';
-import { BlurView } from 'expo-blur';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, Dimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts } from '../../theme';
-import PatternOverlay from '../PatternOverlay';
 import { MODEL_IMAGES, MODEL_IMAGES_OPEN } from '../../constants/models';
 import CapsuleWithTimer from '../CapsuleWithTimer';
 import { timerConfigManager } from '../../utils/timerConfig';
+
+const { width } = Dimensions.get('window');
+const GRID_GAP = 2;
+const CELL_SIZE = Math.floor((width - GRID_GAP * 4) / 3);
+const CELL_META_HEIGHT = 40;
 
 interface ProfileCapsuleCellProps {
     cap: any;
@@ -82,17 +85,12 @@ export const ProfileCapsuleCell = React.memo(({
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 1 }}
                 />
-                
-                {/* Elegant Pattern Overlay */}
-                <PatternOverlay color="rgba(0,0,0,0.15)" opacity={1} gap={14} size={2} />
-                
-                {/* Dynamic Spotlight */}
-                <View style={[s.visualGlow, { backgroundColor: modelThemeColor + '20' }]} />
                 {isSealed ? (
                     <CapsuleWithTimer
                         modelKey={cap.model}
                         source={{ uri: modelImg }}
                         date={cap.opens_at}
+                        modelLayout={cap.model_snapshot}
                         chainId={cap.chain_id}
                         isMinimal
                         style={{ width: '90%', height: '90%' }}
@@ -162,12 +160,6 @@ export const ProfileCapsuleCell = React.memo(({
                     </View>
                 </View>
 
-                <View style={s.timeRow}>
-                    <Ionicons name="calendar-outline" size={10} color={Colors.textMuted} />
-                    <Text style={s.timeText} numberOfLines={1}>
-                        {isSealed ? (cap.opens_at ? new Date(cap.opens_at).toLocaleDateString() : t('detail.sealed')) : t('detail.opened')}
-                    </Text>
-                </View>
             </View>
         </TouchableOpacity>
     );
@@ -175,27 +167,26 @@ export const ProfileCapsuleCell = React.memo(({
 
 const s = StyleSheet.create({
     capsuleCell: {
-        borderRadius: 20, backgroundColor: Colors.surface,
-        borderWidth: 1, borderColor: Colors.divider,
+        width: CELL_SIZE,
+        height: CELL_SIZE + CELL_META_HEIGHT,
+        borderRadius: 8,
+        backgroundColor: Colors.surface,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: Colors.borderLight || Colors.divider,
         overflow: 'hidden',
-        shadowColor: 'rgba(0,0,0,0.06)', shadowOpacity: 1,
-        shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2,
+        shadowColor: 'rgba(0,0,0,0.035)',
+        shadowOpacity: 1,
+        shadowRadius: 4,
+        shadowOffset: { width: 0, height: 1 },
+        elevation: 1,
     },
     capsuleVisual: {
-        aspectRatio: 1,
+        height: CELL_SIZE,
         alignItems: 'center', justifyContent: 'center',
         position: 'relative',
         overflow: 'hidden',
     },
-    visualGlow: {
-        position: 'absolute',
-        width: '120%',
-        height: '120%',
-        borderRadius: 100,
-        opacity: 0.8,
-        transform: [{ scale: 1.2 }],
-    },
-    capsuleModelImg: { width: '90%', height: '90%' },
+    capsuleModelImg: { width: '84%', height: '84%' },
     capsuleCoverImg: { width: '100%', height: '100%' },
     
     badgeContainer: {
@@ -213,13 +204,20 @@ const s = StyleSheet.create({
         borderWidth: 1.5, borderColor: Colors.surface,
     },
 
-    capsuleMeta: { paddingHorizontal: 10, paddingVertical: 10, gap: 4 },
-    capsuleTitle: { fontSize: 12, fontFamily: Fonts.bold, color: Colors.textPrimary, letterSpacing: -0.3 },
+    capsuleMeta: {
+        height: CELL_META_HEIGHT,
+        paddingHorizontal: 7,
+        paddingTop: 5,
+        paddingBottom: 5,
+        gap: 3,
+        backgroundColor: Colors.surface,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: Colors.borderLight || Colors.divider,
+    },
+    capsuleTitle: { fontSize: 11, fontFamily: Fonts.bold, color: Colors.textPrimary, letterSpacing: -0.2 },
     
-    statsGroup: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 2 },
+    statsGroup: { flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 0 },
     statItem: { flexDirection: 'row', alignItems: 'center', gap: 3 },
     statText: { fontSize: 10, fontFamily: Fonts.bold, opacity: 0.9 },
 
-    timeRow: { flexDirection: 'row', alignItems: 'center', gap: 3, opacity: 0.6 },
-    timeText: { fontSize: 9, fontFamily: Fonts.medium, color: Colors.textMuted },
 });

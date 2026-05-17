@@ -212,6 +212,7 @@ export default function InstagramShareScreen() {
                             modelKey={capsule.model}
                             source={modelImg ? { uri: modelImg } : undefined}
                             date={capsuleOpensAt}
+                            modelLayout={capsule.model_snapshot}
                             chainId={capsule.chain_id}
                             capsuleType={capsule.type}
                             style={s.capsuleImg}

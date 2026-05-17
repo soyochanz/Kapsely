@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Platform, Dimensions } from 'react-native';
+import React, { useCallback, useRef, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Platform, Dimensions, Animated, Easing } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -15,6 +15,97 @@ const STICKER_POSITIONS = [
     { top: 120, left: 35, size: 65, rotation: '-8deg' },
     { top: 115, right: 40, size: 85, rotation: '18deg' },
 ];
+
+const CONFETTI_COLORS = ['#FF5C8A', '#FFD166', '#06D6A0', '#4D96FF', '#A855F7', '#FF8A3D'];
+const CONFETTI_PARTICLES = Array.from({ length: 18 }, (_, i) => ({
+    id: i,
+    left: `${(i * 37) % 96}%`,
+    delay: (i % 6) * 180,
+    size: 5 + (i % 4),
+    color: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+}));
+const BIRTHDAY_GIFTS = [
+    { id: 'cake', emoji: '\uD83C\uDF82' },
+    { id: 'flower', emoji: '\uD83C\uDF38' },
+    { id: 'heart', emoji: '\u2764\uFE0F' },
+    { id: 'trip', emoji: '\u2708\uFE0F' },
+    { id: 'star', emoji: '\u2B50' },
+];
+
+const BirthdayConfetti = React.memo(() => {
+    const anims = useRef(CONFETTI_PARTICLES.map(() => new Animated.Value(0))).current;
+
+    React.useEffect(() => {
+        const loops = anims.map((anim, index) => Animated.loop(
+            Animated.sequence([
+                Animated.delay(CONFETTI_PARTICLES[index].delay),
+                Animated.timing(anim, {
+                    toValue: 1,
+                    duration: 3600 + (index % 4) * 260,
+                    easing: Easing.inOut(Easing.quad),
+                    useNativeDriver: true,
+                }),
+                Animated.timing(anim, { toValue: 0, duration: 0, useNativeDriver: true }),
+            ])
+        ));
+        loops.forEach(loop => loop.start());
+        return () => loops.forEach(loop => loop.stop());
+    }, [anims]);
+
+    return (
+        <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+            {CONFETTI_PARTICLES.map((particle, index) => {
+                const translateY = anims[index].interpolate({ inputRange: [0, 1], outputRange: [-20, 215] });
+                const translateX = anims[index].interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, index % 2 ? 14 : -14, 0] });
+                const rotate = anims[index].interpolate({ inputRange: [0, 1], outputRange: ['0deg', index % 2 ? '220deg' : '-220deg'] });
+                const opacity = anims[index].interpolate({ inputRange: [0, 0.1, 0.82, 1], outputRange: [0, 1, 1, 0] });
+                return (
+                    <Animated.View
+                        key={particle.id}
+                        style={[
+                            s.confettiParticle,
+                            {
+                                left: particle.left as `${number}%`,
+                                width: particle.size,
+                                height: particle.size * 1.6,
+                                backgroundColor: particle.color,
+                                opacity,
+                                transform: [{ translateY }, { translateX }, { rotate }],
+                            },
+                        ]}
+                    />
+                );
+            })}
+        </View>
+    );
+});
+
+const BirthdayEmojiBurst = React.memo(({ visible }: { visible: boolean }) => {
+    const anim = useRef(new Animated.Value(0)).current;
+
+    React.useEffect(() => {
+        if (!visible) return;
+        anim.setValue(0);
+        Animated.timing(anim, {
+            toValue: 1,
+            duration: 1700,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+        }).start();
+    }, [visible, anim]);
+
+    if (!visible) return null;
+
+    const opacity = anim.interpolate({ inputRange: [0, 0.12, 0.82, 1], outputRange: [0, 1, 1, 0] });
+    const translateY = anim.interpolate({ inputRange: [0, 1], outputRange: [8, -54] });
+    const scale = anim.interpolate({ inputRange: [0, 0.18, 1], outputRange: [0.4, 1.1, 1] });
+
+    return (
+        <Animated.Text style={[s.birthdayEmoji, { opacity, transform: [{ translateY }, { scale }] }]}>
+            {'\uD83C\uDF89'}
+        </Animated.Text>
+    );
+});
 
 interface ProfileHeaderProps {
     profile: any;
@@ -41,6 +132,11 @@ interface ProfileHeaderProps {
     joinYear: string | number;
     profileId: string;
     navigation: any;
+    isBirthdayToday?: boolean;
+    birthdayCongratsCount?: number;
+    birthdayGiftCounts?: Record<string, number>;
+    hasSentBirthdayCongrats?: boolean;
+    onBirthdayCongrats?: (giftType?: string) => Promise<boolean>;
 }
 
 export const ProfileHeader = React.memo(({
@@ -50,8 +146,19 @@ export const ProfileHeader = React.memo(({
     onNavigateToConversation, onShowEdit, onShowSettings,
     onShowUserOptions, onShowStories, onBack,
     activeTab, setActiveTab, insets, t, i18n, joinYear,
-    profileId, navigation
+    profileId, navigation, isBirthdayToday = false, birthdayGiftCounts = {},
+    hasSentBirthdayCongrats = false, onBirthdayCongrats
 }: ProfileHeaderProps) => {
+    const [showBirthdayBurst, setShowBirthdayBurst] = useState(false);
+    const handleBirthdayPress = useCallback(async (giftType = 'cake') => {
+        if (!onBirthdayCongrats || hasSentBirthdayCongrats) return;
+        const didSend = await onBirthdayCongrats(giftType);
+        if (didSend) {
+            setShowBirthdayBurst(true);
+            setTimeout(() => setShowBirthdayBurst(false), 1800);
+        }
+    }, [onBirthdayCongrats, hasSentBirthdayCongrats]);
+
     return (
         <View style={s.root}>
             {/* HERO BANNER */}
@@ -88,6 +195,7 @@ export const ProfileHeader = React.memo(({
                         );
                     })}
                 </View>
+                {isBirthdayToday && <View style={s.confettiLayer}><BirthdayConfetti /></View>}
 
                 {/* Header buttons */}
                 <View style={[s.bannerBtns, { paddingTop: insets.top + (Platform.OS === 'ios' ? 10 : 20) }]}>
@@ -157,6 +265,7 @@ export const ProfileHeader = React.memo(({
                 </View>
 
                 <View style={s.nameSection}>
+                    <BirthdayEmojiBurst visible={showBirthdayBurst} />
                     <View style={s.nameRow}>
                         <Text style={s.displayName}>{profile?.display_name ?? '—'}</Text>
                         {!!profile?.is_verified && <VerifiedBadge size={17} style={{ marginLeft: 4 }} />}
@@ -164,7 +273,24 @@ export const ProfileHeader = React.memo(({
                     <Text style={s.username}>@{profile?.username ?? '—'}</Text>
                     {!!profile?.bio && <Text style={s.bio}>{profile.bio}</Text>}
 
-                    <View style={s.metaRow}>
+                    {isBirthdayToday && (
+                        <View style={s.metaRow}>
+                            {BIRTHDAY_GIFTS.map(gift => (
+                                <TouchableOpacity
+                                    key={gift.id}
+                                    style={[s.giftBtn, hasSentBirthdayCongrats && s.giftBtnDisabled]}
+                                    activeOpacity={hasSentBirthdayCongrats ? 1 : 0.75}
+                                    onPress={() => handleBirthdayPress(gift.id)}
+                                    disabled={hasSentBirthdayCongrats || isOwnProfile}
+                                >
+                                    <Text style={s.giftEmoji}>{gift.emoji}</Text>
+                                    {!!birthdayGiftCounts[gift.id] && <Text style={s.giftCount}>{birthdayGiftCounts[gift.id]}</Text>}
+                                </TouchableOpacity>
+                            ))}
+                        </View>
+                    )}
+
+                    <View style={[s.metaRow, isBirthdayToday && { display: 'none' }]}>
                         <View style={s.metaChip}>
                             {profile?.birthdate
                                 ? <Text style={{ fontSize: 12 }}>🎂</Text>
@@ -258,6 +384,7 @@ const s = StyleSheet.create({
     orb1: { width: 200, height: 200, top: -60, right: -40 },
     orb2: { width: 140, height: 140, bottom: -30, left: 30 },
     bannerSticker: { position: 'absolute', zIndex: 5 },
+    confettiLayer: { ...StyleSheet.absoluteFillObject, zIndex: 8 },
     bannerBtns: { position: 'absolute', top: 0, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, zIndex: 10 },
     glassBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(0,0,0,0.22)', alignItems: 'center', justifyContent: 'center' },
     headerCard: { marginHorizontal: 16, marginTop: -28, backgroundColor: Colors.surface, borderRadius: 24, padding: 18, borderWidth: 1, borderColor: Colors.divider, shadowColor: 'rgba(0,0,0,0.08)', shadowOpacity: 1, shadowRadius: 16, shadowOffset: { width: 0, height: 4 }, elevation: 4, marginBottom: 12 },
@@ -270,14 +397,23 @@ const s = StyleSheet.create({
     stat: { alignItems: 'center', gap: 2 },
     statValue: { fontSize: 20, fontFamily: Fonts.bold, color: Colors.textPrimary, letterSpacing: -0.5 },
     statLabel: { fontSize: 10, fontFamily: Fonts.semiBold, color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 },
-    nameSection: { marginBottom: 14 },
+    nameSection: { marginBottom: 14, position: 'relative' },
     nameRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 2 },
     displayName: { fontSize: 22, fontFamily: Fonts.bold, color: Colors.textPrimary, letterSpacing: -0.3 },
     username: { fontSize: 13, fontFamily: Fonts.medium, color: Colors.textMuted },
     bio: { fontSize: 14, fontFamily: Fonts.regular, color: Colors.textSecondary, lineHeight: 20, marginTop: 8 },
-    metaRow: { flexDirection: 'row', marginTop: 10 },
+    metaRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 7, marginTop: 10 },
     metaChip: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 4, backgroundColor: Colors.cardAlt, borderRadius: 20, borderWidth: 1, borderColor: Colors.divider },
     metaChipText: { fontSize: 11, fontFamily: Fonts.medium, color: Colors.textSecondary },
+    birthdayChip: { backgroundColor: '#FFF7ED', borderColor: '#FDBA74', paddingHorizontal: 12, paddingVertical: 6 },
+    birthdayChipDone: { backgroundColor: '#ECFDF5', borderColor: '#86EFAC' },
+    birthdayChipText: { color: '#C2410C', fontFamily: Fonts.bold },
+    giftBtn: { minWidth: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFF7ED', borderWidth: 1, borderColor: '#FDBA74', paddingHorizontal: 6 },
+    giftBtnDisabled: { opacity: 0.78, backgroundColor: '#F8FAFC', borderColor: Colors.divider },
+    giftEmoji: { fontSize: 17 },
+    giftCount: { position: 'absolute', right: -3, top: -5, minWidth: 15, height: 15, borderRadius: 8, overflow: 'hidden', textAlign: 'center', backgroundColor: '#7C3AED', color: '#fff', fontSize: 9, fontFamily: Fonts.bold },
+    birthdayEmoji: { position: 'absolute', right: 22, top: 2, fontSize: 34, zIndex: 20 },
+    confettiParticle: { position: 'absolute', top: -24, borderRadius: 3 },
     favRow: { gap: 10, marginBottom: 16 },
     favChip: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 14, backgroundColor: Colors.surface, borderRadius: 16, borderWidth: 1, borderColor: Colors.divider },
     favLabel: { fontSize: 10, fontFamily: Fonts.bold, color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 2 },

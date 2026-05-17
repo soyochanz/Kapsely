@@ -359,6 +359,7 @@ const CollaboratorsBar = React.memo(({ owner, members, invites, tint, isMember, 
 
         const collabList = validInvites.map((i: any) => ({
             ...i.profiles,
+            id: i.profiles?.id || i.user_id,
             isAccepted: i.status === 'accepted',
             isPending: i.status === 'pending'
         }));
@@ -995,6 +996,14 @@ function CapsuleDetailScreen() {
             return;
         }
 
+        const normalizedInvites = (invitesData || []).map((inv: any) => ({
+            ...inv,
+            profiles: inv.profiles ? {
+                ...inv.profiles,
+                id: inv.profiles.id || inv.user_id,
+            } : inv.profiles,
+        }));
+
         setCapsule({ ...capsuleData, delete_requests: delete_requests || [] });
 
         const cfg = timerConfigManager.getConfig(capsuleData.model);
@@ -1009,8 +1018,8 @@ function CapsuleDetailScreen() {
         // Enrich items with profiles if missing (from owner or collaborators)
         const profileMap: Record<string, any> = {};
         if (capsuleData.profiles) profileMap[capsuleData.owner_id] = capsuleData.profiles;
-        if (invitesData) {
-            invitesData.forEach((inv: any) => {
+        if (normalizedInvites) {
+            normalizedInvites.forEach((inv: any) => {
                 if (inv.status === 'accepted' && inv.profiles) {
                     profileMap[inv.user_id] = inv.profiles;
                 }
@@ -1031,9 +1040,9 @@ function CapsuleDetailScreen() {
         setIsLiked(is_liked);
 
         // Always set invites even if empty to avoid stale data
-        setInvites(invitesData || []);
-        if (invitesData) {
-            setAcceptedMembers(invitesData.filter((i: any) => i.status === 'accepted').map((i: any) => i.profiles));
+        setInvites(normalizedInvites);
+        if (normalizedInvites) {
+            setAcceptedMembers(normalizedInvites.filter((i: any) => i.status === 'accepted').map((i: any) => i.profiles));
         } else {
             setAcceptedMembers([]);
         }
@@ -1880,8 +1889,33 @@ function CapsuleDetailScreen() {
     ]);
 
     if (loading && !capsule) return (
-        <View style={[ds.root, { alignItems: 'center', justifyContent: 'center' }]}>
-            <ActivityIndicator color={D.purple} size="large" />
+        <View style={ds.root}>
+            <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
+            <View style={[ds.headerWrap, { paddingTop: insets.top + 6 }]}>
+                <View style={[StyleSheet.absoluteFill, { backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: D.border }]} />
+                <View style={[ds.headerBackBtn, { backgroundColor: D.surface }]} />
+                <View style={{ width: 118, height: 20, borderRadius: 10, backgroundColor: D.border }} />
+                <View style={[ds.headerBackBtn, { backgroundColor: D.surface }]} />
+            </View>
+            <ScrollView contentContainerStyle={{ paddingTop: insets.top + 118, paddingHorizontal: 22, paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
+                <View style={{ alignItems: 'center', gap: 14 }}>
+                    <View style={{ width: 170, height: 20, borderRadius: 10, backgroundColor: D.border }} />
+                    <View style={{ width: width * 0.62, height: width * 0.62, borderRadius: width * 0.31, backgroundColor: D.surface }} />
+                    <View style={{ width: 210, height: 42, borderRadius: 21, backgroundColor: D.border }} />
+                    <View style={{ width: 190, height: 28, borderRadius: 14, backgroundColor: D.border }} />
+                    <View style={{ width: '72%', height: 18, borderRadius: 9, backgroundColor: D.border }} />
+                    <View style={{ width: '86%', height: 82, borderRadius: 18, backgroundColor: D.surface, borderWidth: 1, borderColor: D.border }} />
+                </View>
+                <View style={{ marginTop: 32, gap: 12 }}>
+                    <View style={{ width: 150, height: 28, borderRadius: 14, backgroundColor: D.border }} />
+                    <View style={{ flexDirection: 'row', gap: 10 }}>
+                        {[0, 1, 2].map(i => <View key={i} style={{ flex: 1, height: 38, borderRadius: 19, backgroundColor: D.surface, borderWidth: 1, borderColor: D.border }} />)}
+                    </View>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                        {Array.from({ length: 9 }).map((_, i) => <View key={i} style={{ width: (width - 60) / 3, height: (width - 60) / 3, borderRadius: 16, backgroundColor: D.surface }} />)}
+                    </View>
+                </View>
+            </ScrollView>
         </View>
     );
     if (!capsule) return (
@@ -2272,6 +2306,7 @@ function CapsuleDetailScreen() {
                         onComplete={handleEpicComplete}
                         epicImageUrls={epicImageUrls}
                         modelKey={capsule?.model || 'basicred_kap'}
+                        modelLayout={capsule?.model_snapshot}
                         modelImg={timerConfigManager.getModelImageOpen(capsule?.model) || (MODEL_IMAGES_OPEN as any).basicred_kap}
                         closedModelImg={timerConfigManager.getModelImage(capsule?.model) || (MODEL_IMAGES as any).basicred_kap}
                     />

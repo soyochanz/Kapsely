@@ -14,6 +14,13 @@ interface CapsuleWithTimerProps {
     source: any; // Image source
     date: string; // The target date for the timer
     style?: any; // External dimensions (e.g. { width: 140, height: 140 })
+    modelLayout?: {
+        image_scale?: number | string | null;
+        image_scale_x?: number | string | null;
+        image_scale_y?: number | string | null;
+        image_offset_x?: number | string | null;
+        image_offset_y?: number | string | null;
+    } | null;
     chainId?: string | null; // Selected chain ID
     configOverride?: ModelTimerConfig; // Used by the calibration tool
     chainConfigOverride?: ModelChainConfig; // Used by the calibration tool
@@ -32,6 +39,7 @@ const CapsuleWithTimer = React.memo(({
     source,
     date,
     style,
+    modelLayout,
     chainId,
     configOverride,
     hideTimer,
@@ -89,6 +97,14 @@ const CapsuleWithTimer = React.memo(({
     };
 
     const { width, height } = layoutSize;
+    const resolvedModelLayout = modelLayout || timerConfigManager.getModel(modelKey);
+    const imageFrameSize = Math.max(1, Math.min(width || initialWidth || 300, height || initialHeight || 300));
+    const layoutOffsetScale = imageFrameSize / 300;
+    const imageScale = Math.max(0.5, Math.min(1.8, Number(resolvedModelLayout?.image_scale) || 1));
+    const imageScaleX = Math.max(0.5, Math.min(1.8, Number(resolvedModelLayout?.image_scale_x) || 1));
+    const imageScaleY = Math.max(0.5, Math.min(1.8, Number(resolvedModelLayout?.image_scale_y) || 1));
+    const imageOffsetX = Math.max(-80, Math.min(80, Number(resolvedModelLayout?.image_offset_x) || 0));
+    const imageOffsetY = Math.max(-80, Math.min(80, Number(resolvedModelLayout?.image_offset_y) || 0));
 
     // Calculate absolute position based on normalized config (0..1)
     const containerStyle = [styles.container, style];
@@ -138,11 +154,13 @@ const CapsuleWithTimer = React.memo(({
     });
 
     const activeTint = (MODEL_TINTS as Record<string, string>)[modelKey] || '#a269ff';
+    const isBirthdayCapsule = capsuleType === 'birthdaycap' || modelKey === 'birthday_candy_kap';
 
     return (
         <View style={containerStyle} onLayout={onLayout}>
             {/* Particles - Hide if lightweight or explicitly requested */}
             {width > 0 && !hideParticles && !lightweight && !isMinimal && <Particles activeTint={activeTint} capsuleType={capsuleType} />}
+            {width > 0 && isBirthdayCapsule && <BirthdayConfetti />}
 
             {/* Shadow: behind everything via zIndex */}
             {width > 0 && (
@@ -161,7 +179,15 @@ const CapsuleWithTimer = React.memo(({
                 style={[
                     styles.image, 
                     width > 0 ? { width, height } : {}, 
-                    { zIndex: 1 }
+                    {
+                        zIndex: 1,
+                        transform: [
+                            { translateX: imageOffsetX * layoutOffsetScale },
+                            { translateY: imageOffsetY * layoutOffsetScale },
+                            { scaleX: imageScale * imageScaleX },
+                            { scaleY: imageScale * imageScaleY },
+                        ],
+                    }
                 ]}
                 contentFit="contain"
                 cachePolicy="memory-disk"
@@ -181,7 +207,7 @@ const CapsuleWithTimer = React.memo(({
                     />
 
                     {/* Screen Glint Reflection overlay - Skip for performance if lightweight */}
-                    {!lightweight && !disableAnimations && !isMinimal && (
+                    {!isOpened && !lightweight && !disableAnimations && !isMinimal && (
                         <Animated.View style={{
                             position: 'absolute',
                             top: 0, left: 0, right: 0, bottom: 0,
@@ -224,6 +250,36 @@ const CapsuleWithTimer = React.memo(({
 
 export default CapsuleWithTimer;
 
+const BirthdayConfetti = React.memo(() => {
+    const pieces: Array<[string, `${number}%`, `${number}%`, `${number}deg`]> = [
+        ['#FF5DA2', '9%', '17%', '8deg'], ['#7AD7FF', '19%', '9%', '-14deg'],
+        ['#FFD166', '81%', '14%', '20deg'], ['#8B5CF6', '91%', '31%', '-18deg'],
+        ['#34D399', '84%', '72%', '11deg'], ['#FF8A4C', '12%', '76%', '-20deg'],
+        ['#F472B6', '29%', '88%', '16deg'], ['#60A5FA', '70%', '91%', '-10deg'],
+        ['#FDE68A', '5%', '48%', '25deg'], ['#C084FC', '94%', '54%', '-24deg'],
+    ];
+
+    return (
+        <View pointerEvents="none" style={styles.birthdayConfetti}>
+            {pieces.map(([color, left, top, rotate], index) => (
+                <View
+                    key={`${color}-${index}`}
+                    style={[
+                        styles.confettiPiece,
+                        {
+                            backgroundColor: color,
+                            left,
+                            top,
+                            transform: [{ rotate }],
+                            borderRadius: index % 3 === 0 ? 999 : 2,
+                        },
+                    ]}
+                />
+            ))}
+        </View>
+    );
+});
+
 const styles = StyleSheet.create({
     container: {
         position: 'relative',
@@ -240,5 +296,18 @@ const styles = StyleSheet.create({
         borderRadius: 1000,
         backgroundColor: 'rgba(0,0,0,0.05)', // More diffuse
         transform: [{ scaleY: 0.2 }],
+    },
+    birthdayConfetti: {
+        ...StyleSheet.absoluteFillObject,
+        zIndex: 4,
+    },
+    confettiPiece: {
+        position: 'absolute',
+        width: 7,
+        height: 12,
+        shadowColor: '#000',
+        shadowOpacity: 0.08,
+        shadowRadius: 4,
+        shadowOffset: { width: 0, height: 1 },
     }
 });

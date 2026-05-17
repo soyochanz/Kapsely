@@ -16,8 +16,8 @@ import { Notification } from '../data/mockNotifications';
 import NotificationItem from './NotificationItem';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const TRIGGER_DELETE = SCREEN_WIDTH * 0.28;
-const TRIGGER_READ   = SCREEN_WIDTH * 0.22;
+const TRIGGER_DELETE = SCREEN_WIDTH * 0.22;
+const TRIGGER_READ   = SCREEN_WIDTH * 0.18;
 
 interface Props {
     notification: Notification;
@@ -69,14 +69,17 @@ export default function SwipeableNotificationItem({
 
     // ── Gesture ───────────────────────────────────────────────────────────────
     const gesture = Gesture.Pan()
-        .activeOffsetX([-25, 25])
-        .onBegin(() => {
+        .activeOffsetX([-14, 14])
+        .failOffsetY([-90, 90])
+        .minDistance(8)
+        .onStart(() => {
             if (onSwipeStart) runOnJS(onSwipeStart)();
         })
         .onUpdate((e) => {
+            if (Math.abs(e.translationY) > Math.abs(e.translationX) * 1.25) return;
             // Resist right swipe slightly
             if (e.translationX > 0) {
-                translateX.value = e.translationX * 0.65;
+                translateX.value = e.translationX * 0.85;
             } else {
                 translateX.value = e.translationX;
             }
@@ -96,8 +99,8 @@ export default function SwipeableNotificationItem({
             // If gesture was cancelled / stolen by ScrollView, snap back
             if (!success) {
                 translateX.value = withSpring(0, { damping: 22, stiffness: 260 });
+                if (onSwipeEnd) runOnJS(onSwipeEnd)();
             }
-            if (onSwipeEnd) runOnJS(onSwipeEnd)();
         });
 
     // ── Animated styles ───────────────────────────────────────────────────────

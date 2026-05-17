@@ -36,7 +36,7 @@ export interface Drop {
     id: string;
     name: string;
     start_date: string;
-    end_date: string;
+    end_date?: string | null;
     is_active: boolean;
     created_at?: string;
 }
@@ -66,6 +66,7 @@ class TimerConfigManager {
     private listeners: (() => void)[] = [];
     private initialized = false;
     public models: any[] = [];
+    public lastError: any = null;
 
     constructor() {
         this.init = this.init.bind(this);
@@ -209,12 +210,17 @@ class TimerConfigManager {
 
     async saveModel(model: any) {
         try {
+            this.lastError = null;
             const { error } = await supabase.from('models').upsert(model, { onConflict: 'id' });
-            if (error) throw error;
+            if (error) {
+                this.lastError = error;
+                throw error;
+            }
             await this.refresh();
             return true;
         } catch (e) {
             console.error('Failed to save model', e);
+            this.lastError = e;
             return false;
         }
     }
@@ -243,9 +249,30 @@ class TimerConfigManager {
         }
     }
 
+    async deleteChain(chainId: string) {
+        try {
+            this.lastError = null;
+            await supabase.from('model_chain_configs').delete().eq('chain_id', chainId);
+            const { error } = await supabase.from('chains').delete().eq('id', chainId);
+            if (error) {
+                this.lastError = error;
+                throw error;
+            }
+            await this.refresh();
+            return true;
+        } catch (e) {
+            console.error('Failed to delete chain', e);
+            this.lastError = e;
+            return false;
+        }
+    }
+
     async saveDrop(drop: Partial<Drop>) {
         try {
-            const { error } = await supabase.from('drops').upsert(drop, { onConflict: 'id' });
+            const { id, ...insertPayload } = drop as any;
+            const { error } = id
+                ? await supabase.from('drops').upsert({ id, ...insertPayload }, { onConflict: 'id' })
+                : await supabase.from('drops').insert(insertPayload);
             if (error) throw error;
             await this.refresh();
             return true;
@@ -263,6 +290,29 @@ class TimerConfigManager {
             return true;
         } catch (e) {
             console.error('Failed to delete drop', e);
+            return false;
+        }
+    }
+
+    async deleteModel(modelId: string) {
+        try {
+            this.lastError = null;
+            // 1. Delete associated configs first (if no cascade)
+            await supabase.from('model_configs').delete().eq('model_id', modelId);
+            await supabase.from('model_chain_configs').delete().eq('model_id', modelId);
+            
+            // 2. Delete the model itself
+            const { error } = await supabase.from('models').delete().eq('id', modelId);
+            if (error) {
+                this.lastError = error;
+                throw error;
+            }
+            
+            await this.refresh();
+            return true;
+        } catch (e) {
+            console.error('Failed to delete model', e);
+            this.lastError = e;
             return false;
         }
     }

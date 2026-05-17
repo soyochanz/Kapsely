@@ -1,6 +1,10 @@
 import { Fonts } from '../theme';
 
 export const TEXT_STYLES = [
+    { id: 'classic_bold', label: 'Bold', fontFamily: 'Poppins_800ExtraBold' },
+    { id: 'minimal', label: 'Minimal', fontFamily: 'Inter_300Light' },
+    { id: 'rounded', label: 'Rounded', fontFamily: 'Outfit_700Bold' },
+    { id: 'script', label: 'Script', fontFamily: 'Lobster_400Regular' },
     { id: 'marker', label: '🖍 Marker', fontFamily: 'PermanentMarker_400Regular' },
     { id: 'bangers', label: '💥 Bang', fontFamily: 'Bangers_400Regular' },
     { id: 'caveat', label: '✍️ Pen', fontFamily: 'Caveat_700Bold' },

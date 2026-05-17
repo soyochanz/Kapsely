@@ -266,18 +266,10 @@ export const CapsuleDetail: React.FC<CapsuleDetailProps> = ({ capsule: initialCa
                 >
                    <div className="sealed-background-glow" />
                     <div className="hero-model-container" style={{ position: 'relative', width: '100%', height: '400px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onContextMenu={e => e.preventDefault()}>
-                        {/* Blurred Content Background for Sealed Detail View */}
+                        {/* Sealed web view never renders protected media URLs. */}
                         {isClosed && (capsule.cover_url || (capsule.collage_items?.length > 0)) && (
                           <div className="sealed-content-blur-container" style={{ position: 'absolute', inset: 0, zIndex: 0 }}>
-                             {capsule.cover_url ? (
-                                <img src={capsule.cover_url} className="blurred-img-security" style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" draggable={false} />
-                              ) : (
-                                <div className="collage-grid-blurred" style={{ width: '100%', height: '100%' }}>
-                                  {capsule.collage_items?.slice(0, 4).map((item: any, i: number) => (
-                                    <img key={i} src={item.thumbnail_url || item.media_url} className="blurred-img-security" style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" draggable={false} />
-                                  ))}
-                                </div>
-                              )}
+                              <div className="secure-locked-art" />
                               <div className="security-overlay" />
                           </div>
                         )}
@@ -294,6 +286,7 @@ export const CapsuleDetail: React.FC<CapsuleDetailProps> = ({ capsule: initialCa
                             modelKey={capsule.model}
                             source={getModelImage(capsule.model)}
                             date={capsule.opens_at}
+                            modelLayout={capsule.model_snapshot}
                             chainId={capsule.chain_id}
                             style={{ width: '100%', height: '100%' }}
                             isOpened={false}
@@ -333,6 +326,7 @@ export const CapsuleDetail: React.FC<CapsuleDetailProps> = ({ capsule: initialCa
                         modelKey={capsule.model}
                         source={getModelImageOpen(capsule.model)}
                         date={capsule.opens_at}
+                        modelLayout={capsule.model_snapshot}
                         chainId={capsule.chain_id}
                         style={{ width: 220, height: 220 }}
                         isOpened={true}

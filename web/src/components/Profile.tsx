@@ -3,12 +3,13 @@ import { supabase } from '../lib/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Grid, Unlock, Lock, Settings, Heart, MessageCircle, 
-  Edit3, MapPin, Calendar, X, Clock, ShieldCheck, Share2, Plus
+  Edit3, MapPin, Calendar, X, Share2, Plus
 } from 'lucide-react';
 import { getModelImage, getModelImageOpen } from '../constants/models';
 import { EditProfile } from './EditProfile';
 import CapsuleWithTimer from './CapsuleWithTimer';
 import { format } from 'date-fns';
+import VerifiedBadge from './VerifiedBadge';
 
 interface ProfileProps {
   userId: string;
@@ -38,26 +39,14 @@ export const Profile: React.FC<ProfileProps> = ({
   const fetchProfileData = async () => {
     try {
       setLoading(true);
-      const { data: profileData, error: profileError } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .single();
+      const { data, error } = await supabase.rpc('get_profile_data_unified', {
+        p_target_id: userId
+      });
 
-      if (profileError) throw profileError;
-      setProfile(profileData);
-
-      const { data: capsuleData, error: capsuleError } = await supabase
-        .from('capsules')
-        .select(`
-          *,
-          profiles:owner_id(username, display_name, avatar_url, is_verified)
-        `)
-        .eq('owner_id', userId)
-        .order('created_at', { ascending: false });
-
-      if (capsuleError) throw capsuleError;
-      setCapsules(capsuleData || []);
+      if (error) throw error;
+      setProfile(data?.profile || null);
+      setCapsules(data?.capsules || []);
+      setIsFollowing(!!data?.is_following);
     } catch (error) {
       console.error('Error fetching profile:', error);
     } finally {
@@ -118,7 +107,7 @@ export const Profile: React.FC<ProfileProps> = ({
          <button className="back-circle-btn" onClick={onClose}><X /></button>
          <div className="nav-user-title">
             <strong>{profile?.username}</strong>
-            {profile?.is_verified && <ShieldCheck size={14} color="var(--primary)" fill="var(--primary-light)" />}
+            {profile?.is_verified && <VerifiedBadge size={14} />}
          </div>
          <button className="back-circle-btn"><Share2 size={20} /></button>
       </div>
@@ -138,7 +127,7 @@ export const Profile: React.FC<ProfileProps> = ({
           <div className="profile-name-group">
             <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
                <h1>{profile?.display_name || profile?.username}</h1>
-               {profile?.is_verified && <ShieldCheck size={24} color="var(--primary)" fill="var(--primary-light)" />}
+               {profile?.is_verified && <VerifiedBadge size={24} />}
             </div>
             
             <div className="profile-actions-row">
@@ -164,7 +153,7 @@ export const Profile: React.FC<ProfileProps> = ({
           </div>
           
           <div className="profile-stats-premium">
-            <div className="stat-item"><strong>{capsules.length}</strong><span>capsules</span></div>
+            <div className="stat-item"><strong>{profile?.capsules_count ?? capsules.length}</strong><span>capsules</span></div>
             <div className="stat-item"><strong>{profile?.followers_count || 0}</strong><span>followers</span></div>
             <div className="stat-item"><strong>{profile?.following_count || 0}</strong><span>following</span></div>
           </div>
@@ -194,7 +183,9 @@ export const Profile: React.FC<ProfileProps> = ({
       <div className="profile-grid-premium">
         {filteredCapsules.map((capsule, idx) => {
           const isClosed = capsule.status === 'sealed';
-          const hasMedia = !!(capsule.cover_url || (capsule.collage_items && capsule.collage_items.length > 0));
+          const collageItems = capsule.collage_items || capsule.fallback_media || [];
+          const effectiveCover = capsule.effective_cover_url || capsule.cover_url;
+          const hasMedia = !!(effectiveCover || collageItems.length > 0);
           const timeLeft = isClosed ? calculateTimeLeft(capsule.opens_at) : null;
 
           return (
@@ -210,22 +201,24 @@ export const Profile: React.FC<ProfileProps> = ({
                 {hasMedia ? (
                    <div className="grid-media-mode" style={{ width: '100%', height: '100%', position: 'relative' }}>
                       {/* Background (Blurred if sealed) */}
-                      <div className={`media-background ${isClosed ? 'is-blurred' : ''}`} style={{ width: '100%', height: '100%' }}>
-                        {capsule.cover_url ? (
+                      <div className={`media-background ${isClosed ? 'is-blurred secure-locked-media' : ''}`} style={{ width: '100%', height: '100%' }}>
+                        {isClosed ? (
+                          <div className="secure-locked-art" />
+                        ) : effectiveCover ? (
                           <img 
-                            src={capsule.cover_url} 
-                            className={isClosed ? "blurred-img-security" : "collage-img"} 
+                            src={effectiveCover} 
+                            className="collage-img" 
                             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                             alt="" 
                           />
                         ) : (
-                          <div className={isClosed ? "collage-grid-blurred" : `collage-grid items-${Math.min(capsule.collage_items?.length || 0, 4)}`} style={{ height: '100%' }}>
-                            {capsule.collage_items?.slice(0, 4).map((item: any, i: number) => (
+                          <div className={`collage-grid items-${Math.min(collageItems.length || 0, 4)}`} style={{ height: '100%' }}>
+                            {collageItems.slice(0, 4).map((item: any, i: number) => (
                               <img 
                                 key={i} 
                                 src={item.thumbnail_url || item.media_url} 
-                                className={isClosed ? "blurred-img-security" : "collage-img"} 
-                                style={{ width: '100%', height: '100%', objectFit: 'cover', border: !isClosed ? '0.5px solid rgba(255,255,255,0.3)' : 'none' }}
+                                className="collage-img" 
+                                style={{ width: '100%', height: '100%', objectFit: 'cover', border: '0.5px solid rgba(255,255,255,0.3)' }}
                                 alt="" 
                               />
                             ))}
@@ -242,6 +235,7 @@ export const Profile: React.FC<ProfileProps> = ({
                           modelKey={capsule.model}
                           source={isClosed ? getModelImage(capsule.model) : getModelImageOpen(capsule.model)}
                           date={capsule.opens_at}
+                          modelLayout={capsule.model_snapshot}
                           style={{ width: '100%', height: '100%' }}
                           hideTimer={true}
                           hideParticles={true}
@@ -256,8 +250,9 @@ export const Profile: React.FC<ProfileProps> = ({
                       modelKey={capsule.model}
                       source={isClosed ? getModelImage(capsule.model) : getModelImageOpen(capsule.model)}
                       date={capsule.opens_at}
+                      modelLayout={capsule.model_snapshot}
                       chainId={capsule.chain_id}
-                      style={{ width: '70px', height: '70px' }}
+                      style={{ width: '82%', height: '82%' }}
                       isOpened={!isClosed}
                       lightweight={true}
                     />
@@ -275,6 +270,14 @@ export const Profile: React.FC<ProfileProps> = ({
                 <div className="grid-card-hover">
                    <div className="hover-stat"><Heart size={18} fill="white" /> {capsule.likes_count || 0}</div>
                    <div className="hover-stat"><MessageCircle size={18} fill="white" /> {capsule.comments_count || 0}</div>
+                </div>
+              </div>
+              <div className="grid-card-meta">
+                <strong title={capsule.title}>{capsule.title || 'Untitled'}</strong>
+                <div className="grid-card-stats">
+                  <span className="heart-stat">♥ {capsule.likes_count || 0}</span>
+                  <span className="comment-stat">● {capsule.comments_count || 0}</span>
+                  <span className="image-stat">▧ {capsule.posts_count || capsule.items_count || collageItems.length || 0}</span>
                 </div>
               </div>
             </motion.div>
@@ -335,9 +338,15 @@ export const Profile: React.FC<ProfileProps> = ({
         .profile-tabs-premium button { padding: 18px 0; font-size: 12px; font-weight: 800; letter-spacing: 1px; color: var(--text-muted); display: flex; align-items: center; gap: 10px; border-top: 2px solid transparent; margin-top: -1px; }
         .profile-tabs-premium button.active { color: var(--text); border-top-color: var(--text); }
 
-        .profile-grid-premium { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; }
-        .grid-capsule-card { aspect-ratio: 1; border-radius: 24px; overflow: hidden; cursor: pointer; position: relative; }
-        .grid-card-media { width: 100%; height: 100%; position: relative; display: flex; align-items: center; justify-content: center; }
+        .profile-grid-premium { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+        .grid-capsule-card { border-radius: 8px; overflow: hidden; cursor: pointer; position: relative; background: white; border: 1px solid rgba(232,228,245,0.75); }
+        .grid-card-media { width: 100%; aspect-ratio: 1; position: relative; display: flex; align-items: center; justify-content: center; }
+        .grid-card-meta { padding: 9px 10px 10px; background: white; }
+        .grid-card-meta strong { display: block; font-size: 13px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 6px; }
+        .grid-card-stats { display: flex; gap: 8px; align-items: center; font-size: 12px; font-weight: 800; }
+        .heart-stat { color: #F43F5E; }
+        .comment-stat { color: #0EA5E9; }
+        .image-stat { color: #A855F7; }
         .grid-model-full-wrap { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; transform: translateY(5px); }
         .grid-sealed-overlay { position: absolute; inset: 0; background: rgba(15,11,30,0.15); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: white; pointer-events: none; }
         .grid-timer { display: none; }

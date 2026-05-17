@@ -32,29 +32,19 @@ export const ChatList: React.FC<ChatListProps> = ({ onSelectChat, currentUserId 
   const fetchChats = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase
-        .from('chats')
-        .select(`
-          id,
-          updated_at,
-          participant1:participant1_id(id, username, avatar_url, display_name, is_verified),
-          participant2:participant2_id(id, username, avatar_url, display_name, is_verified),
-          last_message:messages(content, created_at)
-        `)
-        .or(`participant1_id.eq.${currentUserId},participant2_id.eq.${currentUserId}`)
-        .order('updated_at', { ascending: false });
+      const { data, error } = await supabase.rpc('get_chat_list_data');
 
       if (error) throw error;
 
-      const processedChats = (data as any[]).map(chat => {
-        const otherParticipant = chat.participant1.id === currentUserId ? chat.participant2 : chat.participant1;
-        const lastMsg = chat.last_message?.[0];
-        return {
-          ...chat,
-          otherParticipant,
-          lastMsg
-        };
-      });
+      const processedChats = (data?.chats || []).map((chat: any) => ({
+        id: chat.conversation_id,
+        conversation_id: chat.conversation_id,
+        updated_at: chat.sort_at,
+        otherParticipant: chat.other_user,
+        lastMsg: chat.last_message,
+        unread_count: chat.unread_count,
+        is_read: Number(chat.unread_count || 0) === 0
+      }));
 
       setChats(processedChats);
     } catch (err) {
@@ -133,7 +123,7 @@ export const ChatList: React.FC<ChatListProps> = ({ onSelectChat, currentUserId 
                     <p className="chat-item-preview">
                       {chat.lastMsg?.content || 'Started a conversation'}
                     </p>
-                    {!chat.is_read && <div className="unread-indicator" />}
+                    {chat.unread_count > 0 && <div className="unread-indicator" />}
                   </div>
                 </div>
               </motion.div>

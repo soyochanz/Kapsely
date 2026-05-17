@@ -197,6 +197,7 @@ const CapsuleEntry = React.memo(({ item, onSelect }: { item: any; onSelect: (cap
                     modelKey={item.model}
                     source={{ uri: modelImg }}
                     date={item.opens_at}
+                    modelLayout={item.model_snapshot}
                     chainId={item.chain_id}
                     capsuleType={isBornOpen ? 'opencap' : item.type}
                     style={styles.cardImage}

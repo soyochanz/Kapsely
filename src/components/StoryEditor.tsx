@@ -23,7 +23,7 @@ const { width, height } = Dimensions.get('window');
 // Tamaño del área de impacto para detectar si el item está "sobre" la X
 const TRASH_HIT_SIZE = 70;
 // Posición fija desde el fondo del canvas (px desde abajo)
-const TRASH_BOTTOM_OFFSET = 60;
+const TRASH_BOTTOM_OFFSET = 128;
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -204,6 +204,7 @@ export default function StoryEditor({
     const [selectedTextId, setSelectedTextId] = useState<string | null>(null);
     const [selectedStickerId, setSelectedStickerId] = useState<string | null>(null);
     const [capsuleItem, setCapsuleItem] = useState<any>(null);
+    const [capsuleDisplay, setCapsuleDisplay] = useState<'timer' | 'likes' | 'followers' | 'content'>('timer');
 
     const [currentText, setCurrentText] = useState('');
     const [textColor, setTextColor] = useState('#ffffff');
@@ -299,8 +300,9 @@ export default function StoryEditor({
         if (capsuleItem) return;
         setCapsuleItem({
             id: 'capsule-design',
-            model: item?.model || 'standard',
-            x: 0.5, y: 0.8,
+            model: item?.capsule?.model || item?.model || 'standard',
+            title: item?.capsule?.title || '',
+            x: 0.5, y: 0.58,
             scale: new Animated.Value(1),
             rotation: new Animated.Value(0),
             onUpdatePosition: (id: string, x: number, y: number) => {
@@ -350,8 +352,9 @@ export default function StoryEditor({
             } : null,
             capsuleDesign: capsuleItem ? {
                 model: capsuleItem.model,
+                display: capsuleDisplay,
                 scale: capsuleItem.scale?._value ?? 1, rotation: capsuleItem.rotation?._value ?? 0,
-                x: capsuleItem.x || 0.5, y: capsuleItem.y || 0.8,
+                x: capsuleItem.x || 0.5, y: capsuleItem.y || 0.58,
             } : null,
         };
         onConfirm(metadata);
@@ -444,13 +447,31 @@ export default function StoryEditor({
                         onDragStateChange={handleDragStateChange}
                         onDelete={() => setCapsuleItem(null)}
                         initialX={(capsuleItem.x || 0.5) * width}
-                        initialY={(capsuleItem.y || 0.8) * height}
+                        initialY={(capsuleItem.y || 0.58) * height}
                     >
-                        <Image 
-                            source={{ uri: timerConfigManager.getModelImage(capsuleItem.model) || MODEL_IMAGES[capsuleItem.model] }} 
-                            style={{ width: 120, height: 120 }} 
-                            contentFit="contain" 
-                        />
+                        <View style={st.capsuleSticker}>
+                            <Image
+                                source={{ uri: timerConfigManager.getModelImage(capsuleItem.model) || MODEL_IMAGES[capsuleItem.model] }}
+                                style={st.capsuleStickerImg}
+                                contentFit="contain"
+                            />
+                            <View style={st.capsuleDisplayBadge}>
+                                <Ionicons
+                                    name={capsuleDisplay === 'timer' ? 'time' : capsuleDisplay === 'likes' ? 'heart' : capsuleDisplay === 'followers' ? 'people' : 'images'}
+                                    size={11}
+                                    color="#fff"
+                                />
+                                <Text style={st.capsuleDisplayText}>
+                                    {capsuleDisplay === 'timer'
+                                        ? '23m'
+                                        : capsuleDisplay === 'likes'
+                                            ? `${item?.capsule?.likes_count ?? item?.likes_count ?? 0}`
+                                            : capsuleDisplay === 'followers'
+                                                ? `${item?.capsule?.followers_count ?? item?.capsule?.participant_count ?? 0}`
+                                                : `${item?.capsule?.posts_count ?? item?.capsule?.capsule_items_count ?? 0}`}
+                                </Text>
+                            </View>
+                        </View>
                     </DraggableItem>
                 )}
 
@@ -546,6 +567,22 @@ export default function StoryEditor({
                             <Ionicons name="cube" size={24} color="#FFD700" />
                         </View>
                         <Text style={st.toolLabel}>{t('create.capsule')}</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={[st.modernToolBtn, !capsuleItem && { opacity: 0.45 }]}
+                        activeOpacity={0.7}
+                        disabled={!capsuleItem}
+                        onPress={() => {
+                            const modes: Array<'timer' | 'likes' | 'followers' | 'content'> = ['timer', 'likes', 'followers', 'content'];
+                            const idx = modes.indexOf(capsuleDisplay);
+                            setCapsuleDisplay(modes[(idx + 1) % modes.length]);
+                        }}
+                    >
+                        <View style={[st.toolIconCircle, { backgroundColor: 'rgba(255,255,255,0.12)' }]}>
+                            <Ionicons name="albums" size={20} color="#fff" />
+                        </View>
+                        <Text style={st.toolLabel}>{capsuleDisplay}</Text>
                     </TouchableOpacity>
                 </ScrollView>
 
@@ -753,6 +790,23 @@ const st = StyleSheet.create({
         shadowOffset: { width: 0, height: 4 }, elevation: 6,
     },
     locationText: { color: '#fff', fontFamily: Fonts.bold, fontSize: 15 },
+    capsuleSticker: { width: 132, height: 132, alignItems: 'center', justifyContent: 'center' },
+    capsuleStickerImg: { width: 118, height: 118 },
+    capsuleDisplayBadge: {
+        position: 'absolute',
+        bottom: 12,
+        alignSelf: 'center',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        paddingHorizontal: 9,
+        paddingVertical: 5,
+        borderRadius: 14,
+        backgroundColor: 'rgba(0,0,0,0.58)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.25)',
+    },
+    capsuleDisplayText: { color: '#fff', fontSize: 11, fontFamily: Fonts.bold },
 
     // ── Delete zone ────────────────────────────────────────────────────────
     deleteZone: {
@@ -772,11 +826,11 @@ const st = StyleSheet.create({
     deleteGrad: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
     // ── Modern Redesign Styles ─────────────────────────────────────────────
-    toolbar: { 
+    toolbar: {
         position: 'absolute', bottom: 0, left: 0, right: 0,
         zIndex: 50,
-        borderTopLeftRadius: 32, borderTopRightRadius: 32, 
-        paddingBottom: Platform.OS === 'ios' ? 30 : 15,
+        borderTopLeftRadius: 22, borderTopRightRadius: 22,
+        paddingBottom: Platform.OS === 'ios' ? 16 : 10,
         borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
         overflow: 'hidden'
     },
@@ -784,27 +838,27 @@ const st = StyleSheet.create({
         position: 'absolute', top: -40, left: '20%', right: '20%', height: 80,
         backgroundColor: Colors.primary, opacity: 0.12, borderRadius: 40,
     },
-    toolsContent: { padding: 20, gap: 15 },
-    modernToolBtn: { alignItems: 'center', gap: 8, width: 80 },
+    toolsContent: { paddingHorizontal: 14, paddingTop: 12, paddingBottom: 8, gap: 10 },
+    modernToolBtn: { alignItems: 'center', gap: 5, width: 62 },
     toolIconCircle: {
-        width: 56, height: 56, borderRadius: 28,
+        width: 42, height: 42, borderRadius: 21,
         backgroundColor: 'rgba(255,255,255,0.08)',
         alignItems: 'center', justifyContent: 'center',
         borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
     },
-    toolLabel: { color: '#fff', fontSize: 12, fontFamily: Fonts.semiBold },
+    toolLabel: { color: '#fff', fontSize: 10, fontFamily: Fonts.semiBold },
 
-    actions: { flexDirection: 'row', paddingHorizontal: 20, gap: 12, marginTop: 5 },
-    modernCancelBtn: { 
-        flex: 1, height: 54, borderRadius: 18, 
+    actions: { flexDirection: 'row', paddingHorizontal: 14, gap: 10, marginTop: 2 },
+    modernCancelBtn: {
+        flex: 1, height: 44, borderRadius: 16,
         backgroundColor: 'rgba(255,255,255,0.06)',
         alignItems: 'center', justifyContent: 'center',
         borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)'
     },
-    cancelText: { color: 'rgba(255,255,255,0.7)', fontFamily: Fonts.semiBold, fontSize: 15 },
-    modernConfirmBtn: { flex: 2, height: 54, borderRadius: 18, overflow: 'hidden' },
+    cancelText: { color: 'rgba(255,255,255,0.7)', fontFamily: Fonts.semiBold, fontSize: 13 },
+    modernConfirmBtn: { flex: 2, height: 44, borderRadius: 16, overflow: 'hidden' },
     confirmGrad: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
-    confirmText: { color: '#fff', fontFamily: Fonts.bold, fontSize: 15 },
+    confirmText: { color: '#fff', fontFamily: Fonts.bold, fontSize: 13 },
 
     // ── Modal ──────────────────────────────────────────────────────────────
     modalRoot: { flex: 1, padding: 20, justifyContent: 'center' },

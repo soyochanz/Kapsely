@@ -26,6 +26,7 @@ interface EpicOpeningProps {
     modelImg?: string; 
     closedModelImg?: string;
     modelKey?: string;
+    modelLayout?: any;
     tint?: string;
     countdown?: number;
 }
@@ -34,7 +35,7 @@ const PARTICLES_COUNT = 30;
 const OUTBURST_COUNT = 15;
 
 export const EpicOpening = ({
-    capsuleTitle, onComplete, epicImageUrls = [], modelImg, closedModelImg, modelKey = 'basicred_kap', tint, countdown = 10
+    capsuleTitle, onComplete, epicImageUrls = [], modelImg, closedModelImg, modelKey = 'basicred_kap', modelLayout, tint, countdown = 10
 }: EpicOpeningProps) => {
     const { t } = useTranslation();
     const [phase, setPhase] = useState<Phase>('intro_quote');
@@ -418,6 +419,7 @@ export const EpicOpening = ({
                             modelKey={modelKey}
                             source={{ uri: (phase === 'outburst' || phase === 'opened') ? modelImg : closedModelImg }}
                             date={new Date().toISOString()}
+                            modelLayout={modelLayout}
                             style={styles.capsuleModel}
                             hideTimer
                             hideParticles

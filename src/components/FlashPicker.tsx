@@ -10,6 +10,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useTranslation } from 'react-i18next';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../lib/supabase';
 import { Colors, Fonts, Spacing } from '../theme';
 import { MODEL_IMAGES } from '../constants/models';
@@ -37,7 +38,8 @@ export const FlashPicker = React.memo(({
     onStoryPublished
 }: FlashPickerProps) => {
     const { t } = useTranslation();
-    const [pickerStep, setPickerStep] = useState<'list' | 'select' | 'animation' | 'edit'>('list');
+    const [pickerStep, setPickerStep] = useState<'source' | 'list' | 'select' | 'animation' | 'edit'>('source');
+    const [capsuleMode, setCapsuleMode] = useState<'opened' | 'sealed' | null>(null);
     const [userCapsules, setUserCapsules] = useState<any[]>([]);
     const [selectedPickerCapsule, setSelectedPickerCapsule] = useState<any>(null);
     const [pickerItems, setPickerItems] = useState<any[]>([]);
@@ -57,19 +59,6 @@ export const FlashPicker = React.memo(({
     const loadUserCapsules = async () => {
         if (!currentUserId) return;
         
-        try {
-            const globalPickKey = `@flash_global_pick_${currentUserId}`;
-            const saved = await AsyncStorage.getItem(globalPickKey);
-            if (saved) {
-                const { capsule: savedCap, item: savedItem } = JSON.parse(saved);
-                setSelectedPickerCapsule(savedCap);
-                setRandomPreviewItem(savedItem);
-                setSearching(false);
-                setPickerStep('animation');
-                return;
-            }
-        } catch (e) { }
-
         const participantIds = Array.from(participantCapsules);
         const conditions = [`owner_id.eq.${currentUserId}`];
         if (participantIds.length > 0) conditions.push(`id.in.(${participantIds.join(',')})`);
@@ -79,23 +68,111 @@ export const FlashPicker = React.memo(({
             .or(conditions.join(','))
             .order('created_at', { ascending: false });
             
-        if (data && data.length > 0) {
-            const filtered = data.filter(cap => 
-                cap.status === 'sealed' || (cap.status === 'opened' && cap.duration_days === 0)
-            );
-            
-            if (filtered.length > 0) {
-                setUserCapsules(filtered);
-                setPickerStep('list');
-            } else {
-                Alert.alert(t('common.warning'), t('feed.no_capsules_yet') || 'No capsules available for sharing.');
-                onClose();
-            }
-        } else {
-            Alert.alert(t('common.warning'), t('feed.no_capsules_yet'));
-            onClose();
-        }
+        const filtered = (data || []).filter(cap => cap.status === 'sealed' || cap.status === 'opened');
+        setUserCapsules(filtered);
+        setPickerStep('source');
     };
+
+    const openOpenedCapsules = useCallback(() => {
+        if (!userCapsules.some(cap => cap.status === 'opened')) {
+            Alert.alert(t('common.warning'), t('feed.no_capsules_yet') || 'No tienes capsulas abiertas disponibles.');
+            return;
+        }
+        setCapsuleMode('opened');
+        setPickerStep('list');
+    }, [userCapsules, t]);
+
+    const openSealedCapsules = useCallback(async () => {
+        if (!currentUserId) return;
+        const lockKey = `@flash_sealed_lock_${currentUserId}`;
+        const saved = await AsyncStorage.getItem(lockKey);
+        if (saved && Number(saved) > Date.now()) {
+            Alert.alert(t('common.warning'), t('feed.story_cooldown_active') || 'Ya has usado el flash de cápsulas cerradas. Vuelve en 48h.');
+            return;
+        }
+        const sealedCapsules = userCapsules.filter(cap => cap.status === 'sealed');
+        if (!sealedCapsules.length) {
+            Alert.alert(t('common.warning'), t('feed.no_capsules_yet') || 'No tienes cápsulas cerradas disponibles.');
+            return;
+        }
+        const ids = sealedCapsules.map(c => c.id);
+        const { data: items } = await supabase
+            .from('capsule_items')
+            .select('*, capsules:capsule_id(*)')
+            .in('capsule_id', ids)
+            .eq('media_type', 'image');
+        if (!items?.length) {
+            Alert.alert(t('common.warning'), t('create.no_media'));
+            return;
+        }
+        await AsyncStorage.setItem(lockKey, String(Date.now() + 48 * 60 * 60 * 1000));
+        const random = items[Math.floor(Math.random() * items.length)];
+        setSelectedPickerCapsule(random.capsules || sealedCapsules.find(c => c.id === random.capsule_id));
+        setRandomPreviewItem(random);
+        setSearching(false);
+        unblurAnim.setValue(1);
+        setPickerStep('animation');
+        Animated.timing(unblurAnim, { toValue: 0, duration: 1600, useNativeDriver: true, easing: Easing.out(Easing.cubic) }).start();
+    }, [currentUserId, userCapsules, t, unblurAnim]);
+
+    const pickInstantMedia = useCallback(async (source: 'library' | 'camera') => {
+        const permission = source === 'camera'
+            ? await ImagePicker.requestCameraPermissionsAsync()
+            : await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (permission.status !== 'granted') return;
+        const result = source === 'camera'
+            ? await ImagePicker.launchCameraAsync({ mediaTypes: ['images', 'videos'], quality: 0.9 })
+            : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images', 'videos'], quality: 0.9 });
+        if (!result.canceled && result.assets?.[0]) {
+            const asset = result.assets[0];
+            setSelectedPickerCapsule(null);
+            setEditingItem({
+                id: `instant-${Date.now()}`,
+                capsule_id: null,
+                media_url: asset.uri,
+                media_type: asset.type === 'video' ? 'video' : 'image',
+                isInstantFlash: true,
+            });
+            setPickerStep('edit');
+        }
+    }, []);
+
+    const ensureInstantFlashCapsule = useCallback(async () => {
+        if (!currentUserId) return null;
+
+        const marker = '[SYSTEM:INSTANT_FLASH]';
+        const { data: existing } = await supabase
+            .from('capsules')
+            .select('id, status')
+            .eq('owner_id', currentUserId)
+            .eq('description', marker)
+            .eq('status', 'opened')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+        if (existing?.id) return existing.id;
+
+        const { data, error } = await supabase
+            .from('capsules')
+            .insert({
+                owner_id: currentUserId,
+                type: 'instacap',
+                model: 'basicred_kap',
+                title: 'Flash',
+                description: marker,
+                duration_days: 0,
+                opens_at: new Date().toISOString(),
+                status: 'opened',
+                is_public: false,
+                is_shared: false,
+            })
+            .select('id')
+            .single();
+
+        if (error) throw error;
+        return data?.id ?? null;
+    }, [currentUserId]);
 
     const handleSelectCapsuleForPicker = useCallback(async (capsule: any) => {
         setSelectedPickerCapsule(capsule);
@@ -113,61 +190,33 @@ export const FlashPicker = React.memo(({
             return;
         }
         
-        setPickerStep('animation');
-        const storageKey = `@flash_selection_${currentUserId}_${capsule.id}`;
-        const savedId = await AsyncStorage.getItem(storageKey);
-        const savedItem = items.find(i => i.id === savedId);
-        
-        if (savedItem) {
-            setSearching(false);
-            setRandomPreviewItem(savedItem);
-            unblurAnim.setValue(0);
-            try {
-                const globalPickKey = `@flash_global_pick_${currentUserId}`;
-                await AsyncStorage.setItem(globalPickKey, JSON.stringify({ capsule, item: savedItem }));
-            } catch (e) { }
-        } else {
-            setSearching(true);
-            Animated.loop(Animated.sequence([
-                Animated.timing(searchingAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
-                Animated.timing(searchingAnim, { toValue: 0, duration: 300, useNativeDriver: true }),
-            ])).start();
-            
-            setTimeout(async () => {
-                const random = items[Math.floor(Math.random() * items.length)];
-                setRandomPreviewItem(random);
-                try {
-                    await AsyncStorage.setItem(storageKey, random.id);
-                    const globalPickKey = `@flash_global_pick_${currentUserId}`;
-                    await AsyncStorage.setItem(globalPickKey, JSON.stringify({ capsule, item: random }));
-                } catch (e) { }
-                setSearching(false);
-                searchingAnim.stopAnimation();
-                unblurAnim.setValue(1);
-                Animated.timing(unblurAnim, { toValue: 0, duration: 3500, useNativeDriver: true, easing: Easing.out(Easing.cubic) }).start();
-            }, 2500);
-        }
+        setPickerStep('select');
     }, [t, currentUserId]);
 
     const rejectRandomStory = useCallback(async () => {
-        try {
-            await AsyncStorage.removeItem(`@flash_global_pick_${currentUserId}`);
-        } catch (e) { }
-        setPickerStep('list');
+        setPickerStep('source');
     }, [currentUserId]);
 
     const confirmStory = useCallback(async (item: any, metadata: any = {}) => {
-        try {
-            await AsyncStorage.removeItem(`@flash_global_pick_${currentUserId}`);
-        } catch (e) { }
-        
         const expiresAt = new Date();
         expiresAt.setHours(expiresAt.getHours() + 48);
-        
-        const { data: cap } = await supabase.from('capsules').select('status').eq('id', item.capsule_id).single();
+
+        let capsuleId = item.capsule_id || null;
+        if (!capsuleId && item.isInstantFlash) {
+            try {
+                capsuleId = await ensureInstantFlashCapsule();
+            } catch (e) {
+                Alert.alert(t('common.error'), t('feed.share_error'));
+                return;
+            }
+        }
+
+        const { data: cap } = capsuleId
+            ? await supabase.from('capsules').select('status').eq('id', capsuleId).single()
+            : { data: null } as any;
         const { error } = await supabase.from('capsule_items').insert({
             owner_id: currentUserId,
-            capsule_id: item.capsule_id,
+            capsule_id: capsuleId,
             media_url: item.media_url || `empty-story://${Date.now()}`,
             media_type: item.media_type || 'image',
             is_story: true,
@@ -178,7 +227,7 @@ export const FlashPicker = React.memo(({
         
         if (!error) {
             try {
-                await AsyncStorage.removeItem(`@flash_selection_${currentUserId}_${item.capsule_id}`);
+                if (capsuleId) await AsyncStorage.removeItem(`@flash_selection_${currentUserId}_${capsuleId}`);
             } catch (e) { }
             onClose();
             setEditingItem(null);
@@ -187,36 +236,54 @@ export const FlashPicker = React.memo(({
         } else {
             Alert.alert(t('common.error'), t('feed.share_error'));
         }
-    }, [currentUserId, t, onStoryPublished, onClose]);
+    }, [currentUserId, t, onStoryPublished, onClose, ensureInstantFlashCapsule]);
 
     return (
         <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
             <View style={s.pickerOverlay}>
                 <View style={[
                     s.pickerSheet, 
-                    (pickerStep === 'edit' || pickerStep === 'animation' || pickerStep === 'select' || pickerStep === 'list') && { height: height * (pickerStep === 'edit' ? 1 : 0.85) },
+            (pickerStep === 'edit' || pickerStep === 'animation' || pickerStep === 'select' || pickerStep === 'list' || pickerStep === 'source') && { height: height * (pickerStep === 'edit' ? 1 : 0.85) },
                     pickerStep === 'edit' && { borderTopLeftRadius: 0, borderTopRightRadius: 0 }
                 ]}>
                     {pickerStep !== 'edit' && <View style={s.pickerHandle} />}
                     {pickerStep !== 'edit' && (
                         <View style={s.pickerHeader}>
-                            {pickerStep !== 'list' && (
-                                <TouchableOpacity onPress={() => pickerStep === 'animation' ? rejectRandomStory() : setPickerStep('list')} style={s.pickerNavBtn} activeOpacity={0.7}>
+                            {pickerStep !== 'source' && (
+                                <TouchableOpacity onPress={() => pickerStep === 'animation' ? setPickerStep('source') : setPickerStep(capsuleMode ? 'list' : 'source')} style={s.pickerNavBtn} activeOpacity={0.7}>
                                     <Ionicons name="chevron-back" size={22} color={Colors.textPrimary} />
                                 </TouchableOpacity>
                             )}
                             <Text style={s.pickerTitle}>
-                                {pickerStep === 'list' ? t('feed.share_flash') : pickerStep === 'select' ? t('feed.choose_image') : t('feed.discovering')}
+                                {pickerStep === 'source' ? t('feed.share_flash') : pickerStep === 'list' ? t('feed.choose_capsule') || 'Elegir cápsula' : pickerStep === 'select' ? t('feed.choose_image') : t('feed.discovering')}
                             </Text>
-                            <TouchableOpacity onPress={() => pickerStep === 'animation' ? rejectRandomStory() : onClose()} style={s.pickerNavBtn} activeOpacity={0.7}>
+                            <TouchableOpacity onPress={onClose} style={s.pickerNavBtn} activeOpacity={0.7}>
                                 <Ionicons name="close" size={22} color={Colors.textMuted} />
                             </TouchableOpacity>
                         </View>
                     )}
 
+                    {pickerStep === 'source' && (
+                        <View style={s.sourceGrid}>
+                            {[
+                                { key: 'opened', label: 'Cápsulas abiertas', icon: 'lock-open-outline', onPress: openOpenedCapsules },
+                                { key: 'sealed', label: 'Cápsulas cerradas', icon: 'lock-closed-outline', onPress: openSealedCapsules },
+                                { key: 'library', label: 'Library', icon: 'images-outline', onPress: () => pickInstantMedia('library') },
+                                { key: 'camera', label: 'Cámara', icon: 'camera-outline', onPress: () => pickInstantMedia('camera') },
+                            ].map(option => (
+                                <TouchableOpacity key={option.key} style={s.sourceCard} activeOpacity={0.82} onPress={option.onPress as any}>
+                                    <LinearGradient colors={[Colors.primary + '18', Colors.primary + '06']} style={s.sourceIcon}>
+                                        <Ionicons name={option.icon as any} size={26} color={Colors.primary} />
+                                    </LinearGradient>
+                                    <Text style={s.sourceLabel}>{option.label}</Text>
+                                </TouchableOpacity>
+                            ))}
+                        </View>
+                    )}
+
                     {pickerStep === 'list' && (
                         <ScrollView style={{ flex: 1 }}>
-                            {userCapsules.map(cap => (
+                            {userCapsules.filter(cap => capsuleMode === 'opened' ? cap.status === 'opened' : cap.status === 'sealed').map(cap => (
                                 <TouchableOpacity key={cap.id} style={s.pickerItem} activeOpacity={0.8} onPress={() => handleSelectCapsuleForPicker(cap)}>
                                     <View style={s.pickerModelWrap}>
                                         <Image source={{ uri: timerConfigManager.getModelImage(cap.model) || MODEL_IMAGES[cap.model] || (MODEL_IMAGES as any).basicred_kap }} style={s.pickerModelImg} contentFit="contain" cachePolicy="memory-disk" />
@@ -241,7 +308,7 @@ export const FlashPicker = React.memo(({
                                 keyExtractor={(i: any) => i.id}
                                 estimatedItemSize={ITEM_SIZE}
                                 renderItem={({ item }: any) => (
-                                    <TouchableOpacity style={s.pickerGridCell} activeOpacity={0.8} onPress={() => { setEditingItem(item); setPickerStep('edit'); }}>
+                                    <TouchableOpacity style={s.pickerGridCell} activeOpacity={0.8} onPress={() => { setEditingItem({ ...item, capsule: selectedPickerCapsule }); setPickerStep('edit'); }}>
                                         <Image source={{ uri: item.media_url }} style={s.pickerGridImg} cachePolicy="memory-disk" transition={200} />
                                     </TouchableOpacity>
                                 )}
@@ -254,8 +321,25 @@ export const FlashPicker = React.memo(({
                         <View style={s.animWrap}>
                             {searching ? (
                                 <View style={s.searchingWrap}>
-                                    <Animated.View style={{ transform: [{ scale: searchingAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.2] }) }] }}>
-                                        <Ionicons name="rocket-outline" size={60} color={Colors.primary} />
+                                    <Animated.View style={[s.searchDeck, { transform: [{ scale: searchingAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.04] }) }] }]}>
+                                        {[0, 1, 2].map((idx) => (
+                                            <Animated.View
+                                                key={idx}
+                                                style={[
+                                                    s.searchCard,
+                                                    {
+                                                        transform: [
+                                                            { translateX: searchingAnim.interpolate({ inputRange: [0, 1], outputRange: [idx * 8 - 8, idx * -8 + 8] }) },
+                                                            { rotate: `${idx * 5 - 5}deg` },
+                                                        ],
+                                                        opacity: 1 - idx * 0.22,
+                                                    }
+                                                ]}
+                                            >
+                                                <LinearGradient colors={[Colors.primary + '55', Colors.primaryDark + '88']} style={StyleSheet.absoluteFill} />
+                                                <Ionicons name={idx === 0 ? 'sparkles' : 'image'} size={28} color="#fff" />
+                                            </Animated.View>
+                                        ))}
                                     </Animated.View>
                                     <Text style={s.animTitle}>{t('feed.reveal_msg')}</Text>
                                     <Text style={s.animSub}>{t('feed.opening_msg')}</Text>
@@ -277,7 +361,7 @@ export const FlashPicker = React.memo(({
                                         <TouchableOpacity style={s.previewCancelBtn} activeOpacity={0.7} onPress={rejectRandomStory}>
                                             <Text style={s.previewCancelText}>{t('feed.choose_another')}</Text>
                                         </TouchableOpacity>
-                                        <TouchableOpacity style={s.previewConfirmBtn} activeOpacity={0.85} onPress={() => { setEditingItem(randomPreviewItem); setPickerStep('edit'); }}>
+                                        <TouchableOpacity style={s.previewConfirmBtn} activeOpacity={0.85} onPress={() => { setEditingItem({ ...randomPreviewItem, capsule: selectedPickerCapsule }); setPickerStep('edit'); }}>
                                             <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={s.previewConfirmGrad}>
                                                 <Text style={s.previewConfirmText}>{t('feed.add_to_flash')}</Text>
                                             </LinearGradient>
@@ -308,6 +392,21 @@ const s = StyleSheet.create({
     pickerHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: Colors.border },
     pickerTitle: { fontSize: 17, fontFamily: Fonts.bold, color: Colors.textPrimary },
     pickerNavBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: Colors.cardAlt, alignItems: 'center', justifyContent: 'center' },
+    sourceGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, padding: 20 },
+    sourceCard: {
+        width: (width - 52) / 2,
+        minHeight: 138,
+        borderRadius: 20,
+        backgroundColor: Colors.surface,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 16,
+        gap: 12,
+    },
+    sourceIcon: { width: 58, height: 58, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+    sourceLabel: { fontSize: 14, fontFamily: Fonts.bold, color: Colors.textPrimary, textAlign: 'center' },
     pickerItem: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: Colors.border },
     pickerModelWrap: { width: 48, height: 48, borderRadius: 12, backgroundColor: Colors.cardAlt, alignItems: 'center', justifyContent: 'center' },
     pickerModelImg: { width: '80%', height: '80%' },
@@ -317,6 +416,18 @@ const s = StyleSheet.create({
     pickerGridImg: { width: '100%', height: '100%' },
     animWrap: { padding: 28, alignItems: 'center' },
     searchingWrap: { alignItems: 'center', gap: 14, paddingVertical: 20 },
+    searchDeck: { width: 150, height: 170, alignItems: 'center', justifyContent: 'center' },
+    searchCard: {
+        position: 'absolute',
+        width: 118,
+        height: 150,
+        borderRadius: 22,
+        overflow: 'hidden',
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.45)',
+    },
     animTitle: { fontSize: 17, fontFamily: Fonts.bold, color: Colors.textPrimary, textAlign: 'center' },
     animSub: { fontSize: 13, color: Colors.textSecondary, fontFamily: Fonts.medium, textAlign: 'center' },
     previewImgWrap: { width: '100%', height: 320, borderRadius: 20, overflow: 'hidden', marginBottom: 20 },

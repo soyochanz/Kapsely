@@ -39,7 +39,7 @@ export const Notifications: React.FC<NotificationsProps> = ({ currentUserId }) =
       .from('notifications')
       .select(`
         *,
-        actor:actor_id(username, avatar_url, display_name, is_verified),
+        actor:sender_id(username, avatar_url, display_name, is_verified, favorite_color),
         capsule:capsule_id(title)
       `)
       .eq('id', id)
@@ -50,11 +50,17 @@ export const Notifications: React.FC<NotificationsProps> = ({ currentUserId }) =
   const fetchNotifications = async () => {
     try {
       setLoading(true);
+      const { data: followedCapsules } = await supabase
+        .from('capsule_followers')
+        .select('capsule_id')
+        .eq('user_id', currentUserId);
+      const followedCapsuleIds = new Set((followedCapsules || []).map((row: any) => row.capsule_id));
+
       const { data, error } = await supabase
         .from('notifications')
         .select(`
           *,
-          actor:actor_id(username, avatar_url, display_name, is_verified),
+          actor:sender_id(username, avatar_url, display_name, is_verified, favorite_color),
           capsule:capsule_id(title)
         `)
         .eq('user_id', currentUserId)
@@ -62,7 +68,12 @@ export const Notifications: React.FC<NotificationsProps> = ({ currentUserId }) =
         .limit(50);
 
       if (error) throw error;
-      setNotifications(data || []);
+      const filtered = (data || []).filter((n: any) => {
+        if (n.conversation_id || ['chat', 'message', 'capsule_chat', 'chat_message'].includes(n.type)) return false;
+        if (n.type === 'new_item') return !!n.capsule_id && followedCapsuleIds.has(n.capsule_id);
+        return true;
+      });
+      setNotifications(filtered);
       
       // Mark as read
       if (data && data.length > 0) {

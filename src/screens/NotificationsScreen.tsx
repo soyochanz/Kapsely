@@ -132,6 +132,12 @@ export default function NotificationsScreen() {
         else setLoading(true);
 
         const blocked = await safetyService.getAllSafetyUserIds(user.id);
+        const { data: followedCapsules } = await supabase
+            .from('capsule_followers')
+            .select('capsule_id')
+            .eq('user_id', user.id);
+        const followedCapsuleIds = new Set((followedCapsules || []).map((row: any) => row.capsule_id));
+
         const { data, error } = await supabase
             .from('notifications')
             .select('*, sender:sender_id(username, display_name, avatar_url, favorite_color), capsules(title, type, model, chain_id, opens_at, owner_id)')
@@ -148,7 +154,12 @@ export default function NotificationsScreen() {
 
         if (data) {
             const mapped: Notification[] = data
-                .filter(n => !blocked.includes(n.sender_id) && !n.conversation_id && n.type !== 'chat' && n.type !== 'message' && n.type !== 'capsule_chat' && n.type !== 'chat_message')
+                .filter(n => {
+                    if (blocked.includes(n.sender_id) || n.conversation_id) return false;
+                    if (['chat', 'message', 'capsule_chat', 'chat_message'].includes(n.type)) return false;
+                    if (n.type === 'new_item') return !!n.capsule_id && followedCapsuleIds.has(n.capsule_id);
+                    return true;
+                })
                 .map(n => {
                     const createdDate = new Date(n.created_at);
                     const expiryDate = new Date(createdDate.getTime() + 3 * 86400000);
@@ -232,8 +243,17 @@ export default function NotificationsScreen() {
                     .from('notifications')
                     .select('*', { count: 'exact', head: true })
                     .eq('user_id', user.id)
+                    .not('type', 'in', '("chat","message","capsule_chat","chat_message")')
                     .eq('is_read', false);
-                setTotalUnread(count || 0);
+
+                const { data: unreadUploads } = await supabase
+                    .from('notifications')
+                    .select('id, capsule_id')
+                    .eq('user_id', user.id)
+                    .eq('type', 'new_item')
+                    .eq('is_read', false);
+                const hiddenUploadUnread = (unreadUploads || []).filter((n: any) => !n.capsule_id || !followedCapsuleIds.has(n.capsule_id)).length;
+                setTotalUnread(Math.max(0, (count || 0) - hiddenUploadUnread));
             }
         }
     };
@@ -395,6 +415,7 @@ export default function NotificationsScreen() {
                         data={notifications}
                         estimatedItemSize={90}
                         keyExtractor={(item: Notification) => item.id}
+                        scrollEnabled={scrollEnabled}
                         onEndReachedThreshold={0.1}
                         showsVerticalScrollIndicator={false}
                         contentContainerStyle={[s.scrollContent, { paddingBottom: insets.bottom + 110 }]}
@@ -435,6 +456,8 @@ export default function NotificationsScreen() {
                                     onMarkRead={handleMarkRead}
                                     onAcceptInvite={handleAcceptInvite}
                                     onRejectInvite={handleRejectInvite}
+                                    onSwipeStart={() => setScrollEnabled(false)}
+                                    onSwipeEnd={() => setScrollEnabled(true)}
                                 />
                             </Animated.View>
                         )}

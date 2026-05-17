@@ -42,6 +42,22 @@ import QuickLoginModal from '../components/QuickLoginModal';
 import * as Localization from 'expo-localization';
 
 const { width } = Dimensions.get('window');
+const PROFILE_BOOT_CACHE_PREFIX = '@kapsely_profile_boot_v3';
+const PROFILE_BOOT_CACHE_TTL = 5 * 60 * 1000;
+
+const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T | null> =>
+    new Promise(resolve => {
+        const timer = setTimeout(() => resolve(null), ms);
+        promise
+            .then(value => {
+                clearTimeout(timer);
+                resolve(value);
+            })
+            .catch(() => {
+                clearTimeout(timer);
+                resolve(null);
+            });
+    });
 
 type ProfileTab = 'all' | 'opened' | 'sealed';
 
@@ -92,12 +108,17 @@ export default function ProfileScreen() {
     const [confirmNewPassword, setConfirmNewPassword] = useState('');
     const [oldPassword, setOldPassword] = useState('');
     const [savedAccounts, setSavedAccounts] = useState<SavedAccount[]>([]);
+    const [cachedProfileData, setCachedProfileData] = useState<any | null>(null);
+    const [showFollowSuggestions, setShowFollowSuggestions] = useState(false);
 
     const queryClient = useQueryClient();
+    const effectiveProfileId = targetUserId || currentUserId;
+    const profileCacheKey = effectiveProfileId ? `${PROFILE_BOOT_CACHE_PREFIX}_${effectiveProfileId}` : null;
 
     // ─── Fetch Function ──────────────────────────────────────────────────────
     const fetchProfile = async () => {
-        const { data: { session } } = await supabase.auth.getSession();
+        const result = await withTimeout(supabase.auth.getSession(), 900);
+        const session = result?.data?.session;
         const myId = session?.user?.id;
         if (myId && !currentUserId) setCurrentUserId(myId);
 
@@ -128,26 +149,50 @@ export default function ProfileScreen() {
         gcTime: 30 * 60 * 1000,
     });
 
-    const profile = profileDataUnified?.profile;
-    const isFollowingValue = profileDataUnified?.is_following || false;
-    const capsulesData = profileDataUnified?.capsules || [];
-    const storiesData = profileDataUnified?.stories || [];
-    const stickersData = profileDataUnified?.stickers || [];
-    const readIds = new Set(profileDataUnified?.my_reads || []);
-    const myAcceptedCaps = new Set(profileDataUnified?.my_accepted_invites || []);
+    const displayProfileData = profileDataUnified || cachedProfileData;
+    const profile = displayProfileData?.profile;
+    const isFollowingValue = displayProfileData?.is_following || false;
+    const capsulesData = displayProfileData?.capsules || [];
+    const storiesData = displayProfileData?.stories || [];
+    const stickersData = displayProfileData?.stickers || [];
+    const readIds = new Set(displayProfileData?.my_reads || []);
+    const myAcceptedCaps = new Set(displayProfileData?.my_accepted_invites || []);
 
     useEffect(() => {
-        if (profileDataUnified) {
-            setFollowersCount(profileDataUnified.profile?.followers_count || 0);
-            setFollowingCount(profileDataUnified.profile?.following_count || 0);
-            setIsFollowing(profileDataUnified.is_following || false);
-            setProfileStickers(profileDataUnified.stickers || []);
+        let alive = true;
+        if (!profileCacheKey) return () => { alive = false; };
+        AsyncStorage.getItem(profileCacheKey)
+            .then(raw => {
+                if (!alive || !raw) return;
+                const parsed = JSON.parse(raw);
+                if (Date.now() - (parsed.savedAt || 0) < PROFILE_BOOT_CACHE_TTL) {
+                    setCachedProfileData(parsed.data);
+                }
+            })
+            .catch(() => {});
+        return () => { alive = false; };
+    }, [profileCacheKey]);
+
+    useEffect(() => {
+        if (!profileDataUnified || !profileCacheKey) return;
+        AsyncStorage.setItem(profileCacheKey, JSON.stringify({
+            savedAt: Date.now(),
+            data: profileDataUnified,
+        })).catch(() => {});
+    }, [profileDataUnified, profileCacheKey]);
+
+    useEffect(() => {
+        if (displayProfileData) {
+            setFollowersCount(displayProfileData.profile?.followers_count || 0);
+            setFollowingCount(displayProfileData.profile?.following_count || 0);
+            setIsFollowing(displayProfileData.is_following || false);
+            setProfileStickers(displayProfileData.stickers || []);
 
             // Populate cover and media maps from RPC results to avoid secondary fetches
             const newCoverMap: Record<string, string> = {};
             const newMediaMap: Record<string, any[]> = {};
             
-            (profileDataUnified.capsules || []).forEach((c: any) => {
+            (displayProfileData.capsules || []).forEach((c: any) => {
                 if (c.effective_cover_url) newCoverMap[c.id] = c.effective_cover_url;
                 if (c.fallback_media) newMediaMap[c.id] = c.fallback_media;
             });
@@ -155,14 +200,14 @@ export default function ProfileScreen() {
             setCoverMap(prev => ({ ...prev, ...newCoverMap }));
             setCapsuleMediaMap(prev => ({ ...prev, ...newMediaMap }));
 
-            if (profileDataUnified.stories?.length > 0) {
-                const prof = profileDataUnified.profile;
-                setUserStories({ ...prof, owner_id: prof.id, stories: profileDataUnified.stories });
+            if (displayProfileData.stories?.length > 0) {
+                const prof = displayProfileData.profile;
+                setUserStories({ ...prof, owner_id: prof.id, stories: displayProfileData.stories });
             } else {
                 setUserStories(null);
             }
         }
-    }, [profileDataUnified]);
+    }, [displayProfileData]);
 
     useEffect(() => {
         if (showAccountPanel) {
@@ -276,10 +321,14 @@ export default function ProfileScreen() {
     const [activeStoryViewer, setActiveStoryViewer] = useState(false);
     const [isBlocked, setIsBlocked] = useState(false);
     const [showUserOptions, setShowUserOptions] = useState(false);
+    const [birthdayCongratsCount, setBirthdayCongratsCount] = useState(0);
+    const [hasSentBirthdayCongrats, setHasSentBirthdayCongrats] = useState(false);
+    const [birthdayGiftCounts, setBirthdayGiftCounts] = useState<Record<string, number>>({});
 
     useEffect(() => {
         const checkOwn = async () => {
-            const { data: { session } } = await supabase.auth.getSession();
+            const result = await withTimeout(supabase.auth.getSession(), 900);
+            const session = result?.data?.session;
             if (session?.user?.id) {
                 setCurrentUserId(session.user.id);
                 if (targetUserId) {
@@ -290,6 +339,15 @@ export default function ProfileScreen() {
         };
         checkOwn();
     }, [targetUserId]);
+
+    useEffect(() => {
+        setShowFollowSuggestions(false);
+        const task = InteractionManager.runAfterInteractions(() => {
+            const timer = setTimeout(() => setShowFollowSuggestions(true), 500);
+            return () => clearTimeout(timer);
+        });
+        return () => task.cancel?.();
+    }, [currentUserId, isOwnProfile]);
 
     useEffect(() => {
         if (profile) {
@@ -346,6 +404,75 @@ export default function ProfileScreen() {
     const onRefresh = () => {
         refetch();
     };
+
+    const birthdayYear = new Date().getFullYear();
+    const isBirthdayToday = useMemo(() => {
+        if (!profile?.birthdate) return false;
+        const [year, month, day] = String(profile.birthdate).split('-').map(Number);
+        if (!year || !month || !day) return false;
+        const now = new Date();
+        return month === now.getMonth() + 1 && day === now.getDate();
+    }, [profile?.birthdate]);
+
+    useEffect(() => {
+        const loadBirthdayCongrats = async () => {
+            if (!profile?.id || !currentUserId || !isBirthdayToday) {
+                setBirthdayCongratsCount(0);
+                setHasSentBirthdayCongrats(false);
+                setBirthdayGiftCounts({});
+                return;
+            }
+
+            const [giftRes, sentRes] = await Promise.all([
+                supabase
+                    .from('birthday_congratulations')
+                    .select('gift_type')
+                    .eq('profile_id', profile.id)
+                    .eq('birthday_year', birthdayYear),
+                supabase
+                    .from('birthday_congratulations')
+                    .select('profile_id')
+                    .eq('profile_id', profile.id)
+                    .eq('sender_id', currentUserId)
+                    .eq('birthday_year', birthdayYear)
+                    .maybeSingle()
+            ]);
+
+            const counts = (giftRes.data || []).reduce((acc: Record<string, number>, row: any) => {
+                const gift = row.gift_type || 'cake';
+                acc[gift] = (acc[gift] || 0) + 1;
+                return acc;
+            }, {});
+            setBirthdayGiftCounts(counts);
+            setBirthdayCongratsCount((giftRes.data || []).length);
+            setHasSentBirthdayCongrats(!!sentRes.data);
+        };
+
+        loadBirthdayCongrats();
+    }, [profile?.id, currentUserId, isBirthdayToday, birthdayYear]);
+
+    const handleBirthdayCongrats = useCallback(async (giftType = 'cake') => {
+        if (!profile?.id || !currentUserId || hasSentBirthdayCongrats) return false;
+
+        const { error } = await supabase.from('birthday_congratulations').insert({
+            profile_id: profile.id,
+            sender_id: currentUserId,
+            birthday_year: birthdayYear,
+            gift_type: giftType,
+        });
+
+        if (error && error.code !== '23505') {
+            Alert.alert(t('common.error'), error.message);
+            return false;
+        }
+
+        if (!hasSentBirthdayCongrats) {
+            setBirthdayCongratsCount(count => count + 1);
+            setBirthdayGiftCounts(counts => ({ ...counts, [giftType]: (counts[giftType] || 0) + 1 }));
+        }
+        setHasSentBirthdayCongrats(true);
+        return true;
+    }, [profile?.id, currentUserId, hasSentBirthdayCongrats, birthdayYear, t]);
 
     const handleLogout = async () => {
         if (Platform.OS === 'web') {
@@ -513,8 +640,13 @@ export default function ProfileScreen() {
                 joinYear={joinYear}
                 profileId={profileId || targetUserId || currentUserId || ''}
                 navigation={navigation}
+                isBirthdayToday={isBirthdayToday}
+                birthdayCongratsCount={birthdayCongratsCount}
+                birthdayGiftCounts={birthdayGiftCounts}
+                hasSentBirthdayCongrats={hasSentBirthdayCongrats}
+                onBirthdayCongrats={handleBirthdayCongrats}
             />
-            {isOwnProfile && currentUserId && (
+            {isOwnProfile && currentUserId && showFollowSuggestions && (
                 <FollowSuggestions 
                     currentUserId={currentUserId} 
                     onFollowUpdate={() => {
@@ -527,13 +659,33 @@ export default function ProfileScreen() {
     ), [
         profile, accentColor, profileStickers, userStories, followersCount, followingCount,
         openedCaps.length, sealedCaps.length, isOwnProfile, isFollowing, activeTab, insets, t, i18n, joinYear, profileId, navigation,
-        handleShowStories, currentUserId
+        handleShowStories, currentUserId, showFollowSuggestions, isBirthdayToday, birthdayCongratsCount, birthdayGiftCounts, hasSentBirthdayCongrats, handleBirthdayCongrats
     ]);
 
-    if (isLoading) {
+    if (isLoading && !displayProfileData) {
         return (
-            <View style={[s.root, s.centered]}>
-                <ActivityIndicator size="large" color={Colors.primary} />
+            <View style={s.root}>
+                <StatusBar barStyle="light-content" />
+                <ScrollView contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
+                    <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={{ height: 250, paddingTop: insets.top + 18, paddingHorizontal: 20 }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.22)' }} />
+                            <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.22)' }} />
+                        </View>
+                    </LinearGradient>
+                    <View style={{ marginTop: -68, alignItems: 'center', paddingHorizontal: 18 }}>
+                        <View style={{ width: 124, height: 124, borderRadius: 62, backgroundColor: Colors.surface, borderWidth: 4, borderColor: Colors.background }} />
+                        <View style={{ width: 170, height: 24, borderRadius: 12, backgroundColor: Colors.border, marginTop: 14 }} />
+                        <View style={{ width: 118, height: 16, borderRadius: 8, backgroundColor: Colors.border, marginTop: 8 }} />
+                        <View style={{ flexDirection: 'row', gap: 12, marginTop: 18 }}>
+                            {[0, 1, 2].map(i => <View key={i} style={{ width: 88, height: 52, borderRadius: 16, backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border }} />)}
+                        </View>
+                        <View style={{ width: '100%', height: 44, borderRadius: 22, backgroundColor: Colors.border, marginTop: 20 }} />
+                    </View>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 14, marginTop: 28 }}>
+                        {Array.from({ length: 6 }).map((_, i) => <View key={i} style={{ width: (width - 36) / 2, height: 220, borderRadius: 18, backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border }} />)}
+                    </View>
+                </ScrollView>
             </View>
         );
     }
@@ -567,7 +719,7 @@ export default function ProfileScreen() {
                 data={sortedTabData}
                 keyExtractor={(item: any) => item.id}
                 numColumns={3}
-                estimatedItemSize={160}
+                estimatedItemSize={190}
                 contentContainerStyle={[s.gridContent, { paddingBottom: 100 }]}
                 ListHeaderComponent={renderHeader}
                 renderItem={({ item }: { item: any }) => (
@@ -1116,9 +1268,9 @@ const s = StyleSheet.create({
 
     // Grid
     gridWrap: { paddingHorizontal: 12, paddingTop: 12 },
-    gridContent: { gap: 12 },
-    gridRow: { gap: 12 },
-    gridCell: { width: (width - 48) / 3 },
+    gridContent: { gap: 2, paddingHorizontal: 2 },
+    gridRow: { gap: 2 },
+    gridCell: { width: (width - 8) / 3, height: Math.floor((width - 8) / 3) + 48, marginBottom: 8 },
 
     // Capsule cell — clean card
     capsuleCell: {

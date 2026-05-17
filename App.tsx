@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, ActivityIndicator, StyleSheet, Animated, Easing, Image, Dimensions } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import * as SplashScreen from 'expo-splash-screen';
 import { useFonts, Inter_300Light, Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold } from '@expo-google-fonts/inter';
@@ -27,7 +27,7 @@ import { queryClient, asyncStoragePersister } from './src/lib/QueryClient';
 import { timerConfigManager } from './src/utils/timerConfig';
 
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { Platform } from 'react-native';
+import { InteractionManager, Platform } from 'react-native';
 import { registerForPushNotificationsAsync, savePushToken, setupNotificationHandlers, setupResponseListener, clearBadgeCount } from './src/utils/pushNotifications';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -38,6 +38,54 @@ SplashScreen.preventAutoHideAsync();
 // Setup handlers outside the component
 setupNotificationHandlers();
 
+const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
+const STARTUP_AUTH_TIMEOUT_MS = 1200;
+const FONT_GATE_TIMEOUT_MS = 900;
+const SAFETY_SPLASH_TIMEOUT_MS = 1700;
+
+const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T | null> =>
+  new Promise(resolve => {
+    const timer = setTimeout(() => resolve(null), ms);
+    promise
+      .then(value => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch(() => {
+        clearTimeout(timer);
+        resolve(null);
+      });
+  });
+
+function SplashOpenAnimation({ onDone }: { onDone: () => void }) {
+  const progress = React.useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(progress, {
+      toValue: 1,
+      duration: 760,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start(onDone);
+  }, [onDone, progress]);
+
+  const scale = progress.interpolate({ inputRange: [0, 1], outputRange: [1, 1.18] });
+  const opacity = progress.interpolate({ inputRange: [0, 0.72, 1], outputRange: [1, 0.95, 0] });
+  const logoScale = progress.interpolate({ inputRange: [0, 0.55, 1], outputRange: [1, 0.92, 1.22] });
+  const logoY = progress.interpolate({ inputRange: [0, 1], outputRange: [0, -22] });
+
+  return (
+    <Animated.View pointerEvents="none" style={[styles.splashOpen, { opacity, transform: [{ scale }] }]}>
+      <Image source={require('./assets/android-icon-background.png')} style={styles.splashOpenBg} resizeMode="cover" />
+      <Animated.Image
+        source={require('./assets/splash-icon.png')}
+        style={[styles.splashOpenLogo, { transform: [{ scale: logoScale }, { translateY: logoY }] }]}
+        resizeMode="contain"
+      />
+    </Animated.View>
+  );
+}
+
 export default function App() {
   const [fontsLoaded] = useFonts({ 
     Inter_300Light, Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold,
@@ -47,18 +95,17 @@ export default function App() {
   });
   const [session, setSession] = useState<Session | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
+  const [fontGateReady, setFontGateReady] = useState(Platform.OS === 'web');
+  const [showSplashOpen, setShowSplashOpen] = useState(false);
 
   useEffect(() => {
+    let mounted = true;
+
     async function startup() {
       try {
-        // Init timer configs
-        await timerConfigManager.init();
-
-        // Clear notification badge
-        if (Platform.OS !== 'web') clearBadgeCount();
-
-        // Get session
-        const { data: { session: s }, error } = await supabase.auth.getSession();
+        const result = await withTimeout(supabase.auth.getSession(), STARTUP_AUTH_TIMEOUT_MS);
+        const s = result?.data?.session ?? null;
+        const error = result?.error ?? null;
         
         if (error) {
           console.warn('Auth check error:', error.message);
@@ -69,32 +116,42 @@ export default function App() {
           }
         }
 
-        // Check if user wants to stay connected
-        const keepKey = await AsyncStorage.getItem('keep_connected');
+        const keepKey = await withTimeout(AsyncStorage.getItem('keep_connected'), 350);
         const shouldKeep = keepKey === null ? true : JSON.parse(keepKey);
 
         if (s) {
           if (!shouldKeep) {
-            // User chose NOT to stay logged in, so sign out on fresh start
             await supabase.auth.signOut();
-            setSession(null);
+            if (mounted) setSession(null);
           } else {
-            setSession(s);
-            handlePushRegistration(s.user.id);
+            if (mounted) setSession(s);
           }
         }
       } catch (e) {
         console.error('Startup error:', e);
       } finally {
-        setAuthChecked(true);
+        if (mounted) setAuthChecked(true);
       }
     }
 
     startup();
 
+    const deferredTimer = setTimeout(() => {
+      InteractionManager.runAfterInteractions(async () => {
+        try {
+          await timerConfigManager.init();
+          if (Platform.OS !== 'web') {
+            clearBadgeCount();
+            setTimeout(() => multiAccountService.syncAllPushTokens().catch(() => {}), 2500);
+          }
+        } catch (e) {
+          console.warn('Deferred startup task failed:', e);
+        }
+      });
+    }, 350);
+
     async function handlePushRegistration(userId: string) {
       if (Platform.OS === 'web') return;
-      // Sync ALL saved accounts with the current token to ensure push works for all of them
       await multiAccountService.syncAllPushTokens();
     }
 
@@ -108,8 +165,21 @@ export default function App() {
       }
     });
 
-    return () => listener.subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      clearTimeout(deferredTimer);
+      listener.subscription.unsubscribe();
+    };
   }, []);
+
+  useEffect(() => {
+    if (fontsLoaded || Platform.OS === 'web') {
+      setFontGateReady(true);
+      return;
+    }
+    const timer = setTimeout(() => setFontGateReady(true), FONT_GATE_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [fontsLoaded]);
 
   useEffect(() => {
     if (!session) return;
@@ -122,35 +192,37 @@ export default function App() {
   }, [session]);
 
   useEffect(() => {
-    if (fontsLoaded && authChecked) {
+    if (fontGateReady && authChecked) {
       // Small delay to ensure everything is rendered
       const timer = setTimeout(async () => {
         try {
           await SplashScreen.hideAsync();
+          if (Platform.OS !== 'web') setShowSplashOpen(true);
         } catch (e) {
           console.warn('Error hiding splash screen:', e);
         }
       }, 100);
       return () => clearTimeout(timer);
     }
-  }, [fontsLoaded, authChecked]);
+  }, [fontGateReady, authChecked]);
 
   // Safety timer to hide splash screen even if something hangs
   useEffect(() => {
     const safetyTimer = setTimeout(async () => {
-      if (authChecked && fontsLoaded) return;
+      if (authChecked && fontGateReady) return;
       console.warn('Safety timer triggered: hiding splash screen due to timeout');
       setAuthChecked(true); 
+      setFontGateReady(true);
       try {
         await SplashScreen.hideAsync();
       } catch (e) {}
-    }, 6000); // 6 seconds max for splash screen
+    }, SAFETY_SPLASH_TIMEOUT_MS);
     return () => clearTimeout(safetyTimer);
-  }, []);
+  }, [authChecked, fontGateReady]);
 
   const onLayoutRootView = undefined;
 
-  if (!authChecked || (!fontsLoaded && Platform.OS !== 'web')) {
+  if (!authChecked || !fontGateReady) {
     return (
       <View style={styles.loading}>
         <ActivityIndicator color={Colors.primary} size="large" />
@@ -227,6 +299,7 @@ export default function App() {
                 {session ? <AppNavigator key={session.user.id} /> : <AuthNavigator />}
               </View>
             </NavigationContainer>
+            {showSplashOpen && <SplashOpenAnimation onDone={() => setShowSplashOpen(false)} />}
           </View>
         </SafeAreaProvider>
       </PersistQueryClientProvider>
@@ -242,5 +315,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: Colors.background,
+  },
+  splashOpen: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    width: screenWidth,
+    height: screenHeight,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f3f1fe',
+    zIndex: 9999,
+  },
+  splashOpenBg: {
+    position: 'absolute',
+    width: screenWidth,
+    height: screenHeight,
+  },
+  splashOpenLogo: {
+    width: Math.min(180, screenWidth * 0.42),
+    height: Math.min(180, screenWidth * 0.42),
   },
 });

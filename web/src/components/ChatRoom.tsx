@@ -26,7 +26,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ chatId, participant, current
         event: 'INSERT', 
         schema: 'public',
         table: 'messages', 
-        filter: `chat_id=eq.${chatId}` 
+        filter: `conversation_id=eq.${chatId}` 
       }, (payload) => {
         setMessages(prev => [...prev, payload.new]);
       })
@@ -47,7 +47,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ chatId, participant, current
       const { data, error } = await supabase
         .from('messages')
         .select('*')
-        .eq('chat_id', chatId)
+        .eq('conversation_id', chatId)
         .order('created_at', { ascending: true });
 
       if (error) throw error;
@@ -79,17 +79,17 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ chatId, participant, current
       const { error } = await supabase
         .from('messages')
         .insert({
-          chat_id: chatId,
+          conversation_id: chatId,
           sender_id: currentUserId,
           content,
-          type: 'text'
+          media_type: 'text'
         });
 
       if (error) throw error;
       
       await supabase
-        .from('chats')
-        .update({ updated_at: new Date().toISOString() })
+        .from('conversations')
+        .update({ last_message_at: new Date().toISOString() })
         .eq('id', chatId);
 
     } catch (err) {

@@ -66,6 +66,7 @@ export const CapsuleHero = React.memo(({
                     modelKey={capsule.model}
                     source={{ uri: modelImg }}
                     date={capsule.opens_at}
+                    modelLayout={capsule.model_snapshot}
                     chainId={capsule.chain_id}
                     style={{ width: 210, height: 210 }}
                     isOpened={!isSealed}

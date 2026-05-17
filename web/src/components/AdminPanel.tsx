@@ -11,21 +11,20 @@ import {
   Trash2, 
   Save, 
   RefreshCw,
-  Search,
-  Lock,
-  Clock,
   ChevronRight,
   Maximize2,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Eye,
+  XCircle,
+  Image as ImageIcon
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { getModelImage } from '../constants/models';
 import CapsuleWithTimer from './CapsuleWithTimer';
 
 export const AdminPanel = () => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'calibration' | 'users' | 'reports'>('calibration');
-  const [loading, setLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<'overview' | 'moderation' | 'calibration' | 'users' | 'reports'>('moderation');
 
   return (
     <div className="admin-panel-premium">
@@ -46,6 +45,12 @@ export const AdminPanel = () => {
             onClick={() => setActiveTab('overview')}
           >
             <BarChart3 size={18} /> Overview
+          </button>
+          <button 
+            className={`admin-tab-item ${activeTab === 'moderation' ? 'active' : ''}`}
+            onClick={() => setActiveTab('moderation')}
+          >
+            <Eye size={18} /> Moderation
           </button>
           <button 
             className={`admin-tab-item ${activeTab === 'calibration' ? 'active' : ''}`}
@@ -70,6 +75,18 @@ export const AdminPanel = () => {
 
       <main className="admin-content-area">
         <AnimatePresence mode="wait">
+          {activeTab === 'moderation' && (
+            <motion.div
+              key="moderation"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="moderation-container"
+            >
+              <ModerationQueue />
+            </motion.div>
+          )}
+
           {activeTab === 'calibration' && (
             <motion.div
               key="calibration"
@@ -117,9 +134,167 @@ export const AdminPanel = () => {
   );
 };
 
+const ModerationQueue = () => {
+  const [reviews, setReviews] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [filter, setFilter] = useState<'open' | 'all' | 'rejected'>('open');
+
+  const fetchReviews = async () => {
+    setLoading(true);
+    const statuses = filter === 'open'
+      ? ['needs_review', 'error']
+      : filter === 'rejected'
+        ? ['rejected']
+        : ['needs_review', 'error', 'rejected', 'approved'];
+
+    const { data, error } = await supabase
+      .from('content_moderation_reviews')
+      .select(`
+        *,
+        owner:owner_id(id, username, display_name, avatar_url),
+        capsule:capsule_id(id, title, model)
+      `)
+      .in('status', statuses)
+      .order('created_at', { ascending: false })
+      .limit(80);
+
+    if (error) {
+      console.error('Unable to fetch moderation reviews', error);
+      setReviews([]);
+    } else {
+      setReviews(data || []);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchReviews();
+  }, [filter]);
+
+  const resolveReview = async (review: any, decision: 'approved' | 'rejected') => {
+    setBusyId(review.id);
+    const { data: authData } = await supabase.auth.getUser();
+    const adminId = authData.user?.id || null;
+    const { error } = await supabase
+      .from('content_moderation_reviews')
+      .update({
+        status: decision,
+        action: decision === 'approved' ? 'allow' : 'block',
+        admin_notes: decision === 'approved' ? 'Approved from web admin panel' : 'Rejected from web admin panel',
+        resolved_at: new Date().toISOString(),
+        resolved_by: adminId
+      })
+      .eq('id', review.id);
+
+    if (error) {
+      alert(`No se pudo resolver la revision: ${error.message}`);
+    } else {
+      setReviews(prev => prev.map(item => item.id === review.id ? { ...item, status: decision } : item));
+    }
+    setBusyId(null);
+  };
+
+  return (
+    <div className="moderation-panel">
+      <div className="moderation-toolbar">
+        <div>
+          <h2>AI Moderation Review</h2>
+          <p>Contenido que la IA ha bloqueado o marcado como dudoso para revision humana.</p>
+        </div>
+        <div className="moderation-actions">
+          <div className="toggle-group moderation-filter">
+            <button className={filter === 'open' ? 'active' : ''} onClick={() => setFilter('open')}>Pendiente</button>
+            <button className={filter === 'rejected' ? 'active' : ''} onClick={() => setFilter('rejected')}>Bloqueado</button>
+            <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>Todo</button>
+          </div>
+          <button className="admin-secondary-btn" onClick={fetchReviews}>
+            <RefreshCw size={16} /> Refresh
+          </button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="admin-loading"><RefreshCw className="spin" /> Loading reviews...</div>
+      ) : reviews.length === 0 ? (
+        <div className="moderation-empty">
+          <CheckCircle2 size={42} />
+          <h3>Todo limpio</h3>
+          <p>No hay contenido pendiente ahora mismo.</p>
+        </div>
+      ) : (
+        <div className="moderation-grid">
+          {reviews.map(review => {
+            const owner = review.owner || {};
+            const capsule = review.capsule || {};
+            const scores = review.category_scores || {};
+            const topScore = Object.entries(scores)
+              .sort((a: any, b: any) => Number(b[1]) - Number(a[1]))[0];
+
+            return (
+              <article key={review.id} className={`moderation-card status-${review.status}`}>
+                <div className="moderation-preview">
+                  {review.media_type === 'image' && review.media_url ? (
+                    <img src={review.media_url} alt="" />
+                  ) : review.media_type === 'video' && review.media_url ? (
+                    <video src={review.media_url} controls muted playsInline />
+                  ) : (
+                    <div className="moderation-preview-empty">
+                      <ImageIcon size={28} />
+                      <span>{review.media_type || 'text'}</span>
+                    </div>
+                  )}
+                  <span className={`moderation-status-pill ${review.status}`}>{review.status}</span>
+                </div>
+
+                <div className="moderation-card-body">
+                  <div className="moderation-meta">
+                    <strong>{capsule.title || 'Capsula sin titulo'}</strong>
+                    <span>@{owner.username || owner.display_name || 'usuario'}</span>
+                  </div>
+                  {review.content_excerpt && <p className="moderation-excerpt">{review.content_excerpt}</p>}
+                  <div className="moderation-reason">
+                    <AlertCircle size={15} />
+                    <span>{review.reason || 'La IA no pudo aprobar este contenido automaticamente.'}</span>
+                  </div>
+                  {topScore && (
+                    <div className="moderation-score">
+                      Mayor senal: <strong>{topScore[0]}</strong> {Math.round(Number(topScore[1]) * 100)}%
+                    </div>
+                  )}
+                  <time>{new Date(review.created_at).toLocaleString()}</time>
+                </div>
+
+                <div className="moderation-card-actions">
+                  <button
+                    className="moderation-approve"
+                    disabled={busyId === review.id || review.status === 'approved'}
+                    onClick={() => resolveReview(review, 'approved')}
+                  >
+                    <CheckCircle2 size={16} /> Aprobar
+                  </button>
+                  <button
+                    className="moderation-reject"
+                    disabled={busyId === review.id || review.status === 'rejected'}
+                    onClick={() => resolveReview(review, 'rejected')}
+                  >
+                    <XCircle size={16} /> Rechazar
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const CalibrationTool = () => {
   const [models, setModels] = useState<any[]>([]);
   const [selectedModel, setSelectedModel] = useState<any>(null);
+  const [chains, setChains] = useState<any[]>([]);
+  const [selectedChainId, setSelectedChainId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [config, setConfig] = useState({
     x: 0.5,
@@ -139,7 +314,14 @@ const CalibrationTool = () => {
 
   const fetchModels = async () => {
     setLoading(true);
-    const { data, error } = await supabase.from('models').select('*').order('label');
+    const [{ data, error }, chainsRes] = await Promise.all([
+      supabase.from('models').select('*').order('label'),
+      supabase.from('chains').select('*').eq('is_active', true).order('name')
+    ]);
+    if (chainsRes.data) {
+      setChains(chainsRes.data);
+      setSelectedChainId(prev => prev || chainsRes.data?.[0]?.id || null);
+    }
     if (!error && data) {
       setModels(data);
       if (data.length > 0) handleModelSelect(data[0]);
@@ -258,6 +440,8 @@ const CalibrationTool = () => {
                    modelKey={selectedModel.id}
                    source={selectedModel.image}
                    date={new Date(Date.now() + 86400000).toISOString()} // Preview with 1 day
+                   modelLayout={selectedModel}
+                   chainId={selectedChainId}
                    style={{ width: '100%', height: '100%' }}
                    configOverride={{
                      model_id: selectedModel.id,
@@ -319,6 +503,19 @@ const CalibrationTool = () => {
 
           <div className="controls-group">
             <h4>Style & Format</h4>
+            <div className="control-row">
+              <label>Chain preview</label>
+              <select
+                value={selectedChainId || ''}
+                onChange={(e) => setSelectedChainId(e.target.value || null)}
+                style={{ width: '100%', padding: 10, borderRadius: 10, border: '1px solid var(--border)' }}
+              >
+                <option value="">No chain</option>
+                {chains.map(chain => (
+                  <option key={chain.id} value={chain.id}>{chain.name}</option>
+                ))}
+              </select>
+            </div>
             <div className="control-row">
               <label>Color</label>
               <div className="color-picker-custom">

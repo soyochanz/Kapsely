@@ -205,7 +205,29 @@
     "username_limit_msg": "Solo puedes cambiar tu nombre de usuario (@) dos veces al mes.",
     "username_taken": "Este nombre de usuario ya está en uso.",
     "profile_updated": "Perfil actualizado correctamente.",
-    "username": "Nombre de usuario (@)"
+    "username": "Nombre de usuario (@)",
+    "birthday_congratulate": "Felicitar",
+    "birthday_congratulated": "Felicitado",
+    "birthday_congrats_count": "{{count}} felicitaciones",
+    "birthday_gifts_count": "{{count}} regalos",
+    "birthday_gift_sent": "Regalo enviado"
+  },
+  "chat": {
+    "messages": "Mensajes",
+    "no_messages_yet": "Aún no hay mensajes",
+    "start_conversation": "Iniciar conversación",
+    "search_by_username": "Buscar por nombre de usuario...",
+    "no_users_found": "No se encontraron usuarios",
+    "new_group": "Nuevo grupo",
+    "create_group_count": "Crear ({{count}})",
+    "group_name_optional": "Nombre del grupo (opcional)",
+    "search_users": "Buscar usuarios...",
+    "search_by_username_hint": "Busca por nombre de usuario",
+    "no_archived_chats": "No tienes chats archivados",
+    "back_to_messages": "Volver a mensajes",
+    "archived_count": "Archivados ({{count}})",
+    "user_fallback": "Usuario",
+    "group_fallback": "Grupo"
   },
   "create": {
     "title": "Crear Cápsula",

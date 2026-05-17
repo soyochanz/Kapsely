@@ -203,7 +203,29 @@
     "username_limit_msg": "You can only change your username (@) twice a month.",
     "username_taken": "This username is already taken.",
     "profile_updated": "Profile updated successfully.",
-    "username": "Username (@)"
+    "username": "Username (@)",
+    "birthday_congratulate": "Congratulate",
+    "birthday_congratulated": "Congratulated",
+    "birthday_congrats_count": "{{count}} congrats",
+    "birthday_gifts_count": "{{count}} gifts",
+    "birthday_gift_sent": "Gift sent"
+  },
+  "chat": {
+    "messages": "Messages",
+    "no_messages_yet": "No messages yet",
+    "start_conversation": "Start a conversation",
+    "search_by_username": "Search by username...",
+    "no_users_found": "No users found",
+    "new_group": "New group",
+    "create_group_count": "Create ({{count}})",
+    "group_name_optional": "Group name (optional)",
+    "search_users": "Search users...",
+    "search_by_username_hint": "Search by username",
+    "no_archived_chats": "No archived chats",
+    "back_to_messages": "Back to messages",
+    "archived_count": "Archived ({{count}})",
+    "user_fallback": "User",
+    "group_fallback": "Group"
   },
   "create": {
     "title": "Create Capsule",

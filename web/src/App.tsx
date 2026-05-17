@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from './lib/supabase';
 import { 
   MoreHorizontal, 
@@ -39,6 +39,26 @@ import { Notifications } from './components/Notifications';
 import { FlashBar } from './components/FlashBar';
 import { Sliders, ShieldCheck } from 'lucide-react';
 import { AdminPanel } from './components/AdminPanel';
+import VerifiedBadge from './components/VerifiedBadge';
+
+const formatFeedEvent = (eventType: string) => {
+  switch (eventType) {
+    case 'capsule_opened':
+      return 'Capsula abierta';
+    case 'item_batch_added':
+      return 'Nuevos recuerdos';
+    case 'opening_soon':
+      return 'Abre pronto';
+    case 'birthday':
+      return 'Cumpleanos';
+    case 'capsule_commented':
+      return 'Actividad';
+    case 'recommendation':
+      return 'Recomendado';
+    default:
+      return 'Capsula';
+  }
+};
 
 function App() {
   const [session, setSession] = useState<any>(null);
@@ -52,11 +72,15 @@ function App() {
   const [activeFilter, setActiveFilter] = useState<'all' | 'opened' | 'sealed'>('all');
   const [activeChat, setActiveChat] = useState<{id: string, participant: any} | null>(null);
   const [feedTab, setFeedTab] = useState<'following' | 'explore'>('following');
-  const [offset, setOffset] = useState(0);
+  const [feedCursor, setFeedCursor] = useState<{ score: number | null; activityDate: string | null; id: string | null } | null>(null);
   const [hasNextPage, setHasNextPage] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [activeStoryGroup, setActiveStoryGroup] = useState<any>(null);
   const [userProfile, setUserProfile] = useState<any>(null);
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+  const feedSessionId = useRef(`web-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const fetchSeq = useRef(0);
   const PAGE_SIZE = 15;
 
   const calculateTimeLeft = (opensAt: string) => {
@@ -69,29 +93,37 @@ function App() {
   };
 
   const [authChecking, setAuthChecking] = useState(true);
+
+  const normalizedFilter = activeFilter === 'opened' ? 'open' : activeFilter === 'sealed' ? 'closed' : 'all';
   
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setAuthChecking(false);
-      if (session) {
-        fetchFeed();
-        fetchUserProfile(session.user.id);
-      }
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       if (session) {
-        fetchFeed();
         fetchUserProfile(session.user.id);
       } else {
         setUserProfile(null);
+        setFeed([]);
+        setStories([]);
+        setMyStory(null);
       }
     });
 
     return () => subscription.unsubscribe();
-  }, [activeFilter, feedTab]);
+  }, []);
+
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    feedSessionId.current = `web-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    fetchUserProfile(session.user.id);
+    fetchFeed(false, 'initial_load');
+    fetchSuggestions(session.user.id);
+  }, [session?.user?.id, activeFilter, feedTab]);
 
   const fetchUserProfile = async (userId: string) => {
     const { data } = await supabase.rpc('get_profile_data_unified', { p_target_id: userId });
@@ -100,34 +132,107 @@ function App() {
     }
   };
 
-  const fetchFeed = async (isLoadMore = false) => {
+  const fetchSuggestions = async (userId: string) => {
+    const { data: following } = await supabase
+      .from('follows')
+      .select('following_id')
+      .eq('follower_id', userId);
+    const excludedIds = new Set<string>((following || []).map((f: any) => f.following_id));
+    excludedIds.add(userId);
+
+    const { data } = await supabase
+      .from('profiles')
+      .select('id, username, display_name, avatar_url, is_verified, favorite_color')
+      .not('id', 'in', `(${Array.from(excludedIds).join(',')})`)
+      .order('is_verified', { ascending: false })
+      .limit(6);
+
+    setSuggestions(data || []);
+  };
+
+  const followSuggestion = async (targetId: string) => {
+    if (!session?.user?.id) return;
+    const { error } = await supabase.from('follows').insert({
+      follower_id: session.user.id,
+      following_id: targetId
+    });
+    if (!error) setSuggestions(prev => prev.filter(user => user.id !== targetId));
+  };
+
+  const recordImpressions = useCallback(async (items: any[], startPosition = 0) => {
+    if (!session?.user?.id || items.length === 0) return;
+
+    const feedEventIds = items.map(item => item.feed_item_key || item.feed_event_id || item.id).filter(Boolean);
+    if (feedEventIds.length === 0) return;
+
+    const capsuleIds = items.map(item => item.capsule_id || null);
+    const eventTypes = items.map(item => item.event_type || item.feed_type || 'web');
+    const positions = items.map((_, index) => startPosition + index);
+
+    await supabase.rpc('record_feed_impressions', {
+      p_user_id: session.user.id,
+      p_feed_event_ids: feedEventIds,
+      p_capsule_ids: capsuleIds,
+      p_event_types: eventTypes,
+      p_feed_type: feedTab,
+      p_session_id: feedSessionId.current,
+      p_positions: positions
+    });
+  }, [feedTab, session?.user?.id]);
+
+  const recordFeedOpen = useCallback(async (capsule: any) => {
+    if (!session?.user?.id) return;
+    await supabase.rpc('record_feed_click', {
+      p_user_id: session.user.id,
+      p_capsule_id: capsule.capsule_id || capsule.id,
+      p_feed_event_id: capsule.feed_item_key || capsule.feed_event_id || capsule.id
+    });
+  }, [session?.user?.id]);
+
+  const fetchFeed = async (isLoadMore = false, refreshMode: 'initial_load' | 'pull_to_refresh' | 'infinite_scroll' = 'initial_load') => {
+    const seq = ++fetchSeq.current;
     try {
       if (isLoadMore) setLoadingMore(true);
+      else if (refreshMode === 'pull_to_refresh') setRefreshing(true);
       else {
         setLoading(true);
-        setOffset(0);
       }
-      
-      const currentOffset = isLoadMore ? offset + PAGE_SIZE : 0;
+
+      const cursor = isLoadMore ? feedCursor : null;
+      const effectiveMode = isLoadMore ? 'infinite_scroll' : refreshMode;
 
       const { data, error } = await supabase.rpc('get_combined_feed_data', {
         p_tab: feedTab,
-        p_filter: activeFilter,
+        p_filter: normalizedFilter,
         p_limit: PAGE_SIZE,
-        p_offset: currentOffset
+        p_offset: 0,
+        p_seed: Date.now() % 100000,
+        p_refresh_mode: effectiveMode,
+        p_session_id: feedSessionId.current,
+        p_cursor_score: cursor?.score ?? null,
+        p_cursor_activity_date: cursor?.activityDate ?? null,
+        p_cursor_id: cursor?.id ?? null
       });
 
       if (error) throw error;
+      if (seq !== fetchSeq.current) return;
       
       const newItems = data?.feed || [];
       const storiesData = data?.stories || [];
       const myId = session?.user?.id;
+      const lastItem = newItems[newItems.length - 1];
 
       if (isLoadMore) {
-        setFeed(prev => [...prev, ...newItems]);
-        setOffset(currentOffset);
+        setFeed(prev => {
+          const existing = new Set(prev.map(item => item.feed_item_key || item.feed_event_id || item.id));
+          const merged = [...prev, ...newItems.filter((item: any) => !existing.has(item.feed_item_key || item.feed_event_id || item.id))];
+          recordImpressions(newItems, prev.length).catch(err => console.warn('Unable to record web feed impressions', err));
+          return merged;
+        });
       } else {
         setFeed(newItems);
+        setFeedCursor(null);
+        recordImpressions(newItems, 0).catch(err => console.warn('Unable to record web feed impressions', err));
         // Process stories
         if (myId) {
           const usersWithStories: any[] = [];
@@ -152,7 +257,16 @@ function App() {
           setStories(processed.filter(u => u.owner_id !== myId));
           setMyStory(processed.find(u => u.owner_id === myId) || null);
         }
+        if (refreshMode === 'pull_to_refresh') {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
       }
+
+      setFeedCursor(lastItem ? {
+        score: lastItem.cursor_score ?? lastItem.final_score ?? null,
+        activityDate: lastItem.cursor_activity_date ?? lastItem.activity_date ?? null,
+        id: lastItem.cursor_id ?? lastItem.feed_item_key ?? lastItem.feed_event_id ?? lastItem.id ?? null
+      } : cursor);
       
       setHasNextPage(newItems.length >= PAGE_SIZE);
     } catch (err) {
@@ -160,12 +274,13 @@ function App() {
     } finally {
       setLoading(false);
       setLoadingMore(false);
+      setRefreshing(false);
     }
   };
 
   const fetchNextPage = () => {
     if (!loadingMore && hasNextPage) {
-      fetchFeed(true);
+      fetchFeed(true, 'infinite_scroll');
     }
   };
 
@@ -190,8 +305,13 @@ function App() {
     
     const hasMedia = !!(capsule.cover_url || (capsule.collage_items && capsule.collage_items.length > 0));
     
+    const openCapsule = async () => {
+      await recordFeedOpen(capsule).catch(() => {});
+      setSelectedCapsule(capsule);
+    };
+
     return (
-      <div key={capsule.id} className="capsule-card-premium" onClick={() => setSelectedCapsule(capsule)}>
+      <div key={capsule.feed_item_key || capsule.id} className={`capsule-card-premium event-${capsule.event_type || 'capsule'}`} onClick={openCapsule}>
         <div className="card-header">
           <div className="user-info" onClick={(e) => { e.stopPropagation(); setViewingProfileId(capsule.owner_id); }}>
             <img 
@@ -228,23 +348,23 @@ function App() {
           {hasMedia ? (
             <div className="media-mode-view" style={{ width: '100%', height: '100%', position: 'relative' }}>
               {/* Background Media (Blurred if sealed) */}
-              <div className={`media-background ${isClosed ? 'is-blurred' : ''}`} style={{ width: '100%', height: '100%' }}>
-                 {capsule.cover_url ? (
+              <div className={`media-background ${isClosed ? 'is-blurred secure-locked-media' : ''}`} style={{ width: '100%', height: '100%' }}>
+                 {isClosed ? (
+                    <div className="secure-locked-art" />
+                 ) : capsule.cover_url ? (
                     <img 
                       src={capsule.cover_url} 
-                      className={isClosed ? "blurred-img-security" : ""} 
                       style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
                       alt="" 
                       draggable={false}
                     />
                   ) : (
-                    <div className={isClosed ? "collage-grid-blurred" : "web-collage-grid"}>
+                    <div className="web-collage-grid">
                       {capsule.collage_items?.slice(0, 4).map((item: any, i: number) => (
                         <img 
                           key={i} 
                           src={item.thumbnail_url || item.media_url} 
-                          className={isClosed ? "blurred-img-security" : ""} 
-                          style={{ width: '100%', height: '100%', objectFit: 'cover', border: !isClosed ? '1px solid white' : 'none' }} 
+                          style={{ width: '100%', height: '100%', objectFit: 'cover', border: '1px solid white' }} 
                           alt="" 
                           draggable={false}
                         />
@@ -262,6 +382,7 @@ function App() {
                    modelKey={capsule.model}
                    source={isClosed ? getModelImage(capsule.model) : getModelImageOpen(capsule.model)}
                    date={capsule.opens_at}
+                   modelLayout={capsule.model_snapshot}
                    style={{ width: '100%', height: '100%' }}
                    hideTimer={true}
                    hideParticles={true}
@@ -276,6 +397,7 @@ function App() {
                  modelKey={capsule.model}
                  source={isClosed ? getModelImage(capsule.model) : getModelImageOpen(capsule.model)}
                  date={capsule.opens_at}
+                 modelLayout={capsule.model_snapshot}
                  chainId={capsule.chain_id}
                  style={{ width: '180px', height: '180px' }}
                  isOpened={!isClosed}
@@ -293,6 +415,9 @@ function App() {
             <button className="action-btn" style={{marginLeft: 'auto'}}><Share2 size={22} /></button>
           </div>
           <div className="card-content">
+            {capsule.event_type && capsule.event_type !== 'capsule_created' && (
+              <span className="event-pill">{formatFeedEvent(capsule.event_type)}</span>
+            )}
             <h3>{capsule.title}</h3>
             {capsule.description && <p>{capsule.description}</p>}
             <div className="card-meta">
@@ -413,6 +538,9 @@ function App() {
                   <div className="feed-tabs">
                     <button className={`feed-tab-item ${feedTab === 'following' ? 'active' : ''}`} onClick={() => setFeedTab('following')}>Following</button>
                     <button className={`feed-tab-item ${feedTab === 'explore' ? 'active' : ''}`} onClick={() => setFeedTab('explore')}>Explore</button>
+                    <button className="feed-refresh-btn" onClick={() => fetchFeed(false, 'pull_to_refresh')} disabled={refreshing || loading}>
+                      {refreshing ? 'Refreshing...' : 'Refresh'}
+                    </button>
                   </div>
 
                   <FlashBar 
@@ -423,9 +551,9 @@ function App() {
                   />
 
                   <div className="filter-chips">
-                    <button className={`chip ${activeFilter === 'all' ? 'active' : ''}`} onClick={() => setActiveFilter('all')}>All Caps</button>
-                    <button className={`chip ${activeFilter === 'opened' ? 'active' : ''}`} onClick={() => setActiveFilter('opened')}>Opened</button>
-                    <button className={`chip ${activeFilter === 'sealed' ? 'active' : ''}`} onClick={() => setActiveFilter('sealed')}>Sealed</button>
+                    <button className={`chip ${activeFilter === 'all' ? 'active' : ''}`} onClick={() => setActiveFilter('all')}>Todo</button>
+                    <button className={`chip ${activeFilter === 'opened' ? 'active' : ''}`} onClick={() => setActiveFilter('opened')}>Abiertas</button>
+                    <button className={`chip ${activeFilter === 'sealed' ? 'active' : ''}`} onClick={() => setActiveFilter('sealed')}>Selladas</button>
                   </div>
                 </header>
 
@@ -453,18 +581,21 @@ function App() {
               <aside className="feed-right-sidebar">
                 <div className="sidebar-section">
                   <h3 className="section-title">Suggestions</h3>
-                  {[1, 2, 3].map(i => (
-                    <div key={i} className="suggestion-item">
+                  {suggestions.map(user => (
+                    <div key={user.id} className="suggestion-item">
                       <div className="suggestion-user">
                         <div className="nav-avatar-sm" style={{width: '36px', height: '36px'}}>
-                          <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=User${i}`} alt="" />
+                          <img src={getAvatarUrl(user.avatar_url, user.display_name || user.username, user.favorite_color)} alt="" />
                         </div>
                         <div className="user-names">
-                          <span className="display-name">Suggested User {i}</span>
-                          <span className="username">@user_{i}</span>
+                          <span className="display-name">
+                            {user.display_name || user.username}
+                            {user.is_verified && <VerifiedBadge size={12} style={{ marginLeft: 4 }} />}
+                          </span>
+                          <span className="username">@{user.username}</span>
                         </div>
                       </div>
-                      <button className="follow-btn-sm">Follow</button>
+                      <button className="follow-btn-sm" onClick={() => followSuggestion(user.id)}>Seguir</button>
                     </div>
                   ))}
                 </div>

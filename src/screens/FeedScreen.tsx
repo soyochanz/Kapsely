@@ -48,12 +48,19 @@ import CapsuleCard from '../components/CapsuleCard';
 
 type FeedTab = 'following' | 'explore';
 type FilterType = 'all' | 'closed' | 'open';
+type FeedCursor = {
+    score: number;
+    activityDate: string;
+    id: string;
+    page: number;
+};
 
 const { width, height } = Dimensions.get('window');
 
 const FEED_CACHE_TTL = 5 * 60 * 1000;
 const IMPRESSION_FLUSH_MS = 8000;
 const PAGE_SIZE = 15;
+const FEED_BOOT_CACHE_PREFIX = '@kapsely_feed_boot_v4';
 
 const FILTER_KEYS: FilterType[] = ['all', 'closed', 'open'];
 const FILTER_META: Record<FilterType, { icon: string; label: (t: any) => string; iconColor?: string }> = {
@@ -235,25 +242,72 @@ export default function FeedScreen() {
     const [stories, setStories] = useState<any[]>([]);
     const [shuffleSeed, setShuffleSeed] = useState(Date.now());
     const [isOffline, setIsOffline] = useState(false);
+    const [cachedFeedData, setCachedFeedData] = useState<any | null>(null);
+    const [cachedFeedKey, setCachedFeedKey] = useState<string | null>(null);
 
     const queryClient = useQueryClient();
+    const feedCacheKey = `${FEED_BOOT_CACHE_PREFIX}_${activeTab}_${activeFilter}`;
+    const feedSessionId = useRef(`feed-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
+    const refreshModeRef = useRef<'initial_load' | 'pull_to_refresh'>('initial_load');
 
     // ─── Fetch Function ──────────────────────────────────────────────────────
-    const fetchFeed = async ({ pageParam = 0 }) => {
+    const fetchFeed = async ({ pageParam = null }: { pageParam?: FeedCursor | null }) => {
         const { data: { session } } = await supabase.auth.getSession();
         const myId = session?.user?.id;
         if (myId && !currentUserId) setCurrentUserId(myId);
 
-        const { data, error } = await supabase.rpc('get_combined_feed_data', {
+        const isInfiniteScroll = !!pageParam;
+        const refreshMode = isInfiniteScroll ? 'infinite_scroll' : refreshModeRef.current;
+        const params = {
             p_tab: activeTab,
             p_filter: activeFilter,
             p_limit: PAGE_SIZE,
-            p_offset: pageParam * PAGE_SIZE
-        });
+            p_offset: 0,
+            p_seed: shuffleSeed,
+            p_refresh_mode: refreshMode,
+            p_session_id: feedSessionId.current,
+            p_cursor_score: pageParam?.score ?? null,
+            p_cursor_activity_date: pageParam?.activityDate ?? null,
+            p_cursor_id: pageParam?.id ?? null,
+        };
+
+        let { data, error } = await supabase.rpc('get_combined_feed_data', params);
+        if (error?.message?.includes('p_refresh_mode') || error?.message?.includes('p_session_id') || error?.message?.includes('p_cursor_score')) {
+            const { p_refresh_mode, p_session_id, p_cursor_score, p_cursor_activity_date, p_cursor_id, ...legacyParams } = params;
+            legacyParams.p_offset = isInfiniteScroll ? (pageParam?.page ?? 1) * PAGE_SIZE : 0;
+            const fallback = await supabase.rpc('get_combined_feed_data', legacyParams);
+            data = fallback.data;
+            error = fallback.error;
+        }
+        if (error?.message?.includes('p_seed')) {
+            const { p_seed, p_refresh_mode, p_session_id, p_cursor_score, p_cursor_activity_date, p_cursor_id, ...legacyParams } = params;
+            legacyParams.p_offset = isInfiniteScroll ? (pageParam?.page ?? 1) * PAGE_SIZE : 0;
+            const fallback = await supabase.rpc('get_combined_feed_data', legacyParams);
+            data = fallback.data;
+            error = fallback.error;
+        }
+        if (!isInfiniteScroll) refreshModeRef.current = 'initial_load';
 
         if (error) throw error;
         return data;
     };
+
+    useEffect(() => {
+        let alive = true;
+        setCachedFeedData(null);
+        setCachedFeedKey(null);
+        AsyncStorage.getItem(feedCacheKey)
+            .then(raw => {
+                if (!alive || !raw) return;
+                const parsed = JSON.parse(raw);
+                if (Date.now() - (parsed.savedAt || 0) < FEED_CACHE_TTL) {
+                    setCachedFeedData(parsed.data);
+                    setCachedFeedKey(feedCacheKey);
+                }
+            })
+            .catch(() => {});
+        return () => { alive = false; };
+    }, [feedCacheKey]);
 
     // ─── useInfiniteQuery ────────────────────────────────────────────────────
     const {
@@ -264,42 +318,43 @@ export default function FeedScreen() {
         status,
         refetch,
     } = useInfiniteQuery({
-        queryKey: ['feed', activeTab, activeFilter],
+        queryKey: ['feed', activeTab, activeFilter, shuffleSeed],
         queryFn: fetchFeed,
         getNextPageParam: (lastPage, allPages) => {
-            return lastPage.feed?.length >= PAGE_SIZE ? allPages.length : undefined;
+            const feed = lastPage.feed || [];
+            if (feed.length < PAGE_SIZE) return undefined;
+            const last = feed[feed.length - 1];
+            return {
+                score: Number(last.cursor_score ?? last.final_score ?? 0),
+                activityDate: last.cursor_activity_date ?? last.activity_date ?? last.created_at ?? new Date(0).toISOString(),
+                id: last.cursor_id ?? last.feed_item_key ?? last.id,
+                page: allPages.length,
+            } satisfies FeedCursor;
         },
-        initialPageParam: 0,
+        initialPageParam: null,
         staleTime: 5 * 60 * 1000,
         gcTime: 30 * 60 * 1000,
     });
 
     const capsules = useMemo(() => {
-        if (!queryData?.pages) return [];
-        
-        // Shuffle each page individually so pagination works correctly without jumping
-        const shuffledPages = queryData.pages.map((page, pageIdx) => {
-            const raw = page.feed || [];
-            if (raw.length === 0) return [];
-            
-            const shuffled = [...raw];
-            let seed = shuffleSeed + pageIdx; // Seed depends on page index to be different but stable
-            for (let i = shuffled.length - 1; i > 0; i--) {
-                const x = Math.sin(seed++) * 10000;
-                const r = x - Math.floor(x);
-                const j = Math.floor(r * (i + 1));
-                [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-            }
-            return shuffled;
-        });
+        const pages = queryData?.pages || (cachedFeedKey === feedCacheKey ? cachedFeedData?.pages : null);
+        if (!pages) return [];
+        return pages.flatMap((page: any) => page.feed || []);
+    }, [queryData, cachedFeedData, cachedFeedKey, feedCacheKey]);
 
-        return shuffledPages.flat();
-    }, [queryData, shuffleSeed]);
+    useEffect(() => {
+        if (!queryData?.pages?.[0]) return;
+        AsyncStorage.setItem(feedCacheKey, JSON.stringify({
+            savedAt: Date.now(),
+            data: { pages: [queryData.pages[0]] },
+        })).catch(() => {});
+    }, [queryData, feedCacheKey]);
 
     // Update auxiliary states when data changes
     useEffect(() => {
-        if (queryData?.pages[0]) {
-            const { stories: storiesData, following_ids, liked_ids, blocked_ids, participant_ids } = queryData.pages[0];
+        const firstPage = queryData?.pages?.[0] || (cachedFeedKey === feedCacheKey ? cachedFeedData?.pages?.[0] : null);
+        if (firstPage) {
+            const { stories: storiesData, following_ids, liked_ids, blocked_ids, participant_ids } = firstPage;
             
             setBlockedUserIds(blocked_ids || []);
             setFollowingSet(new Set(following_ids || []));
@@ -310,19 +365,28 @@ export default function FeedScreen() {
                 processStoriesData(storiesData || [], currentUserId, blocked_ids || []);
             }
         }
-    }, [queryData, currentUserId]);
+    }, [queryData, cachedFeedData, cachedFeedKey, feedCacheKey, currentUserId]);
 
-    const isLoading = status === 'pending' && !queryData;
+    const hasBootData = capsules.length > 0;
+    const isLoading = status === 'pending' && !hasBootData;
     const isRefreshing = status === 'pending' && !!queryData;
     const isError = status === 'error';
 
     const trackedImpressions = useRef<Set<string>>(new Set());
+    const impressionBufferRef = useRef<Map<string, { capsuleId: string | null; eventType: string; position: number | null }>>(new Map());
 
     const onViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: any[] }) => {
         if (!currentUserId) return;
         viewableItems
             .filter(v => v.isViewable && v.item?.id && !trackedImpressions.current.has(v.item.id))
-            .forEach(v => trackedImpressions.current.add(v.item.id));
+            .forEach(v => {
+                trackedImpressions.current.add(v.item.id);
+                impressionBufferRef.current.set(v.item.id, {
+                    capsuleId: v.item.capsule_id || null,
+                    eventType: v.item.event_type || v.item.feed_type || 'unknown',
+                    position: typeof v.index === 'number' ? v.index : null,
+                });
+            });
     }, [currentUserId]);
 
     const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -333,12 +397,19 @@ export default function FeedScreen() {
     const feedRequestId = useRef(0);
 
     const flatListRef = useRef<any>(null);
-    const impressionBufferRef = useRef<Set<string>>(new Set());
     const impressionFlushRef = useRef<NodeJS.Timeout | null>(null);
     const storiesScrollRef = useRef<ScrollView>(null);
     const filterScrollRef = useRef<ScrollView>(null);
+    const pinTopAfterRefreshRef = useRef(false);
 
     const keyExtractor = useCallback((item: any) => item.id, []);
+
+    const pinFeedToTop = useCallback((animated = false) => {
+        flatListRef.current?.scrollToOffset?.({ offset: 0, animated });
+        requestAnimationFrame(() => {
+            flatListRef.current?.scrollToOffset?.({ offset: 0, animated: false });
+        });
+    }, []);
 
     useWebDragScroll(flatListRef);
     useWebDragScroll(storiesScrollRef);
@@ -401,9 +472,10 @@ export default function FeedScreen() {
                     setTimeout(checkConnectivity, 1500);
                 }
             });
-            checkInterval = setInterval(checkConnectivity, 15000);
-            checkConnectivity();
+            const firstCheck = setTimeout(checkConnectivity, 2500);
+            checkInterval = setInterval(checkConnectivity, 20000);
             return () => {
+                clearTimeout(firstCheck);
                 clearInterval(checkInterval);
                 appStateSub.remove();
             };
@@ -460,12 +532,17 @@ export default function FeedScreen() {
     useEffect(() => {
         const flushImpressions = async () => {
             if (!currentUserId || impressionBufferRef.current.size === 0) return;
-            const ids = Array.from(impressionBufferRef.current) as string[];
+            const entries = Array.from(impressionBufferRef.current.entries());
             impressionBufferRef.current.clear();
             try {
                 await supabase.rpc('record_feed_impressions', {
                     p_user_id: currentUserId,
-                    p_capsule_ids: ids,
+                    p_feed_event_ids: entries.map(([eventId]) => eventId),
+                    p_capsule_ids: entries.map(([, meta]) => meta.capsuleId),
+                    p_event_types: entries.map(([, meta]) => meta.eventType),
+                    p_feed_type: activeTab,
+                    p_session_id: feedSessionId.current,
+                    p_positions: entries.map(([, meta]) => meta.position),
                 });
             } catch (e) { /* best-effort */ }
         };
@@ -639,30 +716,68 @@ export default function FeedScreen() {
             }
             setHasUnread(foundUnread);
         };
-        checkUnread();
+        const unreadTask = InteractionManager.runAfterInteractions(checkUnread);
         const ch = supabase.channel('chat_updates')
             .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, checkUnread)
             .subscribe();
-        return () => { supabase.removeChannel(ch); };
+        return () => {
+            unreadTask.cancel?.();
+            supabase.removeChannel(ch);
+        };
     }, [isFocused]);
 
     const flushImpressionsNow = useCallback(async () => {
         if (!currentUserId || impressionBufferRef.current.size === 0) return;
-        const ids = Array.from(impressionBufferRef.current) as string[];
+        const entries = Array.from(impressionBufferRef.current.entries());
         impressionBufferRef.current.clear();
         try {
             await supabase.rpc('record_feed_impressions', {
                 p_user_id: currentUserId,
-                p_capsule_ids: ids,
+                p_feed_event_ids: entries.map(([eventId]) => eventId),
+                p_capsule_ids: entries.map(([, meta]) => meta.capsuleId),
+                p_event_types: entries.map(([, meta]) => meta.eventType),
+                p_feed_type: activeTab,
+                p_session_id: feedSessionId.current,
+                p_positions: entries.map(([, meta]) => meta.position),
             });
         } catch (e) { /* silent fail */ }
+    }, [currentUserId, activeTab]);
+
+    const recordFeedOpen = useCallback((item: any) => {
+        if (!currentUserId || !item?.id) return;
+        impressionBufferRef.current.delete(item.id);
+        (async () => {
+            try {
+                await supabase.rpc('record_feed_click', {
+                    p_user_id: currentUserId,
+                    p_capsule_id: item.capsule_id || item.id,
+                    p_feed_event_id: item.id,
+                });
+            } catch {
+                impressionBufferRef.current.set(item.id, {
+                    capsuleId: item.capsule_id || null,
+                    eventType: item.event_type || item.feed_type || 'unknown',
+                    position: null,
+                });
+            }
+        })();
     }, [currentUserId]);
 
     const onRefresh = useCallback(async () => {
-        setShuffleSeed(Date.now());
+        const nextSeed = Date.now();
+        pinTopAfterRefreshRef.current = true;
+        pinFeedToTop(false);
+        refreshModeRef.current = 'pull_to_refresh';
+        setShuffleSeed(nextSeed);
         await flushImpressionsNow();
-        refetch();
-    }, [refetch, flushImpressionsNow]);
+        await queryClient.invalidateQueries({ queryKey: ['feed'] });
+    }, [queryClient, flushImpressionsNow, pinFeedToTop]);
+
+    useEffect(() => {
+        if (!pinTopAfterRefreshRef.current || !queryData?.pages?.[0]) return;
+        pinTopAfterRefreshRef.current = false;
+        pinFeedToTop(false);
+    }, [queryData, pinFeedToTop]);
 
     const handleLoadMore = useCallback(() => {
         if (hasNextPage && !isFetchingNextPage) {
@@ -702,7 +817,7 @@ export default function FeedScreen() {
     const likeMutation = useMutation({
         mutationFn: async ({ activityId, wasLiked }: { activityId: string, wasLiked: boolean }) => {
             if (!currentUserId) return;
-            const activity = capsules.find(c => c.id === activityId);
+            const activity = capsules.find((c: any) => c.id === activityId);
             const targetCapsuleId = activity?.capsule_id || activityId;
             
             if (wasLiked) {
@@ -766,6 +881,26 @@ export default function FeedScreen() {
 
     // ─── renderItem ────────────────────────────────────────────────────────────
     const renderItem = useCallback(({ item }: { item: any }) => {
+        if (item.feed_type === 'birthday') {
+            const birthdayProfile = item.profiles || item;
+            return (
+                <TouchableOpacity
+                    activeOpacity={0.9}
+                    style={s.birthdayPost}
+                    onPress={() => navigation.navigate('UserProfile', { targetUserId: item.owner_id })}
+                >
+                    <LinearGradient colors={['#FFF1F8', '#F5F3FF', '#ECFEFF']} style={StyleSheet.absoluteFill} />
+                    <View style={s.birthdayPostAvatarWrap}>
+                        <Image source={{ uri: Colors.getAvatarUrl(birthdayProfile.avatar_url, birthdayProfile.display_name || birthdayProfile.username, birthdayProfile.favorite_color) }} style={s.birthdayPostAvatar} contentFit="cover" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                        <Text style={s.birthdayPostTitle}>Hoy es el cumple de {birthdayProfile.display_name || birthdayProfile.username}</Text>
+                        <Text style={s.birthdayPostSub}>Pásate por su perfil y déjale un regalo.</Text>
+                    </View>
+                    <Text style={s.birthdayPostEmoji}>{'\uD83C\uDF82'}</Text>
+                </TouchableOpacity>
+            );
+        }
         const isFollowed = followingSet.has(item.owner_id);
         const isLiked = likedCapsules.has(item.id) || likedCapsules.has(item.capsule_id);
         const hasAccess = item.is_public
@@ -785,14 +920,12 @@ export default function FeedScreen() {
                 isLocked={!hasAccess}
                 onFollow={handleGlobalFollow}
                 onLike={handleGlobalLike}
+                onOpen={recordFeedOpen}
                 lightweight
                 hideParticles
-                onViewable={() => {
-                    impressionBufferRef.current.add(item.id);
-                }}
             />
         );
-    }, [currentUserId, followingSet, likedCapsules, participantCapsules, handleGlobalFollow, handleGlobalLike, capsules]);
+    }, [currentUserId, followingSet, likedCapsules, participantCapsules, handleGlobalFollow, handleGlobalLike, recordFeedOpen, navigation]);
 
     // ─── List Header ───────────────────────────────────────────────────────────
     const ListHeader = useMemo(() => (
@@ -906,14 +1039,14 @@ export default function FeedScreen() {
 
                     <View style={s.headerActions}>
                         <TouchableOpacity
-                            style={[s.actionBtn, hasUnread && s.actionBtnUnread]}
+                            style={s.actionBtn}
                             activeOpacity={0.72}
                             onPress={() => navigation.navigate('ChatList')}
                         >
                             <Ionicons
-                                name="chatbubble-ellipses"
-                                size={20}
-                                color={hasUnread ? Colors.primary : Colors.textPrimary}
+                                name="paper-plane-outline"
+                                size={24}
+                                color={Colors.textPrimary}
                             />
                             {hasUnread && (
                                 <Animated.View style={[s.unreadDot, { transform: [{ scale: pulseAnim }] }]} />
@@ -944,7 +1077,7 @@ export default function FeedScreen() {
                 renderItem={renderItem}
                 onViewableItemsChanged={onViewableItemsChanged}
                 viewabilityConfig={{ itemVisiblePercentThreshold: 50, minimumViewTime: 800 }}
-                extraData={[likedCapsules, capsules, followingSet]}
+                extraData={[likedCapsules, followingSet, participantCapsules, currentUserId]}
                 drawDistance={height}
                 ListFooterComponent={() =>
                     isFetchingNextPage ? (
@@ -1120,19 +1253,13 @@ const s = StyleSheet.create({
         gap: 8,
     },
     actionBtn: {
-        width: 42,
-        height: 42,
-        borderRadius: 14,
-        backgroundColor: Colors.cardAlt,
-        borderWidth: 1,
-        borderColor: Colors.border,
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: 'transparent',
         alignItems: 'center',
         justifyContent: 'center',
         position: 'relative',
-    },
-    actionBtnUnread: {
-        borderColor: Colors.primary + '50',
-        backgroundColor: Colors.primary + '0C',
     },
     unreadDot: {
         position: 'absolute',
@@ -1269,6 +1396,24 @@ const s = StyleSheet.create({
         fontSize: 12,
         fontFamily: Fonts.medium,
     },
+    birthdayPost: {
+        marginHorizontal: 8,
+        marginBottom: 10,
+        borderRadius: 16,
+        overflow: 'hidden',
+        minHeight: 86,
+        padding: 14,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: '#F9B8D8',
+    },
+    birthdayPostAvatarWrap: { width: 54, height: 54, borderRadius: 27, padding: 2, backgroundColor: '#fff' },
+    birthdayPostAvatar: { width: 50, height: 50, borderRadius: 25 },
+    birthdayPostTitle: { fontSize: 15, fontFamily: Fonts.bold, color: Colors.textPrimary },
+    birthdayPostSub: { fontSize: 12, fontFamily: Fonts.medium, color: Colors.textSecondary, marginTop: 2 },
+    birthdayPostEmoji: { fontSize: 28 },
 });
 
 const attStyles = StyleSheet.create({

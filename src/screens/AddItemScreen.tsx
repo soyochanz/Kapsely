@@ -28,6 +28,18 @@ import Svg, { Path as SvgPath } from 'react-native-svg';
 import { PanResponder } from 'react-native';
 
 const { width } = Dimensions.get('window');
+const MAX_VIDEO_DURATION_MS = 10 * 60 * 1000;
+const UNDO_UPLOAD_DELAY_MS = 5000;
+
+const createUploadBatchId = () =>
+    'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+        const r = Math.floor(Math.random() * 16);
+        const v = c === 'x' ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+    });
+
+const stripBatchMarker = (value?: string | null) =>
+    (value || '').replace(/!!b:[^\s]+/g, '').trim();
 
 // ─── Design Tokens ────────────────────────────────────────────────────────────
 // Imported from ../theme/DesignTokens
@@ -41,6 +53,8 @@ export default function AddItemScreen() {
     const insets = useSafeAreaInsets();
 
     const [loading, setLoading] = useState(false);
+    const [isProcessingMedia, setIsProcessingMedia] = useState(false);
+    const [processingMediaLabel, setProcessingMediaLabel] = useState('');
     const [scrollEnabled, setScrollEnabled] = useState(true);
     const [mediaList, setMediaList] = useState<any[]>([]);
     const [uploadProgress, setUploadProgress] = useState<{ [key: string]: number }>({});
@@ -129,6 +143,9 @@ export default function AddItemScreen() {
     const [isUndoOverlayVisible, setIsUndoOverlayVisible] = useState(false);
     const undoProgress = useRef(new Animated.Value(0)).current;
     const undoTimerRef = useRef<NodeJS.Timeout | null>(null);
+    const uploadCancelledRef = useRef(false);
+    const uploadedPathsRef = useRef<string[]>([]);
+    const activeUploadRequestsRef = useRef<XMLHttpRequest[]>([]);
     const [pendingUploadData, setPendingUploadData] = useState<any>(null);
 
     useEffect(() => {
@@ -223,39 +240,50 @@ export default function AddItemScreen() {
     }, []);
 
     const processAssets = async (assets: any[]) => {
-        setLoading(true);
+        setIsProcessingMedia(true);
+        setProcessingMediaLabel(contentType === 'video' ? 'Procesando video...' : 'Preparando contenido...');
         const processed: any[] = [];
-        for (const asset of assets) {
-            let cur = { ...asset };
-            
-            // Extract location from EXIF
-            if (asset.exif && !suggestedLocation) {
-                const suggested = await locationService.getLocationFromExif(asset.exif);
-                if (suggested) {
-                    setSuggestedLocation(suggested);
-                    // Standard: ask or auto-suggest later
-                }
-            }
+        try {
+            for (const asset of assets) {
+                let cur = { ...asset };
 
-            if (contentType === 'image') {
-                try {
-                    const optimizedUri = await optimizeImageForUpload(asset.uri);
-                    const thumbUri = await optimizeThumbnailForUpload(asset.uri);
-                    const r = await ImageManipulator.manipulateAsync(optimizedUri, [], {});
-                    cur = { ...cur, uri: optimizedUri, thumbnailUri: thumbUri, width: r.width, height: r.height };
-                } catch (e) { }
-            } else if (contentType === 'video') {
-                try {
-                    if (asset.duration && asset.duration > 61000) { Alert.alert('Error', 'Videos must be 1 minute or less.'); setLoading(false); return; }
-                    const { uri: rawThumbUri } = await VideoThumbnails.getThumbnailAsync(asset.uri, { time: 1000 });
-                    const optimizedThumbUri = await optimizeThumbnailForUpload(rawThumbUri);
-                    cur.thumbnailUri = optimizedThumbUri; cur.duration = asset.duration;
-                } catch (e) { }
+                // Extract location from EXIF
+                if (asset.exif && !suggestedLocation) {
+                    const suggested = await locationService.getLocationFromExif(asset.exif);
+                    if (suggested) {
+                        setSuggestedLocation(suggested);
+                        // Standard: ask or auto-suggest later
+                    }
+                }
+
+                if (contentType === 'image') {
+                    try {
+                        setProcessingMediaLabel('Optimizando imagen...');
+                        const optimizedUri = await optimizeImageForUpload(asset.uri);
+                        const thumbUri = await optimizeThumbnailForUpload(asset.uri);
+                        const r = await ImageManipulator.manipulateAsync(optimizedUri, [], {});
+                        cur = { ...cur, uri: optimizedUri, thumbnailUri: thumbUri, width: r.width, height: r.height };
+                    } catch (e) { }
+                } else if (contentType === 'video') {
+                    try {
+                        if (asset.duration && asset.duration > MAX_VIDEO_DURATION_MS + 1000) {
+                            Alert.alert('Error', 'Los videos pueden durar hasta 10 minutos.');
+                            return;
+                        }
+                        setProcessingMediaLabel('Creando miniatura del video...');
+                        const { uri: rawThumbUri } = await VideoThumbnails.getThumbnailAsync(asset.uri, { time: 1000 });
+                        setProcessingMediaLabel('Preparando miniatura...');
+                        const optimizedThumbUri = await optimizeThumbnailForUpload(rawThumbUri);
+                        cur.thumbnailUri = optimizedThumbUri; cur.duration = asset.duration;
+                    } catch (e) { }
+                }
+                processed.push(cur);
             }
-            processed.push(cur);
+            setMediaList(prev => [...prev, ...processed]);
+        } finally {
+            setIsProcessingMedia(false);
+            setProcessingMediaLabel('');
         }
-        setMediaList(prev => [...prev, ...processed]);
-        setLoading(false);
     };
 
     const pickMedia = async () => {
@@ -271,7 +299,7 @@ export default function AddItemScreen() {
                 allowsMultipleSelection: true,
                 selectionLimit: 20,
                 quality: 1,
-                videoMaxDuration: 60,
+                videoMaxDuration: 600,
                 videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720,
                 videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
                 base64: false,
@@ -298,7 +326,7 @@ export default function AddItemScreen() {
             const result = await ImagePicker.launchCameraAsync({
                 mediaTypes: contentType === 'image' ? 'images' : 'videos',
                 quality: 1,
-                videoMaxDuration: 60,
+                videoMaxDuration: 600,
                 videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720,
                 videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
                 exif: true,
@@ -362,6 +390,22 @@ export default function AddItemScreen() {
         undoTimerRef.current = null;
         setIsUndoOverlayVisible(false);
         undoProgress.setValue(0);
+        uploadCancelledRef.current = true;
+    };
+
+    const handleCancelActiveUpload = async () => {
+        uploadCancelledRef.current = true;
+        activeUploadRequestsRef.current.forEach(req => {
+            try { req.abort(); } catch (e) {}
+        });
+        activeUploadRequestsRef.current = [];
+        setLoading(false);
+        setUploadProgress({});
+        const uploaded = [...uploadedPathsRef.current];
+        uploadedPathsRef.current = [];
+        if (uploaded.length > 0) {
+            try { await supabase.storage.from('capsule-media').remove(uploaded); } catch (e) {}
+        }
     };
 
     const handleUpload = async () => {
@@ -371,19 +415,20 @@ export default function AddItemScreen() {
         if ((contentType === 'image' || contentType === 'video') && mediaList.length === 0) return;
 
         // Show Undo Overlay first
+        uploadCancelledRef.current = false;
         setIsUndoOverlayVisible(true);
         undoProgress.setValue(0);
         
         Animated.timing(undoProgress, {
             toValue: 1,
-            duration: 10000,
+            duration: UNDO_UPLOAD_DELAY_MS,
             useNativeDriver: false,
         }).start();
 
         undoTimerRef.current = setTimeout(() => {
             setIsUndoOverlayVisible(false);
             performActualUpload();
-        }, 10000);
+        }, UNDO_UPLOAD_DELAY_MS);
     };
 
     const performActualUpload = async () => {
@@ -392,7 +437,9 @@ export default function AddItemScreen() {
         if (contentType === 'audio' && !recordedUri) return;
         if ((contentType === 'image' || contentType === 'video') && mediaList.length === 0) return;
 
-        const batchId = Math.random().toString(36).substring(2, 11);
+        const batchId = createUploadBatchId();
+        uploadCancelledRef.current = false;
+        uploadedPathsRef.current = [];
         setLoading(true);
         try {
             const { data: { user } } = await supabase.auth.getUser();
@@ -417,6 +464,7 @@ export default function AddItemScreen() {
                 else failedUploads.push({ reason: res.reason || 'Unknown error' });
             });
 
+            if (uploadCancelledRef.current) throw new Error('UPLOAD_CANCELLED');
             if (successfulUploads.length === 0 && failedUploads.length > 0) throw new Error(failedUploads[0].reason);
 
             const entries = successfulUploads.map((res: any) => {
@@ -433,6 +481,7 @@ export default function AddItemScreen() {
                     capsule_id: capsuleId || selectedCapsule?.id, owner_id: user.id,
                     media_url: res.mediaUrl || '', thumbnail_url: res.thumbUrl || '',
                     media_type: res.type, content: contentStr,
+                    batch_id: batchId,
                     caption: caption ? `${caption} !!b:${batchId}` : `!!b:${batchId}`,
                     latitude: includeLocation ? currentLocation?.latitude : null,
                     longitude: includeLocation ? currentLocation?.longitude : null,
@@ -459,8 +508,45 @@ export default function AddItemScreen() {
                 }
             }
 
+            if (uploadCancelledRef.current) throw new Error('UPLOAD_CANCELLED');
+            setProcessingMediaLabel('Revisando contenido...');
+            const moderatedEntries = [];
+            for (const entry of finalEntries) {
+                const { data: moderation, error: moderationError } = await supabase.functions.invoke('moderate-content', {
+                    body: {
+                        owner_id: user.id,
+                        capsule_id: entry.capsule_id,
+                        media_url: entry.media_url,
+                        thumbnail_url: entry.thumbnail_url,
+                        media_type: entry.media_type,
+                        content: entry.media_type === 'note' || contentType === 'note' ? text : entry.content,
+                        caption: stripBatchMarker(entry.caption),
+                    },
+                });
+
+                if (moderationError) {
+                    throw new Error('MODERATION_UNAVAILABLE');
+                }
+
+                if (!moderation?.ok || moderation?.action === 'block') {
+                    const blockedError = new Error(moderation?.reason || 'CONTENT_BLOCKED');
+                    (blockedError as any).code = 'CONTENT_BLOCKED';
+                    throw blockedError;
+                }
+
+                moderatedEntries.push({
+                    ...entry,
+                    moderation_status: 'approved',
+                    moderation_reason: moderation?.reason || null,
+                    moderation_review_id: moderation?.review_id || null,
+                    moderated_at: new Date().toISOString(),
+                });
+            }
+            finalEntries = moderatedEntries;
+
             const { error: dbError } = await supabase.from('capsule_items').insert(finalEntries);
             if (dbError) throw dbError;
+            uploadedPathsRef.current = [];
 
             // Notifications will be handled by a Database Trigger for better performance
 
@@ -476,12 +562,32 @@ export default function AddItemScreen() {
                 navigation.pop(2);
             }
         } catch (err: any) {
+            if (err.message === 'UPLOAD_CANCELLED') {
+                const uploaded = [...uploadedPathsRef.current];
+                uploadedPathsRef.current = [];
+                if (uploaded.length > 0) {
+                    try { await supabase.storage.from('capsule-media').remove(uploaded); } catch (e) {}
+                }
+                return;
+            }
+            const uploaded = [...uploadedPathsRef.current];
+            uploadedPathsRef.current = [];
+            if (uploaded.length > 0) {
+                try { await supabase.storage.from('capsule-media').remove(uploaded); } catch (e) {}
+            }
+            const isBlocked = err.code === 'CONTENT_BLOCKED';
+            const moderationUnavailable = err.message === 'MODERATION_UNAVAILABLE';
             setAestheticAlert({
-                visible: true, title: t('common.error'),
-                message: err.message?.includes('allowed size') ? 'El archivo es demasiado grande.' : (err.message || 'Error al subir.'),
+                visible: true,
+                title: isBlocked ? 'Contenido bloqueado' : t('common.error'),
+                message: isBlocked
+                    ? 'Este contenido no se puede publicar porque incumple las normas de seguridad de Kapsely.'
+                    : moderationUnavailable
+                        ? 'No hemos podido revisar el contenido ahora mismo. Inténtalo de nuevo en unos segundos.'
+                        : err.message?.includes('allowed size') ? 'El archivo es demasiado grande.' : (err.message || 'Error al subir.'),
                 onClose: () => setAestheticAlert(null)
             });
-        } finally { setLoading(false); }
+        } finally { setLoading(false); uploadCancelledRef.current = false; }
     };
 
     const uploadFile = async (uri: string, type: string, userId: string, isThumbnail = false, onProgress?: (p: number) => void) => {
@@ -492,32 +598,72 @@ export default function AddItemScreen() {
         
         const fileName = `${userId}/${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
         const filePath = isThumbnail ? `thumbnails/${fileName}` : `items/${fileName}`;
+        const mimeType = type === 'video'
+            ? 'video/mp4'
+            : type === 'audio'
+                ? 'audio/x-m4a'
+                : ext.toLowerCase() === 'webp'
+                    ? 'image/webp'
+                    : 'image/jpeg';
         
         try {
+            if (uploadCancelledRef.current) throw new Error('UPLOAD_CANCELLED');
             if (!isThumbnail && onProgress) onProgress(10);
-            
-            // Note: Supabase JS SDK doesn't natively support onUploadProgress in all environments
-            // so we simulate a granular progress if needed or use the storage API
-            const formData = new FormData();
-            formData.append('file', { 
-                uri: Platform.OS === 'android' ? uri : uri.replace('file://', ''), 
-                name: `file.${ext}`, 
-                type: type === 'video' ? 'video/mp4' : type === 'audio' ? 'audio/x-m4a' : 'image/jpeg' 
-            } as any);
 
-            const { data, error } = await supabase.storage
-                .from('capsule-media')
-                .upload(filePath, formData, { 
-                    contentType: 'multipart/form-data', 
-                    upsert: true 
-                });
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session?.access_token) throw new Error('Not authenticated');
 
-            if (error) throw error;
+            await new Promise<void>((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                activeUploadRequestsRef.current.push(xhr);
+                xhr.open('POST', `${SUPABASE_URL}/storage/v1/object/capsule-media/${filePath}`);
+                xhr.setRequestHeader('Authorization', `Bearer ${session.access_token}`);
+                xhr.setRequestHeader('apikey', SUPABASE_ANON_KEY);
+                xhr.setRequestHeader('x-upsert', 'true');
+                xhr.setRequestHeader('Content-Type', mimeType);
+
+                xhr.upload.onprogress = (event) => {
+                    if (!isThumbnail && onProgress && event.lengthComputable && event.total > 0) {
+                        const pct = Math.min(95, Math.max(10, Math.round((event.loaded / event.total) * 95)));
+                        onProgress(pct);
+                    }
+                };
+                xhr.onload = () => {
+                    activeUploadRequestsRef.current = activeUploadRequestsRef.current.filter(req => req !== xhr);
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        resolve();
+                    } else {
+                        let message = xhr.responseText || `HTTP ${xhr.status}`;
+                        try {
+                            const parsed = JSON.parse(xhr.responseText);
+                            message = parsed.message || parsed.error || message;
+                        } catch (e) {}
+                        reject(new Error(message));
+                    }
+                };
+                xhr.onerror = () => {
+                    activeUploadRequestsRef.current = activeUploadRequestsRef.current.filter(req => req !== xhr);
+                    reject(new Error('Network error'));
+                };
+                xhr.onabort = () => {
+                    activeUploadRequestsRef.current = activeUploadRequestsRef.current.filter(req => req !== xhr);
+                    reject(new Error('UPLOAD_CANCELLED'));
+                };
+                xhr.send({
+                    uri: Platform.OS === 'android' ? uri : uri.replace('file://', ''),
+                    name: `file.${ext}`,
+                    type: mimeType,
+                } as any);
+            });
+
+            uploadedPathsRef.current.push(filePath);
+            if (uploadCancelledRef.current) throw new Error('UPLOAD_CANCELLED');
             if (!isThumbnail && onProgress) onProgress(100);
             
             const { data: { publicUrl } } = supabase.storage.from('capsule-media').getPublicUrl(filePath);
             return publicUrl;
         } catch (error: any) {
+            if (error.message === 'UPLOAD_CANCELLED') throw error;
             throw new Error(`Upload failed: ${error.message || 'Network error'}`);
         }
     };
@@ -525,21 +671,21 @@ export default function AddItemScreen() {
     // Helper to process uploads in chunks to prevent freezing
     const uploadInChunks = async (items: any[], user: any) => {
         const results = [];
-        const CHUNK_SIZE = 3; // Upload 3 at a time
+        const CHUNK_SIZE = contentType === 'video' ? 1 : 3; // large videos upload more reliably one at a time
         
         for (let i = 0; i < items.length; i += CHUNK_SIZE) {
             const chunk = items.slice(i, i + CHUNK_SIZE);
             const chunkPromises = chunk.map(async (media, indexInChunk) => {
                 const globalIndex = i + indexInChunk;
                 try {
-                    const mediaUrl = await uploadFile(media.uri, contentType, user.id, false, (p) => {
+                    const mediaUpload = uploadFile(media.uri, contentType, user.id, false, (p) => {
                         setUploadProgress(prev => ({ ...prev, [media.uri]: p }));
                     });
                     
-                    let thumbUrl = null;
-                    if (media.thumbnailUri) {
-                        try { thumbUrl = await uploadFile(media.thumbnailUri, 'image', user.id, true); } catch (e) {}
-                    }
+                    const thumbUpload = media.thumbnailUri
+                        ? uploadFile(media.thumbnailUri, 'image', user.id, true).catch(() => null)
+                        : Promise.resolve(null);
+                    const [mediaUrl, thumbUrl] = await Promise.all([mediaUpload, thumbUpload]);
                     
                     return { status: 'fulfilled', value: { mediaUrl, thumbUrl, duration: media.duration, type: contentType, originalMedia: media } };
                 } catch (e: any) {
@@ -553,8 +699,8 @@ export default function AddItemScreen() {
         return results;
     };
 
-    const isUploadDisabled = loading
-        || (contentType === 'note' && !text)
+    const isUploadDisabled = loading || isProcessingMedia
+        || (contentType === 'note' && !text && (!isHandwriting || paths.length === 0))
         || (contentType === 'audio' && !recordedUri)
         || ((contentType === 'image' || contentType === 'video') && mediaList.length === 0);
 
@@ -610,7 +756,7 @@ export default function AddItemScreen() {
                         style={s.publishBtnGrad}
                         start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
                     >
-                        {loading
+                        {loading || isProcessingMedia
                             ? <ActivityIndicator size="small" color={P.white} />
                             : <Text style={s.publishBtnText}>{t('add.save_btn')}</Text>
                         }
@@ -1110,6 +1256,19 @@ export default function AddItemScreen() {
             </Modal>
 
             {/* ── Upload Overlay ── */}
+            {isProcessingMedia && (
+                <View style={s.uploadOverlay}>
+                    <BlurView intensity={28} style={StyleSheet.absoluteFill} />
+                    <View style={s.uploadCard}>
+                        <View style={s.uploadProgressCircle}>
+                            <ActivityIndicator size="large" color={P.p600} />
+                        </View>
+                        <Text style={s.uploadTitle}>{processingMediaLabel || 'Procesando contenido...'}</Text>
+                        <Text style={s.uploadSub}>Espera un momento. El video aparecerá aquí cuando esté listo.</Text>
+                    </View>
+                </View>
+            )}
+
             {loading && (
                 <View style={s.uploadOverlay}>
                     <BlurView intensity={20} style={StyleSheet.absoluteFill} />
@@ -1145,6 +1304,9 @@ export default function AddItemScreen() {
                         <Text style={s.uploadSub}>
                             {mediaList.length > 0 ? t('add.uploading_success') : t('add.one_moment')}
                         </Text>
+                        <TouchableOpacity style={s.uploadCancelBtn} activeOpacity={0.75} onPress={handleCancelActiveUpload}>
+                            <Text style={s.uploadCancelText}>Cancelar subida</Text>
+                        </TouchableOpacity>
                     </View>
                 </View>
             )}
@@ -1743,6 +1905,16 @@ const s = StyleSheet.create({
     },
     uploadTitle: { fontSize: 17, fontWeight: '700', color: P.gray900, textAlign: 'center' },
     uploadSub: { fontSize: 13, color: P.gray400, textAlign: 'center', marginTop: 8 },
+    uploadCancelBtn: {
+        marginTop: 18,
+        height: 42,
+        paddingHorizontal: 22,
+        borderRadius: 21,
+        backgroundColor: '#FEE2E2',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    uploadCancelText: { color: '#DC2626', fontSize: 13, fontWeight: '800' },
 
     // Alert
     alertOverlay: { flex: 1, alignItems: 'center', justifyContent: 'center' },
