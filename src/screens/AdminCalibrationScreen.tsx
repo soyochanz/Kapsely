@@ -12,6 +12,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as FileSystem from 'expo-file-system/legacy';
 import { decode } from 'base64-arraybuffer';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors, Fonts, Shadow } from '../theme';
 import { timerConfigManager, ModelTimerConfig, DEFAULT_CONFIGS } from '../utils/timerConfig';
 import { optimizeImageForUpload, optimizeThumbnailForUpload } from '../utils/mediaOptimization';
@@ -23,6 +24,14 @@ import { CAPSULE_MODELS } from '../constants/models';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const MODELS = CAPSULE_MODELS as unknown as any[];
 const FRAME_SIZE = 300;
+const LAYOUT_PREVIEW_SIZE = FRAME_SIZE;
+const LAYOUT_PREVIEW_IMAGE_SIZE = FRAME_SIZE;
+const MIN_MODEL_IMAGE_SCALE = 0.5;
+const MAX_MODEL_IMAGE_SCALE = 1.8;
+const MIN_MODEL_IMAGE_OFFSET = -80;
+const MAX_MODEL_IMAGE_OFFSET = 80;
+const MODEL_LAYOUT_PRESET_KEY = 'admin_model_layout_default_preset';
+const MODEL_LAYOUT_AUTO_APPLY_KEY = 'admin_model_layout_auto_apply';
 
 const PRESET_COLORS = ['#ffffff', '#000000', '#a269ff', '#6abf69', '#ff9f1c', '#ff5252', '#d4a017', '#e2e2e2'];
 const PRESET_THEME_COLORS = ['#a269ff', '#6abf69', '#ff9f1c', '#00d2ff', '#e67e22', '#ff5252', '#d4a017', '#2d2d2d', '#ec4899', '#ff78b8'];
@@ -33,17 +42,77 @@ const FONTS = [
     { id: 'serif', label: 'Classic', font: Platform.OS === 'ios' ? 'Times New Roman' : 'serif' },
 ];
 
+const clampNumber = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+const getModelImageLayout = (model: any) => ({
+    scale: clampNumber(Number(model?.image_scale) || 1, MIN_MODEL_IMAGE_SCALE, MAX_MODEL_IMAGE_SCALE),
+    scaleX: clampNumber(Number(model?.image_scale_x) || 1, MIN_MODEL_IMAGE_SCALE, MAX_MODEL_IMAGE_SCALE),
+    scaleY: clampNumber(Number(model?.image_scale_y) || 1, MIN_MODEL_IMAGE_SCALE, MAX_MODEL_IMAGE_SCALE),
+    offsetX: clampNumber(Number(model?.image_offset_x) || 0, MIN_MODEL_IMAGE_OFFSET, MAX_MODEL_IMAGE_OFFSET),
+    offsetY: clampNumber(Number(model?.image_offset_y) || 0, MIN_MODEL_IMAGE_OFFSET, MAX_MODEL_IMAGE_OFFSET),
+});
+
+const getModelImageTransform = (model: any) => {
+    const layout = getModelImageLayout(model);
+    return [
+        { translateX: layout.offsetX },
+        { translateY: layout.offsetY },
+        { scaleX: layout.scale * layout.scaleX },
+        { scaleY: layout.scale * layout.scaleY },
+    ];
+};
+
+type AdminTab = 'models' | 'timer' | 'chain' | 'drops' | 'stickers';
+type ModelLayoutPreset = {
+    image_scale: number;
+    image_scale_x: number;
+    image_scale_y: number;
+    image_offset_x: number;
+    image_offset_y: number;
+};
+
+const ADMIN_TABS: Array<{ id: AdminTab; label: string; icon: keyof typeof Ionicons.glyphMap; hint: string }> = [
+    { id: 'models', label: 'Library', icon: 'cube', hint: 'Create and edit capsule designs' },
+    { id: 'timer', label: 'Timer', icon: 'time', hint: 'Position the opening timer' },
+    { id: 'chain', label: 'Chains', icon: 'link', hint: 'Place chain accessories' },
+    { id: 'drops', label: 'Drops', icon: 'flash', hint: 'Schedule design drops' },
+    { id: 'stickers', label: 'Stickers', icon: 'sparkles', hint: 'Profile sticker library' },
+];
+
+const DEFAULT_MODEL_LAYOUT: ModelLayoutPreset = {
+    image_scale: 1,
+    image_scale_x: 1,
+    image_scale_y: 1,
+    image_offset_x: 0,
+    image_offset_y: 0,
+};
+
+const extractModelLayoutPreset = (model: any): ModelLayoutPreset => ({
+    image_scale: getModelImageLayout(model).scale,
+    image_scale_x: getModelImageLayout(model).scaleX,
+    image_scale_y: getModelImageLayout(model).scaleY,
+    image_offset_x: getModelImageLayout(model).offsetX,
+    image_offset_y: getModelImageLayout(model).offsetY,
+});
+
 export default function AdminCalibrationScreen() {
     const navigation = useNavigation<any>();
     const insets = useSafeAreaInsets();
     const [selectedModel, setSelectedModel] = useState<any>(MODELS[0]);
     const [allModels, setAllModels] = useState<any[]>(timerConfigManager.models.length > 0 ? timerConfigManager.models : MODELS);
-    const [activeTab, setActiveTab] = useState<'timer' | 'chain' | 'stickers' | 'models' | 'drops'>('timer');
+    const [activeTab, setActiveTab] = useState<AdminTab>('models');
     const [selectedChainId, setSelectedChainId] = useState<string | null>(null);
     const [isDragging, setIsDragging] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
 
     const [showAddModel, setShowAddModel] = useState(false);
+    const [editingModelId, setEditingModelId] = useState<string | null>(null);
+    const [showBaseModelReference, setShowBaseModelReference] = useState(true);
+    const [baseModelReferenceOpacity, setBaseModelReferenceOpacity] = useState(0.24);
+    const [baseModelReferenceLayer, setBaseModelReferenceLayer] = useState<'behind' | 'front'>('behind');
+    const [defaultLayoutPreset, setDefaultLayoutPreset] = useState<ModelLayoutPreset | null>(null);
+    const [autoApplyDefaultLayout, setAutoApplyDefaultLayout] = useState(false);
+    const [showLayoutTimerReference, setShowLayoutTimerReference] = useState(true);
+    const [showLayoutChainReference, setShowLayoutChainReference] = useState(true);
     interface ModelState {
         id: string;
         label: string;
@@ -53,6 +122,14 @@ export default function AdminCalibrationScreen() {
         tint: string;
         is_active: boolean;
         is_event: boolean;
+        is_birthday: boolean;
+        is_trending: boolean;
+        is_new: boolean;
+        image_scale: number;
+        image_scale_x: number;
+        image_scale_y: number;
+        image_offset_x: number;
+        image_offset_y: number;
         event_start: string;
         event_end: string;
         event_title: string;
@@ -61,9 +138,11 @@ export default function AdminCalibrationScreen() {
         thumbnail_url?: string;
     }
 
-    const [newModel, setNewModel] = useState<ModelState>({ 
+    const [newModel, setNewModel] = useState<ModelState>({
         id: '', label: '', image: '', image_open: '',
-        category: 'Vibe', tint: '#a269ff', is_active: true, is_event: false,
+        category: 'Vibe', tint: '#a269ff', is_active: true, is_event: false, is_birthday: false,
+        is_trending: false, is_new: false,
+        image_scale: 1, image_scale_x: 1, image_scale_y: 1, image_offset_x: 0, image_offset_y: 0,
         event_start: '', event_end: '', event_title: '', event_description: '',
         drop_id: null
     });
@@ -161,17 +240,20 @@ export default function AdminCalibrationScreen() {
 
 
     const [showAddChain, setShowAddChain] = useState(false);
+    const [editingChainId, setEditingChainId] = useState<string | null>(null);
     const [newChain, setNewChain] = useState({ id: '', name: '', image_url: '', thumbnail_url: '', is_active: true });
 
     const [stickers, setStickers] = useState<any[]>([]);
     const [showAddSticker, setShowAddSticker] = useState(false);
+    const [editingStickerId, setEditingStickerId] = useState<string | null>(null);
     const [newSticker, setNewSticker] = useState({ name: '', image_url: '', is_active: true });
     const [addingSticker, setAddingSticker] = useState(false);
 
     const [drops, setDrops] = useState<any[]>([]);
     const [showAddDrop, setShowAddDrop] = useState(false);
-    const [newDrop, setNewDrop] = useState({ 
-        id: '', name: '', start_date: '', end_date: '', is_active: true 
+    const [editingDropId, setEditingDropId] = useState<string | null>(null);
+    const [newDrop, setNewDrop] = useState({
+        id: '', name: '', start_date: '', end_date: '', is_active: true
     });
 
     // Per-model configurations initialized from manager
@@ -217,9 +299,181 @@ export default function AdminCalibrationScreen() {
         return unsubscribe;
     }, []);
 
+    useEffect(() => {
+        const loadLayoutPreset = async () => {
+            try {
+                const [presetRaw, autoApplyRaw] = await Promise.all([
+                    AsyncStorage.getItem(MODEL_LAYOUT_PRESET_KEY),
+                    AsyncStorage.getItem(MODEL_LAYOUT_AUTO_APPLY_KEY),
+                ]);
+                if (presetRaw) {
+                    setDefaultLayoutPreset(JSON.parse(presetRaw));
+                }
+                setAutoApplyDefaultLayout(autoApplyRaw === 'true');
+            } catch (error) {
+                console.warn('Could not load model layout preset', error);
+            }
+        };
+        loadLayoutPreset();
+    }, []);
+
     const loadStickers = async () => {
         const { data } = await supabase.from('stickers').select('*').order('created_at', { ascending: false });
         if (data) setStickers(data);
+    };
+
+    const applyLayoutPresetToForm = (preset: ModelLayoutPreset | null) => {
+        if (!preset) return;
+        setNewModel(p => ({
+            ...p,
+            ...preset,
+        }));
+    };
+
+    const saveDefaultLayoutPreset = async () => {
+        const preset = extractModelLayoutPreset(newModel);
+        setDefaultLayoutPreset(preset);
+        await AsyncStorage.setItem(MODEL_LAYOUT_PRESET_KEY, JSON.stringify(preset));
+        Alert.alert('Preset saved', 'Default capsule layout preset saved.');
+    };
+
+    const updateAutoApplyDefaultLayout = async (value: boolean) => {
+        setAutoApplyDefaultLayout(value);
+        await AsyncStorage.setItem(MODEL_LAYOUT_AUTO_APPLY_KEY, value ? 'true' : 'false');
+    };
+
+    const resetModelForm = () => {
+        setEditingModelId(null);
+        const layout = autoApplyDefaultLayout && defaultLayoutPreset ? defaultLayoutPreset : DEFAULT_MODEL_LAYOUT;
+        setNewModel({
+            id: '', label: '', image: '', image_open: '',
+            category: 'Vibe', tint: '#a269ff', is_active: true, is_event: false, is_birthday: false,
+            is_trending: false, is_new: false,
+            ...layout,
+            event_start: '', event_end: '', event_title: '', event_description: '',
+            drop_id: null
+        });
+    };
+
+    const openNewModel = () => {
+        resetModelForm();
+        setShowAddModel(true);
+    };
+
+    const openEditModel = (model: any) => {
+        setEditingModelId(model.id);
+        setNewModel({
+            ...model,
+            thumbnail_url: model.thumbnail_url || '',
+            event_start: model.event_start || '',
+            event_end: model.event_end || '',
+            event_title: model.event_title || '',
+            event_description: model.event_description || '',
+            is_birthday: !!model.is_birthday,
+            is_event: !!model.is_event,
+            is_trending: !!model.is_trending,
+            is_new: !!model.is_new,
+            image_scale: Number(model.image_scale) || 1,
+            image_scale_x: Number(model.image_scale_x) || 1,
+            image_scale_y: Number(model.image_scale_y) || 1,
+            image_offset_x: Number(model.image_offset_x) || 0,
+            image_offset_y: Number(model.image_offset_y) || 0,
+            is_active: model.is_active !== false,
+            drop_id: model.drop_id || null
+        });
+        setShowAddModel(true);
+    };
+
+    const openNewChain = () => {
+        setEditingChainId(null);
+        setNewChain({ id: '', name: '', image_url: '', thumbnail_url: '', is_active: true });
+        setShowAddChain(true);
+    };
+
+    const openEditChain = (chain: any) => {
+        setEditingChainId(chain.id);
+        setNewChain({
+            id: chain.id || '',
+            name: chain.name || '',
+            image_url: chain.image_url || '',
+            thumbnail_url: chain.thumbnail_url || '',
+            is_active: chain.is_active !== false,
+        });
+        setShowAddChain(true);
+    };
+
+    const openNewSticker = () => {
+        setEditingStickerId(null);
+        setNewSticker({ name: '', image_url: '', is_active: true });
+        setShowAddSticker(true);
+    };
+
+    const openEditSticker = (sticker: any) => {
+        setEditingStickerId(sticker.id);
+        setNewSticker({
+            name: sticker.name || '',
+            image_url: sticker.image_url || '',
+            is_active: sticker.is_active !== false,
+        });
+        setShowAddSticker(true);
+    };
+
+    const openNewDrop = () => {
+        setEditingDropId(null);
+        setNewDrop({ id: '', name: '', start_date: '', end_date: '', is_active: true });
+        setShowAddDrop(true);
+    };
+
+    const openEditDrop = (drop: any) => {
+        setEditingDropId(drop.id);
+        setNewDrop({
+            id: drop.id || '',
+            name: drop.name || '',
+            start_date: drop.start_date || '',
+            end_date: drop.end_date || '',
+            is_active: drop.is_active !== false,
+        });
+        setShowAddDrop(true);
+    };
+
+    const confirmDestructive = (title: string, message: string, onConfirm: () => void) => {
+        if (Platform.OS === 'web') {
+            if (typeof window !== 'undefined' && window.confirm(`${title}\n\n${message}`)) onConfirm();
+            return;
+        }
+        Alert.alert(title, message, [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Delete', style: 'destructive', onPress: onConfirm },
+        ]);
+    };
+
+    const deleteSticker = (sticker: any) => {
+        confirmDestructive('Delete sticker', `Delete "${sticker.name}" from the admin library?`, async () => {
+            const previous = stickers;
+            setStickers(prev => prev.filter(item => item.id !== sticker.id));
+            try {
+                await supabase.from('profile_stickers').delete().eq('sticker_id', sticker.id);
+                await supabase.from('user_stickers').delete().eq('sticker_id', sticker.id);
+                const { error } = await supabase.from('stickers').delete().eq('id', sticker.id);
+                if (error) throw error;
+                await loadStickers();
+            } catch (e) {
+                setStickers(previous);
+                Alert.alert('Error', 'Could not delete sticker. Check admin permissions.');
+            }
+        });
+    };
+
+    const deleteChain = (chain: any) => {
+        confirmDestructive('Delete chain', `Delete "${chain.name}" and its calibrations?`, async () => {
+            const success = await timerConfigManager.deleteChain(chain.id);
+            if (success) {
+                if (selectedChainId === chain.id) setSelectedChainId(null);
+                syncConfigs();
+            } else {
+                Alert.alert('Error', 'Could not delete chain. Check admin permissions.');
+            }
+        });
     };
 
     const updateActiveConfigById = (modelId: string, updates: Partial<ModelTimerConfig>) => {
@@ -286,11 +540,22 @@ export default function AdminCalibrationScreen() {
     const filteredModels = useMemo(() => {
         if (!searchQuery.trim()) return allModels;
         const q = searchQuery.toLowerCase().trim();
-        return allModels.filter(m => 
-            (m.label || '').toLowerCase().includes(q) || 
+        return allModels.filter(m =>
+            (m.label || '').toLowerCase().includes(q) ||
             (m.id || '').toLowerCase().includes(q)
         );
     }, [allModels, searchQuery]);
+
+    const activeTabMeta = ADMIN_TABS.find(tab => tab.id === activeTab) || ADMIN_TABS[0];
+    const activeModelsCount = allModels.filter(m => m.is_active).length;
+    const specialModelsCount = allModels.filter(m => m.is_event || m.is_birthday || m.is_trending || m.is_new).length;
+    const baseModelReference = allModels.find(m => m.id === 'base_kap') || MODELS.find(m => m.id === 'base_kap');
+    const layoutTimerReference = timerConfigManager.getConfig('__GLOBAL__') || timerConfigManager.getConfig('base_kap');
+    const punkRabbitChain = timerConfigManager.getChainLibrary().find(c => c.id === 'punkrabbit_chain')
+        || timerConfigManager.getChainLibrary().find(c => `${c.id} ${c.name}`.toLowerCase().includes('punk') && `${c.id} ${c.name}`.toLowerCase().includes('rabbit'));
+    const layoutChainReference = punkRabbitChain ? timerConfigManager.getChainConfig('__GLOBAL_TEMPLATE__', punkRabbitChain.id) : undefined;
+    const getDropName = (dropId?: string | null) => drops.find(d => d.id === dropId)?.name || null;
+    const getDropModels = (dropId: string) => allModels.filter(m => m.drop_id === dropId);
 
     const pan = useRef(new Animated.ValueXY({ x: activeConfig.x * FRAME_SIZE, y: activeConfig.y * FRAME_SIZE })).current;
 
@@ -358,7 +623,7 @@ export default function AdminCalibrationScreen() {
                 const timestamp = Date.now();
                 const fileName = `model_${timestamp}.webp`;
                 const thumbFileName = `model_${timestamp}_thumb.webp`;
-                
+
                 let body: any;
                 let thumbBody: any;
 
@@ -384,16 +649,15 @@ export default function AdminCalibrationScreen() {
                 if (uploadError) throw uploadError;
 
                 // Upload Thumb
-                const { error: thumbError } = await supabase.storage.from('models').upload(thumbFileName, thumbBody, {
+                await supabase.storage.from('models').upload(thumbFileName, thumbBody, {
                     contentType: 'image/webp',
                     upsert: true,
                 });
 
                 const { data: { publicUrl: url } } = supabase.storage.from('models').getPublicUrl(fileName);
                 const { data: { publicUrl: thumbUrl } } = supabase.storage.from('models').getPublicUrl(thumbFileName);
-                
+
                 onDone(url, thumbUrl);
-                Alert.alert('Success', 'WebP images and thumbnail uploaded!');
             }
         } catch (e: any) {
             Alert.alert('Upload Error', e.message || 'Could not upload image.');
@@ -408,48 +672,62 @@ export default function AdminCalibrationScreen() {
             return;
         }
 
-        const modelToSave: any = { ...newModel };
+        const modelToSave: any = { ...newModel, id: editingModelId || newModel.id.trim() };
+
         delete modelToSave.thumbnail_url;
         delete modelToSave.image_cover;
 
         // Clean up empty strings to prevent Postgres type errors
+        if (!modelToSave.image_open) modelToSave.image_open = modelToSave.image;
         if (!modelToSave.event_start) modelToSave.event_start = null;
         if (!modelToSave.event_end) modelToSave.event_end = null;
+        if (!modelToSave.drop_id) modelToSave.drop_id = null;
         if (!modelToSave.event_title) modelToSave.event_title = '';
         if (!modelToSave.event_description) modelToSave.event_description = '';
-        if (!modelToSave.image_open) modelToSave.image_open = '';
+        modelToSave.image_scale = clampNumber(Number(modelToSave.image_scale) || 1, MIN_MODEL_IMAGE_SCALE, MAX_MODEL_IMAGE_SCALE);
+        modelToSave.image_scale_x = clampNumber(Number(modelToSave.image_scale_x) || 1, MIN_MODEL_IMAGE_SCALE, MAX_MODEL_IMAGE_SCALE);
+        modelToSave.image_scale_y = clampNumber(Number(modelToSave.image_scale_y) || 1, MIN_MODEL_IMAGE_SCALE, MAX_MODEL_IMAGE_SCALE);
+        modelToSave.image_offset_x = clampNumber(Number(modelToSave.image_offset_x) || 0, MIN_MODEL_IMAGE_OFFSET, MAX_MODEL_IMAGE_OFFSET);
+        modelToSave.image_offset_y = clampNumber(Number(modelToSave.image_offset_y) || 0, MIN_MODEL_IMAGE_OFFSET, MAX_MODEL_IMAGE_OFFSET);
 
         const success = await timerConfigManager.saveModel(modelToSave);
         if (success) {
-            await timerConfigManager.saveConfig(modelToSave.id, DEFAULT_CONFIGS.basicred_kap);
+            if (!editingModelId && !configs[modelToSave.id]) {
+                await timerConfigManager.saveConfig(modelToSave.id, DEFAULT_CONFIGS.basicred_kap);
+            }
             syncConfigs();
             setSelectedModel(modelToSave);
             setShowAddModel(false);
-            setNewModel({ 
-                id: '', label: '', image: '', image_open: '',
-                category: 'Vibe', tint: '#a269ff', is_active: true, is_event: false,
-                event_start: '', event_end: '', event_title: '', event_description: '',
-                drop_id: null
-            });
-            Alert.alert('Success', 'Model added successfully');
+            resetModelForm();
+            Alert.alert('Success', editingModelId ? 'Model updated successfully' : 'Model created successfully');
         } else {
-            Alert.alert('Error', 'Could not save model to database. Check if you have permissions or if the dates are corrupted.');
+            console.error('Failed to save model:', timerConfigManager.lastError);
+            Alert.alert('Error', 'Could not save model to database. Column missing?');
         }
     };
 
     const handleAddChain = async () => {
-        if (!newChain.id || !newChain.image_url) {
-            Alert.alert('Error', 'Please provide ID and Image URL');
+        if (!newChain.id.trim() || !newChain.name.trim() || !newChain.image_url.trim()) {
+            Alert.alert('Error', 'Please provide ID, Name and Image URL');
             return;
         }
-        const chainToSave = { ...newChain };
-        delete (chainToSave as any).thumbnail_url;
-        
+        const chainToSave = {
+            ...newChain,
+            id: editingChainId || newChain.id.trim(),
+            name: newChain.name.trim(),
+            image_url: newChain.image_url.trim(),
+            thumbnail_url: newChain.thumbnail_url?.trim() || null,
+        };
+
         const success = await timerConfigManager.addChainToLibrary(chainToSave);
         if (success) {
-            setSelectedChainId(newChain.id);
+            setSelectedChainId(chainToSave.id);
             setShowAddChain(false);
+            setEditingChainId(null);
             setNewChain({ id: '', name: '', image_url: '', thumbnail_url: '', is_active: true });
+            Alert.alert('Success', editingChainId ? 'Chain updated!' : 'Chain created!');
+        } else {
+            Alert.alert('Error', 'Could not save chain.');
         }
     };
 
@@ -461,21 +739,31 @@ export default function AdminCalibrationScreen() {
 
         try {
             setAddingSticker(true);
-            const { data, error } = await supabase.from('stickers').insert([newSticker]).select();
-            
+            const payload = {
+                name: newSticker.name.trim(),
+                image_url: newSticker.image_url.trim(),
+                is_active: newSticker.is_active,
+            };
+            const query = editingStickerId
+                ? supabase.from('stickers').update(payload).eq('id', editingStickerId).select()
+                : supabase.from('stickers').insert([payload]).select();
+            const { data, error } = await query;
+
             if (error) {
                 Alert.alert('Error', error.message);
                 return;
             }
 
             if (data && data.length > 0) {
-                setStickers(prev => [data[0], ...prev]);
+                setStickers(prev => editingStickerId ? prev.map(s => s.id === editingStickerId ? data[0] : s) : [data[0], ...prev]);
                 setShowAddSticker(false);
+                setEditingStickerId(null);
                 setNewSticker({ name: '', image_url: '', is_active: true });
-                Alert.alert('Success', 'Sticker added!');
+                Alert.alert('Success', editingStickerId ? 'Sticker updated!' : 'Sticker added!');
             } else {
                 loadStickers();
                 setShowAddSticker(false);
+                setEditingStickerId(null);
                 setNewSticker({ name: '', image_url: '', is_active: true });
             }
         } catch (e: any) {
@@ -486,25 +774,39 @@ export default function AdminCalibrationScreen() {
     };
 
     const handleAddDrop = async () => {
-        if (!newDrop.name || !newDrop.start_date || !newDrop.end_date) {
-            Alert.alert('Error', 'Please provide name and dates');
+        if (!newDrop.name || !newDrop.start_date) {
+            Alert.alert('Error', 'Please provide name and start date');
             return;
         }
-        const success = await timerConfigManager.saveDrop(newDrop);
+        const dropToSave: any = {
+            ...newDrop,
+            id: editingDropId || newDrop.id || undefined,
+            name: newDrop.name.trim(),
+            end_date: newDrop.end_date || null,
+        };
+        if (!dropToSave.id) delete dropToSave.id;
+        const success = await timerConfigManager.saveDrop(dropToSave);
         if (success) {
             setShowAddDrop(false);
+            setEditingDropId(null);
             setNewDrop({ id: '', name: '', start_date: '', end_date: '', is_active: true });
-            Alert.alert('Success', 'Drop created!');
+            setDrops(timerConfigManager.getDrops());
+            Alert.alert('Success', editingDropId ? 'Drop updated!' : 'Drop created!');
+        } else {
+            Alert.alert('Error', 'Could not save drop.');
         }
     };
 
     const handleDeleteDrop = async (id: string) => {
-        Alert.alert('Delete Drop', 'Are you sure?', [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'Delete', style: 'destructive', onPress: async () => {
-                await timerConfigManager.deleteDrop(id);
-            }}
-        ]);
+        confirmDestructive('Delete Drop', 'This removes the drop schedule. Designs already created keep their saved data.', async () => {
+            const success = await timerConfigManager.deleteDrop(id);
+            if (success) {
+                setDrops(timerConfigManager.getDrops());
+                Alert.alert('Success', 'Drop deleted.');
+            } else {
+                Alert.alert('Error', 'Could not delete drop.');
+            }
+        });
     };
 
     const panResponder = useRef(
@@ -557,59 +859,66 @@ export default function AdminCalibrationScreen() {
                 <TouchableOpacity activeOpacity={0.7} onPress={() => navigation.goBack()} style={styles.backBtn}>
                     <Ionicons name="close" size={28} color={Colors.textPrimary} />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>Calibration Tool</Text>
+                <Text style={styles.headerTitle}>Admin Tools</Text>
                 <TouchableOpacity activeOpacity={0.7} onPress={reset}>
                     <Text style={styles.resetBtn}>Reset</Text>
                 </TouchableOpacity>
             </View>
 
             <ScrollView style={styles.scrollContainer} showsVerticalScrollIndicator={false} scrollEnabled={!isDragging}>
-                <View style={styles.topTabs}>
-                    <TouchableOpacity
-                        style={[styles.topTab, activeTab === 'timer' && styles.activeTopTab]}
-                        activeOpacity={0.7}
-                        onPress={() => setActiveTab('timer')}
-                    >
-                        <Ionicons name="time" size={20} color={activeTab === 'timer' ? Colors.primary : Colors.textMuted} />
-                        <Text style={[styles.topTabText, activeTab === 'timer' && styles.activeTopTabText]}>Timer</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={[styles.topTab, activeTab === 'chain' && styles.activeTopTab]}
-                        activeOpacity={0.7}
-                        onPress={() => setActiveTab('chain')}
-                    >
-                        <Ionicons name="link" size={20} color={activeTab === 'chain' ? Colors.primary : Colors.textMuted} />
-                        <Text style={[styles.topTabText, activeTab === 'chain' && styles.activeTopTabText]}>Chains</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={[styles.topTab, activeTab === 'stickers' && styles.activeTopTab]}
-                        activeOpacity={0.7}
-                        onPress={() => setActiveTab('stickers')}
-                    >
-                        <Ionicons name="sparkles" size={20} color={activeTab === 'stickers' ? Colors.primary : Colors.textMuted} />
-                        <Text style={[styles.topTabText, activeTab === 'stickers' && styles.activeTopTabText]}>Stickers</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={[styles.topTab, activeTab === 'models' && styles.activeTopTab]}
-                        activeOpacity={0.7}
-                        onPress={() => setActiveTab('models')}
-                    >
-                        <Ionicons name="cube" size={20} color={activeTab === 'models' ? Colors.primary : Colors.textMuted} />
-                        <Text style={[styles.topTabText, activeTab === 'models' && styles.activeTopTabText]}>Library</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={[styles.topTab, activeTab === 'drops' && styles.activeTopTab]}
-                        activeOpacity={0.7}
-                        onPress={() => setActiveTab('drops')}
-                    >
-                        <Ionicons name="flash" size={20} color={activeTab === 'drops' ? Colors.primary : Colors.textMuted} />
-                        <Text style={[styles.topTabText, activeTab === 'drops' && styles.activeTopTabText]}>Drops</Text>
-                    </TouchableOpacity>
-                </View>
+                <LinearGradient colors={['#ffffff', '#f7f3ff']} style={styles.adminHero}>
+                    <View style={styles.adminHeroTop}>
+                        <View>
+                            <Text style={styles.adminEyebrow}>Kapsely admin</Text>
+                            <Text style={styles.adminTitle}>{activeTabMeta.label}</Text>
+                            <Text style={styles.adminHint}>{activeTabMeta.hint}</Text>
+                        </View>
+                        <View style={styles.adminHeroIcon}>
+                            <Ionicons name={activeTabMeta.icon} size={24} color={Colors.primary} />
+                        </View>
+                    </View>
+                    <View style={styles.adminStats}>
+                        <View style={styles.adminStatCard}>
+                            <Text style={styles.adminStatValue}>{allModels.length}</Text>
+                            <Text style={styles.adminStatLabel}>Models</Text>
+                        </View>
+                        <View style={styles.adminStatCard}>
+                            <Text style={styles.adminStatValue}>{activeModelsCount}</Text>
+                            <Text style={styles.adminStatLabel}>Active</Text>
+                        </View>
+                        <View style={styles.adminStatCard}>
+                            <Text style={styles.adminStatValue}>{specialModelsCount}</Text>
+                            <Text style={styles.adminStatLabel}>Special</Text>
+                        </View>
+                    </View>
+                </LinearGradient>
 
-                <View style={styles.previewContainer}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.topTabs} contentContainerStyle={styles.topTabsContent}>
+                    {ADMIN_TABS.map(tab => (
+                        <TouchableOpacity
+                            key={tab.id}
+                            style={[styles.topTab, activeTab === tab.id && styles.activeTopTab]}
+                            activeOpacity={0.78}
+                            onPress={() => setActiveTab(tab.id)}
+                        >
+                            <Ionicons name={tab.icon} size={18} color={activeTab === tab.id ? '#fff' : Colors.textMuted} />
+                            <Text style={[styles.topTabText, activeTab === tab.id && styles.activeTopTabText]}>{tab.label}</Text>
+                        </TouchableOpacity>
+                    ))}
+                </ScrollView>
+
+                {(activeTab === 'timer' || activeTab === 'chain') && <View style={styles.previewContainer}>
                     <View style={styles.modelFrame}>
-                        <Image source={{ uri: selectedModel.image }} style={styles.modelImg} resizeMode="contain" />
+                        <Image
+                            source={{ uri: selectedModel.image }}
+                            style={[
+                                styles.modelImg,
+                                {
+                                    transform: getModelImageTransform(selectedModel),
+                                },
+                            ]}
+                            resizeMode="contain"
+                        />
 
                         {activeTab === 'timer' ? (
                             <Animated.View
@@ -668,15 +977,15 @@ export default function AdminCalibrationScreen() {
                         )}
                     </View>
                     <Text style={styles.hint}>Drag to move · Selected: {selectedModel.label}</Text>
-                </View>
+                </View>}
 
                 <View style={styles.controls}>
-                    <View style={styles.sectionHeaderInner}>
+                    {(activeTab === 'timer' || activeTab === 'chain') && <><View style={styles.sectionHeaderInner}>
                         <View>
                             <Text style={styles.sectionLabelTitle}>Model Selection</Text>
                             <Text style={styles.sectionSub}>Choose or create a base capsule model</Text>
                         </View>
-                        <TouchableOpacity style={styles.addModelBtn} activeOpacity={0.7} onPress={() => setShowAddModel(true)}>
+                        <TouchableOpacity style={styles.addModelBtn} activeOpacity={0.7} onPress={openNewModel}>
                             <LinearGradient colors={[Colors.primary, Colors.primaryDark || Colors.primary]} style={styles.addModelIcon}>
                                 <Ionicons name="add" size={18} color="#fff" />
                             </LinearGradient>
@@ -701,7 +1010,7 @@ export default function AdminCalibrationScreen() {
                         ))}
                     </View>
 
-                    <View style={styles.divider} />
+                    <View style={styles.divider} /></>}
 
                     {activeTab === 'timer' ? (
                         <View style={styles.timerCalibration}>
@@ -796,15 +1105,15 @@ export default function AdminCalibrationScreen() {
                             </TouchableOpacity>
 
                             <View style={[styles.grid, { marginTop: 10 }]}>
-                                <TouchableOpacity 
-                                    style={[styles.globalBtn, { backgroundColor: '#FF8A00' }]} 
+                                <TouchableOpacity
+                                    style={[styles.globalBtn, { backgroundColor: '#FF8A00' }]}
                                     onPress={saveAsGlobalTimer}
                                 >
                                     <Ionicons name="earth" size={16} color="#fff" />
                                     <Text style={styles.globalBtnText}>Set Global Timer</Text>
                                 </TouchableOpacity>
-                                <TouchableOpacity 
-                                    style={[styles.globalBtn, { backgroundColor: '#00D1FF' }]} 
+                                <TouchableOpacity
+                                    style={[styles.globalBtn, { backgroundColor: '#00D1FF' }]}
                                     onPress={applyGlobalTimer}
                                 >
                                     <Ionicons name="download" size={16} color="#fff" />
@@ -816,7 +1125,7 @@ export default function AdminCalibrationScreen() {
                         <View style={styles.chainSection}>
                             <View style={styles.sectionHeaderInner}>
                                 <Text style={styles.label}>Select Chain from Library</Text>
-                                <TouchableOpacity style={styles.addModelBtn} activeOpacity={0.7} onPress={() => setShowAddChain(true)}>
+                                <TouchableOpacity style={styles.addModelBtn} activeOpacity={0.7} onPress={openNewChain}>
                                     <Ionicons name="add-circle" size={18} color={Colors.primary} />
                                     <Text style={styles.addModelBtnText}>New Chain</Text>
                                 </TouchableOpacity>
@@ -831,6 +1140,26 @@ export default function AdminCalibrationScreen() {
                                     >
                                         <Image source={{ uri: c.image_url }} style={styles.chainImg} resizeMode="cover" />
                                         <Text style={styles.chainLabel} numberOfLines={1}>{c.name}</Text>
+                                        <TouchableOpacity
+                                            style={styles.editChainBtn}
+                                            activeOpacity={0.75}
+                                            onPress={(event) => {
+                                                event.stopPropagation?.();
+                                                openEditChain(c);
+                                            }}
+                                        >
+                                            <Ionicons name="pencil" size={13} color={Colors.primary} />
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                            style={styles.deleteChainBtn}
+                                            activeOpacity={0.75}
+                                            onPress={(event) => {
+                                                event.stopPropagation?.();
+                                                deleteChain(c);
+                                            }}
+                                        >
+                                            <Ionicons name="trash-outline" size={13} color={Colors.error} />
+                                        </TouchableOpacity>
                                     </TouchableOpacity>
                                 ))}
                             </View>
@@ -871,15 +1200,15 @@ export default function AdminCalibrationScreen() {
                                     </TouchableOpacity>
 
                                     <View style={[styles.grid, { marginTop: 10 }]}>
-                                        <TouchableOpacity 
-                                            style={[styles.globalBtn, { backgroundColor: '#FF8A00' }]} 
+                                        <TouchableOpacity
+                                            style={[styles.globalBtn, { backgroundColor: '#FF8A00' }]}
                                             onPress={saveAsGlobalChain}
                                         >
                                             <Ionicons name="earth" size={16} color="#fff" />
                                             <Text style={styles.globalBtnText}>Set Global Chain</Text>
                                         </TouchableOpacity>
-                                        <TouchableOpacity 
-                                            style={[styles.globalBtn, { backgroundColor: '#00D1FF' }]} 
+                                        <TouchableOpacity
+                                            style={[styles.globalBtn, { backgroundColor: '#00D1FF' }]}
                                             onPress={applyGlobalChain}
                                         >
                                             <Ionicons name="download" size={16} color="#fff" />
@@ -893,7 +1222,7 @@ export default function AdminCalibrationScreen() {
                         <View style={styles.stickerSection}>
                             <View style={styles.sectionHeaderInner}>
                                 <Text style={styles.label}>Manage Profile Stickers</Text>
-                                <TouchableOpacity style={styles.addModelBtn} activeOpacity={0.7} onPress={() => setShowAddSticker(true)}>
+                                <TouchableOpacity style={styles.addModelBtn} activeOpacity={0.7} onPress={openNewSticker}>
                                     <Ionicons name="add-circle" size={18} color={Colors.primary} />
                                     <Text style={styles.addModelBtnText}>New Sticker</Text>
                                 </TouchableOpacity>
@@ -903,18 +1232,10 @@ export default function AdminCalibrationScreen() {
                                     <View key={s.id} style={styles.stickerCard}>
                                         <Image source={{ uri: s.image_url }} style={styles.stickerImg} resizeMode="contain" />
                                         <Text style={styles.stickerName} numberOfLines={1}>{s.name}</Text>
-                                        <TouchableOpacity 
-                                            style={styles.deleteStickerBtn}
-                                            onPress={() => {
-                                                Alert.alert('Delete', 'Delete this sticker?', [
-                                                    { text: 'Cancel' },
-                                                    { text: 'Delete', style: 'destructive', onPress: async () => {
-                                                        const { error } = await supabase.from('stickers').delete().eq('id', s.id);
-                                                        if (!error) loadStickers();
-                                                    }}
-                                                ]);
-                                            }}
-                                        >
+                                        <TouchableOpacity style={styles.editStickerBtn} onPress={() => openEditSticker(s)}>
+                                            <Ionicons name="pencil" size={14} color={Colors.primary} />
+                                        </TouchableOpacity>
+                                        <TouchableOpacity style={styles.deleteStickerBtn} onPress={() => deleteSticker(s)}>
                                             <Ionicons name="trash-outline" size={14} color={Colors.error} />
                                         </TouchableOpacity>
                                     </View>
@@ -928,33 +1249,66 @@ export default function AdminCalibrationScreen() {
                                     <Text style={styles.sectionLabelTitle}>Drops Management</Text>
                                     <Text style={styles.sectionSub}>Create and manage design drops</Text>
                                 </View>
-                                <TouchableOpacity style={styles.addModelBtn} activeOpacity={0.7} onPress={() => setShowAddDrop(true)}>
+                                <TouchableOpacity style={styles.addModelBtn} activeOpacity={0.7} onPress={openNewDrop}>
                                     <LinearGradient colors={[Colors.primary, Colors.primaryDark || Colors.primary]} style={styles.addModelIcon}>
                                         <Ionicons name="add" size={18} color="#fff" />
                                     </LinearGradient>
                                     <Text style={styles.addModelBtnText}>New Drop</Text>
                                 </TouchableOpacity>
                             </View>
-                            
+
                             <View style={styles.dropList}>
-                                {drops.map(d => (
-                                    <View key={d.id} style={styles.dropCard}>
-                                        <View style={styles.dropCardInfo}>
-                                            <Text style={styles.dropCardName}>{d.name}</Text>
-                                            <Text style={styles.dropCardDates}>
-                                                {new Date(d.start_date).toLocaleDateString()} - {new Date(d.end_date).toLocaleDateString()}
-                                            </Text>
-                                            <View style={[styles.statusPill, { backgroundColor: d.is_active ? '#e6fce6' : '#ffeeee' }]}>
-                                                <Text style={[styles.statusPillText, { color: d.is_active ? '#2d8a2d' : '#8a2d2d' }]}>
-                                                    {d.is_active ? 'Active' : 'Inactive'}
-                                                </Text>
+                                {drops.map(d => {
+                                    const dropModels = getDropModels(d.id);
+                                    return (
+                                        <View key={d.id} style={styles.dropCard}>
+                                            <View style={styles.dropCardTop}>
+                                                <View style={styles.dropCardInfo}>
+                                                    <Text style={styles.dropCardName}>{d.name}</Text>
+                                                    <Text style={styles.dropCardDates}>
+                                                        {new Date(d.start_date).toLocaleDateString()} - {d.end_date ? new Date(d.end_date).toLocaleDateString() : 'No end date'}
+                                                    </Text>
+                                                    <View style={styles.dropMetaRow}>
+                                                        <View style={[styles.statusPill, { backgroundColor: d.is_active ? '#e6fce6' : '#ffeeee' }]}>
+                                                            <Text style={[styles.statusPillText, { color: d.is_active ? '#2d8a2d' : '#8a2d2d' }]}>
+                                                                {d.is_active ? 'Active' : 'Inactive'}
+                                                            </Text>
+                                                        </View>
+                                                        <View style={[styles.statusPill, { backgroundColor: Colors.primary + '10' }]}>
+                                                            <Text style={[styles.statusPillText, { color: Colors.primary }]}>
+                                                                {dropModels.length} capsule{dropModels.length === 1 ? '' : 's'}
+                                                            </Text>
+                                                        </View>
+                                                    </View>
+                                                </View>
+                                                <View style={styles.dropActions}>
+                                                    <TouchableOpacity onPress={() => openEditDrop(d)} style={styles.editDropBtn}>
+                                                        <Ionicons name="pencil" size={18} color={Colors.primary} />
+                                                    </TouchableOpacity>
+                                                    <TouchableOpacity onPress={() => handleDeleteDrop(d.id)} style={styles.deleteDropBtn}>
+                                                        <Ionicons name="trash-outline" size={20} color="#ff5252" />
+                                                    </TouchableOpacity>
+                                                </View>
+                                            </View>
+                                            <View style={styles.dropModelList}>
+                                                {dropModels.length > 0 ? dropModels.map((m: any) => (
+                                                    <View key={m.id} style={styles.dropModelChip}>
+                                                        <Image source={{ uri: m.image_cover || m.image }} style={styles.dropModelThumb} />
+                                                        <Text style={styles.dropModelName} numberOfLines={1}>{m.label || m.id}</Text>
+                                                        <Text style={[styles.dropModelState, { color: m.is_active === false ? Colors.error : '#319795' }]}>
+                                                            {m.is_active === false ? 'Hidden' : 'Active'}
+                                                        </Text>
+                                                    </View>
+                                                )) : (
+                                                    <View style={styles.dropEmptyState}>
+                                                        <Ionicons name="cube-outline" size={15} color={Colors.textMuted} />
+                                                        <Text style={styles.dropEmptyText}>No capsules assigned to this drop</Text>
+                                                    </View>
+                                                )}
                                             </View>
                                         </View>
-                                        <TouchableOpacity onPress={() => handleDeleteDrop(d.id)} style={styles.deleteDropBtn}>
-                                            <Ionicons name="trash-outline" size={20} color="#ff5252" />
-                                        </TouchableOpacity>
-                                    </View>
-                                ))}
+                                    );
+                                })}
                             </View>
                         </View>
                     ) : (
@@ -964,15 +1318,7 @@ export default function AdminCalibrationScreen() {
                                     <Text style={styles.label}>Capsule Library</Text>
                                     <Text style={styles.sectionSub}>Total: {allModels.length} models</Text>
                                 </View>
-                                <TouchableOpacity style={styles.addModelBtn} onPress={() => {
-                                    setNewModel({ 
-                                        id: '', label: '', image: '', image_open: '',
-                                        category: 'Vibe', tint: '#a269ff', is_active: true, is_event: false,
-                                        event_start: '', event_end: '', event_title: '', event_description: '',
-                                        drop_id: null
-                                    });
-                                    setShowAddModel(true);
-                                }}>
+                                <TouchableOpacity style={styles.addModelBtn} onPress={openNewModel}>
                                     <Ionicons name="add-circle" size={18} color={Colors.primary} />
                                     <Text style={styles.addModelBtnText}>New Model</Text>
                                 </TouchableOpacity>
@@ -1001,45 +1347,60 @@ export default function AdminCalibrationScreen() {
                                         <View style={{ flex: 1, gap: 2 }}>
                                             <Text style={styles.modelLibraryLabel}>{m.label || m.id}</Text>
                                             <View style={{ flexDirection: 'row', gap: 8 }}>
-                                                {m.is_active ? 
+                                                {m.is_active ?
                                                     <View style={[styles.statusTag, { backgroundColor: '#e6fffa' }]}><Text style={[styles.statusTagText, { color: '#319795' }]}>Active</Text></View> :
                                                     <View style={[styles.statusTag, { backgroundColor: '#fff5f5' }]}><Text style={[styles.statusTagText, { color: '#e53e3e' }]}>Hidden</Text></View>
                                                 }
-                                                {m.is_event && 
+                                                {m.is_event &&
                                                     <View style={[styles.statusTag, { backgroundColor: '#fffaf0' }]}><Text style={[styles.statusTagText, { color: '#dd6b20' }]}>Event</Text></View>
+                                                }
+                                                {m.is_birthday &&
+                                                    <View style={[styles.statusTag, { backgroundColor: '#fff1f8' }]}><Text style={[styles.statusTagText, { color: '#db2777' }]}>Birthday</Text></View>
+                                                }
+                                                {m.is_trending &&
+                                                    <View style={[styles.statusTag, { backgroundColor: '#fff5f5' }]}><Text style={[styles.statusTagText, { color: '#e53e3e' }]}>Popular</Text></View>
+                                                }
+                                                {m.is_new &&
+                                                    <View style={[styles.statusTag, { backgroundColor: '#ebf8ff' }]}><Text style={[styles.statusTagText, { color: '#3182ce' }]}>New</Text></View>
+                                                }
+                                                {m.drop_id && getDropName(m.drop_id) &&
+                                                    <View style={[styles.statusTag, styles.dropLibraryTag]}>
+                                                        <Ionicons name="flash" size={10} color="#fff" />
+                                                        <Text style={[styles.statusTagText, { color: '#fff' }]}>{getDropName(m.drop_id)}</Text>
+                                                    </View>
                                                 }
                                             </View>
                                         </View>
                                         <View style={{ flexDirection: 'row', gap: 10 }}>
-                                            <TouchableOpacity 
+                                            <TouchableOpacity
                                                 style={styles.libActionBtn}
-                                                onPress={() => {
-                                                    setNewModel({ 
-                                                        ...m, 
-                                                        thumbnail_url: m.thumbnail_url || '',
-                                                        event_start: m.event_start || '', 
-                                                        event_end: m.event_end || '', 
-                                                        event_title: m.event_title || '', 
-                                                        event_description: m.event_description || '',
-                                                        drop_id: m.drop_id || null
-                                                    });
-                                                    setShowAddModel(true);
-                                                }}
+                                                onPress={() => openEditModel(m)}
                                             >
                                                 <Ionicons name="pencil" size={16} color={Colors.primary} />
                                             </TouchableOpacity>
-                                            <TouchableOpacity 
+                                            <TouchableOpacity
                                                 style={[styles.libActionBtn, { backgroundColor: Colors.error + '10' }]}
                                                 onPress={() => {
-                                                    Alert.alert('Delete', `Delete model ${m.id}?`, [
-                                                        { text: 'Cancel' },
-                                                        { text: 'Delete', style: 'destructive', onPress: async () => {
-                                                            const { error } = await supabase.from('models').delete().eq('id', m.id);
-                                                            if (!error) {
-                                                                timerConfigManager.refresh();
-                                                            }
-                                                        }}
-                                                    ]);
+                                                    const performDelete = async () => {
+                                                        const success = await timerConfigManager.deleteModel(m.id);
+                                                        if (success) {
+                                                            syncConfigs();
+                                                            Alert.alert('Success', 'Model deleted successfully');
+                                                        } else {
+                                                            Alert.alert('Error', 'Could not delete model. Check dependencies.');
+                                                        }
+                                                    };
+
+                                                    if (Platform.OS === 'web') {
+                                                        if (window.confirm(`Delete model ${m.id}?`)) {
+                                                            performDelete();
+                                                        }
+                                                    } else {
+                                                        Alert.alert('Delete', `Delete model ${m.id}?`, [
+                                                            { text: 'Cancel' },
+                                                            { text: 'Delete', style: 'destructive', onPress: performDelete }
+                                                        ]);
+                                                    }
                                                 }}
                                             >
                                                 <Ionicons name="trash" size={16} color={Colors.error} />
@@ -1058,8 +1419,8 @@ export default function AdminCalibrationScreen() {
                 <View style={styles.modalOverlay}>
                     <ScrollView contentContainerStyle={styles.modalScrollContent} style={{ flex: 1 }}>
                         <View style={styles.modalContent}>
-                            <Text style={styles.modalTitle}>Configure Model</Text>
-                            
+                            <Text style={styles.modalTitle}>{editingModelId ? 'Edit Model' : 'Configure Model'}</Text>
+
                             <View style={styles.inputSection}>
                                 <Text style={styles.innerLabel}>Basic Info</Text>
                                 <TextInput
@@ -1067,7 +1428,8 @@ export default function AdminCalibrationScreen() {
                                     placeholderTextColor="#999"
                                     value={newModel.id || ''}
                                     onChangeText={t => setNewModel(p => ({ ...p, id: t }))}
-                                    style={styles.input}
+                                    editable={!editingModelId}
+                                    style={[styles.input, editingModelId ? styles.disabledInput : null]}
                                 />
                                 <TextInput
                                     placeholder="Label (e.g. Golden Capsule)"
@@ -1082,14 +1444,14 @@ export default function AdminCalibrationScreen() {
                                 <Text style={styles.innerLabel}>Drop Association</Text>
                                 <Text style={styles.switchSub}>Designs in a drop only appear during its active dates.</Text>
                                 <View style={styles.dropPicker}>
-                                    <TouchableOpacity 
+                                    <TouchableOpacity
                                         style={[styles.dropOption, !newModel.drop_id && styles.activeDropOption]}
                                         onPress={() => setNewModel(p => ({ ...p, drop_id: null }))}
                                     >
                                         <Text style={[styles.dropOptionText, !newModel.drop_id && styles.activeDropOptionText]}>None</Text>
                                     </TouchableOpacity>
                                     {drops.map(d => (
-                                        <TouchableOpacity 
+                                        <TouchableOpacity
                                             key={d.id}
                                             style={[styles.dropOption, newModel.drop_id === d.id && styles.activeDropOption]}
                                             onPress={() => setNewModel(p => ({ ...p, drop_id: d.id }))}
@@ -1104,28 +1466,378 @@ export default function AdminCalibrationScreen() {
                             <View style={styles.inputSection}>
                                 <Text style={styles.innerLabel}>Assets</Text>
                                 <View style={styles.assetInputRow}>
-                                    <TextInput
-                                        placeholder="Image URL (WebP)"
-                                        placeholderTextColor="#999"
-                                        value={newModel.image || ''}
-                                        onChangeText={t => setNewModel(p => ({ ...p, image: t }))}
-                                        style={[styles.input, { flex: 1, marginBottom: 0 }]}
-                                    />
-                                    <TouchableOpacity style={styles.uploadSmallBtn} onPress={() => pickAndUploadImage((url) => setNewModel(p => ({ ...p, image: url })))}>
-                                        <Ionicons name="camera" size={20} color="#fff" />
+                                    <View style={{ flex: 1 }}>
+                                        <TextInput
+                                            placeholder="Image URL (WebP)"
+                                            placeholderTextColor="#999"
+                                            value={newModel.image || ''}
+                                            onChangeText={t => setNewModel(p => ({ ...p, image: t }))}
+                                            style={[styles.input, { marginBottom: 0 }]}
+                                        />
+                                        {newModel.image ? (
+                                            <Image source={{ uri: newModel.image }} style={styles.assetPreview} resizeMode="contain" />
+                                        ) : null}
+                                    </View>
+                                    <TouchableOpacity
+                                        style={[styles.uploadSmallBtn, uploading && { opacity: 0.5 }]}
+                                        onPress={() => pickAndUploadImage((url) => setNewModel(p => ({ ...p, image: url })))}
+                                        disabled={uploading}
+                                    >
+                                        {uploading ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="camera" size={20} color="#fff" />}
                                     </TouchableOpacity>
                                 </View>
-                                <View style={[styles.assetInputRow, { marginTop: 10 }]}>
-                                    <TextInput
-                                        placeholder="Image Open URL (WebP)"
-                                        placeholderTextColor="#999"
-                                        value={newModel.image_open || ''}
-                                        onChangeText={t => setNewModel(p => ({ ...p, image_open: t }))}
-                                        style={[styles.input, { flex: 1, marginBottom: 0 }]}
-                                    />
-                                    <TouchableOpacity style={styles.uploadSmallBtn} onPress={() => pickAndUploadImage(url => setNewModel(p => ({ ...p, image_open: url })))}>
-                                        <Ionicons name="camera" size={20} color="#fff" />
+                                <View style={[styles.assetInputRow, { marginTop: 15 }]}>
+                                    <View style={{ flex: 1 }}>
+                                        <TextInput
+                                            placeholder="Image Open URL (WebP)"
+                                            placeholderTextColor="#999"
+                                            value={newModel.image_open || ''}
+                                            onChangeText={t => setNewModel(p => ({ ...p, image_open: t }))}
+                                            style={[styles.input, { marginBottom: 0 }]}
+                                        />
+                                        {newModel.image_open ? (
+                                            <Image source={{ uri: newModel.image_open }} style={styles.assetPreview} resizeMode="contain" />
+                                        ) : null}
+                                    </View>
+                                    <TouchableOpacity
+                                        style={[styles.uploadSmallBtn, uploading && { opacity: 0.5 }]}
+                                        onPress={() => pickAndUploadImage(url => setNewModel(p => ({ ...p, image_open: url })))}
+                                        disabled={uploading}
+                                    >
+                                        {uploading ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="camera" size={20} color="#fff" />}
                                     </TouchableOpacity>
+                                </View>
+                            </View>
+
+                            <View style={styles.inputSection}>
+                                <View style={styles.layoutSectionHeader}>
+                                    <View>
+                                        <Text style={styles.innerLabel}>Image Layout</Text>
+                                        <Text style={styles.switchSub}>Adjust size and position inside the design frame.</Text>
+                                    </View>
+                                    <TouchableOpacity
+                                        style={styles.layoutResetBtn}
+                                        activeOpacity={0.75}
+                                        onPress={() => setNewModel(p => ({ ...p, image_scale: 1, image_scale_x: 1, image_scale_y: 1, image_offset_x: 0, image_offset_y: 0 }))}
+                                    >
+                                        <Ionicons name="refresh" size={14} color={Colors.primary} />
+                                        <Text style={styles.layoutResetText}>Reset</Text>
+                                    </TouchableOpacity>
+                                </View>
+                                <View style={styles.referenceToggleRow}>
+                                    <View style={styles.referenceToggleCopy}>
+                                        <Ionicons name="grid-outline" size={16} color={Colors.primary} />
+                                        <Text style={styles.referenceToggleText}>Guides + base_kap reference</Text>
+                                    </View>
+                                    <Switch
+                                        value={showBaseModelReference}
+                                        onValueChange={setShowBaseModelReference}
+                                        trackColor={{ true: Colors.primary }}
+                                    />
+                                </View>
+                                <View style={styles.referenceToggleRow}>
+                                    <View style={styles.referenceToggleCopy}>
+                                        <Ionicons name="time-outline" size={16} color={Colors.primary} />
+                                        <Text style={styles.referenceToggleText}>Global timer position</Text>
+                                    </View>
+                                    <Switch
+                                        value={showLayoutTimerReference}
+                                        onValueChange={setShowLayoutTimerReference}
+                                        trackColor={{ true: Colors.primary }}
+                                    />
+                                </View>
+                                <View style={styles.referenceToggleRow}>
+                                    <View style={styles.referenceToggleCopy}>
+                                        <Ionicons name="link-outline" size={16} color={Colors.primary} />
+                                        <Text style={styles.referenceToggleText}>Punk Rabbit global chain</Text>
+                                    </View>
+                                    <Switch
+                                        value={showLayoutChainReference}
+                                        onValueChange={setShowLayoutChainReference}
+                                        trackColor={{ true: Colors.primary }}
+                                    />
+                                </View>
+                                <View style={styles.referenceControls}>
+                                    <View style={styles.referenceControlHeader}>
+                                        <Text style={styles.layoutControlLabel}>base_kap Opacity</Text>
+                                        <Text style={styles.referenceValue}>{Math.round(baseModelReferenceOpacity * 100)}%</Text>
+                                    </View>
+                                    <View style={styles.layoutStepper}>
+                                        <TouchableOpacity
+                                            style={styles.layoutStepBtn}
+                                            activeOpacity={0.75}
+                                            onPress={() => setBaseModelReferenceOpacity(v => clampNumber(v - 0.05, 0.1, 1))}
+                                        >
+                                            <Ionicons name="remove" size={18} color={Colors.textPrimary} />
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                            style={[styles.referenceLayerBtn, baseModelReferenceLayer === 'behind' && styles.activeReferenceLayerBtn]}
+                                            activeOpacity={0.75}
+                                            onPress={() => setBaseModelReferenceLayer('behind')}
+                                        >
+                                            <Text style={[styles.referenceLayerText, baseModelReferenceLayer === 'behind' && styles.activeReferenceLayerText]}>Behind</Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                            style={[styles.referenceLayerBtn, baseModelReferenceLayer === 'front' && styles.activeReferenceLayerBtn]}
+                                            activeOpacity={0.75}
+                                            onPress={() => setBaseModelReferenceLayer('front')}
+                                        >
+                                            <Text style={[styles.referenceLayerText, baseModelReferenceLayer === 'front' && styles.activeReferenceLayerText]}>Front</Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                            style={styles.layoutStepBtn}
+                                            activeOpacity={0.75}
+                                            onPress={() => setBaseModelReferenceOpacity(v => clampNumber(v + 0.05, 0.1, 1))}
+                                        >
+                                            <Ionicons name="add" size={18} color={Colors.textPrimary} />
+                                        </TouchableOpacity>
+                                    </View>
+                                </View>
+
+                                <View style={styles.modelLayoutPreview}>
+                                    <View pointerEvents="none" style={styles.layoutGuideLayer}>
+                                        <View style={[styles.layoutGuideLine, styles.layoutGuideVertical]} />
+                                        <View style={[styles.layoutGuideLine, styles.layoutGuideHorizontal]} />
+                                        <View style={[styles.layoutGuideLineSoft, styles.layoutGuideVerticalLeft]} />
+                                        <View style={[styles.layoutGuideLineSoft, styles.layoutGuideVerticalRight]} />
+                                        <View style={[styles.layoutGuideLineSoft, styles.layoutGuideHorizontalTop]} />
+                                        <View style={[styles.layoutGuideLineSoft, styles.layoutGuideHorizontalBottom]} />
+                                        <View style={styles.layoutGuideCenterDot} />
+                                    </View>
+                                    {showBaseModelReference && baseModelReference?.image ? (
+                                        <View
+                                            pointerEvents="none"
+                                            style={[
+                                                styles.baseModelReferenceLayer,
+                                                { zIndex: baseModelReferenceLayer === 'front' ? 4 : 1 }
+                                            ]}
+                                        >
+                                            <Image
+                                                source={{ uri: baseModelReference.image }}
+                                                style={[
+                                                    styles.baseModelReferenceImage,
+                                                    { opacity: baseModelReferenceOpacity },
+                                                    {
+                                                        transform: [
+                                                        ...getModelImageTransform(baseModelReference),
+                                                        ],
+                                                    },
+                                                ]}
+                                                resizeMode="contain"
+                                            />
+                                        </View>
+                                    ) : null}
+                                    {newModel.image ? (
+                                        <Image
+                                            source={{ uri: newModel.image }}
+                                            style={[
+                                                styles.modelLayoutPreviewImage,
+                                                {
+                                                    transform: [
+                                                        ...getModelImageTransform(newModel),
+                                                    ],
+                                                },
+                                            ]}
+                                            resizeMode="contain"
+                                        />
+                                    ) : (
+                                        <Ionicons name="image-outline" size={38} color={Colors.textMuted} />
+                                    )}
+                                    {showLayoutTimerReference && layoutTimerReference ? (
+                                        <View
+                                            pointerEvents="none"
+                                            style={[
+                                                styles.layoutTimerReference,
+                                                {
+                                                    left: layoutTimerReference.x * LAYOUT_PREVIEW_SIZE,
+                                                    top: layoutTimerReference.y * LAYOUT_PREVIEW_SIZE,
+                                                    width: layoutTimerReference.w * LAYOUT_PREVIEW_SIZE,
+                                                    height: layoutTimerReference.h * LAYOUT_PREVIEW_SIZE,
+                                                },
+                                            ]}
+                                        >
+                                            <LiveTimer
+                                                date={new Date(Date.now() + 1000 * 3600 * 2.25).toISOString()}
+                                                modelId="__GLOBAL__"
+                                                configOverride={layoutTimerReference}
+                                                style={{ fontSize: Math.max(7, (LAYOUT_PREVIEW_SIZE * layoutTimerReference.h) * 0.48) }}
+                                            />
+                                        </View>
+                                    ) : null}
+                                    {showLayoutChainReference && punkRabbitChain?.image_url && layoutChainReference ? (
+                                        <View
+                                            pointerEvents="none"
+                                            style={[
+                                                styles.layoutChainReference,
+                                                {
+                                                    left: layoutChainReference.x * LAYOUT_PREVIEW_SIZE,
+                                                    top: layoutChainReference.y * LAYOUT_PREVIEW_SIZE,
+                                                    width: LAYOUT_PREVIEW_SIZE * layoutChainReference.scale,
+                                                    height: LAYOUT_PREVIEW_SIZE * layoutChainReference.scale,
+                                                    transform: [
+                                                        { translateX: -(LAYOUT_PREVIEW_SIZE * layoutChainReference.scale) / 2 },
+                                                        { translateY: -(LAYOUT_PREVIEW_SIZE * layoutChainReference.scale) / 2 },
+                                                    ],
+                                                },
+                                            ]}
+                                        >
+                                            <Image source={{ uri: punkRabbitChain.image_url }} style={styles.layoutChainReferenceImage} resizeMode="contain" />
+                                        </View>
+                                    ) : null}
+                                </View>
+
+                                <View style={styles.layoutQuickActions}>
+                                    <TouchableOpacity
+                                        style={styles.layoutQuickBtn}
+                                        activeOpacity={0.75}
+                                        onPress={() => {
+                                            const baseLayout = getModelImageLayout(baseModelReference);
+                                            setNewModel(p => ({
+                                                ...p,
+                                                image_scale: baseLayout.scale,
+                                                image_scale_x: baseLayout.scaleX,
+                                                image_scale_y: baseLayout.scaleY,
+                                                image_offset_x: baseLayout.offsetX,
+                                                image_offset_y: baseLayout.offsetY,
+                                            }));
+                                        }}
+                                    >
+                                        <Ionicons name="copy-outline" size={14} color={Colors.primary} />
+                                        <Text style={styles.layoutQuickText}>Match base_kap</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={styles.layoutQuickBtn}
+                                        activeOpacity={0.75}
+                                        onPress={saveDefaultLayoutPreset}
+                                    >
+                                        <Ionicons name="save-outline" size={14} color={Colors.primary} />
+                                        <Text style={styles.layoutQuickText}>Save default</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={[styles.layoutQuickBtn, !defaultLayoutPreset && { opacity: 0.45 }]}
+                                        activeOpacity={0.75}
+                                        disabled={!defaultLayoutPreset}
+                                        onPress={() => applyLayoutPresetToForm(defaultLayoutPreset)}
+                                    >
+                                        <Ionicons name="download-outline" size={14} color={Colors.primary} />
+                                        <Text style={styles.layoutQuickText}>Apply default</Text>
+                                    </TouchableOpacity>
+                                </View>
+                                <View style={styles.autoPresetRow}>
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={styles.referenceToggleText}>Use default preset on new designs</Text>
+                                        <Text style={styles.switchSub}>You can still apply or reset it manually.</Text>
+                                    </View>
+                                    <Switch
+                                        value={autoApplyDefaultLayout}
+                                        onValueChange={updateAutoApplyDefaultLayout}
+                                        trackColor={{ true: Colors.primary }}
+                                    />
+                                </View>
+
+                                <View style={styles.layoutControl}>
+                                    <Text style={styles.layoutControlLabel}>Overall Size</Text>
+                                    <View style={styles.layoutStepper}>
+                                        <TouchableOpacity
+                                            style={styles.layoutStepBtn}
+                                            activeOpacity={0.75}
+                                            onPress={() => setNewModel(p => ({ ...p, image_scale: clampNumber((Number(p.image_scale) || 1) - 0.01, MIN_MODEL_IMAGE_SCALE, MAX_MODEL_IMAGE_SCALE) }))}
+                                        >
+                                            <Ionicons name="remove" size={18} color={Colors.textPrimary} />
+                                        </TouchableOpacity>
+                                        <Text style={styles.layoutValue}>{Math.round(getModelImageLayout(newModel).scale * 100)}%</Text>
+                                        <TouchableOpacity
+                                            style={styles.layoutStepBtn}
+                                            activeOpacity={0.75}
+                                            onPress={() => setNewModel(p => ({ ...p, image_scale: clampNumber((Number(p.image_scale) || 1) + 0.01, MIN_MODEL_IMAGE_SCALE, MAX_MODEL_IMAGE_SCALE) }))}
+                                        >
+                                            <Ionicons name="add" size={18} color={Colors.textPrimary} />
+                                        </TouchableOpacity>
+                                    </View>
+                                </View>
+
+                                <View style={styles.layoutControl}>
+                                    <Text style={styles.layoutControlLabel}>Width Stretch</Text>
+                                    <View style={styles.layoutStepper}>
+                                        <TouchableOpacity
+                                            style={styles.layoutStepBtn}
+                                            activeOpacity={0.75}
+                                            onPress={() => setNewModel(p => ({ ...p, image_scale_x: clampNumber((Number(p.image_scale_x) || 1) - 0.01, MIN_MODEL_IMAGE_SCALE, MAX_MODEL_IMAGE_SCALE) }))}
+                                        >
+                                            <Ionicons name="contract-outline" size={17} color={Colors.textPrimary} />
+                                        </TouchableOpacity>
+                                        <Text style={styles.layoutValue}>{Math.round(getModelImageLayout(newModel).scaleX * 100)}%</Text>
+                                        <TouchableOpacity
+                                            style={styles.layoutStepBtn}
+                                            activeOpacity={0.75}
+                                            onPress={() => setNewModel(p => ({ ...p, image_scale_x: clampNumber((Number(p.image_scale_x) || 1) + 0.01, MIN_MODEL_IMAGE_SCALE, MAX_MODEL_IMAGE_SCALE) }))}
+                                        >
+                                            <Ionicons name="resize-outline" size={17} color={Colors.textPrimary} />
+                                        </TouchableOpacity>
+                                    </View>
+                                </View>
+
+                                <View style={styles.layoutControl}>
+                                    <Text style={styles.layoutControlLabel}>Height Stretch</Text>
+                                    <View style={styles.layoutStepper}>
+                                        <TouchableOpacity
+                                            style={styles.layoutStepBtn}
+                                            activeOpacity={0.75}
+                                            onPress={() => setNewModel(p => ({ ...p, image_scale_y: clampNumber((Number(p.image_scale_y) || 1) - 0.01, MIN_MODEL_IMAGE_SCALE, MAX_MODEL_IMAGE_SCALE) }))}
+                                        >
+                                            <Ionicons name="contract-outline" size={17} color={Colors.textPrimary} />
+                                        </TouchableOpacity>
+                                        <Text style={styles.layoutValue}>{Math.round(getModelImageLayout(newModel).scaleY * 100)}%</Text>
+                                        <TouchableOpacity
+                                            style={styles.layoutStepBtn}
+                                            activeOpacity={0.75}
+                                            onPress={() => setNewModel(p => ({ ...p, image_scale_y: clampNumber((Number(p.image_scale_y) || 1) + 0.01, MIN_MODEL_IMAGE_SCALE, MAX_MODEL_IMAGE_SCALE) }))}
+                                        >
+                                            <Ionicons name="resize-outline" size={17} color={Colors.textPrimary} />
+                                        </TouchableOpacity>
+                                    </View>
+                                </View>
+
+                                <View style={styles.layoutControl}>
+                                    <Text style={styles.layoutControlLabel}>Move Horizontal</Text>
+                                    <View style={styles.layoutStepper}>
+                                        <TouchableOpacity
+                                            style={styles.layoutStepBtn}
+                                            activeOpacity={0.75}
+                                            onPress={() => setNewModel(p => ({ ...p, image_offset_x: clampNumber((Number(p.image_offset_x) || 0) - 1, MIN_MODEL_IMAGE_OFFSET, MAX_MODEL_IMAGE_OFFSET) }))}
+                                        >
+                                            <Ionicons name="arrow-back" size={17} color={Colors.textPrimary} />
+                                        </TouchableOpacity>
+                                        <Text style={styles.layoutValue}>{Math.round(getModelImageLayout(newModel).offsetX)}px</Text>
+                                        <TouchableOpacity
+                                            style={styles.layoutStepBtn}
+                                            activeOpacity={0.75}
+                                            onPress={() => setNewModel(p => ({ ...p, image_offset_x: clampNumber((Number(p.image_offset_x) || 0) + 1, MIN_MODEL_IMAGE_OFFSET, MAX_MODEL_IMAGE_OFFSET) }))}
+                                        >
+                                            <Ionicons name="arrow-forward" size={17} color={Colors.textPrimary} />
+                                        </TouchableOpacity>
+                                    </View>
+                                </View>
+
+                                <View style={styles.layoutControl}>
+                                    <Text style={styles.layoutControlLabel}>Move Vertical</Text>
+                                    <View style={styles.layoutStepper}>
+                                        <TouchableOpacity
+                                            style={styles.layoutStepBtn}
+                                            activeOpacity={0.75}
+                                            onPress={() => setNewModel(p => ({ ...p, image_offset_y: clampNumber((Number(p.image_offset_y) || 0) - 1, MIN_MODEL_IMAGE_OFFSET, MAX_MODEL_IMAGE_OFFSET) }))}
+                                        >
+                                            <Ionicons name="arrow-up" size={17} color={Colors.textPrimary} />
+                                        </TouchableOpacity>
+                                        <Text style={styles.layoutValue}>{Math.round(getModelImageLayout(newModel).offsetY)}px</Text>
+                                        <TouchableOpacity
+                                            style={styles.layoutStepBtn}
+                                            activeOpacity={0.75}
+                                            onPress={() => setNewModel(p => ({ ...p, image_offset_y: clampNumber((Number(p.image_offset_y) || 0) + 1, MIN_MODEL_IMAGE_OFFSET, MAX_MODEL_IMAGE_OFFSET) }))}
+                                        >
+                                            <Ionicons name="arrow-down" size={17} color={Colors.textPrimary} />
+                                        </TouchableOpacity>
+                                    </View>
                                 </View>
                             </View>
 
@@ -1138,12 +1850,35 @@ export default function AdminCalibrationScreen() {
                                     <Switch value={newModel.is_active} onValueChange={v => setNewModel(p => ({ ...p, is_active: v }))} trackColor={{ true: Colors.primary }} />
                                 </View>
 
-                                <View style={[styles.switchRow, { marginTop: 15 }]}>
+                                <View style={[styles.switchRow, { marginTop: 12 }]}>
                                     <View>
-                                        <Text style={styles.switchLabel}>Event Capsule</Text>
-                                        <Text style={styles.switchSub}>Automatically active for events</Text>
+                                        <Text style={styles.switchLabel}>Popular (Trending)</Text>
+                                        <Text style={styles.switchSub}>Show with flame effect</Text>
                                     </View>
-                                    <Switch value={newModel.is_event} onValueChange={v => setNewModel(p => ({ ...p, is_event: v }))} trackColor={{ true: '#f5a623' }} />
+                                    <Switch value={newModel.is_trending} onValueChange={v => setNewModel(p => ({ ...p, is_trending: v }))} trackColor={{ true: '#FF8C00' }} />
+                                </View>
+
+                                <View style={[styles.switchRow, { marginTop: 12 }]}>
+                                    <View>
+                                        <Text style={styles.switchLabel}>New Model</Text>
+                                        <Text style={styles.switchSub}>Show with sparkles effect</Text>
+                                    </View>
+                                    <Switch value={newModel.is_new} onValueChange={v => setNewModel(p => ({ ...p, is_new: v }))} trackColor={{ true: '#00D2FF' }} />
+                                </View>
+
+                                <View style={[styles.switchRow, { marginTop: 12 }]}>
+                                    <View>
+                                        <Text style={styles.switchLabel}>Is Event Mode</Text>
+                                        <Text style={styles.switchSub}>Requires start/end dates</Text>
+                                    </View>
+                                    <Switch value={newModel.is_event} onValueChange={v => setNewModel(p => ({ ...p, is_event: v }))} trackColor={{ true: Colors.primary }} />
+                                </View>
+                                <View style={[styles.switchRow, { marginTop: 12 }]}>
+                                    <View>
+                                        <Text style={styles.switchLabel}>Birthday-only Design</Text>
+                                        <Text style={styles.switchSub}>Only appears in creation on the user's birthday</Text>
+                                    </View>
+                                    <Switch value={newModel.is_birthday} onValueChange={v => setNewModel(p => ({ ...p, is_birthday: v, category: v ? 'Birthday' : p.category }))} trackColor={{ true: '#FF6FB7' }} />
                                 </View>
                             </View>
 
@@ -1168,8 +1903,8 @@ export default function AdminCalibrationScreen() {
                                     <View style={styles.grid}>
                                         <View style={styles.col}>
                                             <Text style={styles.miniLabel}>Start Date</Text>
-                                            <TouchableOpacity 
-                                                style={styles.datePickerBtn} 
+                                            <TouchableOpacity
+                                                style={styles.datePickerBtn}
                                                 onPress={() => handleDatePickerPress('start')}
                                             >
                                                 <Ionicons name="calendar-outline" size={16} color={Colors.textMuted} />
@@ -1180,8 +1915,8 @@ export default function AdminCalibrationScreen() {
                                         </View>
                                         <View style={styles.col}>
                                             <Text style={styles.miniLabel}>End Date</Text>
-                                            <TouchableOpacity 
-                                                style={styles.datePickerBtn} 
+                                            <TouchableOpacity
+                                                style={styles.datePickerBtn}
                                                 onPress={() => handleDatePickerPress('end')}
                                             >
                                                 <Ionicons name="calendar-outline" size={16} color={Colors.textMuted} />
@@ -1193,16 +1928,51 @@ export default function AdminCalibrationScreen() {
                                     </View>
 
                                     {Platform.OS === 'web' && datePickerMode && datePickerTarget === 'model' && (
-                                        <View style={{ marginTop: 10 }}>
-                                            <input 
+                                        <View style={styles.webDatePickerContainer}>
+                                            <Text style={styles.miniLabel}>Quick Actions ({datePickerMode})</Text>
+                                            <View style={styles.quickActionRow}>
+                                                {[
+                                                    { label: 'Today', days: 0 },
+                                                    { label: 'Tomorrow', days: 1 },
+                                                    { label: '+1 Week', days: 7 },
+                                                    { label: '+1 Month', days: 30 },
+                                                ].map((preset) => (
+                                                    <TouchableOpacity
+                                                        key={preset.label}
+                                                        style={styles.quickActionBtn}
+                                                        onPress={() => {
+                                                            const d = new Date();
+                                                            d.setDate(d.getDate() + preset.days);
+                                                            setNewModel(p => ({
+                                                                ...p,
+                                                                [datePickerMode === 'start' ? 'event_start' : 'event_end']: d.toISOString()
+                                                            }));
+                                                        }}
+                                                    >
+                                                        <Text style={styles.quickActionText}>{preset.label}</Text>
+                                                    </TouchableOpacity>
+                                                ))}
+                                            </View>
+                                            <input
                                                 type="datetime-local"
-                                                style={{ 
-                                                    width: '100%', 
-                                                    padding: '10px', 
-                                                    borderRadius: '8px', 
-                                                    border: '1px solid #ddd',
-                                                    fontFamily: 'inherit'
+                                                style={{
+                                                    width: '100%',
+                                                    padding: '12px',
+                                                    borderRadius: '12px',
+                                                    border: '2px solid #a269ff20',
+                                                    backgroundColor: '#fff',
+                                                    fontFamily: 'inherit',
+                                                    fontSize: '14px',
+                                                    outline: 'none',
+                                                    color: '#333'
                                                 }}
+                                                value={(() => {
+                                                    const v = (newModel as any)[datePickerMode === 'start' ? 'event_start' : 'event_end'];
+                                                    if (!v) return '';
+                                                    const d = new Date(v);
+                                                    const pad = (n: number) => n.toString().padStart(2, '0');
+                                                    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+                                                })()}
                                                 onChange={(e) => {
                                                     const val = e.target.value;
                                                     if (val) {
@@ -1211,10 +1981,17 @@ export default function AdminCalibrationScreen() {
                                                             [datePickerMode === 'start' ? 'event_start' : 'event_end']: new Date(val).toISOString()
                                                         }));
                                                     }
+                                                }}
+                                            />
+                                            <TouchableOpacity
+                                                style={[styles.confirmBtn, { marginTop: 12, height: 40, paddingVertical: 0, justifyContent: 'center' }]}
+                                                onPress={() => {
                                                     setDatePickerMode(null);
                                                     setDatePickerTarget(null);
                                                 }}
-                                            />
+                                            >
+                                                <Text style={styles.confirmBtnText}>Done</Text>
+                                            </TouchableOpacity>
                                         </View>
                                     )}
 
@@ -1243,10 +2020,14 @@ export default function AdminCalibrationScreen() {
                             )}
 
                             <View style={styles.modalActions}>
-                                <TouchableOpacity style={styles.cancelBtn} onPress={() => setShowAddModel(false)}>
+                                <TouchableOpacity style={styles.cancelBtn} onPress={() => { setShowAddModel(false); resetModelForm(); }} disabled={uploading}>
                                     <Text style={styles.cancelBtnText}>Cancel</Text>
                                 </TouchableOpacity>
-                                <TouchableOpacity style={styles.confirmBtn} onPress={handleAddModel}>
+                                <TouchableOpacity
+                                    style={[styles.confirmBtn, (uploading || !newModel.id || !newModel.image) && { opacity: 0.5 }]}
+                                    onPress={handleAddModel}
+                                    disabled={uploading || !newModel.id || !newModel.image}
+                                >
                                     <Text style={styles.confirmBtnText}>Confirm</Text>
                                 </TouchableOpacity>
                             </View>
@@ -1258,13 +2039,14 @@ export default function AdminCalibrationScreen() {
             <Modal visible={showAddChain} transparent animationType="slide">
                 <View style={styles.modalOverlay}>
                     <View style={styles.modalContent}>
-                        <Text style={styles.modalTitle}>Add New Chain</Text>
+                        <Text style={styles.modalTitle}>{editingChainId ? 'Edit Chain' : 'Add New Chain'}</Text>
                         <TextInput
                             placeholder="Chain ID (e.g. cherry_charm)"
                             placeholderTextColor="#999"
                             value={newChain.id || ''}
                             onChangeText={t => setNewChain(p => ({ ...p, id: t }))}
-                            style={styles.input}
+                            editable={!editingChainId}
+                            style={[styles.input, editingChainId ? styles.disabledInput : null]}
                         />
                         <TextInput
                             placeholder="Name (e.g. Red Cherry)"
@@ -1290,11 +2072,11 @@ export default function AdminCalibrationScreen() {
                             <Switch value={newChain.is_active} onValueChange={v => setNewChain(p => ({ ...p, is_active: v }))} trackColor={{ true: Colors.primary }} />
                         </View>
                         <View style={styles.modalActions}>
-                            <TouchableOpacity style={styles.cancelBtn} onPress={() => setShowAddChain(false)}>
+                            <TouchableOpacity style={styles.cancelBtn} onPress={() => { setShowAddChain(false); setEditingChainId(null); }}>
                                 <Text style={styles.cancelBtnText}>Cancel</Text>
                             </TouchableOpacity>
                             <TouchableOpacity style={styles.confirmBtn} onPress={handleAddChain}>
-                                <Text style={styles.confirmBtnText}>Add</Text>
+                                <Text style={styles.confirmBtnText}>{editingChainId ? 'Save' : 'Add'}</Text>
                             </TouchableOpacity>
                         </View>
                     </View>
@@ -1304,7 +2086,7 @@ export default function AdminCalibrationScreen() {
             <Modal visible={showAddSticker} transparent animationType="slide">
                 <View style={styles.modalOverlay}>
                     <View style={styles.modalContent}>
-                        <Text style={styles.modalTitle}>Add New Sticker</Text>
+                        <Text style={styles.modalTitle}>{editingStickerId ? 'Edit Sticker' : 'Add New Sticker'}</Text>
                         <TextInput
                             placeholder="Sticker Name (e.g. Heart)"
                             placeholderTextColor="#999"
@@ -1324,15 +2106,19 @@ export default function AdminCalibrationScreen() {
                                 <Ionicons name="camera" size={20} color="#fff" />
                             </TouchableOpacity>
                         </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 4, marginTop: 14 }}>
+                            <Text style={{ fontSize: 14, fontFamily: Fonts.medium, color: Colors.textPrimary }}>Active</Text>
+                            <Switch value={newSticker.is_active} onValueChange={v => setNewSticker(p => ({ ...p, is_active: v }))} trackColor={{ true: Colors.primary }} />
+                        </View>
                         <View style={styles.modalActions}>
-                            <TouchableOpacity style={styles.cancelBtn} onPress={() => setShowAddSticker(false)} disabled={addingSticker}>
+                            <TouchableOpacity style={styles.cancelBtn} onPress={() => { setShowAddSticker(false); setEditingStickerId(null); }} disabled={addingSticker}>
                                 <Text style={styles.cancelBtnText}>Cancel</Text>
                             </TouchableOpacity>
                             <TouchableOpacity style={styles.confirmBtn} onPress={handleAddSticker} disabled={addingSticker || !newSticker.name || !newSticker.image_url}>
                                 {addingSticker ? (
                                     <ActivityIndicator color="#fff" />
                                 ) : (
-                                    <Text style={styles.confirmBtnText}>Add Sticker</Text>
+                                    <Text style={styles.confirmBtnText}>{editingStickerId ? 'Save Sticker' : 'Add Sticker'}</Text>
                                 )}
                             </TouchableOpacity>
                         </View>
@@ -1343,7 +2129,7 @@ export default function AdminCalibrationScreen() {
             <Modal visible={showAddDrop} transparent animationType="slide">
                 <View style={styles.modalOverlay}>
                     <View style={styles.modalContent}>
-                        <Text style={styles.modalTitle}>Create New Drop</Text>
+                        <Text style={styles.modalTitle}>{editingDropId ? 'Edit Drop' : 'Create New Drop'}</Text>
                         <TextInput
                             placeholder="Drop Name (e.g. Halloween Drop)"
                             placeholderTextColor="#999"
@@ -1354,8 +2140,8 @@ export default function AdminCalibrationScreen() {
                         <View style={styles.grid}>
                             <View style={styles.col}>
                                 <Text style={styles.miniLabel}>Start Date</Text>
-                                <TouchableOpacity 
-                                    style={styles.datePickerBtn} 
+                                <TouchableOpacity
+                                    style={styles.datePickerBtn}
                                     onPress={() => handleDropDatePicker('start')}
                                 >
                                     <Ionicons name="calendar-outline" size={16} color={Colors.textMuted} />
@@ -1366,8 +2152,8 @@ export default function AdminCalibrationScreen() {
                             </View>
                             <View style={styles.col}>
                                 <Text style={styles.miniLabel}>End Date</Text>
-                                <TouchableOpacity 
-                                    style={styles.datePickerBtn} 
+                                <TouchableOpacity
+                                    style={styles.datePickerBtn}
                                     onPress={() => handleDropDatePicker('end')}
                                 >
                                     <Ionicons name="calendar-outline" size={16} color={Colors.textMuted} />
@@ -1375,20 +2161,65 @@ export default function AdminCalibrationScreen() {
                                         {newDrop.end_date ? new Date(newDrop.end_date).toLocaleDateString() : 'Set Date'}
                                     </Text>
                                 </TouchableOpacity>
+                                {newDrop.end_date ? (
+                                    <TouchableOpacity
+                                        style={styles.clearDateBtn}
+                                        activeOpacity={0.75}
+                                        onPress={() => setNewDrop(p => ({ ...p, end_date: '' }))}
+                                    >
+                                        <Ionicons name="close-circle" size={13} color={Colors.primary} />
+                                        <Text style={styles.clearDateText}>No end date</Text>
+                                    </TouchableOpacity>
+                                ) : null}
                             </View>
                         </View>
 
                         {Platform.OS === 'web' && datePickerMode && datePickerTarget === 'drop' && (
-                            <View style={{ marginTop: 10 }}>
-                                <input 
+                            <View style={styles.webDatePickerContainer}>
+                                <Text style={styles.miniLabel}>Quick Actions ({datePickerMode})</Text>
+                                <View style={styles.quickActionRow}>
+                                    {[
+                                        { label: 'Today', days: 0 },
+                                        { label: 'Tomorrow', days: 1 },
+                                        { label: '+1 Week', days: 7 },
+                                        { label: '+1 Month', days: 30 },
+                                    ].map((preset) => (
+                                        <TouchableOpacity
+                                            key={preset.label}
+                                            style={styles.quickActionBtn}
+                                            onPress={() => {
+                                                const d = new Date();
+                                                d.setDate(d.getDate() + preset.days);
+                                                setNewDrop(p => ({
+                                                    ...p,
+                                                    [datePickerMode === 'start' ? 'start_date' : 'end_date']: d.toISOString()
+                                                }));
+                                            }}
+                                        >
+                                            <Text style={styles.quickActionText}>{preset.label}</Text>
+                                        </TouchableOpacity>
+                                    ))}
+                                </View>
+                                <input
                                     type="date"
-                                    style={{ 
-                                        width: '100%', 
-                                        padding: '10px', 
-                                        borderRadius: '8px', 
-                                        border: '1px solid #ddd',
-                                        fontFamily: 'inherit'
+                                    style={{
+                                        width: '100%',
+                                        padding: '12px',
+                                        borderRadius: '12px',
+                                        border: '2px solid #a269ff20',
+                                        backgroundColor: '#fff',
+                                        fontFamily: 'inherit',
+                                        fontSize: '14px',
+                                        outline: 'none',
+                                        color: '#333'
                                     }}
+                                    value={(() => {
+                                        const v = (newDrop as any)[datePickerMode === 'start' ? 'start_date' : 'end_date'];
+                                        if (!v) return '';
+                                        const d = new Date(v);
+                                        const pad = (n: number) => n.toString().padStart(2, '0');
+                                        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+                                    })()}
                                     onChange={(e) => {
                                         const val = e.target.value;
                                         if (val) {
@@ -1397,10 +2228,17 @@ export default function AdminCalibrationScreen() {
                                                 [datePickerMode === 'start' ? 'start_date' : 'end_date']: new Date(val).toISOString()
                                             }));
                                         }
+                                    }}
+                                />
+                                <TouchableOpacity
+                                    style={[styles.confirmBtn, { marginTop: 12, height: 40, paddingVertical: 0, justifyContent: 'center' }]}
+                                    onPress={() => {
                                         setDatePickerMode(null);
                                         setDatePickerTarget(null);
                                     }}
-                                />
+                                >
+                                    <Text style={styles.confirmBtnText}>Done</Text>
+                                </TouchableOpacity>
                             </View>
                         )}
 
@@ -1428,12 +2266,17 @@ export default function AdminCalibrationScreen() {
                             />
                         )}
 
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 4, marginTop: 4 }}>
+                            <Text style={{ fontSize: 14, fontFamily: Fonts.medium, color: Colors.textPrimary }}>Active Drop</Text>
+                            <Switch value={newDrop.is_active} onValueChange={v => setNewDrop(p => ({ ...p, is_active: v }))} trackColor={{ true: Colors.primary }} />
+                        </View>
+
                         <View style={styles.modalActions}>
-                            <TouchableOpacity style={styles.cancelBtn} onPress={() => setShowAddDrop(false)}>
+                            <TouchableOpacity style={styles.cancelBtn} onPress={() => { setShowAddDrop(false); setEditingDropId(null); }}>
                                 <Text style={styles.cancelBtnText}>Cancel</Text>
                             </TouchableOpacity>
                             <TouchableOpacity style={styles.confirmBtn} onPress={handleAddDrop}>
-                                <Text style={styles.confirmBtnText}>Create Drop</Text>
+                                <Text style={styles.confirmBtnText}>{editingDropId ? 'Save Drop' : 'Create Drop'}</Text>
                             </TouchableOpacity>
                         </View>
                     </View>
@@ -1450,14 +2293,65 @@ const styles = StyleSheet.create({
     backBtn: { width: 40 },
     resetBtn: { color: Colors.primary, fontFamily: Fonts.medium },
     scrollContainer: { flex: 1 },
-    topTabs: { flexDirection: 'row', backgroundColor: '#fff', paddingBottom: 10 },
-    topTab: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12, borderBottomWidth: 2, borderBottomColor: 'transparent' },
-    activeTopTab: { borderBottomColor: Colors.primary },
+    adminHero: { margin: 14, marginBottom: 10, padding: 18, borderRadius: 24, borderWidth: 1, borderColor: '#ede7ff' },
+    adminHeroTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 },
+    adminEyebrow: { fontSize: 11, fontFamily: Fonts.bold, color: Colors.primary, textTransform: 'uppercase', marginBottom: 4 },
+    adminTitle: { fontSize: 24, fontFamily: Fonts.bold, color: Colors.textPrimary },
+    adminHint: { fontSize: 13, fontFamily: Fonts.medium, color: Colors.textMuted, marginTop: 3, maxWidth: SCREEN_WIDTH - 120 },
+    adminHeroIcon: { width: 50, height: 50, borderRadius: 18, backgroundColor: Colors.primary + '12', alignItems: 'center', justifyContent: 'center' },
+    adminStats: { flexDirection: 'row', gap: 10, marginTop: 18 },
+    adminStatCard: { flex: 1, backgroundColor: 'rgba(255,255,255,0.72)', borderWidth: 1, borderColor: '#efeaff', borderRadius: 16, paddingVertical: 10, alignItems: 'center' },
+    adminStatValue: { fontSize: 18, fontFamily: Fonts.bold, color: Colors.textPrimary },
+    adminStatLabel: { fontSize: 10, fontFamily: Fonts.bold, color: Colors.textMuted, textTransform: 'uppercase', marginTop: 2 },
+    topTabs: { backgroundColor: '#fff', borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#f0edf8' },
+    topTabsContent: { paddingHorizontal: 14, paddingVertical: 10, gap: 10 },
+    topTab: { minWidth: 106, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingVertical: 11, paddingHorizontal: 14, borderRadius: 16, backgroundColor: '#f7f7fb', borderWidth: 1, borderColor: '#efedf6' },
+    activeTopTab: { backgroundColor: Colors.primary, borderColor: Colors.primary },
     topTabText: { fontSize: 13, fontFamily: Fonts.bold, color: Colors.textMuted },
-    activeTopTabText: { color: Colors.textPrimary },
+    activeTopTabText: { color: '#fff' },
     previewContainer: { alignItems: 'center', justifyContent: 'center', padding: 20, backgroundColor: '#f0f0f5' },
     modelFrame: { width: 300, height: 300, backgroundColor: '#fff', borderRadius: 24, elevation: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 10, alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden' },
     modelImg: { width: '100%', height: '100%' },
+    assetPreview: { width: '100%', height: 100, borderRadius: 12, marginTop: 8, backgroundColor: '#f0f0f0' },
+    layoutSectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 },
+    layoutResetBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 12, backgroundColor: Colors.primary + '10' },
+    layoutResetText: { fontSize: 11, fontFamily: Fonts.bold, color: Colors.primary },
+    referenceToggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 12, paddingHorizontal: 12, paddingVertical: 9, borderRadius: 14, backgroundColor: Colors.primary + '08', borderWidth: 1, borderColor: Colors.primary + '10' },
+    referenceToggleCopy: { flexDirection: 'row', alignItems: 'center', gap: 7, flex: 1 },
+    referenceToggleText: { fontSize: 12, fontFamily: Fonts.bold, color: Colors.textPrimary },
+    referenceControls: { marginTop: 12, padding: 12, borderRadius: 14, backgroundColor: '#fff', borderWidth: 1, borderColor: Colors.primary + '12' },
+    referenceControlHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    referenceValue: { fontSize: 12, fontFamily: Fonts.bold, color: Colors.primary },
+    referenceLayerBtn: { minWidth: 70, height: 42, borderRadius: 21, borderWidth: 1, borderColor: '#ebe6f7', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
+    activeReferenceLayerBtn: { backgroundColor: Colors.primary, borderColor: Colors.primary },
+    referenceLayerText: { fontSize: 12, fontFamily: Fonts.bold, color: Colors.textMuted },
+    activeReferenceLayerText: { color: '#fff' },
+    layoutQuickActions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8, marginTop: 12 },
+    layoutQuickBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 9, borderRadius: 14, backgroundColor: '#fff', borderWidth: 1, borderColor: Colors.primary + '18' },
+    layoutQuickText: { fontSize: 12, fontFamily: Fonts.bold, color: Colors.primary },
+    autoPresetRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 12, padding: 12, borderRadius: 14, backgroundColor: '#f7f4ff', borderWidth: 1, borderColor: Colors.primary + '10' },
+    modelLayoutPreview: { width: LAYOUT_PREVIEW_SIZE, height: LAYOUT_PREVIEW_SIZE, alignSelf: 'center', borderRadius: 24, backgroundColor: '#fff', borderWidth: 1, borderColor: Colors.primary + '12', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', marginTop: 12 },
+    layoutGuideLayer: { ...StyleSheet.absoluteFillObject, zIndex: 5 },
+    layoutGuideLine: { position: 'absolute', backgroundColor: Colors.primary + '36' },
+    layoutGuideLineSoft: { position: 'absolute', backgroundColor: Colors.primary + '18' },
+    layoutGuideVertical: { top: 0, bottom: 0, left: '50%', width: 1 },
+    layoutGuideHorizontal: { left: 0, right: 0, top: '50%', height: 1 },
+    layoutGuideVerticalLeft: { top: 0, bottom: 0, left: '33.33%', width: 1 },
+    layoutGuideVerticalRight: { top: 0, bottom: 0, right: '33.33%', width: 1 },
+    layoutGuideHorizontalTop: { left: 0, right: 0, top: '33.33%', height: 1 },
+    layoutGuideHorizontalBottom: { left: 0, right: 0, bottom: '33.33%', height: 1 },
+    layoutGuideCenterDot: { position: 'absolute', left: '50%', top: '50%', width: 8, height: 8, marginLeft: -4, marginTop: -4, borderRadius: 4, backgroundColor: Colors.primary + '55', borderWidth: 1, borderColor: '#fff' },
+    baseModelReferenceLayer: { ...StyleSheet.absoluteFillObject, zIndex: 1, alignItems: 'center', justifyContent: 'center' },
+    baseModelReferenceImage: { width: LAYOUT_PREVIEW_IMAGE_SIZE, height: LAYOUT_PREVIEW_IMAGE_SIZE },
+    modelLayoutPreviewImage: { width: LAYOUT_PREVIEW_IMAGE_SIZE, height: LAYOUT_PREVIEW_IMAGE_SIZE, zIndex: 2 },
+    layoutTimerReference: { position: 'absolute', zIndex: 6, borderWidth: 1, borderColor: Colors.primary + '70', borderRadius: 6, backgroundColor: 'rgba(162, 105, 255, 0.12)', alignItems: 'center', justifyContent: 'center' },
+    layoutChainReference: { position: 'absolute', zIndex: 7, borderWidth: 1, borderStyle: 'dashed', borderColor: '#11182755', borderRadius: 12, alignItems: 'center', justifyContent: 'center', opacity: 0.72 },
+    layoutChainReferenceImage: { width: '100%', height: '100%' },
+    layoutControl: { marginTop: 14 },
+    layoutControlLabel: { fontSize: 11, fontFamily: Fonts.bold, color: Colors.textMuted, textTransform: 'uppercase', marginBottom: 8 },
+    layoutStepper: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12 },
+    layoutStepBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#fff', borderWidth: 1, borderColor: '#ebe6f7', alignItems: 'center', justifyContent: 'center' },
+    layoutValue: { minWidth: 76, textAlign: 'center', fontSize: 14, fontFamily: Fonts.bold, color: Colors.textPrimary },
     hint: { marginTop: 15, color: Colors.textMuted, fontSize: 11, fontFamily: Fonts.medium },
     controls: { backgroundColor: '#fff', padding: 20, borderTopLeftRadius: 30, borderTopRightRadius: 30, elevation: 10, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 20 },
     sectionHeaderInner: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
@@ -1513,10 +2407,12 @@ const styles = StyleSheet.create({
     stickerImg: { width: 60, height: 60 },
     stickerName: { fontSize: 11, fontFamily: Fonts.medium, marginTop: 4 },
     deleteStickerBtn: { position: 'absolute', top: 5, right: 5, width: 22, height: 22, borderRadius: 11, backgroundColor: Colors.error + '15', alignItems: 'center', justifyContent: 'center' },
+    editStickerBtn: { position: 'absolute', top: 5, left: 5, width: 22, height: 22, borderRadius: 11, backgroundColor: Colors.primary + '15', alignItems: 'center', justifyContent: 'center' },
     modelLibraryCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', padding: 12, borderRadius: 15, marginBottom: 10, borderWidth: 1, borderColor: '#eee', gap: 12 },
     modelLibraryThumb: { width: 50, height: 50, borderRadius: 10, backgroundColor: '#f5f5f5' },
     modelLibraryLabel: { fontSize: 14, fontFamily: Fonts.bold, color: Colors.textPrimary },
     statusTag: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
+    dropLibraryTag: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: Colors.primary },
     statusTagText: { fontSize: 10, fontFamily: Fonts.bold, textTransform: 'uppercase' },
     libActionBtn: { width: 34, height: 34, borderRadius: 8, backgroundColor: Colors.primary + '10', alignItems: 'center', justifyContent: 'center' },
     addModelIcon: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', elevation: 3, shadowColor: Colors.primary, shadowOpacity: 0.3, shadowRadius: 6 },
@@ -1525,10 +2421,17 @@ const styles = StyleSheet.create({
     sliderTrackAlt: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#f5f5f5', padding: 4, borderRadius: 12 },
     datePickerBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#ddd', borderRadius: 10, paddingHorizontal: 12, height: 44, marginTop: 5 },
     dateText: { fontSize: 13, fontFamily: Fonts.bold, color: '#000000' },
-    chainCard: { width: 100, height: 130, alignItems: 'center', justifyContent: 'center', gap: 8, opacity: 0.6, backgroundColor: '#fff', borderRadius: 20, borderWidth: 1, borderColor: '#eee' },
+    clearDateBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, marginTop: 8, paddingVertical: 7, borderRadius: 10, backgroundColor: Colors.primary + '08' },
+    clearDateText: { fontSize: 11, fontFamily: Fonts.bold, color: Colors.primary },
+    chainCard: { width: 100, height: 130, alignItems: 'center', justifyContent: 'center', gap: 8, opacity: 0.6, backgroundColor: '#fff', borderRadius: 20, borderWidth: 1, borderColor: '#eee', position: 'relative' },
     activeChainCard: { opacity: 1, borderColor: Colors.primary, backgroundColor: Colors.primary + '08' },
     chainImg: { width: 80, height: 80, borderRadius: 15 },
     chainLabel: { fontSize: 11, fontFamily: Fonts.bold, color: Colors.textSecondary },
+    editChainBtn: { position: 'absolute', top: 6, left: 6, width: 24, height: 24, borderRadius: 12, backgroundColor: Colors.primary + '16', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: Colors.primary + '24' },
+    deleteChainBtn: { position: 'absolute', top: 6, right: 6, width: 24, height: 24, borderRadius: 12, backgroundColor: Colors.error + '16', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: Colors.error + '24' },
+    dropActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    editDropBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: Colors.primary + '12', alignItems: 'center', justifyContent: 'center' },
+    disabledInput: { opacity: 0.55, backgroundColor: '#f3f1f8' },
     chainCalibration: { backgroundColor: '#f9f9ff', padding: 15, borderRadius: 15, marginTop: 10 },
     sectionLabelTitle: { fontSize: 16, fontFamily: Fonts.bold, color: Colors.textPrimary },
     sectionSub: { fontSize: 12, color: Colors.textMuted, fontFamily: Fonts.regular, marginTop: 2 },
@@ -1571,8 +2474,6 @@ const styles = StyleSheet.create({
     dropSection: { gap: 15 },
     dropList: { gap: 12, marginTop: 10 },
     dropCard: {
-        flexDirection: 'row',
-        alignItems: 'center',
         padding: 16,
         backgroundColor: '#fff',
         borderRadius: 20,
@@ -1580,13 +2481,22 @@ const styles = StyleSheet.create({
         borderColor: '#eee',
         gap: 12
     },
+    dropCardTop: { flexDirection: 'row', alignItems: 'center', gap: 12 },
     dropCardInfo: { flex: 1, gap: 4 },
     dropCardName: { fontSize: 16, fontFamily: Fonts.bold, color: Colors.textPrimary },
     dropCardDates: { fontSize: 12, color: Colors.textMuted, fontFamily: Fonts.medium },
+    dropMetaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center' },
     statusPill: { alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, marginTop: 2 },
     statusPillText: { fontSize: 10, fontFamily: Fonts.bold },
     deleteDropBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-    
+    dropModelList: { marginTop: 10, flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    dropModelChip: { flexDirection: 'row', alignItems: 'center', gap: 7, maxWidth: 240, paddingVertical: 6, paddingHorizontal: 8, borderRadius: 12, backgroundColor: '#f8f7fc', borderWidth: 1, borderColor: Colors.primary + '10' },
+    dropModelThumb: { width: 26, height: 26, borderRadius: 7, backgroundColor: '#fff' },
+    dropModelName: { flexShrink: 1, fontSize: 12, fontFamily: Fonts.bold, color: Colors.textPrimary },
+    dropModelState: { fontSize: 9, fontFamily: Fonts.bold, textTransform: 'uppercase' },
+    dropEmptyState: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 10, borderRadius: 12, backgroundColor: '#f8f8fb' },
+    dropEmptyText: { fontSize: 12, fontFamily: Fonts.medium, color: Colors.textMuted },
+
     // Model picker for Drops
     dropPicker: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
     dropOption: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, backgroundColor: '#f0f0f0', borderWidth: 1, borderColor: 'transparent' },
@@ -1594,5 +2504,33 @@ const styles = StyleSheet.create({
     dropOptionText: { fontSize: 12, fontFamily: Fonts.medium, color: Colors.textSecondary },
     activeDropOptionText: { color: '#fff', fontFamily: Fonts.bold },
     inputLabel: { fontSize: 13, fontFamily: Fonts.bold, color: Colors.textPrimary, marginBottom: 5 },
+    webDatePickerContainer: {
+        backgroundColor: '#fff',
+        borderRadius: 20,
+        padding: 16,
+        borderWidth: 1.5,
+        borderColor: Colors.primary + '15',
+        marginTop: 10,
+        ...Shadow.small,
+    },
+    quickActionRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        marginBottom: 16,
+    },
+    quickActionBtn: {
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: 10,
+        backgroundColor: Colors.primary + '08',
+        borderWidth: 1,
+        borderColor: Colors.primary + '10',
+    },
+    quickActionText: {
+        fontSize: 11,
+        fontFamily: Fonts.bold,
+        color: Colors.primary,
+    },
     inputWrap: { marginBottom: 15 },
 });

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
     View, Text, TouchableOpacity, StyleSheet,
-    Dimensions, Platform, Alert, Animated
+    Dimensions, Platform, Alert, Animated, Share
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
@@ -14,6 +14,7 @@ import VerifiedBadge from './VerifiedBadge';
 import { timerConfigManager } from '../utils/timerConfig';
 import { Image } from 'expo-image';
 import CapsuleWithTimer from './CapsuleWithTimer';
+import { BlurView } from 'expo-blur';
 
 const { width } = Dimensions.get('window');
 
@@ -36,7 +37,13 @@ function timeAgo(dateStr: string, t: any): string {
 
 const formatOpenDate = (dateStr: string): string => {
     const d = new Date(dateStr);
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const now = new Date();
+    const includeYear = d.getFullYear() !== now.getFullYear();
+    return d.toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        ...(includeYear ? { year: '2-digit' as const } : {}),
+    });
 };
 
 const CollageView = React.memo(({ items, isOpened, themeColor, s }: { items: any[], isOpened: boolean, themeColor: string, s: any }) => {
@@ -50,7 +57,7 @@ const CollageView = React.memo(({ items, isOpened, themeColor, s }: { items: any
         const isLast = idx === 3 && hasMore;
 
         return (
-            <View key={item.id || idx} style={[s.collageItem, style, { height: '100%' }]}>
+            <View key={item.id || idx} style={[s.collageItem, style, { width: undefined, height: undefined }]}>
                 <Image 
                     source={{ uri: src }}
                     style={StyleSheet.absoluteFill}
@@ -85,11 +92,13 @@ const CollageView = React.memo(({ items, isOpened, themeColor, s }: { items: any
                 </View>
             )}
             {displayItems.length === 3 && (
-                <View style={s.collageRow}>
-                    {renderItem(displayItems[0], { flex: 2 }, 0)}
-                    <View style={{ flex: 1, marginLeft: 2, gap: 2 }}>
+                <View style={{ flex: 1, gap: 2 }}>
+                    <View style={s.collageRow}>
+                        {renderItem(displayItems[0], { flex: 1 }, 0)}
+                    </View>
+                    <View style={s.collageRow}>
                         {renderItem(displayItems[1], { flex: 1 }, 1)}
-                        {renderItem(displayItems[2], { flex: 1 }, 2)}
+                        {renderItem(displayItems[2], { flex: 1, marginLeft: 2 }, 2)}
                     </View>
                 </View>
             )}
@@ -122,6 +131,7 @@ const CapsuleCard = React.memo(({
     mediaCollage: mediaCollageProp,
     onLike,
     onFollow,
+    onOpen,
     lightweight,
     hideParticles,
     gridMode,
@@ -139,6 +149,7 @@ const CapsuleCard = React.memo(({
     mediaCollage?: any[];
     onLike?: (capsuleId: string, isLiked: boolean) => void;
     onFollow?: (ownerId: string, isFollowed: boolean) => void;
+    onOpen?: (capsule: any) => void;
     lightweight?: boolean;
     hideParticles?: boolean;
     gridMode?: boolean;
@@ -168,6 +179,19 @@ const CapsuleCard = React.memo(({
         return timerConfigManager.getConfig(capsule.model)?.themeColor || '#a269ff';
     }, [capsule.model]);
 
+    const handleShare = async () => {
+        try {
+            const shareUrl = `https://kapsely.com/capsules/${capsule.id}`;
+            
+            await Share.share({
+                message: `${t('detail.share_text') || '¡Mira esta cápsula en Kapsely!'} ✦\n\n${shareUrl}`,
+                url: shareUrl, // iOS only
+            });
+        } catch (error) {
+            console.log('Error sharing:', error);
+        }
+    };
+
     const heartScale = React.useRef(new Animated.Value(1)).current;
     const bounceHeart = () => {
         Animated.sequence([
@@ -185,7 +209,7 @@ const CapsuleCard = React.memo(({
         setMediaCollage(mediaCollageProp ?? capsule.collage_items ?? []);
         setLatestItem(latestItemProp ?? capsule.latest_item ?? null);
         setLatestItemLoaded(!!(latestItemProp || capsule.latest_item));
-    }, [isFollowedProp, likeCountProp, isLikedProp, commentCountProp, postsCountProp, mediaCollageProp, latestItemProp, capsule]);
+    }, [isFollowedProp, likeCountProp, isLikedProp, commentCountProp, postsCountProp, mediaCollageProp, latestItemProp]);
 
     useEffect(() => {
         if (onViewable) {
@@ -256,6 +280,7 @@ const CapsuleCard = React.memo(({
 
     const handlePress = () => {
         if (isLocked) { Alert.alert(t('profile.private_capsule'), t('profile.private_capsule_msg')); return; }
+        onOpen?.(capsule);
         // Navigation should use capsule_id for item events, falling back to id for capsule events
         const cid = (capsule as any).capsule_id || capsule.id;
         navigation.navigate('CapsuleDetail', { capsuleId: cid });
@@ -264,9 +289,13 @@ const CapsuleCard = React.memo(({
     const profile = capsule.profiles || { username: 'user', avatar_url: null };
     const isOpened = capsule.status === 'opened';
     const isSealed = capsule.status === 'sealed';
-    // A media post is shown if it's an item event from the feed, OR if it's a sealed capsule with content (legacy behavior/profile)
-    const isMediaPost = (capsule.feed_type === 'item' || (isSealed && !capsule.feed_type)) && 
-                        latestItemLoaded && (latestItem?.media_type === 'video' || latestItem?.media_type === 'image');
+    const hasPlayableMedia = latestItemLoaded && (latestItem?.media_type === 'video' || latestItem?.media_type === 'image') &&
+                        (latestItem?.thumbnail_url || latestItem?.media_url || mediaCollage.length > 0);
+    const isOpenedMediaCapsule = isOpened && hasPlayableMedia;
+    // Opened capsules should feel like posts first: show their media full-bleed whenever possible.
+    const isMediaPost = (capsule.feed_type === 'item' || isOpenedMediaCapsule || (isSealed && !capsule.feed_type)) &&
+                        latestItemLoaded && (latestItem?.media_type === 'video' || latestItem?.media_type === 'image') &&
+                        (latestItem?.thumbnail_url || latestItem?.media_url || mediaCollage.length > 0);
 
     const isToday = useMemo(() => {
         if (!capsule.opens_at || isOpened) return false;
@@ -286,16 +315,16 @@ const CapsuleCard = React.memo(({
                 {/* ── Top: Capsule model zone ── */}
                 <View style={s.gridTopZone}>
                     <LinearGradient
-                        colors={[Colors.cardAlt, Colors.background]}
+                        colors={[themeColor + '20', themeColor + '05', Colors.background]}
                         style={StyleSheet.absoluteFill}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0.8 }}
                     />
-                    {/* Subtle radial glow */}
-                    <View style={[s.gridGlow, { backgroundColor: themeColor + '12' }]} />
-
                     <CapsuleWithTimer
                         modelKey={capsule.model}
                         source={{ uri: isOpened ? modelImages.open : modelImages.closed }}
                         date={capsule.opens_at}
+                        modelLayout={capsule.model_snapshot}
                         chainId={capsule.chain_id}
                         capsuleType={capsule.type}
                         hideTimer={isOpened}
@@ -378,20 +407,71 @@ const CapsuleCard = React.memo(({
     return (
         <TouchableOpacity activeOpacity={0.95} onPress={handlePress} style={[s.card, isToday && { borderWidth: 2, borderColor: '#A855F7' }]}>
 
+            {/* ── AUTHOR ROW ────────────────────────────────────────────── */}
+            <View style={s.authorRow}>
+                <TouchableOpacity
+                    activeOpacity={0.8}
+                    style={s.authorLeft}
+                    onPress={() => navigation.navigate('UserProfile', { targetUserId: capsule.owner_id })}
+                >
+                    <Image
+                        source={{ uri: Colors.getAvatarUrl(profile.avatar_url, profile.display_name || profile.username, profile.favorite_color) }}
+                        style={s.avatar}
+                        contentFit="cover"
+                        cachePolicy="memory-disk"
+                        recyclingKey={`avatar-${profile.id}`}
+                    />
+
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                            <Text style={s.authorName} numberOfLines={1}>{profile.display_name || profile.username}</Text>
+                            {profile.is_verified && <VerifiedBadge size={13} />}
+                        </View>
+                        <Text style={s.authorTime}>
+                            {timeAgo(isOpened ? capsule.opens_at : capsule.created_at, t)}
+                        </Text>
+                    </View>
+                </TouchableOpacity>
+
+                {currentUserId !== capsule.owner_id && (
+                    <TouchableOpacity
+                        onPress={handleFollow}
+                        activeOpacity={0.8}
+                        style={[s.followBtn, isFollowed && s.followBtnActive]}
+                    >
+                        <Text style={[s.followBtnText, isFollowed && s.followBtnTextActive]}>
+                            {isFollowed ? t('common.following') : t('common.follow_plus') || '+ Follow'}
+                        </Text>
+                    </TouchableOpacity>
+                )}
+            </View>
+
             {/* ── VISUAL ZONE ──────────────────────────────────────────── */}
             <View style={s.visual}>
-                {/* Tinted bg */}
-                <View style={[StyleSheet.absoluteFill, { backgroundColor: themeColor + '10' }]} />
+                {/* ── BACKGROUND LAYER ── */}
+                {/* Enhanced Base Gradient */}
+                {!isMediaPost && (
+                    <LinearGradient
+                        colors={isOpened
+                            ? [themeColor + '16', '#FFFFFF', Colors.background]
+                            : [themeColor + '28', '#FFFFFF', themeColor + '0A']}
+                        style={StyleSheet.absoluteFill}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                    />
+                )}
 
+                {/* Subtle Shine for Sealed */}
                 {isSealed && (
                     <LinearGradient
-                        colors={['rgba(255,255,255,0)', 'rgba(255,255,255,0.16)', 'rgba(255,255,255,0)']}
+                        colors={['rgba(255,255,255,0)', 'rgba(255,255,255,0.2)', 'rgba(255,255,255,0)']}
                         start={{ x: 0.1, y: 0 }} end={{ x: 0.9, y: 1 }}
                         style={StyleSheet.absoluteFill}
                     />
                 )}
 
-                {/* Blurred bg for media post — using blurRadius on Image (no BlurView) */}
+                {/* ── DYNAMIC BACKGROUNDS (Media / Cover) ── */}
+                {/* Blurred bg for media post */}
                 {isMediaPost && (latestItem?.thumbnail_url || latestItem?.media_url) && mediaCollage.length <= 1 && (
                     <View style={StyleSheet.absoluteFill}>
                         <Image 
@@ -411,61 +491,78 @@ const CapsuleCard = React.memo(({
                     <CollageView items={mediaCollage} isOpened={isOpened} themeColor={themeColor} s={s} />
                 )}
 
-                {/* ── Opened: cover_url OR collage + model (Only if NOT a specific media post event) ── */}
-                {isOpened && capsule.feed_type !== 'item' && (capsule.cover_url || mediaCollage.length > 0) ? (
-                    <View style={s.openedRow}>
-                        {capsule.cover_url ? (
-                            <Image
-                                source={{ uri: capsule.cover_url }}
-                                style={StyleSheet.absoluteFill}
-                                contentFit="cover"
-                                cachePolicy="memory-disk"
-                                recyclingKey={`cap-cover-${capsule.id}`}
-                            />
-                        ) : (
-                            <View style={s.collageWrap}>
-                                <View style={s.collageGrid}>
-                                {mediaCollage.slice(0, 4).map((item, i) => (
-                                    <Image
-                                        key={item.id || i}
-                                        source={{ uri: (item.media_url && !item.media_url.startsWith('text://')) ? item.media_url : '' }}
-                                        style={[
-                                            s.collageItem,
-                                            mediaCollage.length === 1 && s.collageSingle,
-                                            mediaCollage.length === 2 && s.collageDual,
-                                            mediaCollage.slice(0, 4).length === 3 && i === 0 && s.collageTripleLarge,
-                                        ]}
-                                        contentFit="cover"
-                                        cachePolicy="memory-disk"
-                                        recyclingKey={`cap-collage-${item.id}`}
-                                    />
-                                ))}
-                                </View>
-                                <LinearGradient
-                                    colors={['rgba(255,255,255,0)', 'rgba(255,255,255,0.9)']}
-                                    start={{ x: 0.5, y: 0 }} end={{ x: 1, y: 0 }}
-                                    style={[StyleSheet.absoluteFill, { pointerEvents: 'none' } as any]}
+                {/* Background for opened capsules (non-media) */}
+                {!isMediaPost && isOpened && (
+                    <View style={StyleSheet.absoluteFill}>
+                        {capsule.cover_url || mediaCollage.length > 0 ? (
+                            capsule.cover_url ? (
+                                <Image
+                                    source={{ uri: capsule.cover_url }}
+                                    style={StyleSheet.absoluteFill}
+                                    contentFit="cover"
+                                    cachePolicy="memory-disk"
+                                    recyclingKey={`cap-cover-${capsule.id}`}
                                 />
+                            ) : (
+                                <View style={StyleSheet.absoluteFill}>
+                                    <View style={s.collageGrid}>
+                                    {mediaCollage.slice(0, 4).map((item, i) => (
+                                        <Image
+                                            key={item.id || i}
+                                            source={{ uri: (item.media_url && !item.media_url.startsWith('text://')) ? item.media_url : '' }}
+                                            style={[
+                                                s.collageItem,
+                                                mediaCollage.length === 1 && s.collageSingle,
+                                                mediaCollage.length === 2 && s.collageDual,
+                                                mediaCollage.slice(0, 4).length === 3 && i === 0 && s.collageTripleLarge,
+                                            ]}
+                                            contentFit="cover"
+                                            cachePolicy="memory-disk"
+                                            recyclingKey={`cap-collage-${item.id}`}
+                                        />
+                                    ))}
+                                    </View>
+                                </View>
+                            )
+                        ) : (
+                            /* Fallback when NO cover and NO media but IS opened */
+                            <View style={[StyleSheet.absoluteFill, { backgroundColor: themeColor + '20' }]}>
+                                <LinearGradient
+                                    colors={[themeColor + '30', 'transparent']}
+                                    style={StyleSheet.absoluteFill}
+                                />
+                                <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', opacity: 0.5 }}>
+                                    <Ionicons name="images-outline" size={40} color={themeColor} />
+                                    <Text style={{ fontSize: 10, color: themeColor, fontFamily: Fonts.bold, marginTop: 8 }}>MEMORIES INSIDE</Text>
+                                </View>
                             </View>
                         )}
-                        <View style={s.modelOverlap}>
-                            <CapsuleWithTimer
-                                modelKey={capsule.model}
-                                source={{ uri: modelImages.open }}
-                                date={capsule.opens_at}
-                                chainId={capsule.chain_id}
-                                capsuleType={capsule.type}
-                                hideTimer
-                                isOpened
-                                style={s.capsuleSmall}
-                                hideParticles={true}
-                                lightweight={true}
-                                disableAnimations={true}
-                            />
-                        </View>
+                        <LinearGradient
+                            colors={['rgba(255,255,255,0.4)', 'rgba(255,255,255,0.1)']}
+                            style={StyleSheet.absoluteFill}
+                        />
+                        {Platform.OS === 'ios' ? (
+                            <BlurView intensity={15} tint="light" style={StyleSheet.absoluteFill} />
+                        ) : (
+                            <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255,255,255,0.2)' }]} />
+                        )}
                     </View>
+                )}
 
-                ) : isMediaPost ? (
+                {/* ── OVERLAYS (Pattern / Shine) ── */}
+                {/* Elegant Pattern Overlay - Now on top of all backgrounds and using themeColor */}
+                {!isMediaPost && (
+                    <LinearGradient
+                        colors={['rgba(255,255,255,0)', themeColor + '10', 'rgba(255,255,255,0)']}
+                        start={{ x: 0, y: 0.05 }}
+                        end={{ x: 1, y: 0.95 }}
+                        style={StyleSheet.absoluteFill}
+                    />
+                )}
+
+                {/* ── CONTENT LAYER ── */}
+
+                {isMediaPost ? (
                     <View style={s.videoWrap}>
                         {latestItem?.media_type === 'video' && mediaCollage.length <= 1 && (
                             <View style={s.videoPlayBtn}>
@@ -473,10 +570,10 @@ const CapsuleCard = React.memo(({
                             </View>
                         )}
                         <View style={s.modelCorner}>
-                            <Image 
-                                source={{ uri: modelImages.closed }} 
-                                style={s.capsuleCornerImg} 
-                                contentFit="contain" 
+                            <Image
+                                source={{ uri: isOpened ? modelImages.open : modelImages.closed }}
+                                style={s.capsuleCornerImg}
+                                contentFit="contain"
                                 cachePolicy="memory-disk"
                             />
                         </View>
@@ -488,6 +585,7 @@ const CapsuleCard = React.memo(({
                             modelKey={capsule.model}
                             source={{ uri: isOpened ? modelImages.open : modelImages.closed }}
                             date={capsule.opens_at}
+                            modelLayout={capsule.model_snapshot}
                             chainId={capsule.chain_id}
                             capsuleType={capsule.type}
                             hideTimer={isOpened}
@@ -513,8 +611,6 @@ const CapsuleCard = React.memo(({
                     </View>
                 )}
 
-
-
                 {/* Lock Status Badge */}
                 <View style={[s.lockBadge, { backgroundColor: isOpened ? '#4ADE80' : '#F87171' }]}>
                     <Ionicons name={isOpened ? "lock-open" : "lock-closed"} size={10} color="#fff" />
@@ -523,45 +619,6 @@ const CapsuleCard = React.memo(({
 
             {/* ── BODY ─────────────────────────────────────────────────── */}
             <View style={s.body}>
-
-                {/* Author row */}
-                <View style={s.authorRow}>
-                    <TouchableOpacity
-                        activeOpacity={0.8}
-                        style={s.authorLeft}
-                        onPress={() => navigation.navigate('UserProfile', { targetUserId: capsule.owner_id })}
-                    >
-                        <Image 
-                            source={{ uri: Colors.getAvatarUrl(profile.avatar_url, profile.display_name || profile.username, profile.favorite_color) }} 
-                            style={s.avatar} 
-                            contentFit="cover" 
-                            cachePolicy="memory-disk"
-                            recyclingKey={`avatar-${profile.id}`}
-                        />
-
-                        <View style={{ flex: 1, minWidth: 0 }}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                                <Text style={s.authorName} numberOfLines={1}>{profile.display_name || profile.username}</Text>
-                                {profile.is_verified && <VerifiedBadge size={13} />}
-                            </View>
-                            <Text style={s.authorTime}>
-                                {timeAgo(isOpened ? capsule.opens_at : capsule.created_at, t)}
-                            </Text>
-                        </View>
-                    </TouchableOpacity>
-
-                    {currentUserId !== capsule.owner_id && (
-                        <TouchableOpacity
-                            onPress={handleFollow}
-                            activeOpacity={0.8}
-                            style={[s.followBtn, isFollowed && s.followBtnActive]}
-                        >
-                            <Text style={[s.followBtnText, isFollowed && s.followBtnTextActive]}>
-                                {isFollowed ? t('common.following') : t('common.follow_plus') || '+ Follow'}
-                            </Text>
-                        </TouchableOpacity>
-                    )}
-                </View>
 
                 {/* Title */}
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 3 }}>
@@ -611,6 +668,14 @@ const CapsuleCard = React.memo(({
                         <Text style={s.actionNum}>{postsCount}</Text>
                     </View>
 
+                    <TouchableOpacity 
+                        style={[s.actionBtn, { marginLeft: 12 }]} 
+                        onPress={handleShare}
+                        activeOpacity={0.7}
+                    >
+                        <Ionicons name="share-social-outline" size={14} color={Colors.textMuted} />
+                    </TouchableOpacity>
+
                     <View style={{ flex: 1 }} />
 
                     {capsule.opens_at && (
@@ -621,7 +686,7 @@ const CapsuleCard = React.memo(({
                                 color={isOpened ? '#4ADE80' : '#F87171'}
                             />
                             <Text style={[s.dateText, isOpened && { color: '#4ADE80', fontFamily: Fonts.bold }]}>
-                                {isOpened ? t('common.unlocked') : t('common.unlocks')}{formatOpenDate(capsule.opens_at)}
+                                {formatOpenDate(capsule.opens_at)}
                             </Text>
                         </View>
                     )}
@@ -641,32 +706,32 @@ const GRID_ITEM_WIDTH = (width - Spacing.md * 2 - GRID_GAP * (GRID_COLS - 1)) / 
 const s = StyleSheet.create({
     // ── Card Mode ────────────────────────────────────────────────────────────
     card: {
-        marginHorizontal: 14,
-        marginBottom: 12,
-        borderRadius: 20,
+        marginHorizontal: 8,
+        marginBottom: 10,
+        borderRadius: 14,
         backgroundColor: Colors.surface,
-        borderWidth: 1,
-        borderColor: Colors.border,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: Colors.borderLight || Colors.border,
         overflow: 'hidden',
         ...Platform.select({
-            ios: { shadowColor: 'rgba(0,0,0,0.07)', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 1, shadowRadius: 12 },
-            android: { elevation: 2 },
-            web: { boxShadow: '0 3px 14px rgba(0,0,0,0.06)' },
+            ios: { shadowColor: 'rgba(0,0,0,0.05)', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 8 },
+            android: { elevation: 1 },
+            web: { boxShadow: '0 2px 10px rgba(0,0,0,0.045)' },
         }),
     },
 
     visual: {
         width: '100%',
-        height: 200,
+        height: Math.min(430, Math.max(310, width * 0.92)),
         overflow: 'hidden',
         position: 'relative',
         alignItems: 'center',
         justifyContent: 'center',
     },
-    blurBg: { ...StyleSheet.absoluteFillObject, opacity: 0.55 },
+    blurBg: { ...StyleSheet.absoluteFillObject, opacity: 1 },
 
-    sealedWrap: { alignItems: 'center', justifyContent: 'center', flex: 1 },
-    capsuleLarge: { width: 148, height: 148 },
+    sealedWrap: { alignItems: 'center', justifyContent: 'center', flex: 1, paddingTop: 8 },
+    capsuleLarge: { width: 236, height: 236 },
 
     // Video
     videoWrap: { flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center' },
@@ -678,23 +743,23 @@ const s = StyleSheet.create({
     },
     modelCorner: {
         position: 'absolute', bottom: 8, right: 10,
-        width: 50, height: 50,
+        width: 58, height: 58,
         ...Platform.select({
-            ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.22, shadowRadius: 6 },
-            android: { elevation: 4 },
-            web: { boxShadow: '0px 2px 6px rgba(0,0,0,0.22)' }
+            ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.18, shadowRadius: 5 },
+            android: { elevation: 2 },
+            web: { boxShadow: '0px 2px 6px rgba(0,0,0,0.18)' }
         }),
     },
-    capsuleCornerImg: { width: 50, height: 50 },
+    capsuleCornerImg: { width: 58, height: 58 },
 
     // Opened collage
     openedRow: { flexDirection: 'row', width: '100%', height: '100%' },
     collageWrap: { flex: 1.65, height: '100%', position: 'relative' },
     collageGrid: { flex: 1, flexDirection: 'row', flexWrap: 'wrap' },
-    collageItem: { width: '49.8%', height: '49.8%', backgroundColor: Colors.border },
+    collageItem: { width: '50%', height: '50%', backgroundColor: Colors.border },
     collageSingle: { width: '100%', height: '100%' },
-    collageDual: { width: '49.8%', height: '100%' },
-    collageTripleLarge: { width: '100%', height: '49.8%' },
+    collageDual: { width: '50%', height: '100%' },
+    collageTripleLarge: { width: '100%', height: '50%' },
     modelOverlap: {
         position: 'absolute', right: 0, top: 0, bottom: 0,
         width: 148, alignItems: 'center', justifyContent: 'center', zIndex: 10,
@@ -735,20 +800,20 @@ const s = StyleSheet.create({
         position: 'absolute', bottom: 8, right: 10,
         width: 22, height: 22, borderRadius: 11,
         alignItems: 'center', justifyContent: 'center',
-        borderWidth: 2, borderColor: Colors.surface,
+        borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.surface,
     },
 
     // Body
-    body: { paddingHorizontal: 12, paddingTop: 10, paddingBottom: 10 },
+    body: { paddingHorizontal: 10, paddingTop: 10, paddingBottom: 10 },
 
     authorRow: {
-        flexDirection: 'row', alignItems: 'center',
-        justifyContent: 'space-between', marginBottom: 7,
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+        paddingHorizontal: 10, paddingVertical: 8,
     },
     authorLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 },
     avatar: {
         width: 30, height: 30, borderRadius: 15,
-        borderWidth: 1.5, borderColor: Colors.border, flexShrink: 0,
+        borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.border, flexShrink: 0,
     },
     avatarFallback: { backgroundColor: Colors.cardAlt, alignItems: 'center', justifyContent: 'center' },
     authorName: { fontSize: 12, fontFamily: Fonts.bold, color: Colors.textPrimary },
@@ -756,7 +821,7 @@ const s = StyleSheet.create({
 
     followBtn: {
         paddingHorizontal: 10, paddingVertical: 4,
-        borderRadius: 20, borderWidth: 1.5,
+        borderRadius: 20, borderWidth: StyleSheet.hairlineWidth,
         borderColor: Colors.primary, flexShrink: 0,
     },
     followBtnActive: { borderColor: Colors.border, backgroundColor: Colors.cardAlt },
@@ -802,7 +867,7 @@ const s = StyleSheet.create({
 
     actions: {
         flexDirection: 'row', alignItems: 'center',
-        paddingTop: 8, borderTopWidth: 1, borderTopColor: Colors.border, gap: 4,
+        paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Colors.borderLight || Colors.border, gap: 4,
     },
     actionBtn: {
         flexDirection: 'row', alignItems: 'center', gap: 4,
@@ -813,10 +878,10 @@ const s = StyleSheet.create({
 
     dateChip: {
         flexDirection: 'row', alignItems: 'center', gap: 4,
-        paddingHorizontal: 8, paddingVertical: 4,
+        paddingHorizontal: 9, paddingVertical: 5,
         borderRadius: 18, backgroundColor: Colors.cardAlt,
     },
-    dateText: { fontSize: 10, fontFamily: Fonts.medium, color: Colors.textMuted },
+    dateText: { fontSize: 10, fontFamily: Fonts.semiBold, color: Colors.textMuted },
 
     // ── Grid Mode (Explore) ──────────────────────────────────────────────────
     gridCard: {
@@ -839,17 +904,6 @@ const s = StyleSheet.create({
         justifyContent: 'center',
         position: 'relative',
         overflow: 'hidden',
-    },
-    gridGlow: {
-        position: 'absolute',
-        width: 120,
-        height: 120,
-        borderRadius: 60,
-        top: '50%',
-        left: '50%',
-        marginTop: -60,
-        marginLeft: -60,
-        opacity: 0.6,
     },
     gridCapsuleImg: {
         width: 88,

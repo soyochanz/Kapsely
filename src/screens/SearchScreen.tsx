@@ -8,6 +8,7 @@ import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '../lib/supabase';
 import { Colors, Fonts, Spacing, BorderRadius } from '../theme';
@@ -21,6 +22,32 @@ export default function SearchScreen() {
     const [results, setResults] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
     const [searching, setSearching] = useState(false);
+
+    const [searchHistory, setSearchHistory] = useState<any[]>([]);
+
+    useEffect(() => {
+        loadHistory();
+    }, []);
+
+    const loadHistory = async () => {
+        try {
+            const stored = await AsyncStorage.getItem('@search_history');
+            if (stored) setSearchHistory(JSON.parse(stored));
+        } catch (e) {}
+    };
+
+    const saveSearch = async (user: any) => {
+        try {
+            const newHistory = [user, ...searchHistory.filter(h => h.id !== user.id)].slice(0, 15);
+            setSearchHistory(newHistory);
+            await AsyncStorage.setItem('@search_history', JSON.stringify(newHistory));
+        } catch (e) {}
+    };
+
+    const clearHistory = async () => {
+        setSearchHistory([]);
+        await AsyncStorage.removeItem('@search_history');
+    };
 
     useEffect(() => {
         if (query.trim().length > 1) {
@@ -49,9 +76,7 @@ export default function SearchScreen() {
             .or(`username.ilike.%${query}%,display_name.ilike.%${query}%`)
             .limit(20);
 
-
         if (data) {
-            // Filter out blocked/blocking users and current user
             setResults(data.filter(p => !blocked.includes(p.id) && p.id !== user?.id));
         }
         setSearching(false);
@@ -61,7 +86,10 @@ export default function SearchScreen() {
         <TouchableOpacity
             style={styles.userCard}
             activeOpacity={0.7}
-            onPress={() => (navigation as any).navigate('UserProfile', { targetUserId: item.id })}
+            onPress={() => {
+                saveSearch(item);
+                (navigation as any).navigate('ExternalProfile', { targetUserId: item.id });
+            }}
         >
             <Image
                 source={{ uri: Colors.getAvatarUrl(item.avatar_url, item.display_name || item.username, item.favorite_color) }}
@@ -106,24 +134,44 @@ export default function SearchScreen() {
                 </View>
             </View>
 
-            {query.length > 0 && results.length === 0 && !searching ? (
-                <View style={styles.emptyContainer}>
-                    <Ionicons name="search-outline" size={60} color={Colors.cardAlt} />
-                    <Text style={styles.emptyText}>{t('search.no_users_found', { query })}</Text>
-                </View>
+            {query.length > 0 ? (
+                results.length === 0 && !searching ? (
+                    <View style={styles.emptyContainer}>
+                        <Ionicons name="search-outline" size={60} color={Colors.cardAlt} />
+                        <Text style={styles.emptyText}>{t('search.no_users_found', { query })}</Text>
+                    </View>
+                ) : (
+                    <FlatList
+                        data={results}
+                        renderItem={renderUser}
+                        keyExtractor={(item) => item.id}
+                        contentContainerStyle={styles.listContent}
+                        showsVerticalScrollIndicator={false}
+                    />
+                )
             ) : (
-                <FlatList
-                    data={results}
-                    renderItem={renderUser}
-                    keyExtractor={(item) => item.id}
-                    contentContainerStyle={styles.listContent}
-                    showsVerticalScrollIndicator={false}
-                    ListEmptyComponent={
-                        <View style={styles.emptyContainer}>
-                            <Text style={styles.exploreHint}>{t('search.search_hint')}</Text>
+                <View style={{ flex: 1 }}>
+                    {searchHistory.length > 0 && (
+                        <View style={styles.historyHeader}>
+                            <Text style={styles.historyTitle}>Recientes</Text>
+                            <TouchableOpacity onPress={clearHistory}>
+                                <Text style={styles.clearText}>Limpiar</Text>
+                            </TouchableOpacity>
                         </View>
-                    }
-                />
+                    )}
+                    <FlatList
+                        data={searchHistory}
+                        renderItem={renderUser}
+                        keyExtractor={(item) => 'history-' + item.id}
+                        contentContainerStyle={styles.listContent}
+                        showsVerticalScrollIndicator={false}
+                        ListEmptyComponent={
+                            <View style={styles.emptyContainer}>
+                                <Text style={styles.exploreHint}>{t('search.search_hint')}</Text>
+                            </View>
+                        }
+                    />
+                </View>
             )}
         </View>
     );
@@ -205,5 +253,23 @@ const styles = StyleSheet.create({
         color: Colors.textMuted,
         textAlign: 'center',
         lineHeight: 20
+    },
+    historyHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: Spacing.md,
+        marginTop: 10,
+        marginBottom: 5
+    },
+    historyTitle: {
+        fontSize: 16,
+        fontFamily: Fonts.bold,
+        color: Colors.textPrimary
+    },
+    clearText: {
+        fontSize: 14,
+        fontFamily: Fonts.semiBold,
+        color: Colors.primary
     }
 });

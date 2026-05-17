@@ -3,7 +3,7 @@ import {
     View, Text, StyleSheet, ScrollView, TouchableOpacity,
     StatusBar, Modal, Platform, Alert,
     Dimensions, Animated, Easing, ActivityIndicator, InteractionManager,
-    DeviceEventEmitter
+    DeviceEventEmitter, AppState
 } from 'react-native';
 import { Image } from 'expo-image';
 
@@ -17,6 +17,7 @@ import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Shadow } from '../theme';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
+import { useInfiniteQuery, useMutation, useQueryClient, onlineManager } from '@tanstack/react-query';
 import { safetyService } from '../utils/safety';
 import { useWebDragScroll } from '../utils/useWebDragScroll';
 import { feedScrollBus } from '../utils/feedScrollBus';
@@ -47,12 +48,19 @@ import CapsuleCard from '../components/CapsuleCard';
 
 type FeedTab = 'following' | 'explore';
 type FilterType = 'all' | 'closed' | 'open';
+type FeedCursor = {
+    score: number;
+    activityDate: string;
+    id: string;
+    page: number;
+};
 
 const { width, height } = Dimensions.get('window');
 
 const FEED_CACHE_TTL = 5 * 60 * 1000;
 const IMPRESSION_FLUSH_MS = 8000;
 const PAGE_SIZE = 15;
+const FEED_BOOT_CACHE_PREFIX = '@kapsely_feed_boot_v4';
 
 const FILTER_KEYS: FilterType[] = ['all', 'closed', 'open'];
 const FILTER_META: Record<FilterType, { icon: string; label: (t: any) => string; iconColor?: string }> = {
@@ -218,7 +226,6 @@ export default function FeedScreen() {
 
     const [showCapsulePicker, setShowCapsulePicker] = useState(false);
     const [myStory, setMyStory] = useState<any>(null);
-    const [feedCache, setFeedCache] = useState<Record<string, { data: any[]; ts: number }>>({});
     const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
     const [activeStory, setActiveStory] = useState<any>(null);
     const [hasUnread, setHasUnread] = useState(false);
@@ -231,14 +238,156 @@ export default function FeedScreen() {
 
     const [activeTab, setActiveTab] = useState<FeedTab>('following');
     const [activeFilter, setActiveFilter] = useState<FilterType>('all');
-    const [capsules, setCapsules] = useState<any[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [loadingMore, setLoadingMore] = useState(false);
-    const [refreshing, setRefreshing] = useState(false);
-    const [page, setPage] = useState(0);
-    const [hasMore, setHasMore] = useState(true);
     const [currentUserId, setCurrentUserId] = useState<string | null>(null);
     const [stories, setStories] = useState<any[]>([]);
+    const [shuffleSeed, setShuffleSeed] = useState(Date.now());
+    const [isOffline, setIsOffline] = useState(false);
+    const [cachedFeedData, setCachedFeedData] = useState<any | null>(null);
+    const [cachedFeedKey, setCachedFeedKey] = useState<string | null>(null);
+
+    const queryClient = useQueryClient();
+    const feedCacheKey = `${FEED_BOOT_CACHE_PREFIX}_${activeTab}_${activeFilter}`;
+    const feedSessionId = useRef(`feed-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
+    const refreshModeRef = useRef<'initial_load' | 'pull_to_refresh'>('initial_load');
+
+    // ─── Fetch Function ──────────────────────────────────────────────────────
+    const fetchFeed = async ({ pageParam = null }: { pageParam?: FeedCursor | null }) => {
+        const { data: { session } } = await supabase.auth.getSession();
+        const myId = session?.user?.id;
+        if (myId && !currentUserId) setCurrentUserId(myId);
+
+        const isInfiniteScroll = !!pageParam;
+        const refreshMode = isInfiniteScroll ? 'infinite_scroll' : refreshModeRef.current;
+        const params = {
+            p_tab: activeTab,
+            p_filter: activeFilter,
+            p_limit: PAGE_SIZE,
+            p_offset: 0,
+            p_seed: shuffleSeed,
+            p_refresh_mode: refreshMode,
+            p_session_id: feedSessionId.current,
+            p_cursor_score: pageParam?.score ?? null,
+            p_cursor_activity_date: pageParam?.activityDate ?? null,
+            p_cursor_id: pageParam?.id ?? null,
+        };
+
+        let { data, error } = await supabase.rpc('get_combined_feed_data', params);
+        if (error?.message?.includes('p_refresh_mode') || error?.message?.includes('p_session_id') || error?.message?.includes('p_cursor_score')) {
+            const { p_refresh_mode, p_session_id, p_cursor_score, p_cursor_activity_date, p_cursor_id, ...legacyParams } = params;
+            legacyParams.p_offset = isInfiniteScroll ? (pageParam?.page ?? 1) * PAGE_SIZE : 0;
+            const fallback = await supabase.rpc('get_combined_feed_data', legacyParams);
+            data = fallback.data;
+            error = fallback.error;
+        }
+        if (error?.message?.includes('p_seed')) {
+            const { p_seed, p_refresh_mode, p_session_id, p_cursor_score, p_cursor_activity_date, p_cursor_id, ...legacyParams } = params;
+            legacyParams.p_offset = isInfiniteScroll ? (pageParam?.page ?? 1) * PAGE_SIZE : 0;
+            const fallback = await supabase.rpc('get_combined_feed_data', legacyParams);
+            data = fallback.data;
+            error = fallback.error;
+        }
+        if (!isInfiniteScroll) refreshModeRef.current = 'initial_load';
+
+        if (error) throw error;
+        return data;
+    };
+
+    useEffect(() => {
+        let alive = true;
+        setCachedFeedData(null);
+        setCachedFeedKey(null);
+        AsyncStorage.getItem(feedCacheKey)
+            .then(raw => {
+                if (!alive || !raw) return;
+                const parsed = JSON.parse(raw);
+                if (Date.now() - (parsed.savedAt || 0) < FEED_CACHE_TTL) {
+                    setCachedFeedData(parsed.data);
+                    setCachedFeedKey(feedCacheKey);
+                }
+            })
+            .catch(() => {});
+        return () => { alive = false; };
+    }, [feedCacheKey]);
+
+    // ─── useInfiniteQuery ────────────────────────────────────────────────────
+    const {
+        data: queryData,
+        fetchNextPage,
+        hasNextPage,
+        isFetchingNextPage,
+        status,
+        refetch,
+    } = useInfiniteQuery({
+        queryKey: ['feed', activeTab, activeFilter, shuffleSeed],
+        queryFn: fetchFeed,
+        getNextPageParam: (lastPage, allPages) => {
+            const feed = lastPage.feed || [];
+            if (feed.length < PAGE_SIZE) return undefined;
+            const last = feed[feed.length - 1];
+            return {
+                score: Number(last.cursor_score ?? last.final_score ?? 0),
+                activityDate: last.cursor_activity_date ?? last.activity_date ?? last.created_at ?? new Date(0).toISOString(),
+                id: last.cursor_id ?? last.feed_item_key ?? last.id,
+                page: allPages.length,
+            } satisfies FeedCursor;
+        },
+        initialPageParam: null,
+        staleTime: 5 * 60 * 1000,
+        gcTime: 30 * 60 * 1000,
+    });
+
+    const capsules = useMemo(() => {
+        const pages = queryData?.pages || (cachedFeedKey === feedCacheKey ? cachedFeedData?.pages : null);
+        if (!pages) return [];
+        return pages.flatMap((page: any) => page.feed || []);
+    }, [queryData, cachedFeedData, cachedFeedKey, feedCacheKey]);
+
+    useEffect(() => {
+        if (!queryData?.pages?.[0]) return;
+        AsyncStorage.setItem(feedCacheKey, JSON.stringify({
+            savedAt: Date.now(),
+            data: { pages: [queryData.pages[0]] },
+        })).catch(() => {});
+    }, [queryData, feedCacheKey]);
+
+    // Update auxiliary states when data changes
+    useEffect(() => {
+        const firstPage = queryData?.pages?.[0] || (cachedFeedKey === feedCacheKey ? cachedFeedData?.pages?.[0] : null);
+        if (firstPage) {
+            const { stories: storiesData, following_ids, liked_ids, blocked_ids, participant_ids } = firstPage;
+            
+            setBlockedUserIds(blocked_ids || []);
+            setFollowingSet(new Set(following_ids || []));
+            setLikedCapsules(new Set(liked_ids || []));
+            setParticipantCapsules(new Set(participant_ids || []));
+
+            if (currentUserId) {
+                processStoriesData(storiesData || [], currentUserId, blocked_ids || []);
+            }
+        }
+    }, [queryData, cachedFeedData, cachedFeedKey, feedCacheKey, currentUserId]);
+
+    const hasBootData = capsules.length > 0;
+    const isLoading = status === 'pending' && !hasBootData;
+    const isRefreshing = status === 'pending' && !!queryData;
+    const isError = status === 'error';
+
+    const trackedImpressions = useRef<Set<string>>(new Set());
+    const impressionBufferRef = useRef<Map<string, { capsuleId: string | null; eventType: string; position: number | null }>>(new Map());
+
+    const onViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: any[] }) => {
+        if (!currentUserId) return;
+        viewableItems
+            .filter(v => v.isViewable && v.item?.id && !trackedImpressions.current.has(v.item.id))
+            .forEach(v => {
+                trackedImpressions.current.add(v.item.id);
+                impressionBufferRef.current.set(v.item.id, {
+                    capsuleId: v.item.capsule_id || null,
+                    eventType: v.item.event_type || v.item.feed_type || 'unknown',
+                    position: typeof v.index === 'number' ? v.index : null,
+                });
+            });
+    }, [currentUserId]);
 
     const pulseAnim = useRef(new Animated.Value(1)).current;
     const headerOpacity = useRef(new Animated.Value(0)).current;
@@ -248,12 +397,19 @@ export default function FeedScreen() {
     const feedRequestId = useRef(0);
 
     const flatListRef = useRef<any>(null);
-    const impressionBufferRef = useRef<Set<string>>(new Set());
     const impressionFlushRef = useRef<NodeJS.Timeout | null>(null);
     const storiesScrollRef = useRef<ScrollView>(null);
     const filterScrollRef = useRef<ScrollView>(null);
+    const pinTopAfterRefreshRef = useRef(false);
 
     const keyExtractor = useCallback((item: any) => item.id, []);
+
+    const pinFeedToTop = useCallback((animated = false) => {
+        flatListRef.current?.scrollToOffset?.({ offset: 0, animated });
+        requestAnimationFrame(() => {
+            flatListRef.current?.scrollToOffset?.({ offset: 0, animated: false });
+        });
+    }, []);
 
     useWebDragScroll(flatListRef);
     useWebDragScroll(storiesScrollRef);
@@ -277,6 +433,54 @@ export default function FeedScreen() {
         await requestTrackingPermissionsAsync();
         await AsyncStorage.setItem('att_asked', 'true');
     };
+
+    // ─── Connectivity ─────────────────────────────────────────────────────────
+    useEffect(() => {
+        let checkInterval: NodeJS.Timeout;
+        let appStateSub: any;
+
+        const checkConnectivity = async () => {
+            if (Platform.OS === 'web') return;
+            if (AppState.currentState !== 'active') return;
+            
+            try {
+                const { error } = await supabase.from('profiles').select('id').limit(1);
+                const isOnline = !error;
+                setIsOffline(!isOnline);
+                onlineManager.setOnline(isOnline);
+            } catch (e) {
+                setIsOffline(true);
+                onlineManager.setOnline(false);
+            }
+        };
+
+        if (Platform.OS === 'web') {
+            const handleOnline = () => { setIsOffline(false); onlineManager.setOnline(true); };
+            const handleOffline = () => { setIsOffline(true); onlineManager.setOnline(false); };
+            window.addEventListener('online', handleOnline);
+            window.addEventListener('offline', handleOffline);
+            setIsOffline(!navigator.onLine);
+            onlineManager.setOnline(navigator.onLine);
+            return () => {
+                window.removeEventListener('online', handleOnline);
+                window.removeEventListener('offline', handleOffline);
+            };
+        } else {
+            appStateSub = AppState.addEventListener('change', (nextState) => {
+                if (nextState === 'active') {
+                    // Small delay after wake up to let system re-connect
+                    setTimeout(checkConnectivity, 1500);
+                }
+            });
+            const firstCheck = setTimeout(checkConnectivity, 2500);
+            checkInterval = setInterval(checkConnectivity, 20000);
+            return () => {
+                clearTimeout(firstCheck);
+                clearInterval(checkInterval);
+                appStateSub.remove();
+            };
+        }
+    }, []);
 
     // ─── Entrance animations ──────────────────────────────────────────────────
     useEffect(() => {
@@ -311,7 +515,6 @@ export default function FeedScreen() {
         ).start();
     }, []);
 
-    // ─── Feed scroll bus ──────────────────────────────────────────────────────
     useEffect(() => {
         const unsubScroll = feedScrollBus.subscribeScroll(() => {
             flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true });
@@ -319,23 +522,27 @@ export default function FeedScreen() {
             filterScrollRef.current?.scrollTo?.({ x: 0, y: 0, animated: true });
         });
         const unsubRefresh = feedScrollBus.subscribeRefresh(() => {
-            setRefreshing(true);
             setActiveTab('following');
-            loadFeed(true, 'following');
+            queryClient.invalidateQueries({ queryKey: ['feed'] });
         });
         return () => { unsubScroll(); unsubRefresh(); };
-    }, []);
+    }, [queryClient]);
 
     // ─── Impression flush ─────────────────────────────────────────────────────
     useEffect(() => {
         const flushImpressions = async () => {
             if (!currentUserId || impressionBufferRef.current.size === 0) return;
-            const ids = Array.from(impressionBufferRef.current) as string[];
+            const entries = Array.from(impressionBufferRef.current.entries());
             impressionBufferRef.current.clear();
             try {
                 await supabase.rpc('record_feed_impressions', {
                     p_user_id: currentUserId,
-                    p_capsule_ids: ids,
+                    p_feed_event_ids: entries.map(([eventId]) => eventId),
+                    p_capsule_ids: entries.map(([, meta]) => meta.capsuleId),
+                    p_event_types: entries.map(([, meta]) => meta.eventType),
+                    p_feed_type: activeTab,
+                    p_session_id: feedSessionId.current,
+                    p_positions: entries.map(([, meta]) => meta.position),
                 });
             } catch (e) { /* best-effort */ }
         };
@@ -345,6 +552,24 @@ export default function FeedScreen() {
             flushImpressions();
         };
     }, [currentUserId]);
+
+    // ─── Capsule real-time sync ───────────────────────────────────────────────
+    useEffect(() => {
+        const subDel = DeviceEventEmitter.addListener('capsule_deleted', () => refetch());
+        const subNew = DeviceEventEmitter.addListener('capsule_created', () => refetch());
+        return () => { subDel.remove(); subNew.remove(); };
+    }, [refetch]);
+
+    // SWR: refetch when screen regains focus (max once per 30s)
+    const lastFocusFetchRef = useRef(0);
+    useEffect(() => {
+        if (!isFocused) return;
+        const now = Date.now();
+        if (now - lastFocusFetchRef.current > 30_000) {
+            lastFocusFetchRef.current = now;
+            refetch();
+        }
+    }, [isFocused, refetch]);
 
     // ─── Stories ──────────────────────────────────────────────────────────────
     const processStoriesData = (data: any[], currentId: string, blocked: string[]) => {
@@ -372,35 +597,13 @@ export default function FeedScreen() {
         setMyStory(processed.find(u => u.owner_id === currentId) || null);
     };
 
-    const loadStories = useCallback(async (userIdOverride?: string, blockedIds?: string[]) => {
-        // Now mostly handled via RPC in loadFeed, but kept for standalone refreshes
-        try {
-            const { data: { session } } = await supabase.auth.getSession();
-            const user = session?.user;
-            if (!user) return;
-            const myId = user.id;
-            const blocked = blockedIds ?? blockedUserIds;
-
-            const controller = new AbortController();
-            const { data, error } = await (controller.signal 
-                ? supabase.rpc('get_combined_feed_data', { p_user_id: myId, p_tab: activeTab, p_filter: activeFilter, p_limit: 1, p_offset: 0 }).abortSignal(controller.signal)
-                : supabase.rpc('get_combined_feed_data', { p_user_id: myId, p_tab: activeTab, p_filter: activeFilter, p_limit: 1, p_offset: 0 })
-            );
-
-            if (error || !data) return;
-            processStoriesData(data.stories, myId, blocked);
-        } catch (err: any) {
-            if (err?.message?.includes('Abort') || err?.name === 'AbortError') return;
-            console.error('[Feed] loadStories error:', err);
-        }
-    }, [blockedUserIds, activeTab, activeFilter]);
-
     const markStoryRead = useCallback(async (storyId: string) => {
         if (!currentUserId) return;
         await supabase.from('story_reads').upsert(
             { user_id: currentUserId, story_id: storyId },
             { onConflict: 'user_id,story_id' }
         );
+        // Optimistic local update
         setStories(prev =>
             prev.map(u => ({
                 ...u,
@@ -412,103 +615,6 @@ export default function FeedScreen() {
             setMyStory({ ...myStory, stories: updated, all_read: updated.every((s: any) => s.is_read) });
         }
     }, [currentUserId, myStory]);
-
-    // ─── loadFeed ─────────────────────────────────────────────────────────────
-    const loadFeed = useCallback(async (
-        forceRefresh = false,
-        tabOverride?: FeedTab,
-        isNewPage = false,
-    ) => {
-        try {
-            const currentReqId = ++feedRequestId.current;
-            const tab = tabOverride ?? activeTab;
-            const currentPage = isNewPage ? page + 1 : 0;
-
-            if (!isNewPage && !forceRefresh) {
-                const cacheKey = `${tab}_${activeFilter}`;
-                const cached = feedCache[cacheKey];
-                if (cached && (Date.now() - cached.ts) < FEED_CACHE_TTL) {
-                    setCapsules(cached.data);
-                    setLoading(false);
-                    return;
-                }
-            }
-
-            if (isNewPage) setLoadingMore(true);
-            else if (!refreshing) setLoading(true);
-
-            const { data: { session } } = await supabase.auth.getSession();
-            const user = session?.user;
-            if (!user) {
-                setLoading(false); setRefreshing(false); setLoadingMore(false);
-                return;
-            }
-
-            const myId = user.id;
-            if (!currentUserId) setCurrentUserId(myId);
-
-            const controller = new AbortController();
-            const { data, error } = await (controller.signal
-                ? supabase.rpc('get_combined_feed_data', {
-                    p_user_id: myId,
-                    p_tab: tab,
-                    p_filter: activeFilter,
-                    p_limit: PAGE_SIZE,
-                    p_offset: currentPage * PAGE_SIZE
-                  }).abortSignal(controller.signal)
-                : supabase.rpc('get_combined_feed_data', {
-                    p_user_id: myId,
-                    p_tab: tab,
-                    p_filter: activeFilter,
-                    p_limit: PAGE_SIZE,
-                    p_offset: currentPage * PAGE_SIZE
-                  })
-            );
-
-            if (feedRequestId.current !== currentReqId) return;
-
-            if (error || !data) {
-                if (error?.message?.includes('Abort')) return;
-                console.error(`[Feed] RPC error:`, error);
-                setLoading(false); setRefreshing(false); setLoadingMore(false);
-                return;
-            }
-
-            const { feed, stories: storiesData, following_ids, liked_ids, blocked_ids, participant_ids } = data;
-
-            setBlockedUserIds(blocked_ids || []);
-            setFollowingSet(new Set(following_ids || []));
-            setLikedCapsules(new Set(liked_ids || []));
-            setParticipantCapsules(new Set(participant_ids || []));
-
-            if (!isNewPage) {
-                processStoriesData(storiesData || [], myId, blocked_ids || []);
-            }
-
-            const items: any[] = (feed || []).map((c: any) => ({ ...c, feedType: c.feed_type || 'capsule' }));
-            setHasMore(items.length >= PAGE_SIZE);
-
-            if (isNewPage) {
-                setCapsules(prev => [...prev, ...items]);
-                setPage(currentPage);
-            } else {
-                setCapsules(items);
-                setPage(0);
-                const cacheKey = `${tab}_${activeFilter}`;
-                setFeedCache(prev => ({ ...prev, [cacheKey]: { data: items, ts: Date.now() } }));
-            }
-
-            setLoading(false);
-            setRefreshing(false);
-            setLoadingMore(false);
-        } catch (err: any) {
-            if (err?.message?.includes('Abort') || err?.name === 'AbortError') return;
-            console.error('[Feed] Uncaught error in loadFeed:', err);
-            setLoading(false);
-            setRefreshing(false);
-            setLoadingMore(false);
-        }
-    }, [activeTab, activeFilter, page, feedCache, refreshing, currentUserId]);
 
     // ─── Handlers ─────────────────────────────────────────────────────────────
     const handleYourCapPress = useCallback(async () => {
@@ -523,12 +629,10 @@ export default function FeedScreen() {
         setShowCapsulePicker(true);
     }, [myStory, tutorialStep]);
 
-    // ─── Init ─────────────────────────────────────────────────────────────────
     useEffect(() => {
         const init = async () => {
             try {
-                const { data: { session }, error } = await supabase.auth.getSession();
-                if (error) console.warn('[FeedScreen] getSession error:', error);
+                const { data: { session } } = await supabase.auth.getSession();
                 const user = session?.user;
                 if (user) {
                     const { count } = await supabase.from('follows')
@@ -536,73 +640,32 @@ export default function FeedScreen() {
                         .eq('follower_id', user.id);
                     setActiveTab(count && count > 0 ? 'following' : 'explore');
                     setCurrentUserId(user.id);
-                    if (Platform.OS === 'web') {
-                        loadFeed(false, count && count > 0 ? 'following' : 'explore');
-                        loadStories(user.id);
-                        setTimeout(() => {
-                            setLoading(prev => { if (prev) console.warn('[Feed] Safety timeout'); return false; });
-                        }, 6000);
-                    }
-                } else {
-                    setLoading(false);
                 }
-            } catch (e) {
-                console.warn('[FeedScreen] init error:', e);
-                setLoading(false);
-            } finally {
-                isFirstMount.current = false;
-            }
+            } catch (e) { console.error('[Feed] init error:', e); }
         };
         init();
     }, []);
-
-    useEffect(() => {
-        if (!isFirstMount.current && currentUserId && isFocused) {
-            if (Platform.OS === 'web') {
-                loadFeed(false, activeTab);
-                loadStories();
-            } else {
-                InteractionManager.runAfterInteractions(() => {
-                    loadFeed(false, activeTab);
-                    loadStories();
-                });
-            }
-        }
-    }, [activeTab, activeFilter, currentUserId, isFocused]);
 
     // ─── Realtime updates ─────────────────────────────────────────────────────
     useEffect(() => {
         const sub = DeviceEventEmitter.addListener('CAPSULE_UPDATED', (payload: any) => {
             if (payload.id) {
-                // 1. Actualizar la lista de cápsulas de forma atómica
-                setCapsules(prev => prev.map(c => {
-                    const isTarget = c.id === payload.id || c.capsule_id === payload.id;
-                    if (isTarget) {
-                        return { 
-                            ...c, 
-                            likes_count: payload.likes_count ?? c.likes_count,
-                            is_liked: payload.is_liked ?? c.is_liked
-                        };
-                    }
-                    return c;
-                }));
+                // Invalidate query to refetch fresh data
+                queryClient.invalidateQueries({ queryKey: ['feed'] });
                 
-                // 2. Actualizar el set de likes para el icono
+                // 2. Local fallback update for immediate UI response
                 if (payload.is_liked !== undefined) {
                     setLikedCapsules(prev => {
                         const n = new Set(prev);
-                        if (payload.is_liked) {
-                            n.add(payload.id);
-                        } else {
-                            n.delete(payload.id);
-                        }
+                        if (payload.is_liked) n.add(payload.id);
+                        else n.delete(payload.id);
                         return n;
                     });
                 }
             }
         });
         return () => sub.remove();
-    }, [loadFeed]);
+    }, [queryClient]);
 
     useEffect(() => {
         const checkUnread = async () => {
@@ -653,57 +716,84 @@ export default function FeedScreen() {
             }
             setHasUnread(foundUnread);
         };
-        checkUnread();
+        const unreadTask = InteractionManager.runAfterInteractions(checkUnread);
         const ch = supabase.channel('chat_updates')
             .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, checkUnread)
             .subscribe();
-        return () => { supabase.removeChannel(ch); };
+        return () => {
+            unreadTask.cancel?.();
+            supabase.removeChannel(ch);
+        };
     }, [isFocused]);
 
-    const onRefresh = useCallback(() => {
-        setRefreshing(true);
-        setPage(0);
-        setHasMore(true);
-        loadFeed(true);
-    }, [loadFeed]);
+    const flushImpressionsNow = useCallback(async () => {
+        if (!currentUserId || impressionBufferRef.current.size === 0) return;
+        const entries = Array.from(impressionBufferRef.current.entries());
+        impressionBufferRef.current.clear();
+        try {
+            await supabase.rpc('record_feed_impressions', {
+                p_user_id: currentUserId,
+                p_feed_event_ids: entries.map(([eventId]) => eventId),
+                p_capsule_ids: entries.map(([, meta]) => meta.capsuleId),
+                p_event_types: entries.map(([, meta]) => meta.eventType),
+                p_feed_type: activeTab,
+                p_session_id: feedSessionId.current,
+                p_positions: entries.map(([, meta]) => meta.position),
+            });
+        } catch (e) { /* silent fail */ }
+    }, [currentUserId, activeTab]);
+
+    const recordFeedOpen = useCallback((item: any) => {
+        if (!currentUserId || !item?.id) return;
+        impressionBufferRef.current.delete(item.id);
+        (async () => {
+            try {
+                await supabase.rpc('record_feed_click', {
+                    p_user_id: currentUserId,
+                    p_capsule_id: item.capsule_id || item.id,
+                    p_feed_event_id: item.id,
+                });
+            } catch {
+                impressionBufferRef.current.set(item.id, {
+                    capsuleId: item.capsule_id || null,
+                    eventType: item.event_type || item.feed_type || 'unknown',
+                    position: null,
+                });
+            }
+        })();
+    }, [currentUserId]);
+
+    const onRefresh = useCallback(async () => {
+        const nextSeed = Date.now();
+        pinTopAfterRefreshRef.current = true;
+        pinFeedToTop(false);
+        refreshModeRef.current = 'pull_to_refresh';
+        setShuffleSeed(nextSeed);
+        await flushImpressionsNow();
+        await queryClient.invalidateQueries({ queryKey: ['feed'] });
+    }, [queryClient, flushImpressionsNow, pinFeedToTop]);
+
+    useEffect(() => {
+        if (!pinTopAfterRefreshRef.current || !queryData?.pages?.[0]) return;
+        pinTopAfterRefreshRef.current = false;
+        pinFeedToTop(false);
+    }, [queryData, pinFeedToTop]);
 
     const handleLoadMore = useCallback(() => {
-        if (!loadingMore && hasMore && !loading) {
-            loadFeed(false, activeTab, true);
+        if (hasNextPage && !isFetchingNextPage) {
+            fetchNextPage();
         }
-    }, [loadingMore, hasMore, loading, loadFeed, activeTab]);
+    }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
     const handleTabChange = useCallback((tab: FeedTab) => {
         if (tab === activeTab) return;
         setActiveTab(tab);
-        setPage(0);
-        setHasMore(true);
-        const cacheKey = `${tab}_${activeFilter}`;
-        const cached = feedCache[cacheKey];
-        if (cached && (Date.now() - cached.ts) < FEED_CACHE_TTL) {
-            setCapsules(cached.data);
-            setLoading(false);
-            return;
-        }
-        setCapsules([]);
-        setLoading(true);
-    }, [activeTab, activeFilter, feedCache]);
+    }, [activeTab]);
 
     const handleFilterChange = useCallback((filter: FilterType) => {
         if (filter === activeFilter) return;
         setActiveFilter(filter);
-        setPage(0);
-        setHasMore(true);
-        const cacheKey = `${activeTab}_${filter}`;
-        const cached = feedCache[cacheKey];
-        if (cached && (Date.now() - cached.ts) < FEED_CACHE_TTL) {
-            setCapsules(cached.data);
-            setLoading(false);
-            return;
-        }
-        setCapsules([]);
-        setLoading(true);
-    }, [activeFilter, activeTab, feedCache]);
+    }, [activeFilter]);
 
     const handleGlobalFollow = useCallback(async (ownerId: string, isFollowed: boolean) => {
         if (!currentUserId) return;
@@ -723,53 +813,21 @@ export default function FeedScreen() {
         }
     }, [currentUserId]);
 
-    const handleGlobalLike = useCallback(async (activityId: string, is_liked: boolean) => {
-        if (!currentUserId) return;
-        
-        // Encontrar la actividad en la lista para obtener el capsule_id real
-        const activity = capsules.find(c => c.id === activityId);
-        const targetCapsuleId = activity?.capsule_id || activityId; // fallback al id si no hay capsule_id
-        
-        const wasLiked = is_liked;
-        const newIsLiked = !wasLiked;
-
-        // 1. Actualización optimista de los Sets (Color del icono)
-        setLikedCapsules(prev => {
-            const n = new Set(prev);
-            // Agregamos tanto el ID de la actividad como el de la cápsula para seguridad
-            if (newIsLiked) {
-                n.add(activityId);
-                n.add(targetCapsuleId);
-            } else {
-                n.delete(activityId);
-                n.delete(targetCapsuleId);
-            }
-            return n;
-        });
-
-        // 2. Actualización optimista de la lista (Sincronizar todas las tarjetas de esta cápsula)
-        setCapsules(prev => prev.map(c => {
-            if (c.id === activityId || c.capsule_id === targetCapsuleId) {
-                const currentCount = c.likes_count || 0;
-                return {
-                    ...c,
-                    is_liked: newIsLiked,
-                    likes_count: newIsLiked ? currentCount + 1 : Math.max(0, currentCount - 1)
-                };
-            }
-            return c;
-        }));
-
-        try {
+    // ─── Mutations ───────────────────────────────────────────────────────────
+    const likeMutation = useMutation({
+        mutationFn: async ({ activityId, wasLiked }: { activityId: string, wasLiked: boolean }) => {
+            if (!currentUserId) return;
+            const activity = capsules.find((c: any) => c.id === activityId);
+            const targetCapsuleId = activity?.capsule_id || activityId;
+            
             if (wasLiked) {
-                await supabase.from('likes').delete().eq('capsule_id', targetCapsuleId).eq('user_id', currentUserId);
+                const { error } = await supabase.from('likes').delete().eq('capsule_id', targetCapsuleId).eq('user_id', currentUserId);
+                if (error) throw error;
             } else {
                 const { error } = await supabase.from('likes').insert({ capsule_id: targetCapsuleId, user_id: currentUserId });
-                
-                // Si la DB dice que ya existe, simplemente lo ignoramos (ya está Likeado)
                 if (error && error.code !== '23505') throw error;
                 
-                // Notificación al dueño
+                // Track notification
                 if (activity && activity.owner_id !== currentUserId) {
                     const { data: existing } = await supabase.from('notifications')
                         .select('id').eq('user_id', activity.owner_id).eq('sender_id', currentUserId).eq('type', 'like').eq('capsule_id', targetCapsuleId).maybeSingle();
@@ -781,15 +839,68 @@ export default function FeedScreen() {
                     }
                 }
             }
-        } catch (err) {
-            console.error('Feed like error:', err);
-            // Revertir estado si es un error real
-            setLikedCapsules(prev => { const n = new Set(prev); if (wasLiked) n.add(activityId); else n.delete(activityId); return n; });
+        },
+        onMutate: async ({ activityId, wasLiked }) => {
+            await queryClient.cancelQueries({ queryKey: ['feed'] });
+            const previousFeed = queryClient.getQueryData(['feed']);
+
+            queryClient.setQueryData(['feed'], (old: any) => {
+                if (!old) return old;
+                return {
+                    ...old,
+                    pages: old.pages.map((page: any) => ({
+                        ...page,
+                        feed: page.feed.map((item: any) => {
+                            if (item.id === activityId || item.capsule_id === activityId) {
+                                return {
+                                    ...item,
+                                    is_liked: !wasLiked,
+                                    likes_count: (item.likes_count || 0) + (wasLiked ? -1 : 1)
+                                };
+                            }
+                            return item;
+                        })
+                    }))
+                };
+            });
+
+            return { previousFeed };
+        },
+        onError: (err, variables, context) => {
+            if (context?.previousFeed) {
+                queryClient.setQueryData(['feed'], context.previousFeed);
+            }
+            Alert.alert('Error', 'Could not update like. Please try again.');
         }
-    }, [currentUserId, capsules]);
+    });
+
+    const handleGlobalLike = useCallback((activityId: string, is_liked: boolean) => {
+        likeMutation.mutate({ activityId, wasLiked: is_liked });
+    }, [likeMutation]);
+
 
     // ─── renderItem ────────────────────────────────────────────────────────────
     const renderItem = useCallback(({ item }: { item: any }) => {
+        if (item.feed_type === 'birthday') {
+            const birthdayProfile = item.profiles || item;
+            return (
+                <TouchableOpacity
+                    activeOpacity={0.9}
+                    style={s.birthdayPost}
+                    onPress={() => navigation.navigate('UserProfile', { targetUserId: item.owner_id })}
+                >
+                    <LinearGradient colors={['#FFF1F8', '#F5F3FF', '#ECFEFF']} style={StyleSheet.absoluteFill} />
+                    <View style={s.birthdayPostAvatarWrap}>
+                        <Image source={{ uri: Colors.getAvatarUrl(birthdayProfile.avatar_url, birthdayProfile.display_name || birthdayProfile.username, birthdayProfile.favorite_color) }} style={s.birthdayPostAvatar} contentFit="cover" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                        <Text style={s.birthdayPostTitle}>Hoy es el cumple de {birthdayProfile.display_name || birthdayProfile.username}</Text>
+                        <Text style={s.birthdayPostSub}>Pásate por su perfil y déjale un regalo.</Text>
+                    </View>
+                    <Text style={s.birthdayPostEmoji}>{'\uD83C\uDF82'}</Text>
+                </TouchableOpacity>
+            );
+        }
         const isFollowed = followingSet.has(item.owner_id);
         const isLiked = likedCapsules.has(item.id) || likedCapsules.has(item.capsule_id);
         const hasAccess = item.is_public
@@ -809,14 +920,12 @@ export default function FeedScreen() {
                 isLocked={!hasAccess}
                 onFollow={handleGlobalFollow}
                 onLike={handleGlobalLike}
+                onOpen={recordFeedOpen}
                 lightweight
                 hideParticles
-                onViewable={() => {
-                    impressionBufferRef.current.add(item.id);
-                }}
             />
         );
-    }, [currentUserId, followingSet, likedCapsules, participantCapsules, handleGlobalFollow, handleGlobalLike, capsules]);
+    }, [currentUserId, followingSet, likedCapsules, participantCapsules, handleGlobalFollow, handleGlobalLike, recordFeedOpen, navigation]);
 
     // ─── List Header ───────────────────────────────────────────────────────────
     const ListHeader = useMemo(() => (
@@ -889,6 +998,15 @@ export default function FeedScreen() {
     return (
         <View style={s.root}>
             <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
+            
+            {isOffline && (
+                <View 
+                    style={[s.offlineBanner, { paddingTop: insets.top + 5 }]}
+                >
+                    <Ionicons name="cloud-offline-outline" size={14} color="#fff" />
+                    <Text style={s.offlineText}>No internet connection. Some content may not load.</Text>
+                </View>
+            )}
 
             {/* ── Header ── */}
             <Animated.View
@@ -915,20 +1033,20 @@ export default function FeedScreen() {
                         />
                         <View style={s.logoTextWrap}>
                             <Text style={s.logoText}>kapsely</Text>
-                            <Text style={s.logoTagline}>your moments</Text>
+                            <Text style={s.logoTagline}>Memories Forever</Text>
                         </View>
                     </Animated.View>
 
                     <View style={s.headerActions}>
                         <TouchableOpacity
-                            style={[s.actionBtn, hasUnread && s.actionBtnUnread]}
+                            style={s.actionBtn}
                             activeOpacity={0.72}
                             onPress={() => navigation.navigate('ChatList')}
                         >
                             <Ionicons
-                                name="chatbubble-ellipses"
-                                size={20}
-                                color={hasUnread ? Colors.primary : Colors.textPrimary}
+                                name="paper-plane-outline"
+                                size={24}
+                                color={Colors.textPrimary}
                             />
                             {hasUnread && (
                                 <Animated.View style={[s.unreadDot, { transform: [{ scale: pulseAnim }] }]} />
@@ -946,28 +1064,30 @@ export default function FeedScreen() {
                 estimatedItemSize={450}
                 key={`feed-${activeTab}`}
                 ref={flatListRef}
-                data={capsules}
+                data={isLoading ? [] : capsules}
                 keyExtractor={keyExtractor}
                 numColumns={1}
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={[s.listContent, { paddingBottom: insets.bottom + 96 }]}
-                refreshing={refreshing}
+                refreshing={isRefreshing}
                 onRefresh={onRefresh}
                 onEndReached={handleLoadMore}
-                onEndReachedThreshold={0.5}
+                onEndReachedThreshold={0.2}
                 ListHeaderComponent={ListHeader}
                 renderItem={renderItem}
-                extraData={[likedCapsules, capsules, followingSet]}
+                onViewableItemsChanged={onViewableItemsChanged}
+                viewabilityConfig={{ itemVisiblePercentThreshold: 50, minimumViewTime: 800 }}
+                extraData={[likedCapsules, followingSet, participantCapsules, currentUserId]}
                 drawDistance={height}
                 ListFooterComponent={() =>
-                    loadingMore ? (
+                    isFetchingNextPage ? (
                         <View style={s.loadMoreWrap}>
                             <ActivityIndicator color={Colors.primary} size="small" />
                         </View>
                     ) : null
                 }
                 ListEmptyComponent={() =>
-                    loading ? (
+                    isLoading ? (
                         <FeedSkeleton />
                     ) : (
                         <View style={s.emptyState}>
@@ -1005,7 +1125,7 @@ export default function FeedScreen() {
                 onClose={() => setShowCapsulePicker(false)}
                 currentUserId={currentUserId}
                 participantCapsules={participantCapsules}
-                onStoryPublished={loadStories}
+                onStoryPublished={() => queryClient.invalidateQueries({ queryKey: ['feed'] })}
             />
 
             <StoryViewer
@@ -1133,19 +1253,13 @@ const s = StyleSheet.create({
         gap: 8,
     },
     actionBtn: {
-        width: 42,
-        height: 42,
-        borderRadius: 14,
-        backgroundColor: Colors.cardAlt,
-        borderWidth: 1,
-        borderColor: Colors.border,
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: 'transparent',
         alignItems: 'center',
         justifyContent: 'center',
         position: 'relative',
-    },
-    actionBtnUnread: {
-        borderColor: Colors.primary + '50',
-        backgroundColor: Colors.primary + '0C',
     },
     unreadDot: {
         position: 'absolute',
@@ -1268,6 +1382,38 @@ const s = StyleSheet.create({
         fontFamily: Fonts.bold,
         fontSize: 14,
     },
+    offlineBanner: {
+        backgroundColor: '#FF4D4D',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        paddingBottom: 8,
+        zIndex: 100,
+    },
+    offlineText: {
+        color: '#fff',
+        fontSize: 12,
+        fontFamily: Fonts.medium,
+    },
+    birthdayPost: {
+        marginHorizontal: 8,
+        marginBottom: 10,
+        borderRadius: 16,
+        overflow: 'hidden',
+        minHeight: 86,
+        padding: 14,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: '#F9B8D8',
+    },
+    birthdayPostAvatarWrap: { width: 54, height: 54, borderRadius: 27, padding: 2, backgroundColor: '#fff' },
+    birthdayPostAvatar: { width: 50, height: 50, borderRadius: 25 },
+    birthdayPostTitle: { fontSize: 15, fontFamily: Fonts.bold, color: Colors.textPrimary },
+    birthdayPostSub: { fontSize: 12, fontFamily: Fonts.medium, color: Colors.textSecondary, marginTop: 2 },
+    birthdayPostEmoji: { fontSize: 28 },
 });
 
 const attStyles = StyleSheet.create({

@@ -16,6 +16,9 @@
     "report": "Reportar",
     "save": "Guardar",
     "delete": "Eliminar",
+    "archive": "Archivar",
+    "unarchive": "Desarchivar",
+    "no_messages": "Sin mensajes",
     "confirm": "Confirmar",
     "done": "Hecho",
     "ready": "READY!",
@@ -41,6 +44,14 @@
     "5_years": "5 Años",
     "1_week": "1 Semana",
     "custom": "Personalizado",
+    "any_range": "Cualquier rango",
+    "timing_1_night": "Cápsula de una noche",
+    "timing_flash": "Destello rápido",
+    "timing_lunar": "Ciclo lunar",
+    "timing_solar": "Viaje solar",
+    "timing_bridge": "Puente de recuerdos",
+    "timing_legacy": "Bóveda del legado",
+    "timing_custom": "Moldeador de tiempo",
     "shared": "Compartida",
     "member": "miembro",
     "members": "miembros",
@@ -79,7 +90,8 @@
     "unlocks": "Se abre el ",
     "follow_plus": "+ Seguir",
     "private_cap_title": "Cápsula Privada",
-    "private_cap_msg": "Aún no has sido invitado a esta cápsula."
+    "private_cap_msg": "Aún no has sido invitado a esta cápsula.",
+    "view_more": "Ver más"
   },
   "profile": {
     "settings": "Ajustes",
@@ -193,7 +205,29 @@
     "username_limit_msg": "Solo puedes cambiar tu nombre de usuario (@) dos veces al mes.",
     "username_taken": "Este nombre de usuario ya está en uso.",
     "profile_updated": "Perfil actualizado correctamente.",
-    "username": "Nombre de usuario (@)"
+    "username": "Nombre de usuario (@)",
+    "birthday_congratulate": "Felicitar",
+    "birthday_congratulated": "Felicitado",
+    "birthday_congrats_count": "{{count}} felicitaciones",
+    "birthday_gifts_count": "{{count}} regalos",
+    "birthday_gift_sent": "Regalo enviado"
+  },
+  "chat": {
+    "messages": "Mensajes",
+    "no_messages_yet": "Aún no hay mensajes",
+    "start_conversation": "Iniciar conversación",
+    "search_by_username": "Buscar por nombre de usuario...",
+    "no_users_found": "No se encontraron usuarios",
+    "new_group": "Nuevo grupo",
+    "create_group_count": "Crear ({{count}})",
+    "group_name_optional": "Nombre del grupo (opcional)",
+    "search_users": "Buscar usuarios...",
+    "search_by_username_hint": "Busca por nombre de usuario",
+    "no_archived_chats": "No tienes chats archivados",
+    "back_to_messages": "Volver a mensajes",
+    "archived_count": "Archivados ({{count}})",
+    "user_fallback": "Usuario",
+    "group_fallback": "Grupo"
   },
   "create": {
     "title": "Crear Cápsula",
@@ -418,7 +452,9 @@
     "today": "Hoy",
     "earlier": "Anteriores",
     "accepted_your_invite": "aceptó tu invitación a",
-    "new_invite": "Nueva Invitación 📩"
+    "new_invite": "Nueva Invitación 📩",
+    "load_more": "Cargar más",
+    "invite_expired": "Invitación Caducada"
   },
   "search": {
     "explore_people": "Explorar Personas",
@@ -512,6 +548,9 @@
     "delete_confirm_msg": "Esta acción no se puede deshacer.",
     "opening_soon": "Abriendo en {{timer}}s...",
     "opening_now": "¡la cápsula se está abriendo!",
+    "voted_to_open": "ha votado para abrir la cápsula.",
+    "vote_received_title": "¡Nuevo Voto! 🗳️",
+    "vote_received_body": "Alguien ha votado para abrir la cápsula.",
     "followed_capsule": "empezó a seguir tu cápsula \"{{title}}\"",
     "followed_your_capsule": "siguió tu cápsula",
     "added_new_memory_to": "añadió un nuevo recuerdo a",
@@ -548,6 +587,8 @@
     "report_submitted": "Reporte enviado. Gracias por ayudarnos a mantener Kapsely seguro.",
     "delete_message": "Eliminar Mensaje",
     "delete_confirm": "¿Estás seguro de que quieres eliminar este mensaje?",
+    "delete_content_title": "Eliminar contenido",
+    "delete_content_msg": "¿Estás seguro de que quieres eliminar este contenido? Esta acción no se puede deshacer.",
     "blocked_success": "Usuario bloqueado.",
     "unblocked_success": "Usuario desbloqueado.",
     "report_types": {
@@ -580,7 +621,19 @@
     "invited_push_body": "Te han invitado a la cápsula \"{{title}}\"",
     "invites_sent": "¡Invitaciones enviadas!",
     "send_invites": "Enviar invitaciones",
-    "invite_error": "No se pudieron enviar las invitaciones."
+    "invite_error": "No se pudieron enviar las invitaciones.",
+    "share_link": "Compartir enlace corto",
+    "share_text": "¡Mira esta cápsula en Kapsely!",
+    "sent_capsule": "Envió una cápsula",
+    "referencing": "Referenciando a",
+    "block_confirm": "¿Estás seguro de que quieres bloquear a este usuario? Ya no podrá interactuar contigo.",
+    "content_deleted": "Contenido eliminado correctamente.",
+    "load_more_comments": "Ver más comentarios",
+    "voting_to_delete": "Votando para eliminar",
+    "agree_to_delete": "Aceptar eliminación",
+    "you_voted_to_delete": "Ya has votado para eliminar",
+    "vote_to_delete": "Votar para eliminar",
+    "delete_vote_registered": "Tu voto para eliminar la cápsula ha sido registrado."
   },
   "onboarding": {
     "step0_title": "Elige tu idioma",
@@ -638,7 +691,8 @@
     "bg_none": "Ninguno",
     "bg_dark": "Oscuro",
     "bg_white": "Blanco",
-    "bg_blur": "Blur"
+    "bg_blur": "Blur",
+    "search_stickers": "Buscar stickers..."
   },
   "add": {
     "new_memory": "Nueva memoria",
@@ -676,6 +730,17 @@
     "add_your_photos": "Añade tus fotos",
     "add_your_video": "Añade tu video",
     "capture_moment": "Captura un momento único",
-    "hd_ready": "HD listo para guardar (máx. 1 min)"
+    "hd_ready": "HD listo para guardar (máx. 1 min)",
+    "select_capsule": "Seleccionar Cápsula",
+    "choose_destination": "Elige dónde guardar este recuerdo",
+    "no_capsules_available": "No hay cápsulas disponibles",
+    "no_capsules_desc": "Crea una cápsula sellada o abierta para guardar recuerdos",
+    "capsules_available": "{{count}} cápsula(s) disponible(s)",
+    "always_open": "Siempre abierta",
+    "opens_label": "Abre:",
+    "undo_title": "¿Seguro?",
+    "undo_sub": "Subiendo contenido en unos segundos...",
+    "undo_btn": "DESHACER SUBIDA",
+    "undo_hint": "Una vez completada la barra, ya no podrás arrepentirte."
   }
 }

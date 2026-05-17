@@ -8,6 +8,8 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { FlashList } from '@shopify/flash-list';
 
+const AnyFlashList = FlashList as any;
+
 
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
@@ -18,8 +20,10 @@ import Constants from 'expo-constants';
 import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
 import { supabase } from '../lib/supabase';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ProfileCapsuleCell } from '../components/profile/ProfileCapsuleCell';
 import { ProfileHeader } from '../components/profile/ProfileHeader';
+import { FollowSuggestions } from '../components/profile/FollowSuggestions';
 import { Image } from 'expo-image';
 import EditProfileScreen from './EditProfileScreen';
 import { MODEL_IMAGES, MODEL_TINTS, MODEL_IMAGES_OPEN } from '../constants/models';
@@ -38,6 +42,22 @@ import QuickLoginModal from '../components/QuickLoginModal';
 import * as Localization from 'expo-localization';
 
 const { width } = Dimensions.get('window');
+const PROFILE_BOOT_CACHE_PREFIX = '@kapsely_profile_boot_v3';
+const PROFILE_BOOT_CACHE_TTL = 5 * 60 * 1000;
+
+const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T | null> =>
+    new Promise(resolve => {
+        const timer = setTimeout(() => resolve(null), ms);
+        promise
+            .then(value => {
+                clearTimeout(timer);
+                resolve(value);
+            })
+            .catch(() => {
+                clearTimeout(timer);
+                resolve(null);
+            });
+    });
 
 type ProfileTab = 'all' | 'opened' | 'sealed';
 
@@ -68,11 +88,8 @@ export default function ProfileScreen() {
     const [currentUserId, setCurrentUserId] = useState<string | null>(null);
     const [isOwnProfile, setIsOwnProfileState] = useState(true);
     const [activeTab, setActiveTab] = useState<ProfileTab>('all');
-    const [profile, setProfile] = useState<any>(null);
-    const [openedCaps, setOpenedCaps] = useState<any[]>([]);
-    const [sealedCaps, setSealedCaps] = useState<any[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [refreshing, setRefreshing] = useState(false);
+    
+    // Auxiliary states
     const [showEdit, setShowEdit] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
     const [showLanguageSettings, setShowLanguageSettings] = useState(false);
@@ -91,12 +108,129 @@ export default function ProfileScreen() {
     const [confirmNewPassword, setConfirmNewPassword] = useState('');
     const [oldPassword, setOldPassword] = useState('');
     const [savedAccounts, setSavedAccounts] = useState<SavedAccount[]>([]);
+    const [cachedProfileData, setCachedProfileData] = useState<any | null>(null);
+    const [showFollowSuggestions, setShowFollowSuggestions] = useState(false);
+
+    const queryClient = useQueryClient();
+    const effectiveProfileId = targetUserId || currentUserId;
+    const profileCacheKey = effectiveProfileId ? `${PROFILE_BOOT_CACHE_PREFIX}_${effectiveProfileId}` : null;
+
+    // ─── Fetch Function ──────────────────────────────────────────────────────
+    const fetchProfile = async () => {
+        const result = await withTimeout(supabase.auth.getSession(), 900);
+        const session = result?.data?.session;
+        const myId = session?.user?.id;
+        if (myId && !currentUserId) setCurrentUserId(myId);
+
+        const idToLoad = targetUserId || myId;
+        if (!idToLoad) throw new Error('No user ID to load');
+
+        const { data, error } = await supabase.rpc('get_profile_data_unified', {
+            p_target_id: idToLoad
+        });
+
+        if (error) throw error;
+
+        return data;
+    };
+
+    // ─── useQuery ────────────────────────────────────────────────────────────
+    const {
+        data: profileDataUnified,
+        isLoading,
+        isRefetching,
+        refetch,
+        status
+    } = useQuery({
+        queryKey: ['profile', targetUserId || currentUserId],
+        queryFn: fetchProfile,
+        enabled: !!(targetUserId || currentUserId),
+        staleTime: 3 * 60 * 1000,
+        gcTime: 30 * 60 * 1000,
+    });
+
+    const displayProfileData = profileDataUnified || cachedProfileData;
+    const profile = displayProfileData?.profile;
+    const isFollowingValue = displayProfileData?.is_following || false;
+    const capsulesData = displayProfileData?.capsules || [];
+    const storiesData = displayProfileData?.stories || [];
+    const stickersData = displayProfileData?.stickers || [];
+    const readIds = new Set(displayProfileData?.my_reads || []);
+    const myAcceptedCaps = new Set(displayProfileData?.my_accepted_invites || []);
+
+    useEffect(() => {
+        let alive = true;
+        if (!profileCacheKey) return () => { alive = false; };
+        AsyncStorage.getItem(profileCacheKey)
+            .then(raw => {
+                if (!alive || !raw) return;
+                const parsed = JSON.parse(raw);
+                if (Date.now() - (parsed.savedAt || 0) < PROFILE_BOOT_CACHE_TTL) {
+                    setCachedProfileData(parsed.data);
+                }
+            })
+            .catch(() => {});
+        return () => { alive = false; };
+    }, [profileCacheKey]);
+
+    useEffect(() => {
+        if (!profileDataUnified || !profileCacheKey) return;
+        AsyncStorage.setItem(profileCacheKey, JSON.stringify({
+            savedAt: Date.now(),
+            data: profileDataUnified,
+        })).catch(() => {});
+    }, [profileDataUnified, profileCacheKey]);
+
+    useEffect(() => {
+        if (displayProfileData) {
+            setFollowersCount(displayProfileData.profile?.followers_count || 0);
+            setFollowingCount(displayProfileData.profile?.following_count || 0);
+            setIsFollowing(displayProfileData.is_following || false);
+            setProfileStickers(displayProfileData.stickers || []);
+
+            // Populate cover and media maps from RPC results to avoid secondary fetches
+            const newCoverMap: Record<string, string> = {};
+            const newMediaMap: Record<string, any[]> = {};
+            
+            (displayProfileData.capsules || []).forEach((c: any) => {
+                if (c.effective_cover_url) newCoverMap[c.id] = c.effective_cover_url;
+                if (c.fallback_media) newMediaMap[c.id] = c.fallback_media;
+            });
+            
+            setCoverMap(prev => ({ ...prev, ...newCoverMap }));
+            setCapsuleMediaMap(prev => ({ ...prev, ...newMediaMap }));
+
+            if (displayProfileData.stories?.length > 0) {
+                const prof = displayProfileData.profile;
+                setUserStories({ ...prof, owner_id: prof.id, stories: displayProfileData.stories });
+            } else {
+                setUserStories(null);
+            }
+        }
+    }, [displayProfileData]);
 
     useEffect(() => {
         if (showAccountPanel) {
             multiAccountService.getAccounts().then(setAccounts);
         }
     }, [showAccountPanel]);
+
+    useEffect(() => {
+        const subDel = DeviceEventEmitter.addListener('capsule_deleted', () => refetch());
+        const subNew = DeviceEventEmitter.addListener('capsule_created', () => refetch());
+        return () => { subDel.remove(); subNew.remove(); };
+    }, [refetch]);
+
+    const lastFocusFetchRef = useRef(0);
+    useFocusEffect(
+        useCallback(() => {
+            const now = Date.now();
+            if (now - lastFocusFetchRef.current > 30_000) {
+                lastFocusFetchRef.current = now;
+                refetch();
+            }
+        }, [refetch])
+    );
 
     const handleSwitchAccount = async (accountId: string) => {
         try {
@@ -187,10 +321,14 @@ export default function ProfileScreen() {
     const [activeStoryViewer, setActiveStoryViewer] = useState(false);
     const [isBlocked, setIsBlocked] = useState(false);
     const [showUserOptions, setShowUserOptions] = useState(false);
+    const [birthdayCongratsCount, setBirthdayCongratsCount] = useState(0);
+    const [hasSentBirthdayCongrats, setHasSentBirthdayCongrats] = useState(false);
+    const [birthdayGiftCounts, setBirthdayGiftCounts] = useState<Record<string, number>>({});
 
     useEffect(() => {
         const checkOwn = async () => {
-            const { data: { session } } = await supabase.auth.getSession();
+            const result = await withTimeout(supabase.auth.getSession(), 900);
+            const session = result?.data?.session;
             if (session?.user?.id) {
                 setCurrentUserId(session.user.id);
                 if (targetUserId) {
@@ -201,6 +339,15 @@ export default function ProfileScreen() {
         };
         checkOwn();
     }, [targetUserId]);
+
+    useEffect(() => {
+        setShowFollowSuggestions(false);
+        const task = InteractionManager.runAfterInteractions(() => {
+            const timer = setTimeout(() => setShowFollowSuggestions(true), 500);
+            return () => clearTimeout(timer);
+        });
+        return () => task.cancel?.();
+    }, [currentUserId, isOwnProfile]);
 
     useEffect(() => {
         if (profile) {
@@ -222,147 +369,24 @@ export default function ProfileScreen() {
         if (error) Alert.alert('Error', error.message);
     };
 
-    const [page, setPage] = useState(0);
-    const [hasMore, setHasMore] = useState(true);
-    const [loadingMore, setLoadingMore] = useState(false);
+    const openedCaps = useMemo(() => capsulesData.filter((c: any) => c.status === 'opened').map((c: any) => ({
+        ...c,
+        isAccessible: isOwnProfile || c.is_public || c.owner_id === currentUserId || myAcceptedCaps.has(c.id) || (c.invited_user_id === currentUserId && c.invite_status === 'accepted')
+    })), [capsulesData, isOwnProfile, currentUserId, myAcceptedCaps]);
 
-    const loadData = async (isNewPage = false, signal?: AbortSignal) => {
-        try {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (signal?.aborted) return;
-            const user = session?.user;
-            if (!user) {
-                setLoading(false);
-                return;
-            }
-            const myId = user.id;
-            setCurrentUserId(myId);
-            const idToLoad = targetUserId || myId;
-            setProfileId(idToLoad);
-            const own = idToLoad === myId;
-            setIsOwnProfileState(own);
-
-            if (isNewPage) setLoadingMore(true);
-            else if (!refreshing) setLoading(true);
-
-            // NEW: Single RPC call replacing 7 requests
-            const { data, error } = await (signal 
-                ? supabase.rpc('get_profile_data_unified', {
-                    p_target_id: idToLoad,
-                    p_viewer_id: myId
-                  }).abortSignal(signal)
-                : supabase.rpc('get_profile_data_unified', {
-                    p_target_id: idToLoad,
-                    p_viewer_id: myId
-                  })
-            );
-
-            if (error || !data) {
-                if (error?.message?.includes('Abort') || error?.name === 'AbortError') return;
-                console.error('Profile RPC Error:', error);
-                setLoading(false);
-                return;
-            }
-
-            if (signal?.aborted) return;
-
-            const { 
-                profile: profileData, 
-                is_following, 
-                stories: storiesData, 
-                capsules: capsulesData,
-                my_reads,
-                my_accepted_invites
-            } = data;
-
-            if (profileData) {
-                setProfile(profileData);
-                setFollowersCount(profileData.followers_count || 0);
-                setFollowingCount(profileData.following_count || 0);
-            }
-            setIsFollowing(is_following);
-
-            // Handle Stories
-            const readIds = new Set(my_reads || []);
-            if (storiesData && storiesData.length > 0) {
-                const sw = storiesData.map((s: any) => ({ ...s, is_read: readIds.has(s.id) }));
-                setUserStories({ 
-                    owner_id: idToLoad, 
-                    username: profileData?.username, 
-                    avatar_url: profileData?.avatar_url, 
-                    stories: sw, 
-                    all_read: sw.every((s: any) => s.is_read) 
-                });
-            } else setUserStories(null);
-
-            const myAcceptedCaps = new Set(my_accepted_invites || []);
-
-            // Handle Capsules
-            if (capsulesData) {
-                const viewable = capsulesData.map((c: any) => ({
-                    ...c,
-                    isAccessible: own || c.is_public || c.owner_id === myId || myAcceptedCaps.has(c.id) || (c.invited_user_id === myId && c.invite_status === 'accepted')
-                }));
-                
-                const initialCovers: Record<string, string> = {};
-                viewable.forEach((c: any) => { if (c.cover_url) initialCovers[c.id] = c.cover_url; });
-                setCoverMap(prev => ({ ...prev, ...initialCovers }));
-
-                const opened = viewable.filter((c: any) => c.status === 'opened');
-                const sealed = viewable.filter((c: any) => c.status === 'sealed');
-                
-                setOpenedCaps(prev => isNewPage ? [...prev, ...opened] : opened);
-                setSealedCaps(prev => isNewPage ? [...prev, ...sealed] : sealed);
-                setHasMore(capsulesData.length >= 12);
-                
-                // Fetch covers logic
-                const { data: mediaItems } = await (signal
-                    ? supabase.from('capsule_items').select('id, capsule_id, media_url, media_type, created_at').in('capsule_id', opened.map((c: any) => c.id)).in('media_type', ['image', 'video']).order('created_at', { ascending: true }).abortSignal(signal)
-                    : supabase.from('capsule_items').select('id, capsule_id, media_url, media_type, created_at').in('capsule_id', opened.map((c: any) => c.id)).in('media_type', ['image', 'video']).order('created_at', { ascending: true })
-                );
-                    const mediaMap: Record<string, any[]> = {};
-                    (mediaItems || []).forEach((item: any) => {
-                        if (!mediaMap[item.capsule_id]) mediaMap[item.capsule_id] = [];
-                        mediaMap[item.capsule_id].push(item);
-                    });
-                    setCapsuleMediaMap(prev => isNewPage ? { ...prev, ...mediaMap } : mediaMap);
-                
-                const defaultCovers: Record<string, string> = {};
-                Object.entries(mediaMap).forEach(([capId, items]) => {
-                    if (!initialCovers[capId] && (items as any[])[0]?.media_url) {
-                        defaultCovers[capId] = (items as any[])[0].media_url;
-                    }
-                });
-                setCoverMap(prev => ({ ...prev, ...defaultCovers }));
-            }
-
-            const { data: stks } = await supabase.from('profile_stickers').select('*, stickers(*)').eq('user_id', idToLoad);
-            if (stks) setProfileStickers(stks);
-        } catch (error) {
-            console.error('[ProfileScreen] Error loading data:', error);
-        } finally {
-            setLoading(false);
-            setRefreshing(false);
-            setLoadingMore(false);
-        }
-    };
+    const sealedCaps = useMemo(() => capsulesData.filter((c: any) => c.status === 'sealed').map((c: any) => ({
+        ...c,
+        isAccessible: isOwnProfile || c.is_public || c.owner_id === currentUserId || myAcceptedCaps.has(c.id) || (c.invited_user_id === currentUserId && c.invite_status === 'accepted')
+    })), [capsulesData, isOwnProfile, currentUserId, myAcceptedCaps]);
 
     useEffect(() => {
-        const sub = DeviceEventEmitter.addListener('CAPSULE_UPDATED', (payload: any) => {
-            if (payload.id && payload.cover_url) {
-                setCoverMap(prev => ({ ...prev, [payload.id]: payload.cover_url }));
-            }
-            if (payload.id) {
-                const updateFn = (prev: any[]) => prev.map(c => 
-                    c.id === payload.id ? { ...c, ...payload } : c
-                );
-                setOpenedCaps(updateFn);
-                setSealedCaps(updateFn);
-            }
-            loadData();
+        const sub = DeviceEventEmitter.addListener('CAPSULE_UPDATED', () => {
+            queryClient.invalidateQueries({ queryKey: ['profile', targetUserId || currentUserId] });
         });
         return () => sub.remove();
     }, [targetUserId, currentUserId]);
+
+    // Redundant batch-fetch removed (now handled by RPC)
 
     useEffect(() => {
         const idToLoad = targetUserId || currentUserId;
@@ -371,29 +395,84 @@ export default function ProfileScreen() {
         const channel = supabase.channel(`profile-${idToLoad}`)
             .on('postgres_changes', 
                 { event: 'UPDATE', schema: 'public', table: 'capsules', filter: `owner_id=eq.${idToLoad}` }, 
-                () => loadData()
+                () => queryClient.invalidateQueries({ queryKey: ['profile', idToLoad] })
             )
             .subscribe();
         return () => { supabase.removeChannel(channel); };
     }, [targetUserId, currentUserId]);
 
-    useFocusEffect(useCallback(() => {
-        const controller = new AbortController();
-        if (Platform.OS === 'web') {
-            loadData(false, controller.signal);
-        } else {
-            const task = InteractionManager.runAfterInteractions(() => {
-                loadData(false, controller.signal);
-            });
-            return () => {
-                task.cancel();
-                controller.abort();
-            };
-        }
-        return () => controller.abort();
-    }, [targetUserId, currentUserId]));
+    const onRefresh = () => {
+        refetch();
+    };
 
-    const onRefresh = () => { setRefreshing(true); loadData(); };
+    const birthdayYear = new Date().getFullYear();
+    const isBirthdayToday = useMemo(() => {
+        if (!profile?.birthdate) return false;
+        const [year, month, day] = String(profile.birthdate).split('-').map(Number);
+        if (!year || !month || !day) return false;
+        const now = new Date();
+        return month === now.getMonth() + 1 && day === now.getDate();
+    }, [profile?.birthdate]);
+
+    useEffect(() => {
+        const loadBirthdayCongrats = async () => {
+            if (!profile?.id || !currentUserId || !isBirthdayToday) {
+                setBirthdayCongratsCount(0);
+                setHasSentBirthdayCongrats(false);
+                setBirthdayGiftCounts({});
+                return;
+            }
+
+            const [giftRes, sentRes] = await Promise.all([
+                supabase
+                    .from('birthday_congratulations')
+                    .select('gift_type')
+                    .eq('profile_id', profile.id)
+                    .eq('birthday_year', birthdayYear),
+                supabase
+                    .from('birthday_congratulations')
+                    .select('profile_id')
+                    .eq('profile_id', profile.id)
+                    .eq('sender_id', currentUserId)
+                    .eq('birthday_year', birthdayYear)
+                    .maybeSingle()
+            ]);
+
+            const counts = (giftRes.data || []).reduce((acc: Record<string, number>, row: any) => {
+                const gift = row.gift_type || 'cake';
+                acc[gift] = (acc[gift] || 0) + 1;
+                return acc;
+            }, {});
+            setBirthdayGiftCounts(counts);
+            setBirthdayCongratsCount((giftRes.data || []).length);
+            setHasSentBirthdayCongrats(!!sentRes.data);
+        };
+
+        loadBirthdayCongrats();
+    }, [profile?.id, currentUserId, isBirthdayToday, birthdayYear]);
+
+    const handleBirthdayCongrats = useCallback(async (giftType = 'cake') => {
+        if (!profile?.id || !currentUserId || hasSentBirthdayCongrats) return false;
+
+        const { error } = await supabase.from('birthday_congratulations').insert({
+            profile_id: profile.id,
+            sender_id: currentUserId,
+            birthday_year: birthdayYear,
+            gift_type: giftType,
+        });
+
+        if (error && error.code !== '23505') {
+            Alert.alert(t('common.error'), error.message);
+            return false;
+        }
+
+        if (!hasSentBirthdayCongrats) {
+            setBirthdayCongratsCount(count => count + 1);
+            setBirthdayGiftCounts(counts => ({ ...counts, [giftType]: (counts[giftType] || 0) + 1 }));
+        }
+        setHasSentBirthdayCongrats(true);
+        return true;
+    }, [profile?.id, currentUserId, hasSentBirthdayCongrats, birthdayYear, t]);
 
     const handleLogout = async () => {
         if (Platform.OS === 'web') {
@@ -482,7 +561,7 @@ export default function ProfileScreen() {
         const adminId = admins?.[0]?.id;
         if (adminId) await supabase.from('notifications').insert({ user_id: adminId, sender_id: currentUserId, type: 'system', message: `@${profile?.username || 'User'} requested verification.` });
         await supabase.from('profiles').update({ verification_status: 'pending' }).eq('id', currentUserId);
-        setProfile({ ...profile, verification_status: 'pending' });
+        queryClient.invalidateQueries({ queryKey: ['profile', currentUserId] });
     };
 
     const navigateToConversation = async () => {
@@ -507,6 +586,24 @@ export default function ProfileScreen() {
 
     const accentColor = profile?.favorite_color || Colors.primary;
     const joinYear = profile?.created_at ? new Date(profile.created_at).getFullYear() : '—';
+
+    // Extracted so FlashList header always gets the latest closure (not a stale cached version)
+    const handleShowStories = useCallback(async () => {
+        if (!userStories) return;
+        try {
+            const ownerId = userStories.owner_id;
+            const { data: fullStories } = await supabase
+                .from('stories')
+                .select('*, capsules:capsule_id(id, title, type, model)')
+                .eq('owner_id', ownerId)
+                .gt('expires_at', new Date().toISOString())
+                .order('created_at', { ascending: true });
+            if (fullStories?.length) {
+                setUserStories((prev: any) => prev ? { ...prev, stories: fullStories } : prev);
+            }
+        } catch (_) {}
+        setActiveStoryViewer(true);
+    }, [userStories]);
     const tabData = activeTab === 'all'
         ? [...openedCaps, ...sealedCaps].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
         : activeTab === 'sealed' ? sealedCaps : openedCaps;
@@ -517,41 +614,78 @@ export default function ProfileScreen() {
         return 0;
     });
     const renderHeader = useCallback(() => (
-        <ProfileHeader
-            profile={profile}
-            accentColor={accentColor}
-            profileStickers={profileStickers}
-            userStories={userStories}
-            followersCount={followersCount}
-            followingCount={followingCount}
-            capsulesCount={openedCaps.length + sealedCaps.length}
-            isOwnProfile={isOwnProfile}
-            isFollowing={isFollowing}
-            onFollowToggle={handleFollowToggle}
-            onNavigateToConversation={navigateToConversation}
-            onShowEdit={() => setShowEdit(true)}
-            onShowSettings={() => setShowSettings(true)}
-            onShowUserOptions={() => setShowUserOptions(true)}
-            onShowStories={() => setActiveStoryViewer(true)}
-            onBack={() => navigation.goBack()}
-            activeTab={activeTab}
-            setActiveTab={setActiveTab}
-            insets={insets}
-            t={t}
-            i18n={i18n}
-            joinYear={joinYear}
-            profileId={profileId || ''}
-            navigation={navigation}
-        />
+        <View>
+            <ProfileHeader
+                profile={profile}
+                accentColor={accentColor}
+                profileStickers={profileStickers}
+                userStories={userStories}
+                followersCount={followersCount}
+                followingCount={followingCount}
+                capsulesCount={openedCaps.length + sealedCaps.length}
+                isOwnProfile={isOwnProfile}
+                isFollowing={isFollowing}
+                onFollowToggle={handleFollowToggle}
+                onNavigateToConversation={navigateToConversation}
+                onShowEdit={() => setShowEdit(true)}
+                onShowSettings={() => setShowSettings(true)}
+                onShowUserOptions={() => setShowUserOptions(true)}
+                onShowStories={handleShowStories}
+                onBack={() => navigation.goBack()}
+                activeTab={activeTab}
+                setActiveTab={setActiveTab}
+                insets={insets}
+                t={t}
+                i18n={i18n}
+                joinYear={joinYear}
+                profileId={profileId || targetUserId || currentUserId || ''}
+                navigation={navigation}
+                isBirthdayToday={isBirthdayToday}
+                birthdayCongratsCount={birthdayCongratsCount}
+                birthdayGiftCounts={birthdayGiftCounts}
+                hasSentBirthdayCongrats={hasSentBirthdayCongrats}
+                onBirthdayCongrats={handleBirthdayCongrats}
+            />
+            {isOwnProfile && currentUserId && showFollowSuggestions && (
+                <FollowSuggestions 
+                    currentUserId={currentUserId} 
+                    onFollowUpdate={() => {
+                        // Optionally refetch or update state
+                        setFollowingCount(p => p + 1);
+                    }}
+                />
+            )}
+        </View>
     ), [
         profile, accentColor, profileStickers, userStories, followersCount, followingCount,
-        openedCaps.length, sealedCaps.length, isOwnProfile, isFollowing, activeTab, insets, t, i18n, joinYear, profileId, navigation
+        openedCaps.length, sealedCaps.length, isOwnProfile, isFollowing, activeTab, insets, t, i18n, joinYear, profileId, navigation,
+        handleShowStories, currentUserId, showFollowSuggestions, isBirthdayToday, birthdayCongratsCount, birthdayGiftCounts, hasSentBirthdayCongrats, handleBirthdayCongrats
     ]);
 
-    if (loading) {
+    if (isLoading && !displayProfileData) {
         return (
-            <View style={[s.root, s.centered]}>
-                <ActivityIndicator size="large" color={Colors.primary} />
+            <View style={s.root}>
+                <StatusBar barStyle="light-content" />
+                <ScrollView contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
+                    <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={{ height: 250, paddingTop: insets.top + 18, paddingHorizontal: 20 }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.22)' }} />
+                            <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.22)' }} />
+                        </View>
+                    </LinearGradient>
+                    <View style={{ marginTop: -68, alignItems: 'center', paddingHorizontal: 18 }}>
+                        <View style={{ width: 124, height: 124, borderRadius: 62, backgroundColor: Colors.surface, borderWidth: 4, borderColor: Colors.background }} />
+                        <View style={{ width: 170, height: 24, borderRadius: 12, backgroundColor: Colors.border, marginTop: 14 }} />
+                        <View style={{ width: 118, height: 16, borderRadius: 8, backgroundColor: Colors.border, marginTop: 8 }} />
+                        <View style={{ flexDirection: 'row', gap: 12, marginTop: 18 }}>
+                            {[0, 1, 2].map(i => <View key={i} style={{ width: 88, height: 52, borderRadius: 16, backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border }} />)}
+                        </View>
+                        <View style={{ width: '100%', height: 44, borderRadius: 22, backgroundColor: Colors.border, marginTop: 20 }} />
+                    </View>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 14, marginTop: 28 }}>
+                        {Array.from({ length: 6 }).map((_, i) => <View key={i} style={{ width: (width - 36) / 2, height: 220, borderRadius: 18, backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border }} />)}
+                    </View>
+                </ScrollView>
             </View>
         );
     }
@@ -576,20 +710,19 @@ export default function ProfileScreen() {
             {/* Edit Modal */}
             <Modal visible={showEdit} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowEdit(false)}>
                 <EditProfileScreen 
-                    onClose={() => { setShowEdit(false); loadData(); }} 
+                    onClose={() => { setShowEdit(false); refetch(); }} 
                     initialData={profile}
                 />
             </Modal>
 
-            <FlashList
+            <AnyFlashList
                 data={sortedTabData}
-                keyExtractor={item => item.id}
+                keyExtractor={(item: any) => item.id}
                 numColumns={3}
-                // @ts-ignore
-                estimatedItemSize={160}
+                estimatedItemSize={190}
                 contentContainerStyle={[s.gridContent, { paddingBottom: 100 }]}
                 ListHeaderComponent={renderHeader}
-                renderItem={({ item }) => (
+                renderItem={({ item }: { item: any }) => (
                     <View style={s.gridCell}>
                         <ProfileCapsuleCell
                             cap={item}
@@ -598,9 +731,9 @@ export default function ProfileScreen() {
                             isSealed={item.status === 'sealed'}
                             cfg={TYPE_CONFIG(t)[item.type] || TYPE_CONFIG(t).instacap}
                             coverUrl={coverMap[item.id]}
-                            itemsCount={item.capsule_items_count_val ?? (item.capsule_items_count || 0)}
-                            likesCount={item.likes_count_val ?? (item.likes_count || 0)}
-                            commentsCount={item.comments_count_val ?? (item.comments_count || 0)}
+                            itemsCount={item.posts_count ?? item.capsule_items_count ?? 0}
+                            likesCount={item.likes_count ?? 0}
+                            commentsCount={item.comments_count ?? 0}
                             setPickerCapsuleId={setPickerCapsuleId}
                             themeColor={accentColor}
                             capsuleMediaMap={capsuleMediaMap}
@@ -619,10 +752,8 @@ export default function ProfileScreen() {
                         </Text>
                     </View>
                 }
-                onEndReached={() => { if (!loadingMore && hasMore) loadData(true); }}
                 onEndReachedThreshold={0.5}
-                ListFooterComponent={loadingMore ? <ActivityIndicator size="small" color={accentColor} style={{ padding: 20 }} /> : null}
-                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
+                refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={onRefresh} tintColor={Colors.primary} />}
             />
 
             {/* ── MODALS ───────────────────────────────────────────────── */}
@@ -671,12 +802,21 @@ export default function ProfileScreen() {
                                         activeOpacity={0.7}
                                         onPress={async () => { 
                                             const mediaUrl = item.media_url;
-                                            setCoverMap(p => ({ ...p, [pickerCapsuleId!]: mediaUrl })); 
+                                            setCoverMap((p: Record<string, string>) => ({ ...p, [pickerCapsuleId!]: mediaUrl })); 
                                             setPickerCapsuleId(null); 
                                             
                                             // Persist to DB
                                             try {
-                                                const { error } = await supabase.from('capsules').update({ cover_url: mediaUrl }).eq('id', pickerCapsuleId);
+                                                const cap = capsulesData.find((c: any) => c.id === pickerCapsuleId);
+                                                const isOwner = cap?.owner_id === currentUserId;
+                                                let error;
+                                                if (isOwner) {
+                                                    const res = await supabase.from('capsules').update({ cover_url: mediaUrl }).eq('id', pickerCapsuleId);
+                                                    error = res.error;
+                                                } else {
+                                                    const res = await supabase.from('capsule_invites').update({ cover_url: mediaUrl }).eq('capsule_id', pickerCapsuleId).eq('user_id', currentUserId);
+                                                    error = res.error;
+                                                }
                                                 if (error) throw error;
                                                 DeviceEventEmitter.emit('CAPSULE_UPDATED', { id: pickerCapsuleId, cover_url: mediaUrl });
                                                 Alert.alert(t('common.ready'), t('profile.cover_updated'));
@@ -1000,6 +1140,7 @@ export default function ProfileScreen() {
             <StoryViewer
                 visible={activeStoryViewer}
                 userGroup={userStories}
+                currentUserId={currentUserId || undefined}
                 onClose={() => setActiveStoryViewer(false)}
                 onStoryRead={async (storyId) => {
                     if (!currentUserId) return;
@@ -1127,9 +1268,9 @@ const s = StyleSheet.create({
 
     // Grid
     gridWrap: { paddingHorizontal: 12, paddingTop: 12 },
-    gridContent: { gap: 12 },
-    gridRow: { gap: 12 },
-    gridCell: { width: (width - 48) / 3 },
+    gridContent: { gap: 2, paddingHorizontal: 2 },
+    gridRow: { gap: 2 },
+    gridCell: { width: (width - 8) / 3, height: Math.floor((width - 8) / 3) + 48, marginBottom: 8 },
 
     // Capsule cell — clean card
     capsuleCell: {

@@ -6,6 +6,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
 import { supabase } from '../lib/supabase';
 import { MODEL_IMAGES, MODEL_IMAGES_OPEN } from '../constants/models';
@@ -27,6 +28,7 @@ export default function CapsuleSelectorScreen() {
     const insets = useSafeAreaInsets();
     const navigation = useNavigation<any>();
     const route = useRoute();
+    const { t } = useTranslation();
     const { contentType }: any = route.params || {};
 
     const [capsules, setCapsules] = useState<any[]>([]);
@@ -35,15 +37,23 @@ export default function CapsuleSelectorScreen() {
     useEffect(() => { loadCapsules(); }, []);
 
     const loadCapsules = async () => {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) return;
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.user) return;
+        const user = session.user;
 
-        const { data: ownCaps } = await supabase
-            .from('capsules')
-            .select('*, items_count:capsule_items(count), invites_count:capsule_invites(count)')
-            .or(`owner_id.eq.${user.id},invited_user_id.eq.${user.id}`)
-            .in('status', ['sealed', 'opened'])
-            .order('created_at', { ascending: false });
+        const [{ data: ownCaps }, { data: inviteEntries }] = await Promise.all([
+            supabase
+                .from('capsules')
+                .select('*, items_count:capsule_items(count), invites_count:capsule_invites(count)')
+                .or(`owner_id.eq.${user.id},invited_user_id.eq.${user.id}`)
+                .in('status', ['sealed', 'opened'])
+                .order('created_at', { ascending: false }),
+            supabase
+                .from('capsule_invites')
+                .select('capsule_id, capsules:capsule_id(*, items_count:capsule_items(count), invites_count:capsule_invites(count))')
+                .eq('user_id', user.id)
+                .eq('status', 'accepted'),
+        ]);
 
         const now = new Date().getTime();
         const filteredOwnAndLegacy = (ownCaps || []).filter(cap => {
@@ -52,12 +62,6 @@ export default function CapsuleSelectorScreen() {
             const isSealedAndNotReady = cap.status === 'sealed' && new Date(cap.opens_at).getTime() > now;
             return isAccepted && (isBornOpen || isSealedAndNotReady);
         });
-
-        const { data: inviteEntries } = await supabase
-            .from('capsule_invites')
-            .select('capsule_id, capsules:capsule_id(*, items_count:capsule_items(count), invites_count:capsule_invites(count))')
-            .eq('user_id', user.id)
-            .eq('status', 'accepted');
 
         let allCaps = [...filteredOwnAndLegacy];
         if (inviteEntries) {
@@ -73,9 +77,7 @@ export default function CapsuleSelectorScreen() {
         }
 
         setCapsules(
-            allCaps
-                // .filter(c => c.type !== 'eventcap') // Removed filter for 'eventcap'
-                .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+            allCaps.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
         );
         setLoading(false);
     };
@@ -96,8 +98,8 @@ export default function CapsuleSelectorScreen() {
                     </View>
                 </TouchableOpacity>
                 <View style={styles.headerCenter}>
-                    <Text style={styles.headerTitle}>Select Capsule</Text>
-                    <Text style={styles.headerSub}>Choose where to save this memory</Text>
+                    <Text style={styles.headerTitle}>{t('add.select_capsule')}</Text>
+                    <Text style={styles.headerSub}>{t('add.choose_destination')}</Text>
                 </View>
                 <View style={{ width: 44 }} />
             </View>
@@ -116,15 +118,15 @@ export default function CapsuleSelectorScreen() {
                         />
                         <Ionicons name="lock-closed-outline" size={38} color={Colors.primary} />
                     </View>
-                    <Text style={styles.emptyTitle}>No capsules available</Text>
-                    <Text style={styles.emptyText}>Create a Sealed or Open capsule to start storing memories</Text>
+                    <Text style={styles.emptyTitle}>{t('add.no_capsules_available')}</Text>
+                    <Text style={styles.emptyText}>{t('add.no_capsules_desc')}</Text>
                     <TouchableOpacity
                         style={styles.createBtn}
                         activeOpacity={0.85}
                         onPress={() => navigation.navigate('CapsuleCreation')}
                     >
                         <Ionicons name="add" size={18} color="#fff" />
-                        <Text style={styles.createBtnText}>Create a Capsule</Text>
+                        <Text style={styles.createBtnText}>{t('create.create_btn')}</Text>
                     </TouchableOpacity>
                 </View>
             ) : (
@@ -136,7 +138,7 @@ export default function CapsuleSelectorScreen() {
                     ListHeaderComponent={
                         <View style={styles.listHeader}>
                             <Text style={styles.listHeaderCount}>
-                                {capsules.length} {capsules.length === 1 ? 'capsule' : 'capsules'} available
+                                {t('add.capsules_available', { count: capsules.length })}
                             </Text>
                         </View>
                     }
@@ -150,6 +152,7 @@ export default function CapsuleSelectorScreen() {
 
 /* ─── Card ─────────────────────────────────────────────────────────────────── */
 const CapsuleEntry = React.memo(({ item, onSelect }: { item: any; onSelect: (cap: any) => void }) => {
+    const { t } = useTranslation();
     const isBornOpen = item.status === 'opened' && item.duration_days === 0;
     const cfg = isBornOpen ? TYPE_CONFIG.opencap : (TYPE_CONFIG[item.type as keyof typeof TYPE_CONFIG] || TYPE_CONFIG.legacycap);
     
@@ -194,6 +197,7 @@ const CapsuleEntry = React.memo(({ item, onSelect }: { item: any; onSelect: (cap
                     modelKey={item.model}
                     source={{ uri: modelImg }}
                     date={item.opens_at}
+                    modelLayout={item.model_snapshot}
                     chainId={item.chain_id}
                     capsuleType={isBornOpen ? 'opencap' : item.type}
                     style={styles.cardImage}
@@ -233,10 +237,10 @@ const CapsuleEntry = React.memo(({ item, onSelect }: { item: any; onSelect: (cap
                 <View style={styles.openRow}>
                     <Ionicons name="time-outline" size={12} color={Colors.textMuted} />
                     {isOpened ? (
-                        <Text style={styles.cardDate}>Always open</Text>
+                        <Text style={styles.cardDate}>{t('add.always_open')}</Text>
                     ) : (
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                            <Text style={styles.cardDate}>Opens:</Text>
+                            <Text style={styles.cardDate}>{t('add.opens_label')}</Text>
                             <LiveTimer date={item.opens_at} style={styles.cardDateBold} />
                         </View>
                     )}

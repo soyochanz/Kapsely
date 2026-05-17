@@ -24,7 +24,14 @@ export const locationService = {
                 latitude: location.coords.latitude,
                 longitude: location.coords.longitude,
                 altitude: location.coords.altitude,
-                locationName: address?.city || address?.subregion || address?.region || 'Ubicación actual'
+                locationName:
+                    address?.city ||
+                    address?.district ||
+                    address?.subregion ||
+                    address?.region ||
+                    address?.name ||
+                    address?.country ||
+                    'Ubicación actual'
             };
         } catch (e) {
             return null;
@@ -78,11 +85,19 @@ export const locationService = {
         const longitude = toDecimal(lon, lonRef);
 
         const [address] = await Location.reverseGeocodeAsync({ latitude, longitude });
+        const locationName =
+            address?.city ||
+            address?.district ||
+            address?.subregion ||
+            address?.region ||
+            address?.name ||
+            address?.country ||
+            `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
         return {
             latitude,
             longitude,
             altitude: exif.GPSAltitude || null,
-            locationName: address?.city || address?.subregion || address?.region || 'Ubicación'
+            locationName,
         };
     }
 };

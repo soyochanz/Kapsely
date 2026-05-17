@@ -212,6 +212,7 @@ export default function InstagramShareScreen() {
                             modelKey={capsule.model}
                             source={modelImg ? { uri: modelImg } : undefined}
                             date={capsuleOpensAt}
+                            modelLayout={capsule.model_snapshot}
                             chainId={capsule.chain_id}
                             capsuleType={capsule.type}
                             style={s.capsuleImg}
@@ -243,11 +244,11 @@ export default function InstagramShareScreen() {
                                 )}
                                 {/* Blur overlay (only if sealed) */}
                                 {isSealed && (
-                                    Platform.OS === 'ios' ? (
-                                        <BlurView intensity={22} tint="light" style={StyleSheet.absoluteFill as any} />
-                                    ) : (
-                                        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255,255,255,0.6)' }]} />
-                                    )
+                                    <BlurView 
+                                        intensity={Platform.OS === 'ios' ? 35 : 85} 
+                                        tint="light" 
+                                        style={StyleSheet.absoluteFill as any} 
+                                    />
                                 )}
                                 {/* Lock icon (only if sealed) */}
                                 {isSealed && (

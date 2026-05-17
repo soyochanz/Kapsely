@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     Platform, View, Text, StyleSheet, ScrollView, TouchableOpacity,
-    StatusBar, ActivityIndicator, Animated, PanResponder, Easing,
+    StatusBar, ActivityIndicator, Animated, Easing,
     Dimensions, RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTranslation } from 'react-i18next';
@@ -12,13 +13,13 @@ import { Colors, Fonts, Spacing, BorderRadius } from '../theme';
 import SwipeableNotificationItem from '../components/SwipeableNotificationItem';
 import { Notification } from '../data/mockNotifications';
 import { supabase } from '../lib/supabase';
+import { FlashList } from '@shopify/flash-list';
 import { clearBadgeCount } from '../utils/pushNotifications';
 import { safetyService } from '../utils/safety';
 
 const { width, height } = Dimensions.get('window');
 
-// ─── Pull-Up Threshold ────────────────────────────────────────────────────────
-const PULL_THRESHOLD = 90;
+const AnyFlashList = FlashList as any;
 
 // ─── Ripple success animation component ──────────────────────────────────────
 function MarkAllRipple({ visible, onDone }: { visible: boolean; onDone: () => void }) {
@@ -79,76 +80,6 @@ const rippleS = StyleSheet.create({
     },
 });
 
-// ─── Pull-up indicator ────────────────────────────────────────────────────────
-function PullUpIndicator({ pullY, threshold }: { pullY: Animated.Value; threshold: number }) {
-    const { t } = useTranslation();
-    const progress = pullY.interpolate({
-        inputRange: [0, threshold],
-        outputRange: [0, 1],
-        extrapolate: 'clamp',
-    });
-    const indicatorOpacity = pullY.interpolate({
-        inputRange: [0, 20, threshold],
-        outputRange: [0, 0.6, 1],
-        extrapolate: 'clamp',
-    });
-    const indicatorTranslate = pullY.interpolate({
-        inputRange: [0, threshold],
-        outputRange: [20, 0],
-        extrapolate: 'clamp',
-    });
-    const arrowRotate = pullY.interpolate({
-        inputRange: [0, threshold],
-        outputRange: ['0deg', '180deg'],
-        extrapolate: 'clamp',
-    });
-
-    return (
-        <Animated.View style={[pullS.wrap, { opacity: indicatorOpacity, transform: [{ translateY: indicatorTranslate }] }]}>
-            <View style={pullS.pill}>
-                <Animated.View style={{ transform: [{ rotate: arrowRotate }] }}>
-                    <Ionicons name="arrow-up" size={14} color={Colors.primary} />
-                </Animated.View>
-                <Text style={pullS.pillText}>{t('notifications.mark_all_read')}</Text>
-                {/* Progress arc */}
-                <View style={pullS.progressWrap}>
-                    <Animated.View style={[pullS.progressFill, {
-                        width: progress.interpolate({ inputRange: [0, 1], outputRange: [0, 28] }),
-                        opacity: progress,
-                    }]} />
-                </View>
-            </View>
-        </Animated.View>
-    );
-}
-
-const pullS = StyleSheet.create({
-    wrap: {
-        alignItems: 'center',
-        paddingBottom: 12,
-        paddingTop: 4,
-    },
-    pill: {
-        flexDirection: 'row', alignItems: 'center', gap: 7,
-        paddingHorizontal: 16, paddingVertical: 8,
-        backgroundColor: Colors.instaCapLight,
-        borderRadius: 30, borderWidth: 1.5,
-        borderColor: Colors.primary + '33',
-        shadowColor: Colors.primary,
-        shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 2 },
-        elevation: 2,
-    },
-    pillText: { fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.primary },
-    progressWrap: {
-        width: 28, height: 3, borderRadius: 2,
-        backgroundColor: Colors.primary + '20', overflow: 'hidden',
-    },
-    progressFill: {
-        height: '100%', borderRadius: 2,
-        backgroundColor: Colors.primary,
-    },
-});
-
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 export default function NotificationsScreen() {
     const insets = useSafeAreaInsets();
@@ -158,13 +89,9 @@ export default function NotificationsScreen() {
     const [scrollEnabled, setScrollEnabled] = useState(true);
     const [showRipple, setShowRipple] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
+    const [totalUnread, setTotalUnread] = useState(0);
 
-    // Pull-up gesture state
-    const pullY = useRef(new Animated.Value(0)).current;
     const scrollRef = useRef<ScrollView>(null);
-    const isAtBottom = useRef(false);
-    const isPulling = useRef(false);
-    const pulledEnough = useRef(false);
 
     // Header fade-in on mount
     const headerFade = useRef(new Animated.Value(0)).current;
@@ -189,26 +116,54 @@ export default function NotificationsScreen() {
         return t('common.d_ago', { count: Math.floor(hrs / 24) });
     };
 
-    const loadNotifications = async () => {
+    const [page, setPage] = useState(0);
+    const [hasMore, setHasMore] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
+    const PAGE_SIZE = 20;
+
+    const loadNotifications = async (isRefresh = false) => {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return;
 
+        const start = isRefresh ? 0 : page * PAGE_SIZE;
+        const end = start + PAGE_SIZE - 1;
+
+        if (!isRefresh) setLoadingMore(true);
+        else setLoading(true);
+
         const blocked = await safetyService.getAllSafetyUserIds(user.id);
-        const { data } = await supabase
+        const { data: followedCapsules } = await supabase
+            .from('capsule_followers')
+            .select('capsule_id')
+            .eq('user_id', user.id);
+        const followedCapsuleIds = new Set((followedCapsules || []).map((row: any) => row.capsule_id));
+
+        const { data, error } = await supabase
             .from('notifications')
             .select('*, sender:sender_id(username, display_name, avatar_url, favorite_color), capsules(title, type, model, chain_id, opens_at, owner_id)')
             .eq('user_id', user.id)
             .order('created_at', { ascending: false })
-            .limit(50);
+            .range(start, end);
+
+        if (error) {
+            console.error('Error loading notifications:', error);
+            setLoading(false);
+            setLoadingMore(false);
+            return;
+        }
 
         if (data) {
             const mapped: Notification[] = data
-                .filter(n => !blocked.includes(n.sender_id) && !n.conversation_id && n.type !== 'chat' && n.type !== 'message' && n.type !== 'capsule_chat' && n.type !== 'chat_message')
+                .filter(n => {
+                    if (blocked.includes(n.sender_id) || n.conversation_id) return false;
+                    if (['chat', 'message', 'capsule_chat', 'chat_message'].includes(n.type)) return false;
+                    if (n.type === 'new_item') return !!n.capsule_id && followedCapsuleIds.has(n.capsule_id);
+                    return true;
+                })
                 .map(n => {
                     const createdDate = new Date(n.created_at);
                     const expiryDate = new Date(createdDate.getTime() + 3 * 86400000);
                     
-                    // Dynamic message generation for language sync
                     let displayMessage = n.message || '';
                     const capTitle = n.capsules?.title ? `"${n.capsules.title}"` : '';
                     
@@ -250,16 +205,69 @@ export default function NotificationsScreen() {
                         expiryDate,
                     };
                 });
-            setNotifications(mapped);
+            
+            if (isRefresh) {
+                setNotifications(mapped);
+                setPage(1);
+                setHasMore(data.length === PAGE_SIZE);
+
+                // Cleanup expired invitations from DB
+                const expiredIds = mapped.filter(n => n.type === 'capsule_invite' && n.isExpired).map(n => n.capsuleId).filter(Boolean);
+                if (expiredIds.length > 0) {
+                    supabase.from('capsule_invites')
+                        .delete()
+                        .eq('user_id', user.id)
+                        .in('capsule_id', expiredIds)
+                        .eq('status', 'pending')
+                        .then(({ error }) => {
+                            if (!error) {
+                                // Also remove from UI if desired, but here we just clean DB
+                                // The next refresh will show them gone.
+                            }
+                        });
+                }
+            } else {
+                setNotifications(prev => [...prev, ...mapped]);
+                setPage(p => p + 1);
+                setHasMore(data.length === PAGE_SIZE);
+            }
         }
         setLoading(false);
+        setLoadingMore(false);
+
+        // Fetch total unread count for the +20 logic
+        if (isRefresh) {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) {
+                const { count } = await supabase
+                    .from('notifications')
+                    .select('*', { count: 'exact', head: true })
+                    .eq('user_id', user.id)
+                    .not('type', 'in', '("chat","message","capsule_chat","chat_message")')
+                    .eq('is_read', false);
+
+                const { data: unreadUploads } = await supabase
+                    .from('notifications')
+                    .select('id, capsule_id')
+                    .eq('user_id', user.id)
+                    .eq('type', 'new_item')
+                    .eq('is_read', false);
+                const hiddenUploadUnread = (unreadUploads || []).filter((n: any) => !n.capsule_id || !followedCapsuleIds.has(n.capsule_id)).length;
+                setTotalUnread(Math.max(0, (count || 0) - hiddenUploadUnread));
+            }
+        }
+    };
+
+    const handleLoadMore = () => {
+        if (!hasMore || loadingMore || loading) return;
+        loadNotifications();
     };
 
     useEffect(() => {
-        loadNotifications();
+        loadNotifications(true);
         if (Platform.OS !== 'web') clearBadgeCount();
         const channel = supabase.channel('notifications_realtime')
-            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, loadNotifications)
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, () => loadNotifications(true))
             .subscribe();
         return () => { supabase.removeChannel(channel); };
     }, []);
@@ -328,61 +336,15 @@ export default function NotificationsScreen() {
         setRefreshing(true);
         // Mark all as read and reload to ensure everything is synced
         await handleMarkAllRead();
-        await loadNotifications();
+        await loadNotifications(true);
         setRefreshing(false);
         setShowRipple(true);
     };
 
-    // ─── Pull-up to mark all read ─────────────────────────────────────────
-    const panResponder = useRef(
-        PanResponder.create({
-            onMoveShouldSetPanResponder: (_, g) => {
-                // Only capture upward drags when at bottom of scroll
-                return isAtBottom.current && g.dy < -5 && Math.abs(g.dy) > Math.abs(g.dx);
-            },
-            onPanResponderGrant: () => {
-                isPulling.current = true;
-                pulledEnough.current = false;
-            },
-            onPanResponderMove: (_, g) => {
-                if (!isPulling.current) return;
-                const pull = Math.max(0, -g.dy);
-                pullY.setValue(pull);
-                pulledEnough.current = pull >= PULL_THRESHOLD;
-            },
-            onPanResponderRelease: () => {
-                isPulling.current = false;
-                const didPull = pulledEnough.current;
-                Animated.spring(pullY, { toValue: 0, friction: 7, tension: 80, useNativeDriver: false }).start();
-                if (didPull) {
-                    setShowRipple(true);
-                    handleMarkAllRead();
-                }
-            },
-            onPanResponderTerminate: () => {
-                isPulling.current = false;
-                Animated.spring(pullY, { toValue: 0, friction: 7, tension: 80, useNativeDriver: false }).start();
-            },
-        })
-    ).current;
-
-    const unreadCount = notifications.filter(n => !n.isRead).length;
-
-    // ─── Grouped notifications ─────────────────────────────────────────────
-    const grouped = React.useMemo(() => {
-        const today: Notification[] = [];
-        const earlier: Notification[] = [];
-        const now = Date.now();
-        notifications.forEach(n => {
-            const diff = now - new Date(n.createdAt || now).getTime();
-            if (diff < 86400000) today.push(n);
-            else earlier.push(n);
-        });
-        return { today, earlier };
-    }, [notifications]);
+    const unreadCount = totalUnread;
 
     // ─── Render ────────────────────────────────────────────────────────────
-    if (loading) {
+    if (loading && page === 0) {
         return (
             <View style={[s.root, s.centered]}>
                 <ActivityIndicator color={Colors.primary} size="large" />
@@ -391,7 +353,8 @@ export default function NotificationsScreen() {
     }
 
     return (
-        <View style={s.root} {...panResponder.panHandlers}>
+        <GestureHandlerRootView style={{ flex: 1 }}>
+        <View style={s.root}>
             <StatusBar barStyle="dark-content" backgroundColor={Colors.background} />
 
             {/* Ripple overlay */}
@@ -406,7 +369,7 @@ export default function NotificationsScreen() {
                             <View style={s.unreadRow}>
                                 <View style={s.unreadDot} />
                                 <Text style={s.unreadText}>
-                                    {unreadCount} {t('notifications.unread', { count: unreadCount })}
+                                    {unreadCount > 20 ? '+20' : unreadCount} {t('notifications.unread', { count: unreadCount })}
                                 </Text>
                             </View>
                         ) : (
@@ -417,44 +380,29 @@ export default function NotificationsScreen() {
                     {/* Unread count badge */}
                     {unreadCount > 0 && (
                         <View style={s.unreadBadge}>
-                            <Text style={s.unreadBadgeText}>{unreadCount}</Text>
+                            <Text style={s.unreadBadgeText}>{unreadCount > 20 ? '+20' : unreadCount}</Text>
                         </View>
                     )}
                 </View>
 
-                {/* Pull-up hint — only when there are unread */}
+                {/* Mark all read button */}
                 {unreadCount > 0 && (
-                    <View style={s.swipeHint}>
-                        <Ionicons name="arrow-down-outline" size={11} color={Colors.textMuted} />
-                        <Text style={s.swipeHintText}>{t('notifications.swipe_all_read')}</Text>
-                    </View>
+                    <TouchableOpacity
+                        style={s.markAllBtn}
+                        activeOpacity={0.7}
+                        onPress={() => { setShowRipple(true); handleMarkAllRead(); }}
+                    >
+                        <Ionicons name="checkmark-done" size={13} color={Colors.primary} />
+                        <Text style={s.markAllBtnText}>{t('notifications.mark_all_read')}</Text>
+                    </TouchableOpacity>
                 )}
 
                 <View style={s.headerDivider} />
             </Animated.View>
 
-            {/* ── SCROLL ──────────────────────────────────────────────── */}
-            <ScrollView
-                ref={scrollRef}
-                style={s.scroll}
-                scrollEnabled={scrollEnabled}
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={[s.scrollContent, { paddingBottom: insets.bottom + 110 }]}
-                onScroll={e => {
-                    const { layoutMeasurement, contentOffset, contentSize } = e.nativeEvent;
-                    isAtBottom.current = layoutMeasurement.height + contentOffset.y >= contentSize.height - 30;
-                }}
-                scrollEventThrottle={16}
-                refreshControl={
-                    <RefreshControl
-                        refreshing={refreshing}
-                        onRefresh={onRefresh}
-                        tintColor={Colors.primary}
-                        colors={[Colors.primary]}
-                    />
-                }
-            >
-                {notifications.length === 0 ? (
+            {/* ── LIST ────────────────────────────────────────────────── */}
+            <View style={{ flex: 1 }}>
+                {notifications.length === 0 && !loading ? (
                     <View style={s.emptyState}>
                         <View style={s.emptyIconWrap}>
                             <Ionicons name="notifications-off-outline" size={36} color={Colors.textMuted} />
@@ -462,25 +410,48 @@ export default function NotificationsScreen() {
                         <Text style={s.emptyTitle}>{t('notifications.all_clear')}</Text>
                         <Text style={s.emptySub}>{t('notifications.no_notifications')}</Text>
                     </View>
-                ) : (<>
-
-                    {/* Today */}
-                    {grouped.today.length > 0 && (<>
-                        <View style={s.sectionHeader}>
-                            <View style={[s.sectionDot, { backgroundColor: Colors.primary }]} />
-                            <Text style={s.sectionTitle}>{t('notifications.today')}</Text>
-                            <View style={s.sectionLine} />
-                        </View>
-                        {grouped.today.map((n, i) => (
+                ) : (
+                    <AnyFlashList
+                        data={notifications}
+                        estimatedItemSize={90}
+                        keyExtractor={(item: Notification) => item.id}
+                        scrollEnabled={scrollEnabled}
+                        onEndReachedThreshold={0.1}
+                        showsVerticalScrollIndicator={false}
+                        contentContainerStyle={[s.scrollContent, { paddingBottom: insets.bottom + 110 }]}
+                        refreshControl={
+                            <RefreshControl
+                                refreshing={refreshing}
+                                onRefresh={onRefresh}
+                                tintColor={Colors.primary}
+                                colors={[Colors.primary]}
+                            />
+                        }
+                        ListFooterComponent={() => (
+                            <View style={{ paddingBottom: insets.bottom + 120 }}>
+                                {loadingMore ? (
+                                    <ActivityIndicator color={Colors.primary} style={{ marginVertical: 20 }} />
+                                ) : hasMore && notifications.length >= PAGE_SIZE ? (
+                                    <TouchableOpacity 
+                                        style={s.loadMoreBtn} 
+                                        onPress={handleLoadMore}
+                                        activeOpacity={0.7}
+                                    >
+                                        <Text style={s.loadMoreText}>{t('notifications.load_more') || 'Cargar más'}</Text>
+                                        <Ionicons name="chevron-down" size={18} color={Colors.primary} />
+                                    </TouchableOpacity>
+                                ) : null}
+                            </View>
+                        )}
+                        renderItem={({ item, index }: { item: Notification; index: number }) => (
                             <Animated.View
-                                key={n.id}
                                 style={{
                                     opacity: headerFade,
-                                    transform: [{ translateY: headerSlide.interpolate({ inputRange: [-12, 0], outputRange: [-12 - i * 4, 0] }) }],
+                                    transform: [{ translateY: headerSlide.interpolate({ inputRange: [-12, 0], outputRange: [-12 - index * 4, 0] }) }],
                                 }}
                             >
                                 <SwipeableNotificationItem
-                                    notification={n}
+                                    notification={item}
                                     onDelete={handleDelete}
                                     onMarkRead={handleMarkRead}
                                     onAcceptInvite={handleAcceptInvite}
@@ -489,38 +460,12 @@ export default function NotificationsScreen() {
                                     onSwipeEnd={() => setScrollEnabled(true)}
                                 />
                             </Animated.View>
-                        ))}
-                    </>)}
-
-                    {/* Earlier */}
-                    {grouped.earlier.length > 0 && (<>
-                        <View style={[s.sectionHeader, { marginTop: 12 }]}>
-                            <View style={[s.sectionDot, { backgroundColor: Colors.textMuted }]} />
-                            <Text style={[s.sectionTitle, { color: Colors.textMuted }]}>{t('notifications.earlier')}</Text>
-                            <View style={s.sectionLine} />
-                        </View>
-                        {grouped.earlier.map(n => (
-                            <SwipeableNotificationItem
-                                key={n.id}
-                                notification={n}
-                                onDelete={handleDelete}
-                                onMarkRead={handleMarkRead}
-                                onAcceptInvite={handleAcceptInvite}
-                                onRejectInvite={handleRejectInvite}
-                                onSwipeStart={() => setScrollEnabled(false)}
-                                onSwipeEnd={() => setScrollEnabled(true)}
-                            />
-                        ))}
-                    </>)}
-
-                    {/* Pull-up indicator — floats at the very bottom of list */}
-                    {unreadCount > 0 && (
-                        <PullUpIndicator pullY={pullY} threshold={PULL_THRESHOLD} />
-                    )}
-
-                </>)}
-            </ScrollView>
+                        )}
+                    />
+                )}
+            </View>
         </View>
+        </GestureHandlerRootView>
     );
 }
 
@@ -558,11 +503,11 @@ const s = StyleSheet.create({
     },
     unreadBadgeText: { fontSize: 13, fontFamily: Fonts.bold, color: '#fff' },
 
-    swipeHint: {
+    markAllBtn: {
         flexDirection: 'row', alignItems: 'center', gap: 5,
-        paddingBottom: 10, paddingTop: 2,
+        paddingBottom: 10, paddingTop: 2, alignSelf: 'flex-start',
     },
-    swipeHintText: { fontSize: 11, fontFamily: Fonts.regular, color: Colors.textMuted },
+    markAllBtnText: { fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.primary },
 
     headerDivider: { height: 1, backgroundColor: Colors.divider, marginBottom: 4 },
 
@@ -582,6 +527,26 @@ const s = StyleSheet.create({
     },
     sectionLine: {
         flex: 1, height: 1, backgroundColor: Colors.divider,
+    },
+
+    loadMoreBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        paddingVertical: 16,
+        marginTop: 20,
+        marginHorizontal: 20,
+        borderRadius: 18,
+        backgroundColor: Colors.background,
+        borderWidth: 1.5,
+        borderColor: Colors.divider,
+        borderStyle: 'dashed',
+    },
+    loadMoreText: {
+        fontSize: 14,
+        fontFamily: Fonts.bold,
+        color: Colors.primary,
     },
 
     // Empty state

@@ -51,7 +51,7 @@ export default function NotificationItem({ notification, onMarkRead, onAcceptInv
         } else if (notification.capsuleId) {
             navigation.navigate('CapsuleDetail', { capsuleId: notification.capsuleId });
         } else if (notification.user?.id) {
-            navigation.navigate('UserProfile', { targetUserId: notification.user.id });
+            navigation.navigate('ExternalProfile', { targetUserId: notification.user.id });
         }
     };
 
@@ -68,7 +68,7 @@ export default function NotificationItem({ notification, onMarkRead, onAcceptInv
         >
             <TouchableOpacity
                 activeOpacity={0.8}
-                onPress={() => !isMemory && notification.user?.id && navigation.navigate('UserProfile', { targetUserId: notification.user.id })}
+                onPress={() => !isMemory && notification.user?.id && navigation.navigate('ExternalProfile', { targetUserId: notification.user.id })}
                 style={styles.avatarContainer}
             >
                 {isMemory ? (
@@ -113,15 +113,15 @@ export default function NotificationItem({ notification, onMarkRead, onAcceptInv
                 {isInvite && !isExpired && onAcceptInvite && onRejectInvite && (
                     <View style={styles.inviteActions}>
                         <TouchableOpacity style={styles.rejectBtn} activeOpacity={0.7} onPress={() => onRejectInvite(notification)}>
-                            <Text style={styles.rejectBtnText}>Reject</Text>
+                            <Text style={styles.rejectBtnText}>{t('common.reject') || 'Rechazar'}</Text>
                         </TouchableOpacity>
                         <TouchableOpacity style={styles.acceptBtn} activeOpacity={0.8} onPress={() => onAcceptInvite(notification)}>
-                            <Text style={styles.acceptBtnText}>Accept</Text>
+                            <Text style={styles.acceptBtnText}>{t('common.accept') || 'Aceptar'}</Text>
                         </TouchableOpacity>
                     </View>
                 )}
                 {isInvite && isExpired && (
-                    <Text style={styles.expiredText}>Invite Expired</Text>
+                    <Text style={styles.expiredText}>{t('notifications.invite_expired') || 'Invitación Caducada'}</Text>
                 )}
             </View>
 

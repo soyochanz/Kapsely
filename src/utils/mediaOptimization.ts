@@ -3,8 +3,8 @@ import * as ImageManipulator from 'expo-image-manipulator';
 export const UPLOAD_IMAGE_MAX_WIDTH = 1200;
 export const UPLOAD_IMAGE_QUALITY = 0.75;
 
-export const THUMBNAIL_MAX_WIDTH = 480;
-export const THUMBNAIL_QUALITY = 0.6;
+export const THUMBNAIL_MAX_WIDTH = 720;
+export const THUMBNAIL_QUALITY = 0.82;
 
 export async function optimizeImageForUpload(uri: string) {
     try {

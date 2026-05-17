@@ -3,7 +3,8 @@ import {
     View, Text, StyleSheet, ScrollView, TouchableOpacity,
     TextInput, StatusBar, Dimensions, Switch,
     Image, Animated, Alert, ActivityIndicator,
-    Easing, Modal, Platform, Keyboard, KeyboardAvoidingView,
+    Easing, Modal, Platform, Keyboard, KeyboardAvoidingView, DeviceEventEmitter,
+    InteractionManager,
 } from 'react-native';
 import * as NavigationBar from 'expo-navigation-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -20,14 +21,23 @@ import { supabase } from '../lib/supabase';
 import { CAPSULE_MODELS, MODEL_IMAGES } from '../constants/models';
 import CapsuleWithTimer from '../components/CapsuleWithTimer';
 import { timerConfigManager } from '../utils/timerConfig';
+import { sendPushNotification } from '../utils/pushNotifications';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const { width, height } = Dimensions.get('window');
-const MIN_DAYS = 7;
+const MIN_DAYS = 1;
 const MAX_DAYS = 365 * 5;
+const clampModelLayout = (model: any) => ({
+    scale: Math.max(0.5, Math.min(1.8, Number(model?.image_scale) || 1)),
+    scaleX: Math.max(0.5, Math.min(1.8, Number(model?.image_scale_x) || 1)),
+    scaleY: Math.max(0.5, Math.min(1.8, Number(model?.image_scale_y) || 1)),
+    offsetX: Math.max(-80, Math.min(80, Number(model?.image_offset_x) || 0)),
+    offsetY: Math.max(-80, Math.min(80, Number(model?.image_offset_y) || 0)),
+});
 type Step = 'mode' | 'design' | 'identity' | 'timing' | 'review';
 const CLOSED_STEPS: Step[] = ['mode', 'design', 'identity', 'timing', 'review'];
 const OPEN_STEPS: Step[] = ['mode', 'design', 'identity', 'review'];
+const BIRTHDAY_STEPS: Step[] = ['mode', 'design', 'identity', 'review'];
 
 // ─── Design Tokens — Soft White + Warm Rose/Lavender ─────────────────────────
 const L = {
@@ -72,7 +82,7 @@ const TYPE_CFG = {
         limitIcon: 'alert-circle-outline' as const,
         rules: [
             'Only one LegacyCap at a time',
-            'Duration: 1 year → 5 years',
+            'Duration: 24h → 5 years',
             'Cannot change settings after sealing',
         ],
         groupOk: true,
@@ -91,7 +101,7 @@ const TYPE_CFG = {
         limitIcon: 'albums-outline' as const,
         rules: [
             'Up to 5 active at once',
-            'Duration: 2 weeks → 1 year',
+            'Duration: 24h → 5 years',
             'The only type that supports group capsules',
         ],
         groupOk: true,
@@ -134,12 +144,39 @@ const TYPE_CFG = {
         ],
         groupOk: true,
     },
+    birthdaycap: {
+        accent: '#FF6FB7',
+        light: '#FFF1F8',
+        border: '#F9B8D8',
+        gradient: ['#FF6FB7', '#8B5CF6'] as const,
+        gradientFull: ['#FF6FB7', '#8B5CF6', '#67E8F9'] as const,
+        emoji: '\uD83C\uDF82',
+        icon: 'gift' as const,
+        label: 'BirthdayCap',
+        tagline: 'A 24h capsule available only on your birthday.',
+        limit: 'Birthday day only',
+        limitIcon: 'sparkles-outline' as const,
+        rules: [
+            'Only appears on your birthday',
+            'Always opens after 24 hours',
+            'Uses birthday-only designs',
+        ],
+        groupOk: true,
+    },
 } as const;
 
 function isEventActive(s?: string, e?: string) {
     if (!s || !e) return false;
     const now = new Date();
     return now >= new Date(s) && now <= new Date(e);
+}
+
+function isDropActive(drop?: any) {
+    if (!drop?.is_active || !drop.start_date) return false;
+    const now = Date.now();
+    const startsAt = new Date(drop.start_date).getTime();
+    const endsAt = drop.end_date ? new Date(drop.end_date).getTime() : Number.POSITIVE_INFINITY;
+    return now >= startsAt && now <= endsAt;
 }
 
 // ─── Floating orb background decoration ──────────────────────────────────────
@@ -345,30 +382,33 @@ function ModelPickerModal({
         }
     }, [visible]);
 
+    const getModelActiveDrop = (model: any) => {
+        const drop = model.drop_id ? drops.find(d => d.id === model.drop_id) : null;
+        return isDropActive(drop) ? drop : null;
+    };
+
     const filteredModels = models.filter(m => {
-        if (m.is_active === false) return false;
+        const activeDrop = getModelActiveDrop(m);
+        if (m.is_active === false && !activeDrop) return false;
         
         // If it's an event capsule, only show event models
         if (selectedType === 'eventcap') return m.is_event;
+        if (selectedType === 'birthdaycap') return m.is_birthday || m.category === 'Birthday';
         
-        // For other types, show non-event models
-        return !m.is_event;
+        // For other types, show non-event and non-birthday models
+        return !m.is_event && !m.is_birthday;
     });
 
     const groupedModels = useMemo(() => {
         const groups: Record<string, any[]> = { 'Regular': [] };
         
         filteredModels.forEach(m => {
-            const drop = m.drop_id ? drops.find(d => d.id === m.drop_id) : null;
-            if (drop) {
-                // Check if drop is active (current date within range)
-                const now = new Date();
-                const isDropActive = now >= new Date(drop.start_date) && now <= new Date(drop.end_date);
-                
-                if (isDropActive) {
-                    if (!groups[drop.name]) groups[drop.name] = [];
-                    groups[drop.name].push(m);
-                }
+            const activeDrop = getModelActiveDrop(m);
+            if (activeDrop) {
+                groups['Regular'].push({
+                    ...m,
+                    active_drop_name: activeDrop.name,
+                });
             } else {
                 groups['Regular'].push(m);
             }
@@ -395,16 +435,16 @@ function ModelPickerModal({
                 />
                 <View style={modalS.sheetHeader}>
                     <View>
-                        <Text style={modalS.sheetTitle}>Choose Model</Text>
-                        <Text style={modalS.sheetSub}>Pick a shell for your capsule</Text>
+                        <Text style={modalS.sheetTitle}>Elegir Modelo</Text>
+                        <Text style={modalS.sheetSub}>Selecciona la apariencia de tu cápsula</Text>
                     </View>
                     <TouchableOpacity onPress={onClose} style={[modalS.closeBtn, { borderColor: accent + '30', backgroundColor: accent + '0A' }]}>
-                        <Ionicons name="close" size={16} color={accent} />
+                        <Ionicons name="close" size={20} color={accent} />
                     </TouchableOpacity>
                 </View>
                 <ScrollView
                     showsVerticalScrollIndicator={false}
-                    contentContainerStyle={{ paddingBottom: 20 }}
+                    contentContainerStyle={{ paddingBottom: 40 }}
                 >
                     {Object.entries(groupedModels).map(([groupName, groupModels]) => {
                         if (groupModels.length === 0) return null;
@@ -413,36 +453,101 @@ function ModelPickerModal({
                             <View key={groupName} style={modalS.groupSection}>
                                 <View style={modalS.groupHeader}>
                                     <Text style={modalS.groupTitle}>{groupName}</Text>
-                                    {groupName !== 'Regular' && (
-                                        <View style={[modalS.dropLabel, { backgroundColor: accent + '15' }]}>
-                                            <Ionicons name="flash" size={10} color={accent} />
-                                            <Text style={[modalS.dropLabelText, { color: accent }]}>ACTIVE DROP</Text>
-                                        </View>
-                                    )}
                                 </View>
                                 <View style={modalS.grid}>
                                     {groupModels.map((model) => {
+                                        const staticModel = CAPSULE_MODELS.find(m => m.id === model.id);
+                                        
+                                        // Define labels for labels
+                                        const popularLabels = ['Basic Red', 'Mons', 'Flame', 'Unicorn'];
+                                        const newLabels = ['Slime', 'Banana', 'Liquid Metal'];
+                                        
+                                        const isTrending = model.is_trending || (staticModel as any)?.is_trending || popularLabels.includes(model.label) || popularLabels.includes(model.id.replace('_kap', ''));
+                                        const isNew = model.is_new || (staticModel as any)?.is_new || newLabels.includes(model.label) || newLabels.includes(model.id.replace('_kap', ''));
+                                        const isDropModel = !!model.active_drop_name;
+                                        
                                         const isActive = selectedModel === model.id;
                                         return (
                                             <TouchableOpacity
                                                 key={model.id}
                                                 onPress={() => { onSelect(model.id); onClose(); }}
                                                 activeOpacity={0.8}
-                                                style={[modalS.modelCard, isActive && { borderColor: accent, backgroundColor: accent + '08' }]}
+                                                style={[
+                                                    modalS.modelCard, 
+                                                    isDropModel && modalS.dropModelCard,
+                                                    isActive && { borderColor: accent, backgroundColor: accent + '05', transform: [{ scale: 1.02 }] },
+                                                    isTrending && modalS.trendingCardGlow,
+                                                    isNew && modalS.newCardGlow
+                                                ]}
                                             >
                                                 {isActive && (
                                                     <LinearGradient colors={[accent, accent + 'CC']} style={modalS.selectedBadge}>
-                                                        <Ionicons name="checkmark" size={10} color="#fff" />
+                                                        <Ionicons name="checkmark" size={12} color="#fff" />
                                                     </LinearGradient>
                                                 )}
+
                                                 <View style={modalS.modelImgWrap}>
-                                                    <Image source={{ uri: model.image }} style={modalS.modelImg} resizeMode="contain" />
+                                                    <Image 
+                                                        source={{ uri: model.image }} 
+                                                        style={[
+                                                            modalS.modelImg,
+                                                            {
+                                                                transform: [
+                                                                    { translateX: clampModelLayout(model).offsetX * 0.38 },
+                                                                    { translateY: clampModelLayout(model).offsetY * 0.38 },
+                                                                    { scaleX: clampModelLayout(model).scale * clampModelLayout(model).scaleX },
+                                                                    { scaleY: clampModelLayout(model).scale * clampModelLayout(model).scaleY },
+                                                                ],
+                                                            },
+                                                        ]}
+                                                        resizeMode="contain" 
+                                                    />
                                                 </View>
-                                                <Text style={[modalS.modelLabel, isActive && { color: accent }]} numberOfLines={2}>{model.label}</Text>
+                                                
+                                                <View style={modalS.modelInfo}>
+                                                    <Text style={[modalS.modelLabel, isActive && { color: accent }]} numberOfLines={1}>
+                                                        {model.label}
+                                                    </Text>
+                                                </View>
+                                                
+                                                {isTrending && (
+                                                    <LinearGradient 
+                                                        colors={['#FF4D00', '#FF8C00', '#FFD700']} 
+                                                        start={{x:0, y:0}} end={{x:1, y:1}}
+                                                        style={modalS.trendingBadge}
+                                                    >
+                                                        <Ionicons name="flame" size={10} color="#fff" />
+                                                        <Text style={modalS.trendingBadgeText}>POPULAR</Text>
+                                                    </LinearGradient>
+                                                )}
+
+                                                {isNew && (
+                                                    <LinearGradient 
+                                                        colors={['#00D2FF', '#3a7bd5']} 
+                                                        start={{x:0, y:0}} end={{x:1, y:1}}
+                                                        style={modalS.newBadge}
+                                                    >
+                                                        <Ionicons name="sparkles" size={10} color="#fff" />
+                                                        <Text style={modalS.trendingBadgeText}>NEW</Text>
+                                                    </LinearGradient>
+                                                )}
+
                                                 {model.is_event && (
                                                     <View style={modalS.eventBadge}>
-                                                        <Text style={modalS.eventBadgeText}>EVENT</Text>
+                                                        <Text style={modalS.eventBadgeText}>EVENTO</Text>
                                                     </View>
+                                                )}
+                                                {isDropModel && (
+                                                    <>
+                                                    <LinearGradient
+                                                        colors={['#7C3AED', '#A855F7']}
+                                                        start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                                                        style={modalS.modelDropBadge}
+                                                    >
+                                                        <Ionicons name="flash" size={9} color="#fff" />
+                                                        <Text style={modalS.modelDropBadgeText}>DROP</Text>
+                                                    </LinearGradient>
+                                                    </>
                                                 )}
                                             </TouchableOpacity>
                                         );
@@ -464,57 +569,120 @@ const modalS = StyleSheet.create({
         backgroundColor: L.surface,
         borderTopLeftRadius: 32,
         borderTopRightRadius: 32,
-        maxHeight: height * 0.82,
+        maxHeight: height * 0.85,
         paddingTop: 10,
         shadowColor: '#000',
-        shadowOpacity: 0.3,
-        shadowRadius: 30,
-        shadowOffset: { width: 0, height: -8 },
+        shadowOpacity: 0.25,
+        shadowRadius: 25,
+        shadowOffset: { width: 0, height: -10 },
         elevation: 20,
     },
     handle: {
-        width: 40, height: 4, borderRadius: 2,
+        width: 44, height: 5, borderRadius: 3,
         backgroundColor: L.borderStrong,
-        alignSelf: 'center', marginBottom: 16,
+        alignSelf: 'center', marginBottom: 20,
     },
     sheetHeader: {
         flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-        paddingHorizontal: 22, marginBottom: 18,
+        paddingHorizontal: 24, marginBottom: 24,
     },
-    sheetTitle: { fontSize: 22, fontFamily: Fonts.bold, color: L.text, letterSpacing: -0.5 },
-    sheetSub: { fontSize: 13, color: L.textMuted, fontFamily: Fonts.regular, marginTop: 2 },
+    sheetTitle: { fontSize: 24, fontFamily: Fonts.bold, color: L.text, letterSpacing: -0.5 },
+    sheetSub: { fontSize: 14, color: L.textMuted, fontFamily: Fonts.regular, marginTop: 2 },
     closeBtn: {
-        width: 34, height: 34, borderRadius: 17,
+        width: 40, height: 40, borderRadius: 20,
         alignItems: 'center', justifyContent: 'center',
-        borderWidth: 1,
+        borderWidth: 1.5,
     },
     grid: {
         flexDirection: 'row', flexWrap: 'wrap',
-        paddingHorizontal: 16, gap: 12, paddingBottom: 20,
+        paddingHorizontal: 16, gap: 16, paddingBottom: 20,
     },
     modelCard: {
-        width: (width - 32 - 12 * 2) / 3,
+        width: (width - 32 - 16) / 2,
         backgroundColor: L.surfaceAlt,
-        borderRadius: 20, borderWidth: 1.5, borderColor: L.border,
-        paddingVertical: 14, paddingHorizontal: 8,
-        alignItems: 'center', gap: 8,
+        borderRadius: 24, borderWidth: 1.5, borderColor: L.border,
+        paddingVertical: 12, paddingHorizontal: 12,
+        alignItems: 'center', justifyContent: 'center',
         position: 'relative',
+        shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 5, shadowOffset: { width: 0, height: 2 },
+    },
+    dropModelCard: {
+        borderWidth: 2.5,
+        borderColor: '#7C3AED',
+        backgroundColor: '#F6F0FF',
+        shadowColor: '#7C3AED',
+        shadowOpacity: 0.24,
+        shadowRadius: 16,
+        elevation: 8,
+    },
+    trendingCardGlow: {
+        shadowColor: '#FF8C00', shadowOpacity: 0.12, shadowRadius: 10, elevation: 5,
+    },
+    newCardGlow: {
+        shadowColor: '#00D2FF', shadowOpacity: 0.12, shadowRadius: 10, elevation: 5,
     },
     selectedBadge: {
-        position: 'absolute', top: 8, right: 8,
-        width: 20, height: 20, borderRadius: 10,
+        position: 'absolute', top: 12, right: 12,
+        width: 24, height: 24, borderRadius: 12,
         alignItems: 'center', justifyContent: 'center',
+        zIndex: 10,
     },
-    modelImgWrap: { width: 72, height: 72, alignItems: 'center', justifyContent: 'center' },
-    modelImg: { width: 68, height: 68 },
-    modelLabel: { fontSize: 11, fontFamily: Fonts.semiBold, color: L.textSec, textAlign: 'center', lineHeight: 15 },
-    eventBadge: { backgroundColor: '#B87A1A20', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 8 },
-    eventBadgeText: { fontSize: 8, fontFamily: Fonts.bold, color: '#B87A1A', letterSpacing: 1 },
-    groupSection: { marginBottom: 20 },
-    groupHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 22, marginBottom: 10 },
-    groupTitle: { fontSize: 13, fontFamily: Fonts.bold, color: L.textSec, textTransform: 'uppercase', letterSpacing: 1 },
-    dropLabel: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
-    dropLabelText: { fontSize: 9, fontFamily: Fonts.bold },
+    modelImgWrap: { 
+        width: 120, height: 120, 
+        alignItems: 'center', justifyContent: 'center',
+        marginBottom: 12,
+    },
+    modelImg: { width: 110, height: 110 },
+    modelInfo: {
+        alignItems: 'center',
+    },
+    modelLabel: { 
+        fontSize: 14, fontFamily: Fonts.bold, 
+        color: L.text, textAlign: 'center',
+    },
+    eventBadge: { 
+        backgroundColor: '#B87A1A20', paddingHorizontal: 8, paddingVertical: 3, 
+        borderRadius: 10, marginTop: 6 
+    },
+    eventBadgeText: { fontSize: 9, fontFamily: Fonts.bold, color: '#B87A1A', letterSpacing: 1 },
+    groupSection: { marginBottom: 28 },
+    groupHeader: { 
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', 
+        paddingHorizontal: 24, marginBottom: 14 
+    },
+    groupTitle: { 
+        fontSize: 14, fontFamily: Fonts.bold, color: L.textMuted, 
+        textTransform: 'uppercase', letterSpacing: 1.5 
+    },
+    modelDropBadge: {
+        position: 'absolute',
+        top: 12,
+        left: 12,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 4,
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 10,
+        zIndex: 11,
+    },
+    modelDropBadgeText: { fontSize: 8, fontFamily: Fonts.bold, color: '#fff', textTransform: 'uppercase' },
+    trendingBadge: {
+        position: 'absolute', top: 12, left: 12,
+        flexDirection: 'row', alignItems: 'center', gap: 4,
+        paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10,
+        shadowColor: '#FF4D00', shadowOpacity: 0.3, shadowRadius: 5, shadowOffset: { width: 0, height: 2 },
+        zIndex: 10,
+    },
+    newBadge: {
+        position: 'absolute', top: 12, left: 12,
+        flexDirection: 'row', alignItems: 'center', gap: 4,
+        paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10,
+        shadowColor: '#00D2FF', shadowOpacity: 0.3, shadowRadius: 5, shadowOffset: { width: 0, height: 2 },
+        zIndex: 10,
+    },
+    trendingBadgeText: { fontSize: 9, fontFamily: Fonts.bold, color: '#fff' },
 });
 
 // ─── Seal Animation ───────────────────────────────────────────────────────────
@@ -534,7 +702,6 @@ function SealAnimation({ accent, modelUri, modelOpenUri, onDone, isOpen }: {
     const lockOpacity = useRef(new Animated.Value(0)).current;
     const lockScale = useRef(new Animated.Value(0.4)).current;
     const doneOpacity = useRef(new Animated.Value(0)).current;
-    const bgDarken = useRef(new Animated.Value(0)).current;
     const ring1Scale = useRef(new Animated.Value(0.1)).current;
     const ring1Opacity = useRef(new Animated.Value(0)).current;
     const ring2Scale = useRef(new Animated.Value(0.1)).current;
@@ -600,7 +767,6 @@ function SealAnimation({ accent, modelUri, modelOpenUri, onDone, isOpen }: {
                     Animated.parallel(seqs),
                     Animated.delay(120),
                     Animated.parallel([
-                        Animated.timing(bgDarken, { toValue: 1, duration: 400, useNativeDriver: true }),
                         Animated.timing(capY, { toValue: -8, duration: 200, easing: Easing.out(Easing.quad), useNativeDriver: true }),
                         Animated.timing(capScale, { toValue: 1.35, duration: 350, easing: Easing.out(Easing.back(1.2)), useNativeDriver: true }),
                         Animated.timing(glowScale, { toValue: 1.6, duration: 350, useNativeDriver: true }),
@@ -663,8 +829,8 @@ function SealAnimation({ accent, modelUri, modelOpenUri, onDone, isOpen }: {
                                 ]),
                             ]),
                         ]).start(() => {
-                            Animated.timing(doneOpacity, { toValue: 1, duration: 400, useNativeDriver: true }).start();
-                            setTimeout(onDone, 1200);
+                            Animated.timing(doneOpacity, { toValue: 1, duration: 300, useNativeDriver: true }).start();
+                            setTimeout(onDone, 400);
                         });
                     });
                 });
@@ -672,39 +838,62 @@ function SealAnimation({ accent, modelUri, modelOpenUri, onDone, isOpen }: {
         });
     }, []);
 
-    const ITEM_ICONS = ['image-outline', 'videocam-outline', 'musical-notes-outline'] as const;
-    const bgColor = bgDarken.interpolate({ inputRange: [0, 1], outputRange: [L.bg, '#0D0A1A'] });
-
     return (
-        <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: bgColor as any, zIndex: 3000, alignItems: 'center', justifyContent: 'center' }]}>
-            <Animated.View style={{ position: 'absolute', width: 240, height: 240, borderRadius: 120, borderWidth: 2, borderColor: accent + '60', transform: [{ scale: ring1Scale }], opacity: ring1Opacity }} />
-            <Animated.View style={{ position: 'absolute', width: 240, height: 240, borderRadius: 120, borderWidth: 1.5, borderColor: accent + '40', transform: [{ scale: ring2Scale }], opacity: ring2Opacity }} />
-            <Animated.View style={{ position: 'absolute', width: 240, height: 240, borderRadius: 120, borderWidth: 1, borderColor: accent + '30', transform: [{ scale: ring3Scale }], opacity: ring3Opacity }} />
-            <Animated.View style={{ position: 'absolute', width: 300, height: 300, borderRadius: 150, backgroundColor: accent + '18', transform: [{ scale: glowScale }], opacity: glowOpacity }} />
-            <Animated.View style={{ position: 'absolute', width: 340, height: 340, borderRadius: 170, borderWidth: 1.5, borderColor: accent + '22', transform: [{ scale: glowScale }], opacity: glowOpacity }} />
-            {/* Sealing animation logic - items behind removed as per user request */}
-            <Animated.View style={{ position: 'absolute', opacity: stage === 'sealed' ? new Animated.Value(0) : capOpacity, transform: [{ scale: Animated.multiply(capScale, breathe) }, { translateY: capY }] }}>
-                <Image source={{ uri: modelOpenUri || modelUri }} style={{ width: 230, height: 230 }} resizeMode="contain" />
+        <View style={{ flex: 1, backgroundColor: '#0D0A1A', alignItems: 'center', justifyContent: 'center' }}>
+            {/* Ambient glow */}
+            <Animated.View style={{ position: 'absolute', width: 320, height: 320, borderRadius: 160, backgroundColor: accent + '20', transform: [{ scale: glowScale }], opacity: glowOpacity }} />
+            <Animated.View style={{ position: 'absolute', width: 360, height: 360, borderRadius: 180, borderWidth: 1.5, borderColor: accent + '18', transform: [{ scale: glowScale }], opacity: glowOpacity }} />
+            {/* Seal rings */}
+            <Animated.View style={{ position: 'absolute', width: 260, height: 260, borderRadius: 130, borderWidth: 2, borderColor: accent + '70', transform: [{ scale: ring1Scale }], opacity: ring1Opacity }} />
+            <Animated.View style={{ position: 'absolute', width: 260, height: 260, borderRadius: 130, borderWidth: 1.5, borderColor: accent + '50', transform: [{ scale: ring2Scale }], opacity: ring2Opacity }} />
+            <Animated.View style={{ position: 'absolute', width: 260, height: 260, borderRadius: 130, borderWidth: 1, borderColor: accent + '30', transform: [{ scale: ring3Scale }], opacity: ring3Opacity }} />
+            {/* Open capsule — entry stage */}
+            <Animated.View style={{ position: 'absolute', opacity: capOpacity, transform: [{ scale: Animated.multiply(capScale, breathe) }, { translateY: capY }] }}>
+                <Image source={{ uri: modelOpenUri || modelUri }} style={{ width: 250, height: 250 }} resizeMode="contain" />
             </Animated.View>
+            {/* Flash */}
             <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: '#fff', opacity: flash }]} pointerEvents="none" />
-            <Animated.View style={{ position: 'absolute', opacity: sealedOpacity, transform: [{ scale: sealedScale }], alignItems: 'center' }}>
-                <Image source={{ uri: modelUri }} style={{ width: 230, height: 230 }} resizeMode="contain" />
-                <Animated.View style={{ position: 'absolute', bottom: 22, right: '12%', width: 52, height: 52, borderRadius: 26, backgroundColor: accent, alignItems: 'center', justifyContent: 'center', shadowColor: accent, shadowOpacity: 0.7, shadowRadius: 20, shadowOffset: { width: 0, height: 6 }, elevation: 12, opacity: lockOpacity, transform: [{ scale: lockScale }] }}>
-                    <Ionicons name="lock-closed" size={22} color="#fff" />
-                </Animated.View>
+            {/* Sealed capsule — final stage */}
+            <Animated.View style={{ position: 'absolute', opacity: sealedOpacity, transform: [{ scale: sealedScale }], alignItems: 'center', top: '18%' }}>
+                <View style={{ width: 260, height: 260, alignItems: 'center', justifyContent: 'center' }}>
+                    <Image source={{ uri: modelUri }} style={{ width: 260, height: 260 }} resizeMode="contain" />
+                    <Animated.View style={{
+                        position: 'absolute', bottom: 10, right: 10,
+                        width: 54, height: 54, borderRadius: 27,
+                        backgroundColor: accent,
+                        alignItems: 'center', justifyContent: 'center',
+                        shadowColor: accent, shadowOpacity: 0.9, shadowRadius: 18, shadowOffset: { width: 0, height: 4 }, elevation: 16,
+                        opacity: lockOpacity, transform: [{ scale: lockScale }],
+                    }}>
+                        <Ionicons name="lock-closed" size={24} color="#fff" />
+                    </Animated.View>
+                </View>
             </Animated.View>
+            {/* Particles */}
             {particles.map((p, i) => (
                 <Animated.View key={i} style={{ position: 'absolute', width: p.size, height: p.size, borderRadius: p.size / 2, backgroundColor: p.color, opacity: p.op, transform: [{ translateX: p.x }, { translateY: p.y }, { scale: p.sc }] }} />
             ))}
-            <Animated.View style={{ position: 'absolute', bottom: '14%', alignItems: 'center', opacity: doneOpacity }}>
-                <Text style={{ fontSize: 26, fontFamily: Fonts.bold, color: '#fff', letterSpacing: -0.5, textShadowColor: accent, textShadowRadius: 20, textShadowOffset: { width: 0, height: 0 } }}>
-                    {t('create.seal_anim_msg')}
+            {/* Final message */}
+            <Animated.View style={{ position: 'absolute', bottom: 90, alignItems: 'center', opacity: doneOpacity, width: '80%' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: accent + '22', borderRadius: 50, paddingHorizontal: 18, paddingVertical: 8, borderWidth: 1, borderColor: accent + '55', marginBottom: 20 }}>
+                    <Ionicons name="lock-closed" size={11} color={accent} />
+                    <Text style={{ fontSize: 11, color: accent, fontFamily: Fonts.bold, letterSpacing: 2.5, textTransform: 'uppercase' }}>
+                        {t('create.capsule_locked')}
+                    </Text>
+                </View>
+                <Text style={{ fontSize: 32, fontFamily: Fonts.bold, color: '#fff', letterSpacing: -0.5, textAlign: 'center', lineHeight: 38, textShadowColor: accent, textShadowRadius: 32, textShadowOffset: { width: 0, height: 0 } }}>
+                    Sellada{'\n'}para el futuro
                 </Text>
-                <Text style={{ fontSize: 14, color: '#ffffff99', fontFamily: Fonts.regular, marginTop: 6 }}>
-                    {t('create.capsule_locked')}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 18, marginBottom: 12 }}>
+                    <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,0.10)' }} />
+                    <Text style={{ fontSize: 12, color: accent + 'BB', letterSpacing: 6 }}>✦ ✦ ✦</Text>
+                    <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,0.10)' }} />
+                </View>
+                <Text style={{ fontSize: 14, color: 'rgba(255,255,255,0.50)', fontFamily: Fonts.regular, textAlign: 'center', letterSpacing: 0.3 }}>
+                    Tus recuerdos esperan el momento
                 </Text>
             </Animated.View>
-        </Animated.View>
+        </View>
     );
 }
 
@@ -797,13 +986,13 @@ function OpenCapAnimation({ accent, modelUri, onDone }: {
                 ]),
             ]).start(() => {
                 Animated.timing(doneOpacity, { toValue: 1, duration: 450, useNativeDriver: true }).start();
-                setTimeout(onDone, 1400);
+                setTimeout(onDone, 800);
             });
         });
     }, []);
 
     return (
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: '#EEF5FF', zIndex: 3000, alignItems: 'center', justifyContent: 'center' }]}>
+        <View style={{ flex: 1, backgroundColor: '#EEF5FF', alignItems: 'center', justifyContent: 'center' }}>
             <Animated.View style={{ position: 'absolute', width: 200, height: 200, borderRadius: 100, borderWidth: 3, borderColor: '#6B8FF550', transform: [{ scale: bloom1 }], opacity: bloom1Op }} />
             <Animated.View style={{ position: 'absolute', width: 200, height: 200, borderRadius: 100, borderWidth: 2, borderColor: '#74C0FC40', transform: [{ scale: bloom2 }], opacity: bloom2Op }} />
             <Animated.View style={{ position: 'absolute', width: 200, height: 200, borderRadius: 100, borderWidth: 1.5, borderColor: '#A5D8FF30', transform: [{ scale: bloom3 }], opacity: bloom3Op }} />
@@ -845,7 +1034,7 @@ function DurationSlider({ days, onChange, accent, daysToLabel, setScrollEnabled 
                 thumbTintColor={accent}
             />
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 2 }}>
-                <Text style={{ fontSize: 10, color: L.textMuted, fontFamily: Fonts.regular }}>1 week</Text>
+                <Text style={{ fontSize: 10, color: L.textMuted, fontFamily: Fonts.regular }}>24h</Text>
                 <Text style={{ fontSize: 13, color: accent, fontFamily: Fonts.bold }}>{daysToLabel(days)}</Text>
                 <Text style={{ fontSize: 10, color: L.textMuted, fontFamily: Fonts.regular }}>5 years</Text>
             </View>
@@ -878,6 +1067,7 @@ export default function CapsuleCreationScreen() {
     const [selectedModel, setSelectedModel] = useState('basicred_kap');
     const [hasLegacyCap, setHasLegacyCap] = useState(false);
     const [activeInstaCapCount, setActiveInstaCapCount] = useState(0);
+    const [isBirthdayToday, setIsBirthdayToday] = useState(false);
     const [loadingLimits, setLoadingLimits] = useState(true);
     const [allModels, setAllModels] = useState<any[]>([...(timerConfigManager.models.length > 0 ? timerConfigManager.models : CAPSULE_MODELS)]);
     const [drops, setDrops] = useState<any[]>([]);
@@ -887,6 +1077,7 @@ export default function CapsuleCreationScreen() {
             setAllModels([...timerConfigManager.models]);
             setDrops(timerConfigManager.getDrops());
         });
+        setDrops(timerConfigManager.getDrops());
         return unsubscribe;
     }, []);
     const [showModelPicker, setShowModelPicker] = useState(false);
@@ -913,16 +1104,17 @@ export default function CapsuleCreationScreen() {
     const [capAngelSearchResults, setCapAngelSearchResults] = useState<any[]>([]);
     const [searchingCapAngel, setSearchingCapAngel] = useState(false);
 
-    const [availableModels, setAvailableModels] = useState<any[]>(timerConfigManager.models);
+    const [availableModels, setAvailableModels] = useState<any[]>(timerConfigManager.models.length > 0 ? timerConfigManager.models : [...CAPSULE_MODELS]);
     const [sealing, setSealing] = useState(false);
     const [showSealAnim, setShowSealAnim] = useState(false);
+    const newCapsuleRef = useRef<any>(null);
     const [showDatePicker, setShowDatePicker] = useState(false);
 
     const slideAnim = useRef(new Animated.Value(0)).current;
     const capScaleAnim = useRef(new Animated.Value(1)).current;
     const headerBorderAnim = useRef(new Animated.Value(0)).current;
 
-    const steps = selectedMode === 'open' ? OPEN_STEPS : CLOSED_STEPS;
+    const steps = selectedType === 'birthdaycap' ? BIRTHDAY_STEPS : selectedMode === 'open' ? OPEN_STEPS : CLOSED_STEPS;
     const stepIndex = steps.indexOf(currentStep);
     const cfg = selectedType ? TYPE_CFG[selectedType as keyof typeof TYPE_CFG] : null;
     const accent = cfg?.accent ?? L.purple;
@@ -933,12 +1125,12 @@ export default function CapsuleCreationScreen() {
     );
 
     const PRESETS = [
-        { label: 'common.1_week', days: 7, emoji: '⚡' },
-        { label: 'common.1_month', days: 30, emoji: '🌙' },
-        { label: 'common.1_year', days: 365, emoji: '🔮' },
-        { label: 'common.2_years', days: 365 * 2, emoji: '🕰️' },
-        { label: 'common.5_years', days: 365 * 5, emoji: '⏳' },
-        { label: 'common.custom', days: -1, emoji: '🎛️' },
+        { label: 'common.timing_1_night', days: 1, emoji: '🌙' },
+        { label: 'common.timing_flash', days: 7, emoji: '⚡' },
+        { label: 'common.timing_lunar', days: 30, emoji: '🌑' },
+        { label: 'common.timing_solar', days: 365, emoji: '☀️' },
+        { label: 'common.timing_legacy', days: 365 * 5, emoji: '🏺' },
+        { label: 'common.timing_custom', days: -1, emoji: '🎛️' },
     ];
 
     const daysToLabel = (d: number) => {
@@ -971,6 +1163,8 @@ export default function CapsuleCreationScreen() {
     useEffect(() => {
         if (selectedMode === 'open') {
             if (selectedType !== 'opencap') setSelectedType('opencap' as any);
+        } else if (selectedType === 'birthdaycap') {
+            return;
         } else if (isJoiningEvent && activeEvent) {
             if (selectedType !== 'eventcap') setSelectedType('eventcap');
         } else if (finalDays && finalDays > 365) {
@@ -978,10 +1172,11 @@ export default function CapsuleCreationScreen() {
         } else {
             if (selectedType !== 'instacap') setSelectedType('instacap');
         }
-    }, [finalDays, selectedMode, isJoiningEvent, activeEvent]);
+    }, [finalDays, selectedMode, isJoiningEvent, activeEvent, selectedType]);
 
     const openingDate = useMemo(() => {
         if (selectedType === 'eventcap' && activeEvent) return activeEvent.event_end;
+        if (selectedType === 'birthdaycap') return new Date(Date.now() + 86400000).toISOString();
         if (selectedMode === 'open' || selectedType === 'opencap') return new Date().toISOString();
         if (finalDays) {
             const d = new Date(); d.setSeconds(0, 0);
@@ -1098,6 +1293,14 @@ export default function CapsuleCreationScreen() {
                 const { data: { session } } = await supabase.auth.getSession();
                 const user = session?.user;
                 if (user) {
+                    const { data: myProfile } = await supabase.from('profiles').select('birthdate').eq('id', user.id).maybeSingle();
+                    if (myProfile?.birthdate) {
+                        const [, month, day] = String(myProfile.birthdate).split('-').map(Number);
+                        const now = new Date();
+                        setIsBirthdayToday(month === now.getMonth() + 1 && day === now.getDate());
+                    } else {
+                        setIsBirthdayToday(false);
+                    }
                     const { count: lc } = await supabase.from('capsules').select('*', { count: 'exact', head: true }).eq('owner_id', user.id).eq('type', 'legacycap').eq('status', 'sealed');
                     if (lc != null) setHasLegacyCap(lc > 0);
                     const { count: ic } = await supabase.from('capsules').select('*', { count: 'exact', head: true }).eq('owner_id', user.id).eq('type', 'instacap').eq('status', 'sealed');
@@ -1111,19 +1314,23 @@ export default function CapsuleCreationScreen() {
     }, []);
 
     useEffect(() => {
-        const sub = timerConfigManager.subscribe(() => setAvailableModels([...timerConfigManager.models]));
-        setAvailableModels([...timerConfigManager.models]);
+        const syncModels = () => setAvailableModels([...(timerConfigManager.models.length > 0 ? timerConfigManager.models : [...CAPSULE_MODELS])]);
+        const sub = timerConfigManager.subscribe(syncModels);
+        syncModels();
         return sub;
     }, []);
 
     useEffect(() => {
         if (selectedType === 'eventcap' && activeEvent) {
             setSelectedModel(activeEvent.id);
+        } else if (selectedType === 'birthdaycap') {
+            const birthdayModel = availableModels.find(m => m.is_birthday || m.category === 'Birthday');
+            setSelectedModel(birthdayModel?.id || 'birthday_candy_kap');
         } else if (selectedType !== 'eventcap' && activeModel?.is_event) {
             // Revert back to basic model if event is deselected
             setSelectedModel('basicred_kap');
         }
-    }, [selectedType, activeEvent, activeModel?.is_event]);
+    }, [selectedType, activeEvent, activeModel?.is_event, availableModels]);
 
     // ─── Navigation ───────────────────────────────────────────────────────────
     const goToStep = (next: Step, dir: number) => {
@@ -1151,6 +1358,10 @@ export default function CapsuleCreationScreen() {
                 return;
             }
 
+            // Fetch current user profile for notifications
+            const { data: profile } = await supabase.from('profiles').select('username, display_name, birthdate').eq('id', user.id).single();
+            const ownerName = profile?.display_name || profile?.username || 'Someone';
+
             if (!title.trim()) {
                 Alert.alert('Missing Title', 'Please give your capsule a name');
                 setSealing(false);
@@ -1176,10 +1387,18 @@ export default function CapsuleCreationScreen() {
                     return;
                 }
             }
+            if (selectedType === 'birthdaycap' && !isBirthdayToday) {
+                Alert.alert('Birthday only', 'BirthdayCap is only available on your birthday.');
+                setSealing(false);
+                setShowSealAnim(false);
+                return;
+            }
 
             const dbType = selectedType === 'opencap' ? 'instacap' : selectedType;
             const opensAt = selectedType === 'opencap'
                 ? new Date().toISOString()
+                : selectedType === 'birthdaycap'
+                    ? new Date(Date.now() + 86400000).toISOString()
                 : (selectedType === 'eventcap' && activeEvent
                     ? activeEvent.event_end
                     : finalDays ? new Date(Date.now() + finalDays * 86400000).toISOString() : null);
@@ -1191,19 +1410,40 @@ export default function CapsuleCreationScreen() {
                 title: title || 'Untitled Capsule',
                 description,
                 is_shared: isShared,
-                duration_days: selectedType === 'opencap' ? 0 : finalDays,
+                duration_days: selectedType === 'opencap' ? 0 : selectedType === 'birthdaycap' ? 1 : finalDays,
                 opens_at: opensAt,
                 is_public: selectedType === 'opencap' ? true : isPublic,
                 status: selectedType === 'opencap' ? 'opened' : 'sealed',
                 chain_id: selectedChainId || null,
+                model_snapshot: activeModel ? {
+                    id: activeModel.id,
+                    label: activeModel.label,
+                    image: activeModel.image,
+                    image_open: activeModel.image_open,
+                    tint: activeModel.tint,
+                    image_scale: activeModel.image_scale ?? 1,
+                    image_scale_x: activeModel.image_scale_x ?? 1,
+                    image_scale_y: activeModel.image_scale_y ?? 1,
+                    image_offset_x: activeModel.image_offset_x ?? 0,
+                    image_offset_y: activeModel.image_offset_y ?? 0,
+                    captured_at: new Date().toISOString(),
+                } : null,
                 cap_angel: (selectedMode === 'closed' && useCapAngel && selectedCapAngel) ? true : false,
                 cap_angel_handle: (selectedMode === 'closed' && useCapAngel && selectedCapAngel) ? selectedCapAngel.username : null,
             }).select().single();
 
             if (error) throw error;
+            newCapsuleRef.current = newCapsule;
+            DeviceEventEmitter.emit('capsule_created', { capsuleId: newCapsule.id });
 
             if (isShared && invitedUsers.length > 0 && newCapsule) {
-                const inviteData = invitedUsers.map(u => ({ capsule_id: newCapsule.id, user_id: u.id, status: 'pending' }));
+                const expiresAt = new Date(Date.now() + 3 * 86400000).toISOString();
+                const inviteData = invitedUsers.map(u => ({ 
+                    capsule_id: newCapsule.id, 
+                    user_id: u.id, 
+                    status: 'pending',
+                    expires_at: expiresAt
+                }));
                 await supabase.from('capsule_invites').insert(inviteData);
                 
                 // Add notifications for each invited user
@@ -1212,17 +1452,27 @@ export default function CapsuleCreationScreen() {
                     sender_id: user.id,
                     type: 'capsule_invite',
                     capsule_id: newCapsule.id,
-                    message: `invited you to collaborate on the capsule "${title || 'New Capsule'}"`,
+                    message: `${ownerName} ${t('notifications.invited_you_msg') || 'invited you to collaborate on a capsule'}`,
                     is_read: false
                 }));
                 await supabase.from('notifications').insert(notificationData);
+
+                // Send Push Notifications
+                for (const u of invitedUsers) {
+                    try {
+                        sendPushNotification(
+                            u.id, 
+                            t('notifications.invitation_title') || 'New Invitation!', 
+                            `${ownerName} ${t('notifications.invited_you_body') || 'invited you to join a capsule.'}`,
+                            { screen: 'CapsuleDetail', params: { capsuleId: newCapsule.id } }
+                        );
+                    } catch (pushErr) {
+                        console.error('[SealCapsule] Push error:', pushErr);
+                    }
+                }
             }
 
-            setTimeout(() => {
-                setShowSealAnim(false);
-                setSealing(false);
-                navigation.reset({ index: 1, routes: [{ name: 'Main' }, { name: 'CapsuleDetail', params: { capsuleId: newCapsule.id } }] });
-            }, 5800);
+            // Navigation triggered by onDone callback from the animation
         } catch (e: any) {
             console.error('Create Capsule Error:', e);
             Alert.alert('Error', e.message ?? 'Could not create capsule');
@@ -1240,23 +1490,6 @@ export default function CapsuleCreationScreen() {
         <LinearGradient colors={bgColors} start={{ x: 0, y: 0 }} end={{ x: 0.4, y: 1 }} style={s.root}>
             <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
             <AmbientOrbs accent={accent} />
-
-            {showSealAnim && (
-                selectedType === 'opencap' ? (
-                    <OpenCapAnimation
-                        accent={accent}
-                        modelUri={activeModel?.image_open || activeModel?.image || ''}
-                        onDone={() => { }}
-                    />
-                ) : (
-                    <SealAnimation
-                        accent={accent}
-                        modelUri={activeModel?.image ?? ''}
-                        modelOpenUri={activeModel?.image_open}
-                        onDone={() => { }}
-                    />
-                )
-            )}
 
             <ModelPickerModal
                 visible={showModelPicker}
@@ -1316,10 +1549,43 @@ export default function CapsuleCreationScreen() {
                             <Text style={s.pageSub}>Choose how your capsule will work</Text>
                         </View>
 
+                        {isBirthdayToday && (
+                            <TouchableOpacity
+                                activeOpacity={0.92}
+                                onPress={() => { setSelectedMode('closed'); setSelectedType('birthdaycap'); setSelectedPreset(1); setShowCustomSlider(false); setSelectedModel('birthday_candy_kap'); goToStep('design', 1); }}
+                                style={[s.modeBigCard, { borderColor: TYPE_CFG.birthdaycap.border, marginBottom: 14 }]}
+                            >
+                                <LinearGradient
+                                    colors={TYPE_CFG.birthdaycap.gradientFull}
+                                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                                    style={s.modeCardGradient}
+                                >
+                                    <View style={s.modeCardInner}>
+                                        <View style={s.modeCardIconWrap}>
+                                            <View style={s.modeIconCircle}>
+                                                <Text style={{ fontSize: 34 }}>{'\uD83C\uDF82'}</Text>
+                                            </View>
+                                        </View>
+                                        <View style={s.modeCardTexts}>
+                                            <Text style={s.modeCardTitle}>BirthdayCap</Text>
+                                            <Text style={s.modeCardDesc}>Una cápsula destacada de 24h para tu cumpleaños.</Text>
+                                            <View style={s.modeCardTag}>
+                                                <Ionicons name="gift-outline" size={11} color="rgba(255,255,255,0.86)" />
+                                                <Text style={s.modeCardTagText}>Birthday only · 24h · Diseño único</Text>
+                                            </View>
+                                        </View>
+                                        <View style={s.modeCardArrow}>
+                                            <Ionicons name="arrow-forward" size={18} color="rgba(255,255,255,0.9)" />
+                                        </View>
+                                    </View>
+                                </LinearGradient>
+                            </TouchableOpacity>
+                        )}
+
                         {/* Sealed Cap */}
                         <TouchableOpacity
                             activeOpacity={0.92}
-                            onPress={() => { setSelectedMode('closed'); setSelectedType('instacap'); goNext(); }}
+                            onPress={() => { setSelectedMode('closed'); setSelectedType('instacap'); goToStep('design', 1); }}
                             style={[s.modeBigCard, selectedMode === 'closed' && s.modeBigCardActive]}
                         >
                             <LinearGradient
@@ -1353,7 +1619,7 @@ export default function CapsuleCreationScreen() {
                         {/* Open Cap */}
                         <TouchableOpacity
                             activeOpacity={0.92}
-                            onPress={() => { setSelectedMode('open'); setSelectedType('opencap' as any); goNext(); }}
+                            onPress={() => { setSelectedMode('open'); setSelectedType('opencap' as any); goToStep('design', 1); }}
                             style={[s.modeBigCard, selectedMode === 'open' && s.modeBigCardActive]}
                         >
                             <LinearGradient
@@ -1393,7 +1659,7 @@ export default function CapsuleCreationScreen() {
                         </View>
 
                         {/* Event Selection - NOW IN STEP 2 */}
-                        {selectedMode === 'closed' && activeEvent && (
+                        {selectedMode === 'closed' && selectedType !== 'birthdaycap' && activeEvent && (
                             <BlurView intensity={65} tint="light" style={[s.eventJoinCard, isJoiningEvent && { borderColor: TYPE_CFG.eventcap.accent, backgroundColor: TYPE_CFG.eventcap.light }]}>
                                 <LinearGradient colors={[TYPE_CFG.eventcap.accent + '15', 'transparent']} style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 60, borderRadius: 24 }} />
                                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
@@ -1426,9 +1692,19 @@ export default function CapsuleCreationScreen() {
                         )}
 
                         {/* Hero capsule preview */}
-                        <BlurView intensity={60} tint="light" style={s.designHeroCard}>
+                        <BlurView intensity={60} tint="light" style={[s.designHeroCard, activeModel?.is_trending && { borderColor: '#FF8C00', borderWidth: 2, shadowColor: '#FF4D00', shadowOpacity: 0.4, shadowRadius: 20 }]}>
+                            {activeModel?.is_trending && (
+                                <LinearGradient 
+                                    colors={['#FF4D00', '#FF8C00', '#FFD700']} 
+                                    start={{x:0, y:0}} end={{x:1, y:1}}
+                                    style={s.trendingLabelTop}
+                                >
+                                    <Ionicons name="flame" size={10} color="#fff" />
+                                    <Text style={s.trendingLabelText}>DISEÑO POPULAR</Text>
+                                </LinearGradient>
+                            )}
                             <LinearGradient
-                                colors={[accent + '14', accent + '06', 'transparent']}
+                                colors={[activeModel?.is_trending ? '#EAB30820' : accent + '14', accent + '06', 'transparent']}
                                 style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 120, borderRadius: 28 }}
                             />
                             <View style={s.designHeroCapsule}>
@@ -1439,8 +1715,10 @@ export default function CapsuleCreationScreen() {
                                         modelKey={selectedModel}
                                         source={activeModel?.image ? { uri: activeModel.image } : (MODEL_IMAGES as any)[selectedModel]}
                                         date={openingDate}
+                                        modelLayout={activeModel}
                                         chainId={selectedChainId}
-                                        style={{ width: 190, height: 190 }}
+                                        capsuleType={selectedType || undefined}
+                                        style={{ width: 220, height: 220 }}
                                         hideTimer
                                     />
                                 </Animated.View>
@@ -1514,7 +1792,20 @@ export default function CapsuleCreationScreen() {
                         {/* Preview card */}
                         <BlurView intensity={55} tint="light" style={[s.previewCard, { borderColor: accent + '28' }]}>
                             <LinearGradient colors={[accent + '10', 'transparent']} style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 60, borderRadius: 20 }} />
-                            <Image source={activeModel?.image ? { uri: activeModel.image } : (MODEL_IMAGES as any)[selectedModel]} style={{ width: 52, height: 52 }} resizeMode="contain" />
+                            <Image
+                                source={activeModel?.image ? { uri: activeModel.image } : (MODEL_IMAGES as any)[selectedModel]}
+                                style={{
+                                    width: 52,
+                                    height: 52,
+                                    transform: [
+                                        { translateX: clampModelLayout(activeModel).offsetX * 0.18 },
+                                        { translateY: clampModelLayout(activeModel).offsetY * 0.18 },
+                                        { scaleX: clampModelLayout(activeModel).scale * clampModelLayout(activeModel).scaleX },
+                                        { scaleY: clampModelLayout(activeModel).scale * clampModelLayout(activeModel).scaleY },
+                                    ],
+                                }}
+                                resizeMode="contain"
+                            />
                             <View style={{ flex: 1, minWidth: 0, marginLeft: 8 }}>
                                 <Text style={[s.previewTitle, { color: title ? L.text : L.textMuted }]} numberOfLines={1}>{title || t('create.your_title_here')}</Text>
                                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 3 }}>
@@ -1756,6 +2047,7 @@ export default function CapsuleCreationScreen() {
                                 display={Platform.OS === 'ios' ? 'spinner' : 'default'}
                                 minimumDate={new Date(Date.now() + MIN_DAYS * 86400000)}
                                 maximumDate={new Date(Date.now() + MAX_DAYS * 86400000)}
+                                locale={i18n.language.startsWith('es') ? 'es-ES' : 'en-US'}
                                 onChange={onDateChange}
                             />
                         )}
@@ -1859,16 +2151,29 @@ export default function CapsuleCreationScreen() {
                                 modelKey={selectedModel}
                                 source={{ uri: activeModel?.image ?? '' }}
                                 date={openingDate}
+                                modelLayout={activeModel}
                                 chainId={selectedChainId}
                                 capsuleType={selectedType || undefined}
-                                style={{ width: 175, height: 175 }}
+                                style={{ width: 200, height: 200 }}
                                 hideTimer={selectedType === 'opencap'}
                             />
-                            <View style={[s.reviewBadge, { backgroundColor: accent + '18', borderColor: accent + '40' }]}>
-                                <Ionicons name={cfg?.icon as any} size={11} color={accent} />
-                                <Text style={[s.reviewBadgeText, { color: accent }]}>
-                                    {selectedType ? t(`create.${selectedType}_label`) : '—'}
-                                </Text>
+                            <View style={{ flexDirection: 'row', gap: 8, marginTop: 14, marginBottom: 12 }}>
+                                <View style={[s.reviewBadge, { backgroundColor: accent + '18', borderColor: accent + '40', marginTop: 0, marginBottom: 0 }]}>
+                                    <Ionicons name={cfg?.icon as any} size={11} color={accent} />
+                                    <Text style={[s.reviewBadgeText, { color: accent }]}>
+                                        {selectedType ? t(`create.${selectedType}_label`) : '—'}
+                                    </Text>
+                                </View>
+                                {activeModel?.is_trending && (
+                                    <LinearGradient 
+                                        colors={['#FF4D00', '#FF8C00']} 
+                                        start={{x:0, y:0}} end={{x:1, y:1}}
+                                        style={[s.reviewBadge, { borderColor: '#FFD70050', marginTop: 0, marginBottom: 0 }]}
+                                    >
+                                        <Ionicons name="flame" size={11} color="#fff" />
+                                        <Text style={[s.reviewBadgeText, { color: '#fff' }]}>POPULAR</Text>
+                                    </LinearGradient>
+                                )}
                             </View>
                             <Text style={s.reviewTitle}>{title || t('create.untitled_capsule')}</Text>
                             <Text style={s.reviewDate}>{selectedType === 'opencap' ? displayDate : t('create.opens_on', { date: displayDate })}</Text>
@@ -1969,6 +2274,42 @@ export default function CapsuleCreationScreen() {
                     </TouchableOpacity>
                 </BlurView>
             )}
+        <Modal visible={showSealAnim} transparent={false} animationType="none" statusBarTranslucent>
+            {selectedType === 'opencap' ? (
+                <OpenCapAnimation
+                    accent={accent}
+                    modelUri={activeModel?.image_open || activeModel?.image || ''}
+                    onDone={() => {
+                        setShowSealAnim(false);
+                        setSealing(false);
+                        if (newCapsuleRef.current) {
+                            navigation.reset({ index: 1, routes: [{ name: 'Main' }, { name: 'CapsuleDetail', params: { capsuleId: newCapsuleRef.current.id } }] });
+                        }
+                    }}
+                />
+            ) : (
+                <SealAnimation
+                    accent={accent}
+                    modelUri={timerConfigManager.getModelImage(selectedModel) || activeModel?.image || ''}
+                    modelOpenUri={timerConfigManager.getModelImageOpen(selectedModel) || activeModel?.image_open || activeModel?.image || ''}
+                    onDone={() => {
+                        InteractionManager.runAfterInteractions(() => {
+                            setShowSealAnim(false);
+                            setSealing(false);
+                            if (newCapsuleRef.current) {
+                                navigation.reset({ 
+                                    index: 1, 
+                                    routes: [
+                                        { name: 'Main' }, 
+                                        { name: 'CapsuleDetail', params: { capsuleId: newCapsuleRef.current.id } }
+                                    ] 
+                                });
+                            }
+                        });
+                    }}
+                />
+            )}
+        </Modal>
         </LinearGradient>
     );
 }
@@ -2177,4 +2518,12 @@ const s = StyleSheet.create({
     capAngelResultText: { fontSize: 13, fontFamily: Fonts.bold, color: L.text },
     capAngelInfoBox: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 14, paddingHorizontal: 6 },
     capAngelInfoText: { fontSize: 11, fontFamily: Fonts.medium, color: L.textMuted, flex: 1 },
+    trendingLabelTop: {
+        position: 'absolute', top: -10, alignSelf: 'center',
+        flexDirection: 'row', alignItems: 'center', gap: 4,
+        paddingHorizontal: 12, paddingVertical: 4,
+        borderRadius: 20, zIndex: 10,
+        shadowColor: '#FF4D00', shadowOpacity: 0.4, shadowRadius: 8, shadowOffset: { width: 0, height: 3 },
+    },
+    trendingLabelText: { fontSize: 9, fontFamily: Fonts.bold, color: '#fff', letterSpacing: 0.5 },
 });

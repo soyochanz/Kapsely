@@ -40,7 +40,7 @@ interface Props {
 }
 
 export default function EditProfileScreen({ onClose, initialData }: Props) {
-    const { t } = useTranslation();
+    const { t, i18n } = useTranslation();
     const navigation = useNavigation();
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -54,6 +54,8 @@ export default function EditProfileScreen({ onClose, initialData }: Props) {
     const [songAuthor, setSongAuthor] = useState('');
     const [avatarUri, setAvatarUri] = useState<string | null>(null);
     const [uploading, setUploading] = useState(false);
+    const [birthdate, setBirthdate] = useState<Date | null>(null);
+    const [showDatePicker, setShowDatePicker] = useState(false);
 
     const [showColorPicker, setShowColorPicker] = useState(false);
     const [userId, setUserId] = useState<string | null>(null);
@@ -86,6 +88,7 @@ export default function EditProfileScreen({ onClose, initialData }: Props) {
                 setDisplayNameHistory(initialData.display_name_history ?? []);
                 // setUsernameHistory(initialData.username_history ?? []);
                 setUserId(initialData.id);
+                setBirthdate(initialData.birthdate ? new Date(initialData.birthdate) : null);
                 setLoading(false);
                 return;
             }
@@ -119,7 +122,8 @@ export default function EditProfileScreen({ onClose, initialData }: Props) {
                 setInitialDisplayName(data.display_name ?? '');
                 setInitialUsername(data.username ?? '');
                 setDisplayNameHistory(data.display_name_history ?? []);
-                // setUsernameHistory(data.username_history ?? []);
+                // setUsernameHistory(initialData.username_history ?? []);
+                setBirthdate(data.birthdate ? new Date(data.birthdate) : null);
             }
             setLoading(false);
         })();
@@ -268,6 +272,7 @@ export default function EditProfileScreen({ onClose, initialData }: Props) {
                     ? `${songTitle.trim()}${songAuthor.trim() ? ` - ${songAuthor.trim()}` : ''}` 
                     : null,
                 avatar_url: finalAvatarUrl,
+                birthdate: birthdate ? birthdate.toISOString().split('T')[0] : null,
                 display_name_history: newNameHistory,
                 // username_history: newUsernameHistory,
                 updated_at: new Date().toISOString(),
@@ -430,6 +435,42 @@ export default function EditProfileScreen({ onClose, initialData }: Props) {
                     <TextInput style={[styles.input, styles.textArea]} value={bio} onChangeText={setBio}
                         placeholder={t('profile.writeSomethingAboutYou')} placeholderTextColor={Colors.textMuted}
                         multiline numberOfLines={3} />
+                </View>
+
+                {/* Birthdate */}
+                <View style={styles.section}>
+                    <Text style={styles.sectionLabel}>{t('profile.birthdate')}</Text>
+                    <TouchableOpacity
+                        style={styles.input}
+                        onPress={() => setShowDatePicker(true)}
+                        activeOpacity={0.8}
+                    >
+                        <Text style={{ color: birthdate ? Colors.textPrimary : Colors.textMuted, fontFamily: Fonts.regular }}>
+                            {birthdate ? birthdate.toLocaleDateString() : t('profile.setYourBirthday')}
+                        </Text>
+                    </TouchableOpacity>
+                    {showDatePicker && (
+                        <DateTimePicker
+                            value={birthdate || new Date()}
+                            mode="date"
+                            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                            style={Platform.OS === 'ios' ? { height: 180, width: '100%' } : {}}
+                            textColor={Colors.textPrimary}
+                            locale={i18n.language.startsWith('es') ? 'es-ES' : 'en-US'}
+                            onChange={(event, selectedDate) => {
+                                if (Platform.OS !== 'ios') {
+                                    setShowDatePicker(false);
+                                }
+                                if (selectedDate) setBirthdate(selectedDate);
+                            }}
+                            maximumDate={new Date()}
+                        />
+                    )}
+                    {showDatePicker && Platform.OS === 'ios' && (
+                        <TouchableOpacity style={styles.dateDoneBtn} onPress={() => setShowDatePicker(false)}>
+                            <Text style={styles.dateDoneText}>{t('common.done') || 'Done'}</Text>
+                        </TouchableOpacity>
+                    )}
                 </View>
 
                 {/* Favorite Color */}

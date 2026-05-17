@@ -1,0 +1,2 @@
+ALTER TABLE public.drops
+ALTER COLUMN end_date DROP NOT NULL;

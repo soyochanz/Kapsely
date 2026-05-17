@@ -5,15 +5,19 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { FlashList } from '@shopify/flash-list';
+
+const AnyFlashList = FlashList as any;
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
 import { supabase } from '../lib/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import SwipeableChatRow from '../components/SwipeableChatRow';
 
 export default function ChatListScreen() {
+    const { t } = useTranslation();
     const [loading, setLoading] = useState(true);
     const [conversations, setConversations] = useState<any[]>([]);
     const [showSearch, setShowSearch] = useState(false);
@@ -36,6 +40,9 @@ export default function ChatListScreen() {
     const insets = useSafeAreaInsets();
     const navigation = useNavigation<any>();
     const channelRef = useRef<any>(null);
+    const loadInFlightRef = useRef(false);
+    const lastLoadAtRef = useRef(0);
+    const realtimeRefreshRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     // In-memory set of deleted conversation IDs so the realtime callback also respects it
     const deletedConvIdsRef = useRef<Set<string>>(new Set());
@@ -43,23 +50,51 @@ export default function ChatListScreen() {
     const loadConversations = async (userId?: string) => {
         const uid = userId || currentUserId;
         if (!uid) return;
+        if (loadInFlightRef.current) return;
+        loadInFlightRef.current = true;
 
-        // Load deleted chat timestamps from AsyncStorage
-        const deletedKey = `deleted_chats_${uid}`;
-        const existingDeleted = await AsyncStorage.getItem(deletedKey);
-        let deletedStamps: Record<string, string> = {};
-        if (existingDeleted) {
-            try {
-                const parsed = JSON.parse(existingDeleted);
-                if (Array.isArray(parsed)) {
-                    parsed.forEach((id: string) => { deletedStamps[id] = new Date(0).toISOString(); });
-                } else {
-                    deletedStamps = parsed;
-                }
-            } catch (e) {}
-        }
-        // Sync in-memory ref with persisted storage
-        deletedConvIdsRef.current = new Set(Object.keys(deletedStamps));
+        try {
+            // Load deleted chat timestamps from AsyncStorage
+            const deletedKey = `deleted_chats_${uid}`;
+            const existingDeleted = await AsyncStorage.getItem(deletedKey);
+            let deletedStamps: Record<string, string> = {};
+            if (existingDeleted) {
+                try {
+                    const parsed = JSON.parse(existingDeleted);
+                    if (Array.isArray(parsed)) {
+                        parsed.forEach((id: string) => { deletedStamps[id] = new Date(0).toISOString(); });
+                    } else {
+                        deletedStamps = parsed;
+                    }
+                } catch (e) {}
+            }
+            // Sync in-memory ref with persisted storage
+            deletedConvIdsRef.current = new Set(Object.keys(deletedStamps));
+
+            const { data: rpcData, error: rpcError } = await supabase.rpc('get_chat_list_data');
+            if (!rpcError && rpcData?.chats) {
+                const activeChats = (rpcData.chats || [])
+                    .map((chat: any) => {
+                        const lastMsgTimeStr = chat.last_message?.created_at || chat.sort_at;
+                        const delTime = deletedStamps[chat.conversation_id];
+                        if (delTime && lastMsgTimeStr && new Date(lastMsgTimeStr).getTime() <= new Date(delTime).getTime()) {
+                            return null;
+                        }
+                        return {
+                            conversation_id: chat.conversation_id,
+                            otherUser: chat.other_user || { display_name: t('chat.user_fallback') },
+                            lastMessage: chat.last_message,
+                            unreadCount: chat.unread_count || 0,
+                            is_group: chat.is_group || false,
+                        };
+                    })
+                    .filter(Boolean);
+
+                setConversations(activeChats);
+                setLoading(false);
+                lastLoadAtRef.current = Date.now();
+                return;
+            }
 
         const { data: myConvs, error: convError } = await supabase
             .from('conversation_participants')
@@ -118,8 +153,8 @@ export default function ChatListScreen() {
             return {
                 conversation_id: cId,
                 otherUser: conv?.is_group
-                    ? { display_name: conv.name || 'Grupo', avatar_url: conv.avatar_url }
-                    : (otherUserProfile || { display_name: 'Usuario' }),
+                    ? { display_name: conv.name || t('chat.group_fallback'), avatar_url: conv.avatar_url }
+                    : (otherUserProfile || { display_name: t('chat.user_fallback') }),
                 lastMessage: lastMsg,
                 unreadCount: unreadCount,
                 is_group: conv?.is_group || false,
@@ -137,8 +172,12 @@ export default function ChatListScreen() {
             return bTime - aTime;
         });
 
-        setConversations(sorted);
-        setLoading(false);
+            setConversations(sorted);
+            setLoading(false);
+            lastLoadAtRef.current = Date.now();
+        } finally {
+            loadInFlightRef.current = false;
+        }
     };
 
     useEffect(() => {
@@ -167,13 +206,15 @@ export default function ChatListScreen() {
                     if (msg?.conversation_id && deletedConvIdsRef.current.has(msg.conversation_id)) {
                         // A new message arrived — we load fresh, the stamp check will re-surface it
                     }
-                    loadConversations(user.id);
+                    if (realtimeRefreshRef.current) clearTimeout(realtimeRefreshRef.current);
+                    realtimeRefreshRef.current = setTimeout(() => loadConversations(user.id), 450);
                 })
                 .subscribe();
         };
         init();
 
         return () => {
+            if (realtimeRefreshRef.current) clearTimeout(realtimeRefreshRef.current);
             if (channelRef.current) supabase.removeChannel(channelRef.current);
         };
     }, []);
@@ -183,7 +224,7 @@ export default function ChatListScreen() {
             const refreshConversations = async () => {
                 const { data: { session } } = await supabase.auth.getSession();
                 const user = session?.user;
-                if (user) {
+                if (user && Date.now() - lastLoadAtRef.current > 12_000) {
                     await loadConversations(user.id);
                 }
             };
@@ -384,7 +425,7 @@ export default function ChatListScreen() {
             onDelete={handleDeleteConversation}
             onArchive={showArchived ? handleUnarchiveConversation : handleArchiveConversation}
             onPress={() => navigation.navigate('ChatDetail', { conversationId: item.conversation_id })}
-            onAvatarPress={() => !item.is_group && (navigation as any).navigate('UserProfile', { targetUserId: item.otherUser.id })}
+            onAvatarPress={() => !item.is_group && (navigation as any).navigate('ExternalProfile', { targetUserId: item.otherUser.id })}
             isArchived={showArchived}
         />
     );
@@ -401,7 +442,7 @@ export default function ChatListScreen() {
                     <TouchableOpacity activeOpacity={0.7} onPress={() => navigation.goBack()} style={styles.backBtn}>
                         <Ionicons name="chevron-back" size={24} color={Colors.textPrimary} />
                     </TouchableOpacity>
-                    <Text style={styles.headerTitle}>Messages</Text>
+                    <Text style={styles.headerTitle}>{t('chat.messages')}</Text>
                     <View style={{ flexDirection: 'row', gap: 4 }}>
                         <TouchableOpacity activeOpacity={0.7} onPress={() => setShowGroupModal(true)} style={styles.newChatBtn}>
                             <Ionicons name="people-outline" size={22} color={Colors.primary} />
@@ -421,7 +462,7 @@ export default function ChatListScreen() {
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                         <Ionicons name={showArchived ? "chevron-up" : "archive-outline"} size={20} color={Colors.primary} />
                         <Text style={styles.archivedToggleText}>
-                            {showArchived ? 'Volver a Mensajes' : `Archivados (${archivedConvIds.length})`}
+                            {showArchived ? t('chat.back_to_messages') : t('chat.archived_count', { count: archivedConvIds.length })}
                         </Text>
                     </View>
                     <Ionicons name="chevron-forward" size={16} color={Colors.primary} />
@@ -429,23 +470,33 @@ export default function ChatListScreen() {
             )}
 
             {loading ? (
-                <View style={styles.centered}><ActivityIndicator color={Colors.primary} /></View>
+                <View style={styles.list}>
+                    {Array.from({ length: 8 }).map((_, i) => (
+                        <View key={i} style={styles.chatSkeletonRow}>
+                            <View style={styles.chatSkeletonAvatar} />
+                            <View style={{ flex: 1 }}>
+                                <View style={styles.chatSkeletonTitle} />
+                                <View style={styles.chatSkeletonLine} />
+                            </View>
+                        </View>
+                    ))}
+                </View>
             ) : (
-                <FlashList
+                <AnyFlashList
                     data={filteredConversations}
                     keyExtractor={(item: any) => item.conversation_id}
                     renderItem={renderItem}
-                    {...({ estimatedItemSize: 88 } as any)}
+                    estimatedItemSize={88}
                     contentContainerStyle={styles.list}
                     ListEmptyComponent={
                         <View style={styles.empty}>
                             <Ionicons name="chatbubbles-outline" size={64} color={Colors.textMuted} />
                             <Text style={styles.emptyText}>
-                                {showArchived ? 'No tienes chats archivados' : 'No messages yet'}
+                            {showArchived ? t('chat.no_archived_chats') : t('chat.no_messages_yet')}
                             </Text>
                             {!showArchived && (
                                 <TouchableOpacity style={styles.startBtn} activeOpacity={0.8} onPress={() => setShowSearch(true)}>
-                                    <Text style={styles.startBtnText}>Start a conversation</Text>
+                                    <Text style={styles.startBtnText}>{t('chat.start_conversation')}</Text>
                                 </TouchableOpacity>
                             )}
                         </View>
@@ -466,7 +517,7 @@ export default function ChatListScreen() {
                         </TouchableOpacity>
                         <TextInput
                             style={styles.searchInput}
-                            placeholder="Search by username..."
+                            placeholder={t('chat.search_by_username')}
                             placeholderTextColor={Colors.textMuted}
                             value={searchQuery}
                             onChangeText={searchUsers}
@@ -506,7 +557,7 @@ export default function ChatListScreen() {
                             )}
                             ListEmptyComponent={
                                 searchQuery.length > 1 ? (
-                                    <Text style={styles.noResults}>No users found</Text>
+                                    <Text style={styles.noResults}>{t('chat.no_users_found')}</Text>
                                 ) : null
                             }
                         />
@@ -523,7 +574,7 @@ export default function ChatListScreen() {
                             <Ionicons name="close" size={28} color={Colors.textPrimary} />
                         </TouchableOpacity>
                         <Text style={{ flex: 1, marginLeft: 12, fontSize: 17, fontFamily: Fonts.bold, color: Colors.textPrimary }}>
-                            Nuevo Grupo
+                            {t('chat.new_group')}
                         </Text>
                         {selectedUsers.length > 0 && (
                             <TouchableOpacity
@@ -533,7 +584,7 @@ export default function ChatListScreen() {
                             >
                                 {startingChatId === 'group'
                                     ? <ActivityIndicator size="small" color={Colors.primary} />
-                                    : <Text style={styles.groupToggleText}>Crear ({selectedUsers.length})</Text>}
+                                    : <Text style={styles.groupToggleText}>{t('chat.create_group_count', { count: selectedUsers.length })}</Text>}
                             </TouchableOpacity>
                         )}
                     </View>
@@ -543,7 +594,7 @@ export default function ChatListScreen() {
                         <Ionicons name="camera-outline" size={20} color={Colors.textMuted} style={{ marginRight: 10 }} />
                         <TextInput
                             style={styles.groupNameInput}
-                            placeholder="Nombre del grupo (opcional)"
+                            placeholder={t('chat.group_name_optional')}
                             placeholderTextColor={Colors.textMuted}
                             value={groupName}
                             onChangeText={setGroupName}
@@ -583,7 +634,7 @@ export default function ChatListScreen() {
                         <Ionicons name="search-outline" size={18} color={Colors.textMuted} style={{ marginRight: 8 }} />
                         <TextInput
                             style={{ flex: 1, fontSize: 15, fontFamily: Fonts.regular, color: Colors.textPrimary }}
-                            placeholder="Buscar usuarios..."
+                            placeholder={t('chat.search_users')}
                             placeholderTextColor={Colors.textMuted}
                             value={groupSearchQuery}
                             onChangeText={searchGroupUsers}
@@ -625,9 +676,9 @@ export default function ChatListScreen() {
                             }}
                             ListEmptyComponent={
                                 groupSearchQuery.length > 1 ? (
-                                    <Text style={styles.noResults}>No users found</Text>
+                                    <Text style={styles.noResults}>{t('chat.no_users_found')}</Text>
                                 ) : (
-                                    <Text style={styles.noResults}>Busca por nombre de usuario</Text>
+                                    <Text style={styles.noResults}>{t('chat.search_by_username_hint')}</Text>
                                 )
                             }
                         />
@@ -647,6 +698,20 @@ const styles = StyleSheet.create({
     newChatBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
     centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     list: { padding: Spacing.md },
+    chatSkeletonRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 14,
+        borderRadius: 22,
+        backgroundColor: Colors.surface,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        marginBottom: 10,
+        gap: 12,
+    },
+    chatSkeletonAvatar: { width: 54, height: 54, borderRadius: 27, backgroundColor: Colors.border },
+    chatSkeletonTitle: { width: '46%', height: 14, borderRadius: 7, backgroundColor: Colors.border, marginBottom: 10 },
+    chatSkeletonLine: { width: '74%', height: 11, borderRadius: 6, backgroundColor: Colors.border },
     empty: { alignItems: 'center', justifyContent: 'center', marginTop: 100, gap: Spacing.md },
     emptyText: { fontSize: 16, fontFamily: Fonts.medium, color: Colors.textMuted },
     startBtn: { backgroundColor: Colors.primary, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20, marginTop: 10 },

@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
 import {
-    View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, Modal, Alert,
+    View, Text, StyleSheet, TouchableOpacity, TextInput, Modal, Alert,
     KeyboardAvoidingView, Platform, StatusBar, ActivityIndicator, Keyboard,
-    ScrollView, Linking, Animated as RNAnimated
+    ScrollView, Linking, Animated as RNAnimated, FlatList
 } from 'react-native';
-import { Image } from 'expo-image';
 import { FlashList } from '@shopify/flash-list';
+import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useIsFocused, useNavigation, useRoute } from '@react-navigation/native';
@@ -435,6 +435,14 @@ const ChatCapsuleCard = memo(({ capsuleId, isMe }: { capsuleId: string; isMe: bo
     const tint = (MODEL_TINTS as any)[capsule.model] || PALETTE.myBubble;
     const modelImg = (MODEL_IMAGES as any)[capsule.model] || (MODEL_IMAGES as any).basicred_kap;
 
+    const isSealed = capsule.status === 'sealed';
+    const blurAmt = Platform.OS === 'ios' ? 50 : 20;
+    const sealedOverlay = isSealed ? (
+        <View style={{ ...StyleSheet.absoluteFillObject, backgroundColor: Platform.OS === 'ios' ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.65)', alignItems: 'center', justifyContent: 'center' }}>
+            <Ionicons name="lock-closed" size={22} color="rgba(0,0,0,0.35)" />
+        </View>
+    ) : null;
+
     const renderCollage = () => {
         if (collage.length === 0) {
             return (
@@ -444,21 +452,28 @@ const ChatCapsuleCard = memo(({ capsuleId, isMe }: { capsuleId: string; isMe: bo
             );
         }
         if (collage.length === 1) {
-            return <Image source={{ uri: collage[0].thumbnail_url || collage[0].media_url }} style={{ flex: 1 }} />;
+            return (
+                <View style={{ flex: 1 }}>
+                    <Image source={{ uri: collage[0].thumbnail_url || collage[0].media_url }} style={{ flex: 1 }} blurRadius={isSealed ? blurAmt : 0} contentFit="cover" />
+                    {sealedOverlay}
+                </View>
+            );
         }
         if (collage.length === 2) {
             return (
                 <View style={{ flex: 1, flexDirection: 'row', gap: 2 }}>
-                    <Image source={{ uri: collage[0].thumbnail_url || collage[0].media_url }} style={{ flex: 1 }} />
-                    <Image source={{ uri: collage[1].thumbnail_url || collage[1].media_url }} style={{ flex: 1 }} />
+                    <Image source={{ uri: collage[0].thumbnail_url || collage[0].media_url }} style={{ flex: 1 }} blurRadius={isSealed ? blurAmt : 0} contentFit="cover" />
+                    <Image source={{ uri: collage[1].thumbnail_url || collage[1].media_url }} style={{ flex: 1 }} blurRadius={isSealed ? blurAmt : 0} contentFit="cover" />
+                    {sealedOverlay}
                 </View>
             );
         }
         return (
             <View style={{ flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: 2, padding: 2 }}>
                 {collage.map((item: any, i: number) => (
-                    <Image key={item.id ?? i} source={{ uri: item.thumbnail_url || item.media_url }} style={{ width: '49%', height: '48.5%', borderRadius: 4 }} />
+                    <Image key={item.id ?? i} source={{ uri: item.thumbnail_url || item.media_url }} style={{ width: '49%', height: '48.5%', borderRadius: 4 }} blurRadius={isSealed ? blurAmt : 0} contentFit="cover" />
                 ))}
+                {sealedOverlay}
             </View>
         );
     };
@@ -642,10 +657,13 @@ export default function ChatDetailScreen() {
             const deletedIds = stored ? JSON.parse(stored) : [];
             deletedIdsRef.current = deletedIds;
             const filtered = msgs.filter((m: any) => !deletedIds.includes(m.id));
+            
             setMessages(filtered);
+            setPage(0);
+            setHasMore(msgs.length === PAGE_SIZE);
+            
             latestMessageAtRef.current = filtered.reduce((acc: string | null, curr: any) =>
                 !acc ? curr.created_at : new Date(curr.created_at) > new Date(acc) ? curr.created_at : acc, null);
-            if (msgs.length < PAGE_SIZE) setHasMore(false);
         }
         setLoading(false);
 
@@ -662,13 +680,26 @@ export default function ChatDetailScreen() {
     }, [conversationId]);
 
     const loadMoreMessages = useCallback(async () => {
-        if (!hasMore || loadingMore || conversationId === 'new') return;
+        if (!hasMore || loadingMore || conversationId === 'new' || messages.length === 0) return;
         setLoadingMore(true);
-        const nextPage = page + 1;
+        
+        // Use the timestamp of the oldest message to load even older ones
+        const oldestMsg = messages[messages.length - 1];
+        if (!oldestMsg) {
+            setLoadingMore(false);
+            return;
+        }
+
         try {
-            let q = supabase.from('messages').select('*').eq('conversation_id', conversationId);
+            let q = supabase.from('messages')
+                .select('*')
+                .eq('conversation_id', conversationId)
+                .lt('created_at', oldestMsg.created_at); // Load messages older than the current oldest
+
             if (chatDeletionTimeRef.current) q = q.gt('created_at', chatDeletionTimeRef.current);
-            const { data: msgs } = await q.order('created_at', { ascending: false }).range(nextPage * PAGE_SIZE, (nextPage + 1) * PAGE_SIZE - 1);
+            
+            const { data: msgs } = await q.order('created_at', { ascending: false }).limit(PAGE_SIZE);
+
             if (msgs?.length) {
                 const stored = await AsyncStorage.getItem(`deletedMsgs_${conversationId}`);
                 const dels = stored ? JSON.parse(stored) : [];
@@ -677,11 +708,16 @@ export default function ChatDetailScreen() {
                     const extras = msgs.filter((m: any) => !seen.has(m.id) && !dels.includes(m.id));
                     return [...prev, ...extras];
                 });
-                setPage(nextPage);
-                if (msgs.length < PAGE_SIZE) setHasMore(false);
-            } else { setHasMore(false); }
-        } finally { setLoadingMore(false); }
-    }, [hasMore, loadingMore, conversationId, page]);
+                setHasMore(msgs.length === PAGE_SIZE);
+            } else { 
+                setHasMore(false); 
+            }
+        } catch (err) {
+            console.error('loadMoreMessages error:', err);
+        } finally { 
+            setLoadingMore(false); 
+        }
+    }, [hasMore, loadingMore, conversationId, messages]);
 
     useEffect(() => {
         loadData();
@@ -1180,7 +1216,7 @@ export default function ChatDetailScreen() {
                     activeOpacity={0.7}
                     onPress={() => {
                         if (conversation?.is_group) { setNewGroupName(conversation.name || ''); setGroupSettingsVisible(true); }
-                        else if (otherUser) (navigation as any).navigate('UserProfile', { targetUserId: otherUser.id });
+                        else if (otherUser) (navigation as any).navigate('ExternalProfile', { targetUserId: otherUser.id });
                     }}
                     style={styles.headerUserInfo}
                 >
@@ -1224,27 +1260,27 @@ export default function ChatDetailScreen() {
                     </View>
                 )}
 
-                {loading ? (
-                    <View style={styles.centered}><ActivityIndicator color={PALETTE.myBubble} /></View>
-                ) : (
-                    <FlashList
-                        data={messages as any}
-                        keyExtractor={keyExtractor as any}
-                        renderItem={renderMessage as any}
-                        contentContainerStyle={styles.list}
-                        showsVerticalScrollIndicator={false}
-                        removeClippedSubviews
-                        {...({
-                            inverted: true,
-                            estimatedItemSize: 80
-                        } as any)}
-                        onEndReached={loadMoreMessages}
-                        onEndReachedThreshold={0.5}
-                        ListFooterComponent={loadingMore
-                            ? <ActivityIndicator color={PALETTE.myBubble} style={{ marginVertical: 12 }} />
-                            : null}
-                    />
-                )}
+                <FlatList
+                    data={messages}
+                    keyExtractor={keyExtractor}
+                    renderItem={renderMessage}
+                    contentContainerStyle={styles.list}
+                    showsVerticalScrollIndicator={false}
+                    inverted={true}
+                    onEndReached={loadMoreMessages}
+                    onEndReachedThreshold={0.2}
+                    maintainVisibleContentPosition={{
+                        minIndexForVisible: 0,
+                    }}
+                    ListEmptyComponent={loading ? (
+                        <View style={[styles.centered, { flex: 1 }]}>
+                            <ActivityIndicator color={PALETTE.myBubble} />
+                        </View>
+                    ) : null}
+                    ListFooterComponent={loadingMore
+                        ? <ActivityIndicator color={PALETTE.myBubble} style={{ marginVertical: 12 }} />
+                        : null}
+                />
 
                 {/* Input row */}
                 <View style={[styles.inputRow, { paddingBottom: isKeyboardVisible ? 6 : Math.max(insets.bottom || 16, Spacing.md) }]}>
