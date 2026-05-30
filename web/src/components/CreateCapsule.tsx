@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Layers, Lock, Globe, ChevronRight, Check, Sparkles, Clock, Users, ArrowLeft, Calendar, Info, Zap, PartyPopper } from 'lucide-react';
+import { X, Layers, Lock, Globe, ChevronRight, ChevronLeft, Check, Sparkles, Clock, Users, ArrowLeft, Calendar, Info, Grid3X3, BookOpen } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { CAPSULE_MODELS as MODELS, getModelImage, TYPE_CFG, getModelImageOpen } from '../constants/models';
 
@@ -17,7 +17,11 @@ export const CreateCapsule: React.FC<CreateCapsuleProps> = ({ onClose }) => {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [isPublic, setIsPublic] = useState(true);
+  const [isShared, setIsShared] = useState(false);
   const [opensAt, setOpensAt] = useState('');
+  const [selectedPreset, setSelectedPreset] = useState<number | null>(7);
+  const [showModelGrid, setShowModelGrid] = useState(false);
+  const [carouselDirection, setCarouselDirection] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showSealAnim, setShowSealAnim] = useState(false);
@@ -36,6 +40,9 @@ export const CreateCapsule: React.FC<CreateCapsuleProps> = ({ onClose }) => {
       if (!user) throw new Error('Not authenticated');
 
       const isSealed = selectedType !== 'opencap';
+      const computedOpenDate = isSealed
+        ? (opensAt || new Date(Date.now() + 86400000 * (selectedPreset || 7)).toISOString())
+        : null;
       
       const { error: insertError } = await supabase
         .from('capsules')
@@ -43,10 +50,12 @@ export const CreateCapsule: React.FC<CreateCapsuleProps> = ({ onClose }) => {
           owner_id: user.id,
           title: title.trim(),
           description: description.trim(),
-          type: selectedType,
+          type: selectedType === 'opencap' ? 'instacap' : selectedType,
           is_public: isPublic,
+          is_shared: isShared,
           model,
-          opens_at: isSealed ? (opensAt || new Date(Date.now() + 86400000 * 7).toISOString()) : null,
+          opens_at: computedOpenDate,
+          duration_days: isSealed ? (selectedPreset || 7) : 0,
           status: isSealed ? 'sealed' : 'opened'
         });
 
@@ -62,6 +71,39 @@ export const CreateCapsule: React.FC<CreateCapsuleProps> = ({ onClose }) => {
 
   const currentModel = MODELS.find(m => m.id === model) || MODELS[1];
   const typeInfo = selectedType ? TYPE_CFG[selectedType] : null;
+  const modelIndex = Math.max(0, MODELS.findIndex(m => m.id === model));
+  const presets = [
+    { label: '1 noche', days: 1, icon: 'moon' },
+    { label: '1 semana', days: 7, icon: 'zap' },
+    { label: '1 mes', days: 30, icon: 'calendar' },
+    { label: '1 año', days: 365, icon: 'sun' },
+    { label: '5 años', days: 365 * 5, icon: 'archive' },
+  ];
+  const selectModelAt = (nextIndex: number) => {
+    const normalized = (nextIndex + MODELS.length) % MODELS.length;
+    setCarouselDirection(normalized > modelIndex || (modelIndex === MODELS.length - 1 && normalized === 0) ? 1 : -1);
+    setModel(MODELS[normalized].id);
+  };
+  const modeOptions = [
+    {
+      key: 'instacap',
+      label: 'Capsula cerrada',
+      tagline: 'Guarda recuerdos y abrelos en una fecha futura.',
+      limit: 'Incluye timer y bloqueo hasta su apertura',
+      emoji: '🔒',
+      accent: '#7C5CBF',
+      light: '#F3F1FE',
+    },
+    {
+      key: 'opencap',
+      label: 'Capsula abierta',
+      tagline: 'Publica y comparte recuerdos sin cuenta atras.',
+      limit: 'Siempre visible segun su privacidad',
+      emoji: '🌍',
+      accent: '#10B981',
+      light: '#ECFDF5',
+    },
+  ];
 
   if (step === 'animating') {
      return (
@@ -120,23 +162,26 @@ export const CreateCapsule: React.FC<CreateCapsuleProps> = ({ onClose }) => {
               >
                 <div className="step-header">
                   <span className="step-tag">Step 1</span>
-                  <h3>Select Experience</h3>
-                  <p>How do you want to preserve these memories?</p>
+                  <h3>Tipo de capsula</h3>
+                  <p>Elige como quieres crearla, igual que en la app.</p>
                 </div>
                 
                 <div className="type-list-premium">
-                  {Object.entries(TYPE_CFG).map(([key, cfg]: [string, any]) => (
+                  {modeOptions.map((cfg: any) => (
                     <button 
-                      key={key}
-                      className={`type-option-card ${selectedType === key ? 'active' : ''}`}
+                      key={cfg.key}
+                      className={`type-option-card ${selectedType === cfg.key ? 'active' : ''}`}
                       style={{'--accent': cfg.accent, '--bg-light': cfg.light} as any}
-                      onClick={() => setSelectedType(key)}
+                      onClick={() => {
+                        setSelectedType(cfg.key);
+                        setStep('design');
+                      }}
                     >
                       <div className="type-option-icon">{cfg.emoji}</div>
                       <div className="type-option-content">
                         <div className="type-option-title">
                            {cfg.label}
-                           {selectedType === key && <Check size={14} className="check-icon" />}
+                           {selectedType === cfg.key && <Check size={14} className="check-icon" />}
                         </div>
                         <p>{cfg.tagline}</p>
                         <div className="type-option-meta">
@@ -170,36 +215,61 @@ export const CreateCapsule: React.FC<CreateCapsuleProps> = ({ onClose }) => {
               >
                 <div className="step-header">
                   <span className="step-tag" style={{background: typeInfo?.accent+'20', color: typeInfo?.accent}}>Step 2</span>
-                  <h3>Choose Shell</h3>
-                  <p>Select the 3D model that will protect your story.</p>
+                  <h3>Diseno</h3>
+                  <p>Elige el diseno de tu capsula.</p>
                 </div>
 
                 <div className="model-selection-area">
-                   <div className="main-model-preview">
-                      <motion.img 
-                        key={model}
-                        initial={{ scale: 0.8, opacity: 0 }}
-                        animate={{ scale: 1, opacity: 1 }}
-                        src={getModelImage(model)} 
-                        alt="" 
-                      />
-                      <div className="model-info-overlay">
-                         <h4>{currentModel.label}</h4>
-                         <p>{currentModel.description}</p>
+                   <div className="model-carousel-panel" style={{'--accent': typeInfo?.accent || 'var(--primary)'} as any}>
+                      <button className="carousel-arrow left" onClick={() => selectModelAt(modelIndex - 1)} aria-label="Previous design">
+                        <ChevronLeft size={24} />
+                      </button>
+                      <div className="carousel-stage">
+                        <AnimatePresence mode="popLayout" custom={carouselDirection}>
+                          <motion.div
+                            key={model}
+                            custom={carouselDirection}
+                            initial={{ opacity: 0, x: carouselDirection >= 0 ? 80 : -80, rotate: carouselDirection >= 0 ? 6 : -6, scale: 0.92 }}
+                            animate={{ opacity: 1, x: 0, rotate: 0, scale: 1 }}
+                            exit={{ opacity: 0, x: carouselDirection >= 0 ? -80 : 80, rotate: carouselDirection >= 0 ? -6 : 6, scale: 0.92 }}
+                            transition={{ type: 'spring', stiffness: 240, damping: 24 }}
+                            className="carousel-capsule-wrap"
+                          >
+                            <img src={getModelImage(model)} alt={currentModel.label} />
+                          </motion.div>
+                        </AnimatePresence>
+                      </div>
+                      <button className="carousel-arrow right" onClick={() => selectModelAt(modelIndex + 1)} aria-label="Next design">
+                        <ChevronRight size={24} />
+                      </button>
+                      <div className="carousel-model-copy">
+                        <h4>{currentModel.label}</h4>
+                        <p>{currentModel.description}</p>
+                        <span>{modelIndex + 1} / {MODELS.length}</span>
                       </div>
                    </div>
 
-                   <div className="model-grid-premium">
-                      {MODELS.map(m => (
+                   <div className="model-side-panel">
+                    <button className="grid-toggle-btn" onClick={() => setShowModelGrid(prev => !prev)}>
+                      <Grid3X3 size={16} /> {showModelGrid ? 'Ocultar cuadricula' : 'Ver cuadricula'}
+                    </button>
+                    {showModelGrid && (
+                     <div className="model-grid-premium">
+                      {MODELS.map((m, index) => (
                         <button 
                           key={m.id} 
                           className={`model-item-sm ${model === m.id ? 'active' : ''}`}
-                          onClick={() => setModel(m.id)}
+                          onClick={() => {
+                            setCarouselDirection(index >= modelIndex ? 1 : -1);
+                            setModel(m.id);
+                          }}
                           style={{'--accent': typeInfo?.accent} as any}
                         >
-                          <img src={m.image} alt="" />
+                          <img src={getModelImage(m.id)} alt={m.label} />
                         </button>
                       ))}
+                     </div>
+                    )}
                    </div>
                 </div>
 
@@ -228,25 +298,25 @@ export const CreateCapsule: React.FC<CreateCapsuleProps> = ({ onClose }) => {
               >
                 <div className="step-header">
                   <span className="step-tag" style={{background: typeInfo?.accent+'20', color: typeInfo?.accent}}>Step 3</span>
-                  <h3>Identity</h3>
-                  <p>Give your capsule a name and set its visibility.</p>
+                  <h3>Identidad</h3>
+                  <p>Nombre, descripcion y privacidad de la capsula.</p>
                 </div>
 
                 <div className="form-premium">
                    <div className="input-group-premium">
-                      <label>Title</label>
+                      <label>Nombre de la capsula</label>
                       <input 
                         type="text" 
-                        placeholder="My amazing journey..." 
+                        placeholder="Mi viaje, mi familia, verano 2026..." 
                         value={title}
                         onChange={e => setTitle(e.target.value)}
                         autoFocus
                       />
                    </div>
                    <div className="input-group-premium">
-                      <label>Description (Optional)</label>
+                      <label>Descripcion</label>
                       <textarea 
-                        placeholder="Tell a bit more about what's inside..." 
+                        placeholder="Cuenta que recuerdos va a guardar esta capsula..." 
                         value={description}
                         onChange={e => setDescription(e.target.value)}
                         rows={3}
@@ -266,6 +336,17 @@ export const CreateCapsule: React.FC<CreateCapsuleProps> = ({ onClose }) => {
                         {isPublic ? 'Visible to everyone on the discovery feed.' : 'Only people you invite can see this capsule.'}
                       </p>
                    </div>
+                   <div className="input-group-premium">
+                      <label>Capsula compartida</label>
+                      <button className={`shared-toggle-card ${isShared ? 'active' : ''}`} onClick={() => setIsShared(prev => !prev)} style={{'--accent': typeInfo?.accent || 'var(--primary)'} as any}>
+                        <Users size={18} />
+                        <div>
+                          <strong>{isShared ? 'Compartida activada' : 'Crear solo para mi'}</strong>
+                          <span>{isShared ? 'Podras invitar miembros despues de crearla.' : 'Puedes invitar miembros mas tarde.'}</span>
+                        </div>
+                        {isShared && <Check size={16} />}
+                      </button>
+                   </div>
                 </div>
 
                 <div className="actions-footer">
@@ -274,7 +355,7 @@ export const CreateCapsule: React.FC<CreateCapsuleProps> = ({ onClose }) => {
                   </button>
                   <button 
                     className="primary-btn-premium" 
-                    disabled={!title.trim()} 
+                    disabled={!title.trim() || !description.trim()} 
                     onClick={() => setStep(selectedType === 'opencap' ? 'review' : 'timing')}
                     style={{'--accent': typeInfo?.accent || 'var(--primary)'} as any}
                   >
@@ -294,23 +375,43 @@ export const CreateCapsule: React.FC<CreateCapsuleProps> = ({ onClose }) => {
               >
                 <div className="step-header">
                   <span className="step-tag" style={{background: typeInfo?.accent+'20', color: typeInfo?.accent}}>Step 4</span>
-                  <h3>Timing</h3>
-                  <p>When should this capsule be unlocked?</p>
+                  <h3>Tiempo</h3>
+                  <p>Cuando quieres que se abra?</p>
                 </div>
 
                 <div className="timing-picker-premium">
                    <div className="timer-preview-web">
                       <Clock size={40} color={typeInfo?.accent} />
-                      <div className="timer-val">7 Days</div>
-                      <p>Default duration</p>
+                      <div className="timer-val">{selectedPreset ? presets.find(p => p.days === selectedPreset)?.label : 'Personalizado'}</div>
+                      <p>{opensAt ? new Date(opensAt).toLocaleDateString() : 'Fecha calculada automaticamente'}</p>
+                   </div>
+
+                   <div className="preset-grid-web">
+                     {presets.map(preset => (
+                       <button
+                         key={preset.days}
+                         className={selectedPreset === preset.days && !opensAt ? 'active' : ''}
+                         onClick={() => {
+                           setSelectedPreset(preset.days);
+                           setOpensAt('');
+                         }}
+                         style={{'--accent': typeInfo?.accent || 'var(--primary)'} as any}
+                       >
+                         <Clock size={16} />
+                         <span>{preset.label}</span>
+                       </button>
+                     ))}
                    </div>
                    
                    <div className="input-group-premium">
-                      <label>Custom Unlock Date</label>
+                      <label>Fecha personalizada</label>
                       <input 
                         type="datetime-local" 
                         value={opensAt}
-                        onChange={e => setOpensAt(e.target.value)}
+                        onChange={e => {
+                          setOpensAt(e.target.value);
+                          setSelectedPreset(null);
+                        }}
                       />
                    </div>
                 </div>
@@ -340,8 +441,8 @@ export const CreateCapsule: React.FC<CreateCapsuleProps> = ({ onClose }) => {
               >
                 <div className="step-header">
                   <span className="step-tag" style={{background: typeInfo?.accent+'20', color: typeInfo?.accent}}>Final Step</span>
-                  <h3>Review</h3>
-                  <p>Ready to launch your memories into the future?</p>
+                  <h3>Revision</h3>
+                  <p>Comprueba que todo esta listo.</p>
                 </div>
 
                 <div className="review-card-premium" style={{'--accent': typeInfo?.accent} as any}>
@@ -351,16 +452,20 @@ export const CreateCapsule: React.FC<CreateCapsuleProps> = ({ onClose }) => {
                    <div className="review-details">
                       <h4>{title}</h4>
                       <div className="review-meta-item">
-                         <Layers size={14} /> <span>{typeInfo?.label}</span>
+                         <Layers size={14} /> <span>{selectedType === 'opencap' ? 'Capsula abierta' : 'Capsula cerrada'}</span>
                       </div>
                       {selectedType !== 'opencap' && (
                         <div className="review-meta-item">
-                           <Clock size={14} /> <span>Opens on {opensAt ? new Date(opensAt).toLocaleDateString() : '7 days'}</span>
+                           <Clock size={14} /> <span>Abre {opensAt ? new Date(opensAt).toLocaleDateString() : `en ${selectedPreset || 7} dias`}</span>
                         </div>
                       )}
                       <div className="review-meta-item">
                          {isPublic ? <Globe size={14} /> : <Lock size={14} />}
                          <span>{isPublic ? 'Public' : 'Private'}</span>
+                      </div>
+                      <div className="review-meta-item">
+                         {isShared ? <Users size={14} /> : <BookOpen size={14} />}
+                         <span>{isShared ? 'Compartida' : 'Individual'}</span>
                       </div>
                    </div>
                 </div>
@@ -377,7 +482,7 @@ export const CreateCapsule: React.FC<CreateCapsuleProps> = ({ onClose }) => {
                     onClick={handleCreate}
                     style={{'--accent': typeInfo?.accent || 'var(--primary)'} as any}
                   >
-                    {loading ? 'Launching...' : 'Seal Capsule'} <Sparkles size={20} />
+                    {loading ? 'Creando...' : selectedType === 'opencap' ? 'Crear capsula' : 'Sellar capsula'} <Sparkles size={20} />
                   </button>
                 </div>
               </motion.div>
@@ -387,9 +492,9 @@ export const CreateCapsule: React.FC<CreateCapsuleProps> = ({ onClose }) => {
 
         <style>{`
           .create-capsule-modal {
-            max-width: 600px;
+            max-width: 920px;
             width: 95%;
-            height: 750px;
+            height: min(860px, 92vh);
             display: flex;
             flex-direction: column;
             padding: 0 !important;
@@ -421,8 +526,8 @@ export const CreateCapsule: React.FC<CreateCapsuleProps> = ({ onClose }) => {
           .step-pill { width: 8px; height: 8px; border-radius: 50%; background: var(--border); transition: all 0.3s; }
           .step-pill.active { background: var(--accent); width: 24px; border-radius: 4px; box-shadow: 0 0 10px var(--accent); }
 
-          .create-scroll-area { flex: 1; overflow-y: auto; padding: 0 40px 40px; }
-          .step-view { display: flex; flex-direction: column; height: 100%; pt: 30px; }
+          .create-scroll-area { flex: 1; overflow-y: auto; padding: 0 46px 42px; }
+          .step-view { display: flex; flex-direction: column; min-height: 100%; padding-top: 30px; }
           
           .step-header { margin: 30px 0; }
           .step-tag {
@@ -433,14 +538,14 @@ export const CreateCapsule: React.FC<CreateCapsuleProps> = ({ onClose }) => {
           .step-header h3 { font-size: 28px; margin: 0 0 8px 0; font-weight: 900; }
           .step-header p { color: var(--text-sec); margin: 0; font-size: 15px; }
 
-          .type-list-premium { display: flex; flex-direction: column; gap: 12px; }
+          .type-list-premium { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
           .type-option-card {
-            display: flex; align-items: center; gap: 20px; padding: 20px;
+            display: flex; align-items: center; gap: 18px; padding: 20px;
             border-radius: 20px; border: 2.5px solid var(--border);
             text-align: left; transition: all 0.3s; cursor: pointer;
             background: white;
           }
-          .type-option-card:hover { transform: translateX(8px); border-color: var(--accent); }
+          .type-option-card:hover { transform: translateY(-3px); border-color: var(--accent); }
           .type-option-card.active { background: var(--bg-light); border-color: var(--accent); box-shadow: 0 10px 20px rgba(0,0,0,0.05); }
           
           .type-option-icon { font-size: 32px; width: 60px; height: 60px; display: flex; align-items: center; justify-content: center; background: white; border-radius: 16px; border: 1px solid var(--border); }
@@ -449,30 +554,59 @@ export const CreateCapsule: React.FC<CreateCapsuleProps> = ({ onClose }) => {
           .type-option-content p { margin: 4px 0 8px; font-size: 13px; color: var(--text-sec); line-height: 1.4; }
           .type-option-meta { display: flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; color: var(--text-muted); }
 
-          .model-selection-area { display: flex; flex-direction: column; gap: 30px; }
-          .main-model-preview {
-            height: 220px; background: var(--background); border-radius: 24px;
-            position: relative; display: flex; align-items: center; justify-content: center;
-            overflow: hidden; border: 1px solid var(--border);
+          .model-selection-area { display: grid; grid-template-columns: minmax(380px, 1fr) 260px; gap: 24px; align-items: start; }
+          .model-carousel-panel {
+            min-height: 420px;
+            position: relative;
+            border-radius: 30px;
+            overflow: hidden;
+            border: 1px solid rgba(232,228,245,0.95);
+            background: radial-gradient(circle at 50% 26%, color-mix(in srgb, var(--accent), transparent 80%), transparent 38%), linear-gradient(180deg, #fff, #f8f7ff);
+            box-shadow: 0 18px 42px rgba(26,21,48,0.08);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
           }
-          .main-model-preview img { width: 150px; height: 150px; object-fit: contain; z-index: 1; filter: drop-shadow(0 10px 20px rgba(0,0,0,0.1)); }
-          .model-info-overlay {
-            position: absolute; bottom: 0; left: 0; right: 0;
-            padding: 20px; background: linear-gradient(transparent, rgba(0,0,0,0.05));
-            text-align: center;
+          .carousel-stage { position: relative; width: 100%; height: 292px; display: grid; place-items: center; overflow: hidden; }
+          .carousel-capsule-wrap { position: absolute; width: 280px; height: 280px; display: grid; place-items: center; }
+          .carousel-capsule-wrap img { width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 22px 34px rgba(15,11,30,0.18)); }
+          .carousel-arrow {
+            position: absolute;
+            top: 42%;
+            z-index: 5;
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.92);
+            border: 1px solid rgba(232,228,245,0.95);
+            color: var(--accent);
+            display: grid;
+            place-items: center;
+            box-shadow: 0 10px 24px rgba(26,21,48,0.12);
           }
-          .model-info-overlay h4 { margin: 0; font-size: 16px; color: var(--text); }
-          .model-info-overlay p { margin: 2px 0 0; font-size: 12px; color: var(--text-sec); }
-
-          .model-grid-premium { display: flex; gap: 10px; overflow-x: auto; padding: 5px; scrollbar-width: none; }
+          .carousel-arrow.left { left: 18px; }
+          .carousel-arrow.right { right: 18px; }
+          .carousel-model-copy { width: 100%; padding: 0 24px 24px; text-align: center; }
+          .carousel-model-copy h4 { margin: 0; font-size: 24px; color: var(--text); }
+          .carousel-model-copy p { margin: 4px auto 8px; max-width: 360px; color: var(--text-sec); font-size: 13px; font-weight: 700; }
+          .carousel-model-copy span { color: var(--text-muted); font-size: 12px; font-weight: 900; }
+          .model-side-panel { display: flex; flex-direction: column; gap: 12px; }
+          .grid-toggle-btn { width: 100%; min-height: 48px; border-radius: 16px; background: #fff; border: 1.5px solid var(--border); display: inline-flex; align-items: center; justify-content: center; gap: 8px; color: var(--text-sec); font-weight: 900; }
+          .model-grid-premium { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; max-height: 360px; overflow-y: auto; padding: 5px; scrollbar-width: thin; }
           .model-grid-premium::-webkit-scrollbar { display: none; }
           .model-item-sm {
-            min-width: 64px; height: 64px; border-radius: 16px;
+            min-width: 64px; height: 72px; border-radius: 16px;
             border: 2px solid var(--border); padding: 8px; background: white;
           }
           .model-item-sm.active { border-color: var(--accent); background: var(--accent); opacity: 0.1; } /* Fallback for active state style */
           .model-item-sm.active { background: white; border-width: 3px; transform: scale(1.1); box-shadow: 0 5px 15px rgba(0,0,0,0.1); }
           .model-item-sm img { width: 100%; height: 100%; object-fit: contain; }
+          .shared-toggle-card { width: 100%; display: flex; align-items: center; gap: 14px; padding: 16px 18px; border-radius: 18px; background: #fff; border: 2px solid var(--border); color: var(--text-sec); text-align: left; }
+          .shared-toggle-card.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent), white 92%); color: var(--accent); }
+          .shared-toggle-card div { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+          .shared-toggle-card strong { color: var(--text); font-size: 14px; }
+          .shared-toggle-card span { font-size: 12px; font-weight: 700; color: var(--text-muted); }
 
           .form-premium { display: flex; flex-direction: column; gap: 24px; }
           .input-group-premium label { display: block; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 10px; }
@@ -497,6 +631,9 @@ export const CreateCapsule: React.FC<CreateCapsuleProps> = ({ onClose }) => {
           }
           .timer-val { font-size: 42px; font-weight: 900; color: var(--text); margin: 10px 0 2px; }
           .timer-preview-web p { margin: 0; color: var(--text-muted); font-weight: 600; }
+          .preset-grid-web { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 22px; }
+          .preset-grid-web button { min-height: 76px; border-radius: 18px; background: #fff; border: 2px solid var(--border); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--text-sec); font-weight: 900; }
+          .preset-grid-web button.active { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent), white 92%); }
 
           .review-card-premium {
             display: flex; align-items: center; gap: 30px; padding: 30px;
@@ -521,7 +658,27 @@ export const CreateCapsule: React.FC<CreateCapsuleProps> = ({ onClose }) => {
           }
           .launch-btn { background: linear-gradient(135deg, var(--accent) 0%, var(--primary) 100%); }
 
+          @media (max-width: 820px) {
+            .create-capsule-modal { width: 100%; height: 100vh; border-radius: 0; }
+            .modal-header-premium { padding: 22px 20px; }
+            .create-scroll-area { padding: 0 18px 34px; }
+            .type-list-premium { grid-template-columns: 1fr; }
+            .model-selection-area { grid-template-columns: 1fr; }
+            .model-carousel-panel { min-height: 360px; }
+            .carousel-stage { height: 240px; }
+            .carousel-capsule-wrap { width: 230px; height: 230px; }
+            .model-side-panel { width: 100%; }
+            .model-grid-premium { grid-template-columns: repeat(4, 1fr); max-height: 230px; }
+            .preset-grid-web { grid-template-columns: repeat(2, 1fr); }
+          }
+
           .seal-anim-overlay { position: fixed; inset: 0; z-index: 3000; background: #0D0A1A; display: flex; align-items: center; justify-content: center; }
+          @media (max-width: 760px) {
+            .create-capsule-modal { width: 100%; height: 100%; border-radius: 0; }
+            .modal-header-premium { padding: 22px; }
+            .create-scroll-area { padding: 0 22px 28px; }
+            .type-list-premium, .model-selection-area { grid-template-columns: 1fr; }
+          }
         `}</style>
       </motion.div>
     </motion.div>
@@ -625,4 +782,3 @@ const SealAnimation = ({ accent, modelUri, modelOpenUri, onDone, isOpen }: any) 
     </div>
   );
 };
-

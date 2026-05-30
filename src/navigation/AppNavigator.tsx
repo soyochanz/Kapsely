@@ -24,12 +24,27 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { View, StyleSheet, ActivityIndicator } from 'react-native';
 import { Colors } from '../theme';
 import { navigationRef } from '../../App';
-import { supabase } from '../lib/supabase';
-import { multiAccountService } from '../utils/multiAccount';
+import { safeSignOut, supabase } from '../lib/supabase';
 
 
 const Tab = createMaterialTopTabNavigator();
 const Stack = createStackNavigator();
+const ONBOARDING_BOOT_TIMEOUT_MS = 1400;
+
+const withTimeout = async <T,>(promise: any, ms: number, fallback: T): Promise<T> => {
+    return await new Promise(resolve => {
+        const timer = setTimeout(() => resolve(fallback), ms);
+        Promise.resolve(promise)
+            .then(value => {
+                clearTimeout(timer);
+                resolve(value);
+            })
+            .catch(() => {
+                clearTimeout(timer);
+                resolve(fallback);
+            });
+    });
+};
 
 const FeedStack = createStackNavigator();
 function FeedStackNavigator() {
@@ -105,46 +120,57 @@ export default function AppNavigator() {
     const [hasSeenOnboarding, setHasSeenOnboarding] = React.useState<boolean | null>(null);
 
     React.useEffect(() => {
+        let alive = true;
         const checkOnboarding = async () => {
             try {
-                // Sync push tokens for all accounts
-                multiAccountService.syncAllPushTokens().catch(console.error);
-                // Also ensure current is saved
-                multiAccountService.saveCurrentAccount().catch(console.error);
+                const localSeenRaw = await withTimeout(AsyncStorage.getItem('@has_seen_onboarding_v2'), 220, null as string | null);
 
                 // 1. Get user first to check DB status
-                const { data: { user } } = await supabase.auth.getUser();
+                const authResult = await withTimeout(supabase.auth.getUser(), ONBOARDING_BOOT_TIMEOUT_MS, null as Awaited<ReturnType<typeof supabase.auth.getUser>> | null);
+                const user = authResult?.data?.user ?? null;
                 
                 if (user) {
-                    const { data, error } = await supabase
-                        .from('profiles')
-                        .select('has_completed_onboarding')
-                        .eq('id', user.id)
-                        .single();
+                    const profileResult = await withTimeout(
+                        supabase
+                            .from('profiles')
+                            .select('has_completed_onboarding, account_status')
+                            .eq('id', user.id)
+                            .single(),
+                        ONBOARDING_BOOT_TIMEOUT_MS,
+                        null as any
+                    );
                     
-                    if (data) {
-                        // If DB says false, we MUST show onboarding even if local says true
-                        if (data.has_completed_onboarding === false) {
+                    if (profileResult?.data) {
+                        if (profileResult.data.account_status && profileResult.data.account_status !== 'active') {
+                            await safeSignOut();
                             await AsyncStorage.removeItem('@has_seen_onboarding_v2');
-                            setHasSeenOnboarding(false);
-                            return;
-                        } else {
-                            // If DB says true, ensure local is also true
-                            await AsyncStorage.setItem('@has_seen_onboarding_v2', 'true');
-                            setHasSeenOnboarding(true);
+                            if (alive) setHasSeenOnboarding(false);
                             return;
                         }
+
+                        if (profileResult.data.has_completed_onboarding === false) {
+                            await AsyncStorage.removeItem('@has_seen_onboarding_v2');
+                            if (alive) setHasSeenOnboarding(false);
+                            return;
+                        }
+
+                        await AsyncStorage.setItem('@has_seen_onboarding_v2', 'true');
+                        if (alive) setHasSeenOnboarding(true);
+                        return;
                     }
                 }
 
-                // 2. Fallback to local check (for guest or if DB check failed)
-                const seen = await AsyncStorage.getItem('@has_seen_onboarding_v2');
-                setHasSeenOnboarding(seen === 'true');
+                // 2. Fallback to local check if Supabase is slow or unavailable
+                const fallbackSeen = localSeenRaw === 'true';
+                if (alive) setHasSeenOnboarding(fallbackSeen);
             } catch (e) {
-                setHasSeenOnboarding(false);
+                if (alive) setHasSeenOnboarding(false);
             }
         };
         checkOnboarding();
+        return () => {
+            alive = false;
+        };
     }, []);
 
     if (hasSeenOnboarding === null) {

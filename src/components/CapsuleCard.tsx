@@ -15,6 +15,7 @@ import { timerConfigManager } from '../utils/timerConfig';
 import { Image } from 'expo-image';
 import CapsuleWithTimer from './CapsuleWithTimer';
 import { BlurView } from 'expo-blur';
+import { buildCapsuleShareUrl } from '../utils/deepLinks';
 
 const { width } = Dimensions.get('window');
 
@@ -22,6 +23,7 @@ const typeConfig = {
     instacap: { label: 'InstaCap', color: Colors.instaCap, icon: 'camera-outline' as const },
     eventcap: { label: 'EventCap', color: Colors.eventCap, icon: 'calendar-outline' as const },
     legacycap: { label: 'LegacyCap', color: Colors.legacyCap, icon: 'time-outline' as const },
+    birthdaycap: { label: 'BirthdayCap', color: '#FF6FB7', icon: 'gift-outline' as const, emoji: '\uD83C\uDF82' },
 };
 
 function timeAgo(dateStr: string, t: any): string {
@@ -166,6 +168,7 @@ const CapsuleCard = React.memo(({
     const [mediaCollage, setMediaCollage] = useState<any[]>(mediaCollageProp ?? capsule.collage_items ?? []);
     const [latestItem, setLatestItem] = useState<any>(latestItemProp ?? capsule.latest_item ?? null);
     const [latestItemLoaded, setLatestItemLoaded] = useState(!!(latestItemProp || capsule.latest_item));
+    const [configVersion, setConfigVersion] = useState(0);
     
     const isLocked = isLockedProp ?? !(capsule.is_public || capsule.owner_id === currentUserId || capsule.is_participant);
     const cfg = typeConfig[capsule.type as keyof typeof typeConfig] || typeConfig.legacycap;
@@ -176,12 +179,12 @@ const CapsuleCard = React.memo(({
     }), [capsule.model]);
 
     const themeColor = useMemo(() => {
-        return timerConfigManager.getConfig(capsule.model)?.themeColor || '#a269ff';
-    }, [capsule.model]);
+        return timerConfigManager.getModelThemeColor(capsule.model, capsule.model_snapshot, '#a269ff');
+    }, [capsule.model, capsule.model_snapshot, configVersion]);
 
     const handleShare = async () => {
         try {
-            const shareUrl = `https://kapsely.com/capsules/${capsule.id}`;
+            const shareUrl = buildCapsuleShareUrl(String(capsule.id));
             
             await Share.share({
                 message: `${t('detail.share_text') || '¡Mira esta cápsula en Kapsely!'} ✦\n\n${shareUrl}`,
@@ -209,7 +212,30 @@ const CapsuleCard = React.memo(({
         setMediaCollage(mediaCollageProp ?? capsule.collage_items ?? []);
         setLatestItem(latestItemProp ?? capsule.latest_item ?? null);
         setLatestItemLoaded(!!(latestItemProp || capsule.latest_item));
-    }, [isFollowedProp, likeCountProp, isLikedProp, commentCountProp, postsCountProp, mediaCollageProp, latestItemProp]);
+    }, [
+        capsule.id,
+        capsule.capsule_id,
+        capsule.is_followed,
+        capsule.likes_count,
+        capsule.is_liked,
+        capsule.comments_count,
+        capsule.posts_count,
+        capsule.collage_items,
+        capsule.latest_item,
+        isFollowedProp,
+        likeCountProp,
+        isLikedProp,
+        commentCountProp,
+        postsCountProp,
+        mediaCollageProp,
+        latestItemProp,
+    ]);
+
+    useEffect(() => {
+        return timerConfigManager.subscribe(() => {
+            setConfigVersion(v => v + 1);
+        });
+    }, []);
 
     useEffect(() => {
         if (onViewable) {
@@ -286,6 +312,13 @@ const CapsuleCard = React.memo(({
         navigation.navigate('CapsuleDetail', { capsuleId: cid });
     };
 
+    const uploaderProfile = latestItem?.profiles || null;
+    const authorProfile = uploaderProfile || capsule.profiles || { username: 'user', avatar_url: null };
+    const authorId = latestItem?.owner_id || authorProfile.id || capsule.owner_id;
+    const sharedMembers = Array.isArray(capsule.shared_members)
+        ? capsule.shared_members.filter((member: any) => member?.id && member.id !== authorId).slice(0, 3)
+        : [];
+    const hasSharedMembers = sharedMembers.length > 0 && (capsule.is_shared || capsule.participant_count > 0 || capsule.is_participant);
     const profile = capsule.profiles || { username: 'user', avatar_url: null };
     const isOpened = capsule.status === 'opened';
     const isSealed = capsule.status === 'sealed';
@@ -337,7 +370,7 @@ const CapsuleCard = React.memo(({
 
                     {/* Type badge */}
                     <View style={[s.gridTypeBadge, { backgroundColor: cfg.color }]}>
-                        <Ionicons name={cfg.icon} size={8} color="#fff" />
+                        {'emoji' in cfg ? <Text style={s.typeBadgeEmoji}>{cfg.emoji}</Text> : <Ionicons name={cfg.icon} size={8} color="#fff" />}
                         <Text style={s.gridTypeBadgeText}>{cfg.label}</Text>
                     </View>
 
@@ -412,20 +445,36 @@ const CapsuleCard = React.memo(({
                 <TouchableOpacity
                     activeOpacity={0.8}
                     style={s.authorLeft}
-                    onPress={() => navigation.navigate('UserProfile', { targetUserId: capsule.owner_id })}
+                    onPress={() => navigation.navigate('UserProfile', { targetUserId: authorId })}
                 >
                     <Image
-                        source={{ uri: Colors.getAvatarUrl(profile.avatar_url, profile.display_name || profile.username, profile.favorite_color) }}
+                        source={{ uri: Colors.getAvatarUrl(authorProfile.avatar_url, authorProfile.display_name || authorProfile.username, authorProfile.favorite_color) }}
                         style={s.avatar}
                         contentFit="cover"
                         cachePolicy="memory-disk"
-                        recyclingKey={`avatar-${profile.id}`}
+                        recyclingKey={`avatar-${authorId}`}
                     />
 
                     <View style={{ flex: 1, minWidth: 0 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                            <Text style={s.authorName} numberOfLines={1}>{profile.display_name || profile.username}</Text>
-                            {profile.is_verified && <VerifiedBadge size={13} />}
+                        <View style={s.authorNameLine}>
+                            <Text style={s.authorName} numberOfLines={1}>{authorProfile.display_name || authorProfile.username}</Text>
+                            {authorProfile.is_verified && <VerifiedBadge size={13} />}
+                            {hasSharedMembers && (
+                                <View style={s.sharedMembersInline}>
+                                    {sharedMembers.map((member: any) => (
+                                        <View key={member.id} style={s.sharedMemberChip}>
+                                            <Image
+                                                source={{ uri: Colors.getAvatarUrl(member.avatar_url, member.display_name || member.username, member.favorite_color) }}
+                                                style={s.sharedMemberAvatar}
+                                                contentFit="cover"
+                                                cachePolicy="memory-disk"
+                                                recyclingKey={`shared-member-${capsule.capsule_id || capsule.id}-${member.id}`}
+                                            />
+                                            <Text style={s.sharedMemberName} numberOfLines={1}>{member.display_name || member.username}</Text>
+                                        </View>
+                                    ))}
+                                </View>
+                            )}
                         </View>
                         <Text style={s.authorTime}>
                             {timeAgo(isOpened ? capsule.opens_at : capsule.created_at, t)}
@@ -433,7 +482,7 @@ const CapsuleCard = React.memo(({
                     </View>
                 </TouchableOpacity>
 
-                {currentUserId !== capsule.owner_id && (
+                {currentUserId !== capsule.owner_id && !capsule.is_participant && (
                     <TouchableOpacity
                         onPress={handleFollow}
                         activeOpacity={0.8}
@@ -601,7 +650,7 @@ const CapsuleCard = React.memo(({
 
                 {/* ── Badges ── */}
                 <View style={[s.typeBadge, { backgroundColor: cfg.color }]}>
-                    <Ionicons name={cfg.icon} size={9} color="#fff" />
+                    {'emoji' in cfg ? <Text style={s.typeBadgeEmoji}>{cfg.emoji}</Text> : <Ionicons name={cfg.icon} size={9} color="#fff" />}
                     <Text style={s.typeBadgeText}>{cfg.label}</Text>
                 </View>
 
@@ -778,6 +827,7 @@ const s = StyleSheet.create({
         paddingHorizontal: 7, paddingVertical: 3,
         borderRadius: 30,
     },
+    typeBadgeEmoji: { fontSize: 10, lineHeight: 12 },
     typeBadgeText: { fontSize: 9, fontFamily: Fonts.bold, color: '#fff', letterSpacing: 0.2 },
 
     durationBadge: {
@@ -816,8 +866,13 @@ const s = StyleSheet.create({
         borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.border, flexShrink: 0,
     },
     avatarFallback: { backgroundColor: Colors.cardAlt, alignItems: 'center', justifyContent: 'center' },
+    authorNameLine: { flexDirection: 'row', alignItems: 'center', gap: 3, minWidth: 0 },
     authorName: { fontSize: 12, fontFamily: Fonts.bold, color: Colors.textPrimary },
     authorTime: { fontSize: 10, fontFamily: Fonts.regular, color: Colors.textMuted, marginTop: 1 },
+    sharedMembersInline: { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 1, opacity: 0.58 },
+    sharedMemberChip: { flexDirection: 'row', alignItems: 'center', gap: 3, maxWidth: 82, flexShrink: 1 },
+    sharedMemberAvatar: { width: 14, height: 14, borderRadius: 7 },
+    sharedMemberName: { fontSize: 10, fontFamily: Fonts.medium, color: Colors.textSecondary, flexShrink: 1 },
 
     followBtn: {
         paddingHorizontal: 10, paddingVertical: 4,

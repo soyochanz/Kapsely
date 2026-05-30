@@ -1,4 +1,4 @@
--- Update request_capsule_open_v4 to use 50% threshold and return is_first_vote flag
+-- Update request_capsule_open_v4 to require all member votes and start a 30s shared opening countdown
 CREATE OR REPLACE FUNCTION request_capsule_open_v4(target_capsule_id UUID, requester_user_id UUID)
 RETURNS JSONB AS $$
 DECLARE
@@ -30,11 +30,10 @@ BEGIN
     FROM capsule_invites
     WHERE capsule_id = target_capsule_id AND status = 'accepted';
 
-    -- 5. Check threshold (50% now)
-    -- ceiling of members / 2
-    IF ARRAY_LENGTH(v_open_requests, 1) >= CEIL(v_members_count::FLOAT / 2.0) THEN
+    -- 5. Shared capsules open only when every member has voted
+    IF ARRAY_LENGTH(v_open_requests, 1) >= v_members_count THEN
         v_is_opening := TRUE;
-        v_opening_at := now() + interval '10 seconds';
+        v_opening_at := now() + interval '30 seconds';
         
         UPDATE capsules
         SET is_opening = TRUE, opening_at = v_opening_at

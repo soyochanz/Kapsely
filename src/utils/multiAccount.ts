@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { supabase } from '../lib/supabase';
+import { safeSignOut, supabase } from '../lib/supabase';
 import { Session } from '@supabase/supabase-js';
 
 const ACCOUNTS_KEY = '@multi_accounts_v1';
@@ -18,8 +18,8 @@ export const multiAccountService = {
         return data ? JSON.parse(data) : [];
     },
 
-    async saveCurrentAccount() {
-        const { data: { session } } = await supabase.auth.getSession();
+    async saveCurrentAccount(sessionOverride?: Session | null) {
+        const session = sessionOverride ?? (await supabase.auth.getSession()).data.session;
         if (!session) return;
 
         const { data: profile } = await supabase.from('profiles')
@@ -94,7 +94,7 @@ export const multiAccountService = {
             const accounts = await this.getAccounts();
             const filtered = accounts.filter(a => a.id !== session.user.id);
             await AsyncStorage.setItem(ACCOUNTS_KEY, JSON.stringify(filtered));
-            await supabase.auth.signOut();
+            await safeSignOut();
         }
     },
 

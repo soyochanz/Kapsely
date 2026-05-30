@@ -17,8 +17,9 @@ interface ProfileCapsuleCellProps {
     cap: any;
     navigation: any;
     isOwnProfile: boolean;
+    canManage: boolean;
     isSealed: boolean;
-    cfg: any;
+    cfg: { icon: string; color: string; label: string; emoji?: string };
     coverUrl?: string;
     itemsCount: number;
     likesCount: number;
@@ -27,13 +28,15 @@ interface ProfileCapsuleCellProps {
     themeColor: string;
     capsuleMediaMap: Record<string, any[]>;
     t: any;
+    onLongPressCapsule: (cap: any) => void;
 }
 
 export const ProfileCapsuleCell = React.memo(({
-    cap, navigation, isOwnProfile, isSealed, cfg,
+    cap, navigation, isOwnProfile, canManage, isSealed, cfg,
     coverUrl, itemsCount, likesCount, commentsCount,
-    setPickerCapsuleId, themeColor, capsuleMediaMap, t
+    setPickerCapsuleId, themeColor, capsuleMediaMap, t, onLongPressCapsule
 }: ProfileCapsuleCellProps) => {
+    const [configVersion, setConfigVersion] = useState(0);
     const [modelImg, setModelImg] = useState(() =>
         isSealed
             ? (timerConfigManager.getModelImage(cap.model) || MODEL_IMAGES[cap.model] || (MODEL_IMAGES as any).basicred_kap)
@@ -46,6 +49,7 @@ export const ProfileCapsuleCell = React.memo(({
                 ? (timerConfigManager.getModelImage(cap.model) || MODEL_IMAGES[cap.model] || (MODEL_IMAGES as any).basicred_kap)
                 : (timerConfigManager.getModelImageOpen(cap.model) || MODEL_IMAGES_OPEN[cap.model] || MODEL_IMAGES[cap.model] || (MODEL_IMAGES as any).basicred_kap)
             );
+            setConfigVersion(v => v + 1);
         };
         return timerConfigManager.subscribe(update);
     }, [cap.model, isSealed]);
@@ -58,17 +62,19 @@ export const ProfileCapsuleCell = React.memo(({
     }, [cap.opens_at, isSealed]);
 
     const modelThemeColor = React.useMemo(() => {
-        return timerConfigManager.getConfig(cap.model)?.themeColor || cfg.color || Colors.primary;
-    }, [cap.model, cfg.color]);
+        return timerConfigManager.getModelThemeColor(
+            cap.model,
+            cap.model_snapshot,
+            cfg.color || Colors.primary
+        );
+    }, [cap.model, cap.model_snapshot, cfg.color, configVersion]);
 
     return (
         <TouchableOpacity
             style={[s.capsuleCell, !cap.isAccessible && { opacity: 0.85 }, isToday && { borderWidth: 2, borderColor: '#A855F7' }]}
             activeOpacity={0.8}
             onLongPress={() => {
-                if (isOwnProfile && !isSealed) {
-                    setPickerCapsuleId(cap.id);
-                }
+                if (canManage) onLongPressCapsule(cap);
             }}
             onPress={() => {
                 if (!cap.isAccessible) {
@@ -121,13 +127,28 @@ export const ProfileCapsuleCell = React.memo(({
                     if (mediaUrl) {
                         return <Image source={{ uri: mediaUrl }} style={s.capsuleCoverImg} contentFit="cover" cachePolicy="memory-disk" transition={250} recyclingKey={`prof-media-${cap.id}`} />;
                     }
-                    return <Image source={{ uri: modelImg }} style={s.capsuleModelImg} contentFit="contain" cachePolicy="memory-disk" />;
+                    return (
+                        <CapsuleWithTimer
+                            modelKey={cap.model}
+                            source={{ uri: modelImg }}
+                            date={cap.opens_at}
+                            modelLayout={cap.model_snapshot}
+                            chainId={cap.chain_id}
+                            hideTimer
+                            isOpened
+                            isMinimal
+                            hideParticles
+                            lightweight
+                            disableAnimations
+                            style={{ width: '90%', height: '90%' }}
+                        />
+                    );
                 })()}
                 
                 {/* Status Badges */}
                 <View style={s.badgeContainer}>
                     <View style={[s.miniBadge, { backgroundColor: cfg.color }]}>
-                        <Ionicons name={cfg.icon} size={8} color="#fff" />
+                        {cfg.emoji ? <Text style={s.miniBadgeEmoji}>{cfg.emoji}</Text> : <Ionicons name={cfg.icon as any} size={8} color="#fff" />}
                     </View>
                     {(cap.is_shared || cap.participant_count > 0) && (
                         <View style={[s.miniBadge, { backgroundColor: Colors.primary }]}>
@@ -197,6 +218,7 @@ const s = StyleSheet.create({
         width: 16, height: 16, borderRadius: 8,
         alignItems: 'center', justifyContent: 'center',
     },
+    miniBadgeEmoji: { fontSize: 9, lineHeight: 11 },
     lockStatus: {
         position: 'absolute', top: 6, right: 6,
         width: 18, height: 18, borderRadius: 9,

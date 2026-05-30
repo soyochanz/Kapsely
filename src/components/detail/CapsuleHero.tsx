@@ -26,6 +26,7 @@ interface CapsuleHeroProps {
     hasRequestedOpen: boolean;
     handleRequestOpen: () => void;
     reqCount: number;
+    isSharedCapsule: boolean;
     isBornOpen: boolean;
     userId: string | null;
     setCapsule: (c: any) => void;
@@ -47,7 +48,7 @@ export const CapsuleHero = React.memo(({
     modelImg, totalMembers, likeCount, followerCount,
     isFollowedCapsule, handleCapsuleFollowToggle,
     isOwner, canBeOpened, hasRequestedOpen,
-    handleRequestOpen, reqCount, isBornOpen, userId,
+    handleRequestOpen, reqCount, isSharedCapsule, isBornOpen, userId,
     setCapsule, onAddContent, t, collaborators
 }: CapsuleHeroProps) => {
     const canAddContent = isMember && (isBornOpen || (isSealed && !canBeOpened && !isOpening));
@@ -93,7 +94,7 @@ export const CapsuleHero = React.memo(({
                 <Text style={s.title}>{capsule.title}</Text>
                 {capsule.description && <Text style={s.desc}>{capsule.description.replace(/\[STYLE:(OPEN|CLOSED)\]/gi, '').trim()}</Text>}
 
-                {userId !== capsule.owner_id && (
+                {userId !== capsule.owner_id && !isMember && (
                     <TouchableOpacity
                         style={[s.capsuleFollowBtn, { borderColor: isFollowedCapsule ? D.border : tint + '40', backgroundColor: isFollowedCapsule ? 'transparent' : tint + '08' }]}
                         onPress={handleCapsuleFollowToggle}
@@ -111,16 +112,32 @@ export const CapsuleHero = React.memo(({
                             {isMember ? (
                                 isOpening ? (
                                     <View style={s.countdownCard}>
-                                        <Text>{t('detail.unsealing_soon')}</Text>
+                                        <View style={[s.countdownIconWrap, { backgroundColor: tint + '15' }]}>
+                                            <Ionicons name="timer-outline" size={22} color={tint} />
+                                        </View>
+                                        <View style={{ flex: 1 }}>
+                                            <Text style={[s.countdownLabel, { color: tint }]}>
+                                                {isSharedCapsule
+                                                    ? `${t('detail.unsealing_soon') || 'Abriéndose pronto'} · ${reqCount}/${totalMembers}`
+                                                    : (t('detail.unsealing_soon') || 'Abriéndose pronto')}
+                                            </Text>
+                                            {!!capsule.opening_at && (
+                                                <LiveTimer date={capsule.opening_at} modelId={capsule.model} style={{ fontSize: 18, color: '#000' }} />
+                                            )}
+                                        </View>
                                     </View>
                                 ) : canBeOpened ? (
                                     <View style={s.unsealBtnWrap}>
                                         <TouchableOpacity
                                             style={[s.unsealBtnGrad, { backgroundColor: tint }]}
-                                            disabled={hasRequestedOpen}
+                                            disabled={isSharedCapsule && hasRequestedOpen}
                                             onPress={handleRequestOpen}
                                         >
-                                            <Text style={s.unsealBtnText}>{hasRequestedOpen ? t('detail.requested') : t('detail.unseal_now')}</Text>
+                                            <Text style={s.unsealBtnText}>
+                                                {isSharedCapsule
+                                                    ? (hasRequestedOpen ? (t('detail.requested') || 'Voto registrado') : (t('detail.unseal_now') || 'Abrir cápsula'))
+                                                    : (t('detail.unseal_now') || 'Abrir cápsula')}
+                                            </Text>
                                         </TouchableOpacity>
                                     </View>
                                 ) : (

@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { supabase } from './lib/supabase';
+﻿import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { safeLocalSignOut, safeSignOut, supabase } from './lib/supabase';
 import { 
   MoreHorizontal, 
   Search, 
@@ -17,7 +17,12 @@ import {
   Lock, 
   Unlock,
   Clock, 
-  Share2 
+  Share2,
+  RefreshCw,
+  Sparkles,
+  Images,
+  Smartphone,
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CapsuleDetail } from './components/CapsuleDetail';
@@ -60,7 +65,44 @@ const formatFeedEvent = (eventType: string) => {
   }
 };
 
+const getSharedCapsuleIdFromPath = () => {
+  if (typeof window === 'undefined') return null;
+  const match = window.location.pathname.match(/^\/capsules\/([^/?#]+)/);
+  return match?.[1] ? decodeURIComponent(match[1]) : null;
+};
+
+const CapsuleShareFallback = ({ capsuleId }: { capsuleId: string }) => {
+  const appLink = `kapsely://capsules/${encodeURIComponent(capsuleId)}`;
+  const playStoreLink = 'https://play.google.com/store/apps/details?id=com.kapsely.app';
+  const appStoreLink = 'https://apps.apple.com/search?term=Kapsely';
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      window.location.href = appLink;
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [appLink]);
+
+  return (
+    <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 24, background: 'radial-gradient(circle at top, #F1E9FF 0, #FFFFFF 48%, #F8F7FF 100%)' }}>
+      <div style={{ width: '100%', maxWidth: 460, textAlign: 'center', background: 'rgba(255,255,255,0.82)', border: '1px solid rgba(124,92,191,0.18)', borderRadius: 28, padding: 28, boxShadow: '0 28px 80px rgba(55,37,109,0.16)' }}>
+        <img src="https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/website/Logomain.png" alt="Kapsely" style={{ width: 72, height: 72, objectFit: 'contain', margin: '0 auto 14px' }} />
+        <h1 style={{ margin: 0, fontSize: 34, lineHeight: 1, color: '#1A1530' }}>kapsely</h1>
+        <p style={{ margin: '14px 0 24px', color: '#5C5778', fontSize: 16, lineHeight: 1.5 }}>Abre esta capsula en la app para verla completa.</p>
+        <div style={{ display: 'grid', gap: 12 }}>
+          <a href={appLink} style={{ display: 'block', padding: '14px 18px', borderRadius: 16, background: '#7C5CBF', color: '#fff', fontWeight: 800, textDecoration: 'none' }}>Abrir en Kapsely</a>
+          <a href={playStoreLink} style={{ display: 'block', padding: '13px 18px', borderRadius: 16, background: '#1A1530', color: '#fff', fontWeight: 700, textDecoration: 'none' }}>Google Play</a>
+          <a href={appStoreLink} style={{ display: 'block', padding: '13px 18px', borderRadius: 16, background: '#FFFFFF', color: '#1A1530', fontWeight: 700, textDecoration: 'none', border: '1px solid #EAE6F5' }}>App Store</a>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 function App() {
+  const SIMPLE_FRONTEND_FEED = true;
+  const SIMPLE_FRONTEND_PROFILE = true;
+  const DISABLE_FEED_METRICS_UNTIL_STABLE = true;
   const [session, setSession] = useState<any>(null);
   const [feed, setFeed] = useState<any[]>([]);
   const [stories, setStories] = useState<any[]>([]);
@@ -79,9 +121,25 @@ function App() {
   const [activeStoryGroup, setActiveStoryGroup] = useState<any>(null);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [suggestions, setSuggestions] = useState<any[]>([]);
+  const sharedCapsuleIdFromPath = getSharedCapsuleIdFromPath();
   const feedSessionId = useRef(`web-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const feedRpcPreference = useRef<'unknown' | 'v2' | 'v1'>('unknown');
   const fetchSeq = useRef(0);
   const PAGE_SIZE = 15;
+
+  const withTimeout = <T,>(promise: PromiseLike<T>, ms: number, label: string): Promise<T> =>
+    new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`${label} timed out`)), ms);
+      Promise.resolve(promise)
+        .then(value => {
+          clearTimeout(timer);
+          resolve(value);
+        })
+        .catch(error => {
+          clearTimeout(timer);
+          reject(error);
+        });
+    });
 
   const calculateTimeLeft = (opensAt: string) => {
     const difference = +new Date(opensAt) - +new Date();
@@ -97,10 +155,14 @@ function App() {
   const normalizedFilter = activeFilter === 'opened' ? 'open' : activeFilter === 'sealed' ? 'closed' : 'all';
   
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setAuthChecking(false);
-    });
+    withTimeout(supabase.auth.getSession(), 1500, 'web getSession')
+      .then(result => {
+        setSession(result?.data?.session ?? null);
+        setAuthChecking(false);
+      })
+      .catch(() => {
+        setAuthChecking(false);
+      });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
@@ -125,7 +187,42 @@ function App() {
     fetchSuggestions(session.user.id);
   }, [session?.user?.id, activeFilter, feedTab]);
 
+  useEffect(() => {
+    if (!session?.user?.id || !sharedCapsuleIdFromPath) return;
+    let cancelled = false;
+    supabase
+      .from('capsules')
+      .select('*, profiles:owner_id(id, username, display_name, avatar_url, favorite_color, is_verified)')
+      .eq('id', sharedCapsuleIdFromPath)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!cancelled && data) setSelectedCapsule(data);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.id, sharedCapsuleIdFromPath]);
+
   const fetchUserProfile = async (userId: string) => {
+    if (SIMPLE_FRONTEND_PROFILE) {
+      const [profileRes, followersRes, followingRes, capsulesRes] = await Promise.all([
+        supabase.from('profiles').select('*').eq('id', userId).single(),
+        supabase.from('follows').select('follower_id', { count: 'exact', head: true }).eq('following_id', userId),
+        supabase.from('follows').select('following_id', { count: 'exact', head: true }).eq('follower_id', userId),
+        supabase.from('capsules').select('id', { count: 'exact', head: true }).eq('owner_id', userId),
+      ]);
+
+      if (profileRes.data) {
+        setUserProfile({
+          ...profileRes.data,
+          followers_count: followersRes.count || 0,
+          following_count: followingRes.count || 0,
+          capsules_count: capsulesRes.count || 0,
+        });
+      }
+      return;
+    }
+
     const { data } = await supabase.rpc('get_profile_data_unified', { p_target_id: userId });
     if (data?.profile) {
       setUserProfile(data.profile);
@@ -160,6 +257,7 @@ function App() {
   };
 
   const recordImpressions = useCallback(async (items: any[], startPosition = 0) => {
+    if (DISABLE_FEED_METRICS_UNTIL_STABLE) return;
     if (!session?.user?.id || items.length === 0) return;
 
     const feedEventIds = items.map(item => item.feed_item_key || item.feed_event_id || item.id).filter(Boolean);
@@ -181,6 +279,7 @@ function App() {
   }, [feedTab, session?.user?.id]);
 
   const recordFeedOpen = useCallback(async (capsule: any) => {
+    if (DISABLE_FEED_METRICS_UNTIL_STABLE) return;
     if (!session?.user?.id) return;
     await supabase.rpc('record_feed_click', {
       p_user_id: session.user.id,
@@ -198,10 +297,194 @@ function App() {
         setLoading(true);
       }
 
+      if (SIMPLE_FRONTEND_FEED && session?.user?.id) {
+        const myId = session.user.id;
+        const statusFilter = activeFilter === 'opened' ? 'opened' : activeFilter === 'sealed' ? 'sealed' : null;
+        const candidateLimit = PAGE_SIZE * 3;
+
+        const [followingRes, followedCapsulesRes, storiesRes] = await Promise.all([
+          supabase.from('follows').select('following_id').eq('follower_id', myId),
+          supabase.from('capsule_followers').select('capsule_id').eq('user_id', myId),
+          supabase.from('capsule_items')
+            .select('*, profiles:owner_id(id, username, display_name, avatar_url, favorite_color, is_verified)')
+            .eq('is_story', true)
+            .gt('expires_at', new Date().toISOString())
+            .order('created_at', { ascending: false })
+            .limit(40),
+        ]);
+
+        const followingIds = (followingRes.data || []).map((row: any) => row.following_id);
+        const followedCapsuleIds = (followedCapsulesRes.data || []).map((row: any) => row.capsule_id);
+
+        let capsuleRows: any[] = [];
+        if (feedTab === 'following') {
+          const ownerIds = Array.from(new Set([myId, ...followingIds]));
+          const ownerQuery = ownerIds.length
+            ? supabase
+                .from('capsules')
+                .select('*, profiles:owner_id(id, username, display_name, avatar_url, favorite_color, is_verified)')
+                .in('owner_id', ownerIds)
+                .order('updated_at', { ascending: false })
+                .limit(candidateLimit)
+            : Promise.resolve({ data: [] } as any);
+
+          const followedQuery = followedCapsuleIds.length
+            ? supabase
+                .from('capsules')
+                .select('*, profiles:owner_id(id, username, display_name, avatar_url, favorite_color, is_verified)')
+                .in('id', followedCapsuleIds)
+                .order('updated_at', { ascending: false })
+                .limit(candidateLimit)
+            : Promise.resolve({ data: [] } as any);
+
+          const [ownerCapsules, followedCapsules] = await Promise.all([ownerQuery, followedQuery]);
+          const merged = [...(ownerCapsules.data || []), ...(followedCapsules.data || [])];
+          capsuleRows = Array.from(new Map(merged.map((item: any) => [item.id, item])).values());
+        } else {
+          const exploreRes = await supabase
+            .from('capsules')
+            .select('*, profiles:owner_id(id, username, display_name, avatar_url, favorite_color, is_verified)')
+            .eq('is_public', true)
+            .neq('owner_id', myId)
+            .order('updated_at', { ascending: false })
+            .limit(candidateLimit);
+          capsuleRows = exploreRes.data || [];
+        }
+
+        if (statusFilter) {
+          capsuleRows = capsuleRows.filter((capsule: any) => capsule.status === statusFilter);
+        }
+
+        const capsuleIds = capsuleRows.map((capsule: any) => capsule.id);
+        const [mediaRes, likesRes, commentsRes, membersRes] = capsuleIds.length
+          ? await Promise.all([
+              supabase
+                .from('capsule_items')
+                .select('id, capsule_id, owner_id, media_url, media_type, thumbnail_url, created_at, profiles:owner_id(id, username, display_name, avatar_url, favorite_color, is_verified)')
+                .in('capsule_id', capsuleIds)
+                .eq('is_story', false)
+                .neq('moderation_status', 'rejected')
+                .in('media_type', ['image', 'video'])
+                .order('created_at', { ascending: false }),
+              supabase
+                .from('likes')
+                .select('capsule_id, user_id')
+                .in('capsule_id', capsuleIds),
+              supabase
+                .from('comments')
+                .select('capsule_id')
+                .in('capsule_id', capsuleIds),
+              supabase
+                .from('capsule_invites')
+                .select('capsule_id, user_id, status, profiles:user_id(id, username, display_name, avatar_url, favorite_color, is_verified)')
+                .in('capsule_id', capsuleIds)
+                .eq('status', 'accepted'),
+            ])
+          : [
+              { data: [] as any[] },
+              { data: [] as any[] },
+              { data: [] as any[] },
+              { data: [] as any[] },
+            ];
+
+        const mediaByCapsule = new Map<string, any[]>();
+        (mediaRes.data || []).forEach((item: any) => {
+          const list = mediaByCapsule.get(item.capsule_id) || [];
+          if (list.length < 4) list.push(item);
+          mediaByCapsule.set(item.capsule_id, list);
+        });
+
+        const countByCapsule = (rows: any[]) => {
+          const counts = new Map<string, number>();
+          rows.forEach((row: any) => {
+            if (!row?.capsule_id) return;
+            counts.set(row.capsule_id, (counts.get(row.capsule_id) || 0) + 1);
+          });
+          return counts;
+        };
+
+        const likesByCapsule = countByCapsule(likesRes.data || []);
+        const commentsByCapsule = countByCapsule(commentsRes.data || []);
+        const likedIds = new Set(
+          (likesRes.data || [])
+            .filter((like: any) => like.user_id === myId)
+            .map((like: any) => like.capsule_id)
+            .filter(Boolean)
+        );
+        const membersByCapsule = new Map<string, any[]>();
+        capsuleRows.forEach((capsule: any) => {
+          if (capsule?.id && capsule.profiles) {
+            membersByCapsule.set(capsule.id, [{ ...capsule.profiles, id: capsule.owner_id, role: 'owner' }]);
+          }
+        });
+        (membersRes.data || []).forEach((member: any) => {
+          if (!member?.capsule_id || !member?.profiles) return;
+          const list = membersByCapsule.get(member.capsule_id) || [];
+          if (!list.some((profile: any) => profile.id === member.user_id)) {
+            list.push({ ...member.profiles, id: member.user_id, role: 'member' });
+          }
+          membersByCapsule.set(member.capsule_id, list);
+        });
+
+        const mappedFeed = capsuleRows
+          .map((capsule: any) => {
+            const media = mediaByCapsule.get(capsule.id) || [];
+            const activityDate = media[0]?.created_at || capsule.updated_at || capsule.created_at;
+            const score =
+              (capsule.owner_id === myId ? 70 : 0) +
+              (followingIds.includes(capsule.owner_id) ? 45 : 0) +
+              (followedCapsuleIds.includes(capsule.id) ? 55 : 0) +
+              (capsule.status === 'opened' ? 30 : 10) +
+              Math.min(media.length * 5, 20);
+
+            return {
+              ...capsule,
+              id: `web-simple:${capsule.id}`,
+              feed_item_key: `web-simple:${capsule.id}`,
+              feed_event_id: `web-simple:${capsule.id}`,
+              capsule_id: capsule.id,
+              event_type: capsule.status === 'opened' ? 'capsule_opened' : 'capsule_created',
+              latest_item: media[0] || null,
+              collage_items: media,
+              posts_count: media.length,
+              likes_count: likesByCapsule.get(capsule.id) || 0,
+              comments_count: commentsByCapsule.get(capsule.id) || 0,
+              is_liked: likedIds.has(capsule.id),
+              shared_members: membersByCapsule.get(capsule.id) || [],
+              participants_count: membersByCapsule.get(capsule.id)?.length || 1,
+              is_followed_capsule: followedCapsuleIds.includes(capsule.id),
+              final_score: score,
+              activity_date: activityDate,
+            };
+          })
+          .sort((a: any, b: any) => b.final_score - a.final_score || +new Date(b.activity_date) - +new Date(a.activity_date));
+
+        if (seq !== fetchSeq.current) return;
+
+        setFeed(mappedFeed.slice(0, PAGE_SIZE));
+        setFeedCursor(null);
+        setHasNextPage(mappedFeed.length > PAGE_SIZE);
+
+        const storiesData = storiesRes.data || [];
+        const usersWithStories: any[] = [];
+        storiesData.forEach((s: any) => {
+          let group = usersWithStories.find(u => u.owner_id === s.owner_id);
+          if (!group) {
+            group = { ...s.profiles, owner_id: s.owner_id, stories: [] };
+            usersWithStories.push(group);
+          }
+          group.stories.push(s);
+        });
+        const processedStories = usersWithStories.sort((a, b) => (a.owner_id === myId ? -1 : b.owner_id === myId ? 1 : 0));
+        setStories(processedStories);
+        setMyStory(processedStories.find(u => u.owner_id === myId) || null);
+        return;
+      }
+
       const cursor = isLoadMore ? feedCursor : null;
       const effectiveMode = isLoadMore ? 'infinite_scroll' : refreshMode;
 
-      const { data, error } = await supabase.rpc('get_combined_feed_data', {
+      const rpcParams = {
         p_tab: feedTab,
         p_filter: normalizedFilter,
         p_limit: PAGE_SIZE,
@@ -212,7 +495,37 @@ function App() {
         p_cursor_score: cursor?.score ?? null,
         p_cursor_activity_date: cursor?.activityDate ?? null,
         p_cursor_id: cursor?.id ?? null
-      });
+      };
+
+      let data: any = null;
+      let error: any = null;
+
+      if (feedRpcPreference.current !== 'v1') {
+        const ranked = await supabase.rpc('get_combined_feed_data_v2', rpcParams);
+        data = ranked.data;
+        error = ranked.error;
+
+        const missingV2 =
+          typeof error?.message === 'string' &&
+          error.message.includes('get_combined_feed_data_v2') &&
+          (
+            error.message.includes('Could not find the function') ||
+            error.message.includes('does not exist') ||
+            error.message.includes('schema cache')
+          );
+
+        if (!error) {
+          feedRpcPreference.current = 'v2';
+        } else if (missingV2) {
+          feedRpcPreference.current = 'v1';
+        }
+      }
+
+      if (!data || error) {
+        const legacy = await supabase.rpc('get_combined_feed_data', rpcParams);
+        data = legacy.data;
+        error = legacy.error;
+      }
 
       if (error) throw error;
       if (seq !== fetchSeq.current) return;
@@ -284,12 +597,23 @@ function App() {
     }
   };
 
+  const dashboardStats = {
+    total: feed.length,
+    opened: feed.filter(item => item.status === 'opened').length,
+    sealed: feed.filter(item => item.status === 'sealed').length,
+    stories: stories.reduce((sum, group) => sum + (group.stories?.length || 0), myStory?.stories?.length || 0),
+  };
+
   if (authChecking) {
     return (
       <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8F7FF' }}>
         <div className="loader"></div>
       </div>
     );
+  }
+
+  if (!session && sharedCapsuleIdFromPath) {
+    return <CapsuleShareFallback capsuleId={sharedCapsuleIdFromPath} />;
   }
 
   if (!session) {
@@ -303,11 +627,59 @@ function App() {
     const cfg = typeConfig[capsule.type as keyof typeof typeConfig] || typeConfig.default;
     const TypeIcon = cfg.icon === 'camera' ? Camera : (cfg.icon === 'calendar' ? CalendarIcon : ClockIcon);
     
-    const hasMedia = !!(capsule.cover_url || (capsule.collage_items && capsule.collage_items.length > 0));
+    const hasMedia = !isClosed && !!(capsule.cover_url || (capsule.collage_items && capsule.collage_items.length > 0));
     
     const openCapsule = async () => {
       await recordFeedOpen(capsule).catch(() => {});
       setSelectedCapsule(capsule);
+    };
+
+    const toggleLike = async (event: React.MouseEvent) => {
+      event.stopPropagation();
+      if (!session?.user?.id) return;
+      const capsuleId = capsule.capsule_id || capsule.id?.replace?.('web-simple:', '') || capsule.id;
+      const wasLiked = !!capsule.is_liked;
+      setFeed(prev => prev.map(item => {
+        const itemCapsuleId = item.capsule_id || item.id?.replace?.('web-simple:', '') || item.id;
+        if (itemCapsuleId !== capsuleId) return item;
+        return {
+          ...item,
+          is_liked: !wasLiked,
+          likes_count: Math.max(0, (item.likes_count || 0) + (wasLiked ? -1 : 1)),
+        };
+      }));
+
+      try {
+        if (wasLiked) {
+          await supabase.from('likes').delete().eq('capsule_id', capsuleId).eq('user_id', session.user.id);
+        } else {
+          await supabase.from('likes').insert({ capsule_id: capsuleId, user_id: session.user.id });
+        }
+      } catch (error) {
+        setFeed(prev => prev.map(item => {
+          const itemCapsuleId = item.capsule_id || item.id?.replace?.('web-simple:', '') || item.id;
+          if (itemCapsuleId !== capsuleId) return item;
+          return {
+            ...item,
+            is_liked: wasLiked,
+            likes_count: Math.max(0, (item.likes_count || 0) + (wasLiked ? 1 : -1)),
+          };
+        }));
+      }
+    };
+
+    const shareCapsule = async (event: React.MouseEvent) => {
+      event.stopPropagation();
+      const capsuleId = capsule.capsule_id || capsule.id?.replace?.('web-simple:', '') || capsule.id;
+      const url = `https://kapsely.com/capsules/${encodeURIComponent(capsuleId)}`;
+      try {
+        if (navigator.share) {
+          await navigator.share({ title: capsule.title || 'Kapsely', text: 'Mira esta capsula en Kapsely', url });
+        } else {
+          await navigator.clipboard.writeText(url);
+          alert('Link copied to clipboard');
+        }
+      } catch {}
     };
 
     return (
@@ -328,24 +700,38 @@ function App() {
         </div>
 
         <div 
-          className="card-media-container" 
-          style={{ backgroundColor: isClosed ? '#1a1530' : '#f8f7ff', position: 'relative', height: '280px', overflow: 'hidden' }}
+          className={`card-media-container ${isClosed ? 'sealed-card-media' : ''}`}
+          style={{ backgroundColor: isClosed ? '#f8f7ff' : '#f8f7ff', position: 'relative', height: '280px', overflow: 'hidden' }}
           onContextMenu={e => e.preventDefault()}
         >
-          {/* Type badge */}
-          <div className="type-badge-floating" style={{ backgroundColor: cfg.color, position: 'absolute', top: '12px', left: '12px', zIndex: 12, display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 8px', borderRadius: '20px', fontSize: '10px', color: 'white', fontWeight: 'bold' }}>
-            <TypeIcon size={12} color="white" />
-            <span>{cfg.label}</span>
-          </div>
-
-          {/* Status badge */}
-          <div className="status-badge-floating" style={{ position: 'absolute', bottom: '12px', right: '12px', zIndex: 12, backgroundColor: !isClosed ? '#4ADE80' : '#F87171', width: '24px', height: '24px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid white' }}>
-             {isClosed ? <Lock size={12} color="white" /> : <Unlock size={12} color="white" />}
-          </div>
+          {!isClosed && (
+            <>
+              <div className="type-badge-floating" style={{ backgroundColor: cfg.color, position: 'absolute', top: '12px', left: '12px', zIndex: 12, display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 8px', borderRadius: '20px', fontSize: '10px', color: 'white', fontWeight: 'bold' }}>
+                <TypeIcon size={12} color="white" />
+                <span>{cfg.label}</span>
+              </div>
+              <div className="status-badge-floating" style={{ position: 'absolute', bottom: '12px', right: '12px', zIndex: 12, backgroundColor: '#4ADE80', width: '24px', height: '24px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid white' }}>
+                 <Unlock size={12} color="white" />
+              </div>
+            </>
+          )}
 
           <div className="model-glow" />
 
-          {hasMedia ? (
+          {isClosed ? (
+            <div className="center-model-view sealed-card-model">
+               <CapsuleWithTimer 
+                 modelKey={capsule.model}
+                 source={getModelImage(capsule.model)}
+                 date={capsule.opens_at}
+                 modelLayout={capsule.model_snapshot}
+                 chainId={capsule.chain_id}
+                 style={{ width: '230px', height: '230px' }}
+                 isOpened={false}
+                 lightweight={true}
+               />
+            </div>
+          ) : hasMedia ? (
             <div className="media-mode-view" style={{ width: '100%', height: '100%', position: 'relative' }}>
               {/* Background Media (Blurred if sealed) */}
               <div className={`media-background ${isClosed ? 'is-blurred secure-locked-media' : ''}`} style={{ width: '100%', height: '100%' }}>
@@ -361,21 +747,32 @@ function App() {
                   ) : (
                     <div className="web-collage-grid">
                       {capsule.collage_items?.slice(0, 4).map((item: any, i: number) => (
-                        <img 
-                          key={i} 
-                          src={item.thumbnail_url || item.media_url} 
-                          style={{ width: '100%', height: '100%', objectFit: 'cover', border: '1px solid white' }} 
-                          alt="" 
-                          draggable={false}
-                        />
+                        item.media_type === 'video' ? (
+                          <div key={i} className="web-video-tile">
+                            <video
+                              src={item.media_url}
+                              poster={item.thumbnail_url || undefined}
+                              muted
+                              playsInline
+                              preload="metadata"
+                            />
+                            <span className="video-play-badge">▶</span>
+                          </div>
+                        ) : (
+                          <img 
+                            key={i} 
+                            src={item.thumbnail_url || item.media_url} 
+                            style={{ width: '100%', height: '100%', objectFit: 'cover', border: '1px solid white' }} 
+                            alt="" 
+                            draggable={false}
+                          />
+                        )
                       ))}
                     </div>
                   )}
               </div>
 
               {/* Security Overlay */}
-              {isClosed && <div className="security-overlay" />}
-
               {/* Small Corner Model */}
               <div style={{ position: 'absolute', bottom: '45px', right: '15px', width: '70px', height: '70px', zIndex: 11 }}>
                  <CapsuleWithTimer 
@@ -410,9 +807,9 @@ function App() {
 
         <div className="card-footer">
           <div className="card-actions">
-            <button className="action-btn"><Heart size={22} fill={capsule.is_liked ? "var(--secondary)" : "none"} color={capsule.is_liked ? "var(--secondary)" : "currentColor"} /> <span>{capsule.likes_count || 0}</span></button>
-            <button className="action-btn"><MessageCircle size={22} /> <span>{capsule.comments_count || 0}</span></button>
-            <button className="action-btn" style={{marginLeft: 'auto'}}><Share2 size={22} /></button>
+            <button className="action-btn" onClick={toggleLike}><Heart size={22} fill={capsule.is_liked ? "var(--secondary)" : "none"} color={capsule.is_liked ? "var(--secondary)" : "currentColor"} /> <span>{capsule.likes_count || 0}</span></button>
+            <button className="action-btn" onClick={(event) => { event.stopPropagation(); openCapsule(); }}><MessageCircle size={22} /> <span>{capsule.comments_count || 0}</span></button>
+            <button className="action-btn" style={{marginLeft: 'auto'}} onClick={shareCapsule}><Share2 size={22} /></button>
           </div>
           <div className="card-content">
             {capsule.event_type && capsule.event_type !== 'capsule_created' && (
@@ -445,20 +842,6 @@ function App() {
             <Home size={22} /> <span>Home</span>
           </button>
           
-          <button 
-            className={`nav-item ${activeView === 'search' ? 'active' : ''}`} 
-            onClick={() => { setActiveView('search'); setViewingProfileId(null); }}
-          >
-            <Search size={22} /> <span>Search</span>
-          </button>
-
-          <button 
-            className={`nav-item ${activeView === 'feed' && feedTab === 'explore' && !viewingProfileId ? 'active' : ''}`} 
-            onClick={() => { setActiveView('feed'); setFeedTab('explore'); setViewingProfileId(null); }}
-          >
-            <Compass size={22} /> <span>Explore</span>
-          </button>
-
           <button 
             className={`nav-item ${activeView === 'chat' ? 'active' : ''}`} 
             onClick={() => { setActiveView('chat'); setViewingProfileId(null); }}
@@ -509,13 +892,23 @@ function App() {
         </div>
 
         <div className="sidebar-footer">
-          <button className="nav-item logout-item" onClick={() => supabase.auth.signOut()}>
+          <button className="nav-item logout-item" onClick={() => safeSignOut()}>
             <LogOut size={20} /> <span>Logout</span>
           </button>
         </div>
       </aside>
 
       <main className="main-content">
+        <div className="desktop-topbar">
+          <div>
+            <span className="topbar-kicker">Kapsely Web</span>
+            <h1>{viewingProfileId ? 'Profile' : activeView === 'feed' ? (feedTab === 'following' ? 'Home' : 'Explore') : activeView.charAt(0).toUpperCase() + activeView.slice(1)}</h1>
+          </div>
+          <div className="topbar-actions">
+            <button className="topbar-btn" onClick={() => { setActiveView('search'); setViewingProfileId(null); }}><Search size={18} /> Search</button>
+            <button className="topbar-primary" onClick={() => { setActiveView('create'); setViewingProfileId(null); }}><Plus size={18} /> New capsule</button>
+          </div>
+        </div>
         <AnimatePresence mode="wait">
           {viewingProfileId ? (
             <Profile 
@@ -539,6 +932,7 @@ function App() {
                     <button className={`feed-tab-item ${feedTab === 'following' ? 'active' : ''}`} onClick={() => setFeedTab('following')}>Following</button>
                     <button className={`feed-tab-item ${feedTab === 'explore' ? 'active' : ''}`} onClick={() => setFeedTab('explore')}>Explore</button>
                     <button className="feed-refresh-btn" onClick={() => fetchFeed(false, 'pull_to_refresh')} disabled={refreshing || loading}>
+                      <RefreshCw size={16} className={refreshing ? 'spin-icon' : ''} />
                       {refreshing ? 'Refreshing...' : 'Refresh'}
                     </button>
                   </div>
@@ -559,6 +953,13 @@ function App() {
 
                 {loading ? (
                   <div className="loading-state"><div className="loader"></div></div>
+                ) : feed.length === 0 ? (
+                  <div className="web-empty-state">
+                    <Sparkles size={34} />
+                    <h3>No hay capsulas aqui todavia</h3>
+                    <p>Cambia de filtro, explora capsulas publicas o crea una nueva desde la web.</p>
+                    <button className="topbar-primary" onClick={() => setActiveView('create')}><Plus size={18} /> Crear capsula</button>
+                  </div>
                 ) : (
                   <div className="capsule-grid">
                     {feed.map(renderCapsuleCard)}
@@ -581,6 +982,7 @@ function App() {
               <aside className="feed-right-sidebar">
                 <div className="sidebar-section">
                   <h3 className="section-title">Suggestions</h3>
+                  {suggestions.length === 0 && <p className="empty-side-note">Sin sugerencias por ahora.</p>}
                   {suggestions.map(user => (
                     <div key={user.id} className="suggestion-item">
                       <div className="suggestion-user">
@@ -600,21 +1002,6 @@ function App() {
                   ))}
                 </div>
 
-                <div className="sidebar-section">
-                  <h3 className="section-title">Trending Models</h3>
-                  <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px'}}>
-                    {['original', 'classic', 'modern', 'future'].map(m => (
-                      <div key={m} style={{background: 'var(--surface-alt)', borderRadius: '12px', padding: '10px', textAlign: 'center'}}>
-                        <img src={getModelImage(m)} style={{width: '40px', height: '40px', objectFit: 'contain'}} alt="" />
-                        <div style={{fontSize: '11px', fontWeight: '700', textTransform: 'capitalize'}}>{m}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div style={{fontSize: '12px', color: 'var(--text-muted)', padding: '0 10px'}}>
-                   © 2026 Kapsely from Ochanz • Help • Privacy • Terms
-                </div>
               </aside>
             </div>
           ) : activeView === 'search' ? (
@@ -625,8 +1012,10 @@ function App() {
                {activeChat ? (
                  <ChatRoom chatId={activeChat.id} participant={activeChat.participant} currentUserId={session.user.id} onBack={() => setActiveChat(null)} />
                ) : (
-                 <div style={{flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888'}}>
-                   Select a conversation to start chatting
+                 <div className="web-empty-state chat-empty">
+                   <MessageCircle size={36} />
+                   <h3>Selecciona un chat</h3>
+                   <p>El panel de mensajes se queda abierto para trabajar comodo desde ordenador.</p>
                  </div>
                )}
             </div>
@@ -668,7 +1057,7 @@ function App() {
                   <div style={{flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
                     {activeStoryGroup.stories[0].type === 'voice' ? (
                       <div style={{textAlign: 'center'}}>
-                        <div style={{fontSize: '48px'}}>🎙️</div>
+                        <div style={{fontSize: '48px'}}>ðŸŽ™ï¸</div>
                         <p>Voice Flash</p>
                       </div>
                     ) : (

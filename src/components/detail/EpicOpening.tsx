@@ -1,7 +1,13 @@
-import React, { useRef, useEffect, useState, useMemo } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import {
-    View, Text, StyleSheet, Animated, Easing,
-    Dimensions, Platform, TouchableOpacity,
+    View,
+    Text,
+    StyleSheet,
+    Animated,
+    Easing,
+    Dimensions,
+    Platform,
+    Pressable,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -12,110 +18,193 @@ import CapsuleWithTimer from '../CapsuleWithTimer';
 
 const { width, height } = Dimensions.get('window');
 
-// Colores base de la app
-const DETAIL_PURPLE = '#955aff';
+const BRAND_PURPLE = 'rgb(166, 110, 255)';
+const BRAND_PURPLE_HEX = '#A66EFF';
 const WHITE = '#ffffff';
-const BLACK = '#000000';
+const SOFT_TEXT = '#5C5778';
+const LIGHT_TEXT = '#9B96B5';
+const CARD_BORDER = '#F0ECFF';
 
-type Phase = 'intro_quote' | 'vibrate' | 'flash' | 'outburst' | 'opened';
+type Phase =
+    | 'intro'
+    | 'awakening'
+    | 'unlocking'
+    | 'memory_release'
+    | 'opened';
 
 interface EpicOpeningProps {
     capsuleTitle: string;
     onComplete: () => void;
     epicImageUrls?: string[];
-    modelImg?: string; 
+    flashbackComments?: string[];
+    likeCount?: number;
+    modelImg?: string;
     closedModelImg?: string;
     modelKey?: string;
     modelLayout?: any;
     tint?: string;
     countdown?: number;
+    lockedForText?: string;
+    interactive?: boolean;
+    passiveTargetDate?: string | null;
+    spectatorLabel?: string;
 }
 
-const PARTICLES_COUNT = 30;
-const OUTBURST_COUNT = 15;
+const PARTICLES_COUNT = 24;
+const MEMORY_COUNT = 7;
+const OPEN_BURST_COUNT = 14;
+const INTRO_CAPSULE_SIZE = 250;
 
 export const EpicOpening = ({
-    capsuleTitle, onComplete, epicImageUrls = [], modelImg, closedModelImg, modelKey = 'basicred_kap', modelLayout, tint, countdown = 10
+    capsuleTitle,
+    onComplete,
+    epicImageUrls = [],
+    flashbackComments = [],
+    likeCount = 0,
+    modelImg,
+    closedModelImg,
+    modelKey = 'basicred_kap',
+    modelLayout,
+    tint,
+    countdown = 10,
+    lockedForText,
+    interactive = true,
+    passiveTargetDate,
+    spectatorLabel,
 }: EpicOpeningProps) => {
     const { t } = useTranslation();
-    const [phase, setPhase] = useState<Phase>('intro_quote');
-    const activeTint = tint || DETAIL_PURPLE;
+    const activeTint = tint || BRAND_PURPLE;
 
-    // Valores animados
-    const introOpacity = useRef(new Animated.Value(0)).current;
-    const vibratePos = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
-    const vibrateOpacity = useRef(new Animated.Value(1)).current; 
-    const intensity = useRef(new Animated.Value(1)).current;
-    const intensityRef = useRef(1);
-    const [imgLoadError, setImgLoadError] = useState(false);
-    const [openedImgLoadError, setOpenedImgLoadError] = useState(false);
-    const flashOpacity = useRef(new Animated.Value(0)).current;
-    const openedOpacity = useRef(new Animated.Value(0)).current;
-    const openedScale = useRef(new Animated.Value(0.7)).current;
-    const vibrateScale = useRef(new Animated.Value(1)).current;
-    const vibrateRot = useRef(new Animated.Value(0)).current;
-    
-    // Asset loading state
+    const [phase, setPhase] = useState<Phase>('intro');
     const [soundsReady, setSoundsReady] = useState(false);
     const [imagesLoaded, setImagesLoaded] = useState(false);
     const [introMinTimeDone, setIntroMinTimeDone] = useState(false);
+    const [canTriggerOpening, setCanTriggerOpening] = useState(false);
+    const [isPressingToOpen, setIsPressingToOpen] = useState(false);
 
-    // Particles values
-    const particles = useRef([...Array(PARTICLES_COUNT)].map(() => ({
-        pos: new Animated.ValueXY({ x: 0, y: 0 }),
-        opacity: new Animated.Value(0),
-        scale: new Animated.Value(Math.random() * 0.5 + 0.5),
-    }))).current;
+    const introOpacity = useRef(new Animated.Value(0)).current;
+    const introTranslateY = useRef(new Animated.Value(18)).current;
 
-    // Media Outburst values
-    const outburstItems = useRef([...Array(OUTBURST_COUNT)].map((_, i) => ({
-        pos: new Animated.ValueXY({ x: 0, y: 0 }),
-        opacity: new Animated.Value(0),
-        scale: new Animated.Value(0.1),
-        rotate: new Animated.Value(0),
-        type: i % 4 === 0 ? 'image' : i % 4 === 1 ? 'video' : i % 4 === 2 ? 'audio' : 'note',
-        url: epicImageUrls[i % epicImageUrls.length] || null,
-        target: {
-            x: (Math.random() - 0.5) * width * 1.1,
-            y: (Math.random() - 0.5) * height * 1.0,
-            rot: (Math.random() - 0.5) * 60
-        }
-    }))).current;
+    const stageOpacity = useRef(new Animated.Value(0)).current;
+    const capsuleScale = useRef(new Animated.Value(0.92)).current;
+    const capsuleRotate = useRef(new Animated.Value(0)).current;
+    const capsuleFloat = useRef(new Animated.Value(0)).current;
 
-    const introPad = useRef<Audio.Sound | null>(null);   // Phase 1: intro ambient
-    const rumbleSound = useRef<Audio.Sound | null>(null); // Phase 2: vibration rumble
-    const cardFlip = useRef<Audio.Sound | null>(null);    // Phase 3: card reveal
-    const openSound = useRef<Audio.Sound | null>(null);   // Flash/open transition
-    const vibeFrame = useRef<number | undefined>(undefined);
+    const haloOpacity = useRef(new Animated.Value(0)).current;
+    const haloScale = useRef(new Animated.Value(0.75)).current;
+
+    const ringScale = useRef(new Animated.Value(0.4)).current;
+    const ringOpacity = useRef(new Animated.Value(0)).current;
+
+    const flashOpacity = useRef(new Animated.Value(0)).current;
+
+    const openedOpacity = useRef(new Animated.Value(0)).current;
+    const openedScale = useRef(new Animated.Value(0.94)).current;
+    const finalTextOpacity = useRef(new Animated.Value(0)).current;
+    const finalTextTranslateY = useRef(new Animated.Value(18)).current;
+
+    const timeLabelOpacity = useRef(new Animated.Value(0)).current;
+    const timeLabelTranslateY = useRef(new Animated.Value(12)).current;
+    const holdProgress = useRef(new Animated.Value(0)).current;
+    const liquidWaveShift = useRef(new Animated.Value(0)).current;
+    const introCapsulePressScale = useRef(new Animated.Value(1)).current;
+
+    const shimmerTranslate = useRef(new Animated.Value(-width)).current;
+
+    const introPad = useRef<Audio.Sound | null>(null);
+    const unlockSound = useRef<Audio.Sound | null>(null);
+    const releaseSound = useRef<Audio.Sound | null>(null);
+
+    const floatLoopRef = useRef<Animated.CompositeAnimation | null>(null);
+    const haloLoopRef = useRef<Animated.CompositeAnimation | null>(null);
+    const shimmerLoopRef = useRef<Animated.CompositeAnimation | null>(null);
+    const holdCompleteRef = useRef(false);
+    const holdAnimationRef = useRef<Animated.CompositeAnimation | null>(null);
+    const liquidWaveLoopRef = useRef<Animated.CompositeAnimation | null>(null);
+
+    const particles = useRef(
+        [...Array(PARTICLES_COUNT)].map(() => ({
+            pos: new Animated.ValueXY({ x: 0, y: 0 }),
+            opacity: new Animated.Value(0),
+            scale: new Animated.Value(Math.random() * 0.45 + 0.45),
+            target: {
+                x: (Math.random() - 0.5) * width * 0.9,
+                y: (Math.random() - 0.5) * height * 0.65,
+            },
+        }))
+    ).current;
+
+    const openBurstParticles = useRef(
+        [...Array(OPEN_BURST_COUNT)].map((_, i) => {
+            const angle = (Math.PI * 2 * i) / OPEN_BURST_COUNT;
+            const radius = 78 + (i % 4) * 18;
+            return {
+                pos: new Animated.ValueXY({ x: 0, y: 0 }),
+                opacity: new Animated.Value(0),
+                scale: new Animated.Value(0.3),
+                target: {
+                    x: Math.cos(angle) * radius,
+                    y: Math.sin(angle) * radius - 8,
+                },
+            };
+        })
+    ).current;
+
+    const memoryItems = useRef(
+        [...Array(MEMORY_COUNT)].map((_, i) => {
+            const angle = (Math.PI * 2 * i) / MEMORY_COUNT - Math.PI / 2;
+            const radiusX = width * 0.32;
+            const radiusY = height * 0.22;
+
+            return {
+                pos: new Animated.ValueXY({ x: 0, y: 0 }),
+                opacity: new Animated.Value(0),
+                scale: new Animated.Value(0.2),
+                rotate: new Animated.Value(0),
+                type:
+                    i % 4 === 0
+                        ? 'image'
+                        : i % 4 === 1
+                        ? 'video'
+                        : i % 4 === 2
+                        ? 'audio'
+                        : 'note',
+                url: epicImageUrls[i % Math.max(epicImageUrls.length, 1)] || null,
+                target: {
+                    x: Math.cos(angle) * radiusX,
+                    y: Math.sin(angle) * radiusY,
+                    rot: (Math.random() - 0.5) * 18,
+                },
+            };
+        })
+    ).current;
 
     useEffect(() => {
-        const listenerId = intensity.addListener(({ value }) => {
-            intensityRef.current = value;
-        });
         loadSounds();
         prefetchImages();
-        startSequence();
+        startIntro();
+
         return () => {
-            intensity.removeListener(listenerId);
-            if (vibeFrame.current) cancelAnimationFrame(vibeFrame.current);
+            floatLoopRef.current?.stop();
+            haloLoopRef.current?.stop();
+            shimmerLoopRef.current?.stop();
+            holdAnimationRef.current?.stop?.();
+            liquidWaveLoopRef.current?.stop?.();
             introPad.current?.unloadAsync();
-            rumbleSound.current?.unloadAsync();
-            cardFlip.current?.unloadAsync();
-            openSound.current?.unloadAsync();
+            unlockSound.current?.unloadAsync();
+            releaseSound.current?.unloadAsync();
         };
     }, []);
 
     useEffect(() => {
-        if (soundsReady && imagesLoaded && introMinTimeDone) {
-            proceedToVibration();
+        if (imagesLoaded && introMinTimeDone && phase === 'intro') {
+            if (interactive) {
+                setCanTriggerOpening(true);
+            } else {
+                startPassiveOpening();
+            }
         }
-    }, [soundsReady, imagesLoaded, introMinTimeDone]);
-
-    useEffect(() => {
-        if (__DEV__) {
-            console.log("[EpicOpening] Status:", { soundsReady, imagesLoaded, introMinTimeDone });
-        }
-    }, [soundsReady, imagesLoaded, introMinTimeDone]);
+    }, [imagesLoaded, introMinTimeDone, phase, interactive]);
 
     const loadSounds = async () => {
         try {
@@ -128,334 +217,1018 @@ export const EpicOpening = ({
                 playThroughEarpieceAndroid: false,
             });
 
-            const cfg = { shouldPlay: false, volume: 1.0 };
+            const cfg = { shouldPlay: false, volume: 1 };
 
-            // 3 reliable sounds from public CDNs
-            const [
-                { sound: s1 }, // intro ambient pad
-                { sound: s2 }, // rumble / vibrate
-                { sound: s3 }, // card flip
-                { sound: s4 }, // open flash whoosh
-            ] = await Promise.all([
-                Audio.Sound.createAsync(
-                    { uri: 'https://cdn.pixabay.com/download/audio/2022/01/18/audio_b35d32f8b2.mp3' }, // soft ambient drone
-                    { ...cfg, volume: 0.45, isLooping: true }
-                ),
-                Audio.Sound.createAsync(
-                    { uri: 'https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c1539c.mp3' }, // low rumble
-                    { ...cfg, volume: 0.8, isLooping: true }
-                ),
-                Audio.Sound.createAsync(
-                    { uri: 'https://cdn.pixabay.com/download/audio/2022/03/10/audio_39187cf94f.mp3' }, // card whoosh
-                    { ...cfg, volume: 0.7 }
-                ),
-                Audio.Sound.createAsync(
-                    { uri: 'https://cdn.pixabay.com/download/audio/2021/08/09/audio_dc39bede7d.mp3' }, // shiny open
-                    { ...cfg, volume: 0.9 }
-                ),
-            ]);
+            const soundTimeout = new Promise((resolve) => setTimeout(() => resolve(null), 1800));
+            const loadedSounds = await Promise.race([
+                Promise.all([
+                    Audio.Sound.createAsync(
+                        { uri: 'https://cdn.pixabay.com/download/audio/2022/01/18/audio_b35d32f8b2.mp3' },
+                        { ...cfg, volume: 0.28, isLooping: true }
+                    ),
+                    Audio.Sound.createAsync(
+                        { uri: 'https://cdn.pixabay.com/download/audio/2021/08/09/audio_dc39bede7d.mp3' },
+                        { ...cfg, volume: 0.75 }
+                    ),
+                    Audio.Sound.createAsync(
+                        { uri: 'https://cdn.pixabay.com/download/audio/2022/03/10/audio_39187cf94f.mp3' },
+                        { ...cfg, volume: 0.45 }
+                    ),
+                ]),
+                soundTimeout,
+            ]) as any;
+
+            if (!loadedSounds) {
+                setSoundsReady(true);
+                return;
+            }
+
+            const [{ sound: s1 }, { sound: s2 }, { sound: s3 }] = loadedSounds;
 
             introPad.current = s1;
-            rumbleSound.current = s2;
-            cardFlip.current = s3;
-            openSound.current = s4;
+            unlockSound.current = s2;
+            releaseSound.current = s3;
 
-            console.log('[EpicOpening] Sounds loaded OK');
             setSoundsReady(true);
         } catch (e) {
             console.log('[EpicOpening] Error loading sounds:', e);
-            setSoundsReady(true); // never block the animation
+            setSoundsReady(true);
         }
     };
 
     const prefetchImages = async () => {
-        if (!closedModelImg && !modelImg) {
-            setImagesLoaded(true);
-            return;
-        }
         try {
-            const urls = [];
+            const urls: string[] = [];
+
             if (closedModelImg) urls.push(closedModelImg);
             if (modelImg) urls.push(modelImg);
-            
-            await Image.prefetch(urls);
-            console.log("Images prefetched successfully in EpicOpening");
+            epicImageUrls.forEach((url) => {
+                if (url) urls.push(url);
+            });
+
+            if (urls.length > 0) {
+                await Promise.race([
+                    Image.prefetch(urls),
+                    new Promise((resolve) => setTimeout(resolve, 2000)),
+                ]);
+            }
+
             setImagesLoaded(true);
         } catch (e) {
-            console.log("Error prefetching images", e);
-            setImagesLoaded(true); // Proceed anyway
+            console.log('[EpicOpening] Error prefetching images:', e);
+            setImagesLoaded(true);
         }
     };
 
-    const startSequence = () => {
-        // Phase 1: Intro — play ambient pad
+    const startIntro = () => {
         introPad.current?.playAsync().catch(() => {});
-        Animated.timing(introOpacity, {
-            toValue: 1,
-            duration: 1000,
-            useNativeDriver: true,
-        }).start(() => {
-            setTimeout(() => setIntroMinTimeDone(true), 3000);
-        });
-    };
 
-    const proceedToVibration = () => {
-        if (phase !== 'intro_quote') return;
-        Animated.timing(introOpacity, {
-            toValue: 0,
-            duration: 1000,
-            useNativeDriver: true,
-        }).start(() => {
-            introPad.current?.stopAsync().catch(() => {});
-            startVibrationPhase();
-        });
-    };
-
-    const startVibrationPhase = () => {
-        setPhase('vibrate');
-        // Phase 2: Vibration rumble loop
-        rumbleSound.current?.playAsync().catch(() => {});
-        rumbleSound.current?.setIsLoopingAsync(true).catch(() => {});
-        
-        Animated.timing(vibrateOpacity, { toValue: 1, duration: 1000, useNativeDriver: true }).start();
-
-        // Vibration loop (Rotational for more "aesthetic" feel)
-        const shake = () => {
-            if (intensityRef.current === 0) return; // Stop if intensity is 0
-            
-            const mult = intensityRef.current * 2; // Max ~8 degrees — subtler shake
-            vibrateRot.setValue((Math.random() - 0.5) * mult);
-            
-            vibeFrame.current = requestAnimationFrame(shake);
-        };
-        shake();
-
-        // Increase intensity and scale over 7 seconds
         Animated.parallel([
-            Animated.timing(intensity, { toValue: 3, duration: 7000, useNativeDriver: true }),
-            Animated.timing(vibrateScale, { toValue: 1.06, duration: 7000, useNativeDriver: true }),
+            Animated.timing(introOpacity, {
+                toValue: 1,
+                duration: 700,
+                easing: Easing.out(Easing.cubic),
+                useNativeDriver: true,
+            }),
+            Animated.timing(introTranslateY, {
+                toValue: 0,
+                duration: 700,
+                easing: Easing.out(Easing.cubic),
+                useNativeDriver: true,
+            }),
         ]).start();
 
-        // Particles outburst gradually
-        particles.forEach((p, i) => {
-            Animated.sequence([
-                Animated.delay(2000 + i * 200),
-                Animated.parallel([
-                    Animated.timing(p.opacity, { toValue: 0.6, duration: 300, useNativeDriver: true }),
-                    Animated.timing(p.pos, {
-                        toValue: { x: (Math.random() - 0.5) * 500, y: (Math.random() - 0.5) * 500 },
-                        duration: 2000,
-                        easing: Easing.out(Easing.exp),
-                        useNativeDriver: true
-                    }),
-                    Animated.timing(p.opacity, { toValue: 0, duration: 2000, useNativeDriver: true })
-                ])
-            ]).start();
-        });
+        Animated.parallel([
+            Animated.timing(timeLabelOpacity, {
+                toValue: 1,
+                duration: 900,
+                delay: 500,
+                easing: Easing.out(Easing.cubic),
+                useNativeDriver: true,
+            }),
+            Animated.timing(timeLabelTranslateY, {
+                toValue: 0,
+                duration: 900,
+                delay: 500,
+                easing: Easing.out(Easing.cubic),
+                useNativeDriver: true,
+            }),
+        ]).start();
 
-        // 7 seconds of vibrating then FLASH
         setTimeout(() => {
-            if (vibeFrame.current) cancelAnimationFrame(vibeFrame.current);
-            vibrateRot.setValue(0);
-            intensityRef.current = 0;
-            startFlashPhase();
-        }, 7000);
+            setIntroMinTimeDone(true);
+        }, 2600);
     };
 
-    const startFlashPhase = () => {
-        setPhase('flash');
-        rumbleSound.current?.stopAsync().catch(() => {});
-        // Play open whoosh on the flash
-        openSound.current?.replayAsync().catch(() => {});
-        
-        Animated.sequence([
-            Animated.timing(flashOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
-            Animated.delay(50),
-            Animated.parallel([
-                Animated.timing(flashOpacity, { toValue: 0, duration: 1200, useNativeDriver: true }),
-                Animated.timing(openedOpacity, { toValue: 1, duration: 800, useNativeDriver: true }),
-                Animated.spring(openedScale, { toValue: 1, friction: 5, tension: 30, useNativeDriver: true }),
-            ])
+    const enterAwakening = (unlockDelayMs: number) => {
+        holdCompleteRef.current = true;
+        setIsPressingToOpen(false);
+        holdAnimationRef.current?.stop?.();
+        liquidWaveLoopRef.current?.stop?.();
+
+        Animated.timing(holdProgress, {
+            toValue: 1,
+            duration: 140,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+        }).start();
+
+        Animated.timing(liquidWaveShift, {
+            toValue: 0,
+            duration: 180,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+        }).start();
+
+        setPhase('awakening');
+
+        Animated.parallel([
+            Animated.timing(introOpacity, {
+                toValue: 0,
+                duration: 550,
+                easing: Easing.inOut(Easing.cubic),
+                useNativeDriver: true,
+            }),
+            Animated.timing(stageOpacity, {
+                toValue: 1,
+                duration: 900,
+                easing: Easing.out(Easing.cubic),
+                useNativeDriver: true,
+            }),
+            Animated.spring(capsuleScale, {
+                toValue: 1,
+                friction: 8,
+                tension: 42,
+                useNativeDriver: true,
+            }),
         ]).start(() => {
-            startOutburstPhase();
+            startAmbientMotion();
+            startParticles();
+            setTimeout(startUnlocking, unlockDelayMs);
         });
     };
 
-    const startOutburstPhase = () => {
-        setPhase('outburst');
+    const startAwakening = () => {
+        if (!canTriggerOpening || phase !== 'intro') return;
+        enterAwakening(4300);
+    };
 
-        // Phase 3: play card flip sound for each card with stagger
-        outburstItems.forEach((item, i) => {
+    const startPassiveOpening = () => {
+        if (phase !== 'intro') return;
+        const remainingMs = passiveTargetDate
+            ? Math.max(3200, new Date(passiveTargetDate).getTime() - Date.now())
+            : 12900;
+        const unlockAndRevealTailMs = 8600;
+        const unlockDelayMs = Math.max(1200, remainingMs - unlockAndRevealTailMs);
+        enterAwakening(unlockDelayMs);
+    };
+
+    const handlePressInCapsule = () => {
+        if (!canTriggerOpening || phase !== 'intro' || holdCompleteRef.current) return;
+        setIsPressingToOpen(true);
+
+        Animated.spring(introCapsulePressScale, {
+            toValue: 0.975,
+            friction: 7,
+            tension: 120,
+            useNativeDriver: true,
+        }).start();
+
+        liquidWaveLoopRef.current?.stop?.();
+        liquidWaveLoopRef.current = Animated.loop(
             Animated.sequence([
-                Animated.delay(i * 100),
-                Animated.parallel([
-                    Animated.timing(item.opacity, { toValue: 1, duration: 400, useNativeDriver: true }),
-                    Animated.spring(item.pos, {
-                        toValue: { x: item.target.x, y: item.target.y },
-                        friction: 6, tension: 40, useNativeDriver: true
-                    }),
-                    Animated.spring(item.scale, { toValue: 1, friction: 5, useNativeDriver: true }),
-                    Animated.timing(item.rotate, {
-                        toValue: 1, duration: 800,
-                        easing: Easing.out(Easing.back(1)), useNativeDriver: true
-                    })
-                ])
-            ]).start();
+                Animated.timing(liquidWaveShift, {
+                    toValue: 1,
+                    duration: 650,
+                    easing: Easing.inOut(Easing.sin),
+                    useNativeDriver: true,
+                }),
+                Animated.timing(liquidWaveShift, {
+                    toValue: -1,
+                    duration: 650,
+                    easing: Easing.inOut(Easing.sin),
+                    useNativeDriver: true,
+                }),
+            ])
+        );
+        liquidWaveLoopRef.current.start();
 
-            // Card flip sound — play every card with a small offset
-            setTimeout(() => {
-                cardFlip.current?.replayAsync().catch(() => {});
-            }, i * 100);
+        holdAnimationRef.current?.stop?.();
+        holdAnimationRef.current = Animated.timing(holdProgress, {
+            toValue: 1,
+            duration: 1300,
+            easing: Easing.inOut(Easing.cubic),
+            useNativeDriver: true,
+        });
+        holdAnimationRef.current.start(({ finished }) => {
+            if (finished && !holdCompleteRef.current) {
+                startAwakening();
+            }
+        });
+    };
+
+    const handlePressOutCapsule = () => {
+        if (holdCompleteRef.current || phase !== 'intro') return;
+        setIsPressingToOpen(false);
+        holdAnimationRef.current?.stop?.();
+        liquidWaveLoopRef.current?.stop?.();
+
+        Animated.spring(introCapsulePressScale, {
+            toValue: 1,
+            friction: 7,
+            tension: 120,
+            useNativeDriver: true,
+        }).start();
+
+        Animated.timing(liquidWaveShift, {
+            toValue: 0,
+            duration: 200,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+        }).start();
+
+        Animated.timing(holdProgress, {
+            toValue: 0,
+            duration: 220,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+        }).start();
+    };
+
+    const startAmbientMotion = () => {
+        floatLoopRef.current = Animated.loop(
+            Animated.sequence([
+                Animated.timing(capsuleFloat, {
+                    toValue: -10,
+                    duration: 1800,
+                    easing: Easing.inOut(Easing.sin),
+                    useNativeDriver: true,
+                }),
+                Animated.timing(capsuleFloat, {
+                    toValue: 0,
+                    duration: 1800,
+                    easing: Easing.inOut(Easing.sin),
+                    useNativeDriver: true,
+                }),
+            ])
+        );
+
+        haloLoopRef.current = Animated.loop(
+            Animated.sequence([
+                Animated.parallel([
+                    Animated.timing(haloOpacity, {
+                        toValue: 0.2,
+                        duration: 1600,
+                        easing: Easing.inOut(Easing.cubic),
+                        useNativeDriver: true,
+                    }),
+                    Animated.timing(haloScale, {
+                        toValue: 1.15,
+                        duration: 1600,
+                        easing: Easing.inOut(Easing.cubic),
+                        useNativeDriver: true,
+                    }),
+                ]),
+                Animated.parallel([
+                    Animated.timing(haloOpacity, {
+                        toValue: 0.1,
+                        duration: 1600,
+                        easing: Easing.inOut(Easing.cubic),
+                        useNativeDriver: true,
+                    }),
+                    Animated.timing(haloScale, {
+                        toValue: 0.95,
+                        duration: 1600,
+                        easing: Easing.inOut(Easing.cubic),
+                        useNativeDriver: true,
+                    }),
+                ]),
+            ])
+        );
+
+        shimmerLoopRef.current = Animated.loop(
+            Animated.sequence([
+                Animated.timing(shimmerTranslate, {
+                    toValue: width,
+                    duration: 2200,
+                    easing: Easing.inOut(Easing.cubic),
+                    useNativeDriver: true,
+                }),
+                Animated.delay(900),
+                Animated.timing(shimmerTranslate, {
+                    toValue: -width,
+                    duration: 0,
+                    useNativeDriver: true,
+                }),
+            ])
+        );
+
+        floatLoopRef.current.start();
+        haloLoopRef.current.start();
+        shimmerLoopRef.current.start();
+    };
+
+    const startParticles = () => {
+        particles.forEach((p, i) => {
+            Animated.loop(
+                Animated.sequence([
+                    Animated.delay(i * 120),
+                    Animated.parallel([
+                        Animated.timing(p.opacity, {
+                            toValue: 0.55,
+                            duration: 600,
+                            easing: Easing.out(Easing.cubic),
+                            useNativeDriver: true,
+                        }),
+                        Animated.timing(p.pos, {
+                            toValue: {
+                                x: p.target.x,
+                                y: p.target.y,
+                            },
+                            duration: 2600 + Math.random() * 1200,
+                            easing: Easing.out(Easing.exp),
+                            useNativeDriver: true,
+                        }),
+                    ]),
+                    Animated.timing(p.opacity, {
+                        toValue: 0,
+                        duration: 900,
+                        easing: Easing.in(Easing.cubic),
+                        useNativeDriver: true,
+                    }),
+                    Animated.timing(p.pos, {
+                        toValue: { x: 0, y: 0 },
+                        duration: 0,
+                        useNativeDriver: true,
+                    }),
+                ])
+            ).start();
+        });
+    };
+
+    const startUnlocking = () => {
+        setPhase('unlocking');
+
+        unlockSound.current?.replayAsync().catch(() => {});
+
+        Animated.parallel([
+            Animated.sequence([
+                Animated.timing(capsuleScale, {
+                    toValue: 1.045,
+                    duration: 420,
+                    easing: Easing.out(Easing.cubic),
+                    useNativeDriver: true,
+                }),
+                Animated.spring(capsuleScale, {
+                    toValue: 1,
+                    friction: 6,
+                    tension: 36,
+                    useNativeDriver: true,
+                }),
+            ]),
+            Animated.sequence([
+                Animated.timing(capsuleRotate, {
+                    toValue: 1,
+                    duration: 120,
+                    useNativeDriver: true,
+                }),
+                Animated.timing(capsuleRotate, {
+                    toValue: -1,
+                    duration: 120,
+                    useNativeDriver: true,
+                }),
+                Animated.timing(capsuleRotate, {
+                    toValue: 0,
+                    duration: 160,
+                    useNativeDriver: true,
+                }),
+            ]),
+            Animated.sequence([
+                Animated.parallel([
+                    Animated.timing(ringOpacity, {
+                        toValue: 0.75,
+                        duration: 120,
+                        useNativeDriver: true,
+                    }),
+                    Animated.timing(ringScale, {
+                        toValue: 0.75,
+                        duration: 120,
+                        useNativeDriver: true,
+                    }),
+                ]),
+                Animated.parallel([
+                    Animated.timing(ringOpacity, {
+                        toValue: 0,
+                        duration: 900,
+                        easing: Easing.out(Easing.exp),
+                        useNativeDriver: true,
+                    }),
+                    Animated.timing(ringScale, {
+                        toValue: 2.4,
+                        duration: 900,
+                        easing: Easing.out(Easing.exp),
+                        useNativeDriver: true,
+                    }),
+                ]),
+            ]),
+            Animated.sequence([
+                Animated.timing(flashOpacity, {
+                    toValue: 0.14,
+                    duration: 90,
+                    easing: Easing.out(Easing.cubic),
+                    useNativeDriver: true,
+                }),
+                Animated.timing(flashOpacity, {
+                    toValue: 0,
+                    duration: 260,
+                    easing: Easing.out(Easing.cubic),
+                    useNativeDriver: true,
+                }),
+            ]),
+        ]).start(() => {
+            startMemoryRelease();
+        });
+    };
+
+    const startMemoryRelease = () => {
+        setPhase('memory_release');
+
+        releaseSound.current?.replayAsync().catch(() => {});
+
+        Animated.parallel([
+            Animated.timing(openedOpacity, {
+                toValue: 1,
+                duration: 760,
+                easing: Easing.out(Easing.cubic),
+                useNativeDriver: true,
+            }),
+            Animated.spring(openedScale, {
+                toValue: 1.04,
+                friction: 7,
+                tension: 38,
+                useNativeDriver: true,
+            }),
+        ]).start();
+
+        openBurstParticles.forEach((particle, index) => {
+            particle.pos.setValue({ x: 0, y: 0 });
+            particle.opacity.setValue(0);
+            particle.scale.setValue(0.24);
+
+            Animated.sequence([
+                Animated.delay(index * 26),
+                Animated.parallel([
+                    Animated.timing(particle.opacity, {
+                        toValue: 0.95,
+                        duration: 130,
+                        easing: Easing.out(Easing.cubic),
+                        useNativeDriver: true,
+                    }),
+                    Animated.spring(particle.pos, {
+                        toValue: particle.target,
+                        friction: 7,
+                        tension: 78,
+                        useNativeDriver: true,
+                    }),
+                    Animated.spring(particle.scale, {
+                        toValue: 1,
+                        friction: 7,
+                        tension: 88,
+                        useNativeDriver: true,
+                    }),
+                ]),
+                Animated.timing(particle.opacity, {
+                    toValue: 0,
+                    duration: 760,
+                    easing: Easing.out(Easing.cubic),
+                    useNativeDriver: true,
+                }),
+            ]).start();
         });
 
-        // End opening after cards
+        memoryItems.forEach((item, i) => {
+            Animated.sequence([
+                Animated.delay(180 + i * 135),
+                Animated.parallel([
+                    Animated.timing(item.opacity, {
+                        toValue: 1,
+                        duration: 520,
+                        easing: Easing.out(Easing.cubic),
+                        useNativeDriver: true,
+                    }),
+                    Animated.spring(item.pos, {
+                        toValue: {
+                            x: item.target.x,
+                            y: item.target.y,
+                        },
+                        friction: 7,
+                        tension: 42,
+                        useNativeDriver: true,
+                    }),
+                    Animated.spring(item.scale, {
+                        toValue: i === 0 ? 1.06 : 0.96,
+                        friction: 8,
+                        tension: 42,
+                        useNativeDriver: true,
+                    }),
+                    Animated.timing(item.rotate, {
+                        toValue: 1,
+                        duration: 860,
+                        easing: Easing.out(Easing.back(0.45)),
+                        useNativeDriver: true,
+                    }),
+                ]),
+            ]).start();
+        });
+
         setTimeout(() => {
             setPhase('opened');
-            setTimeout(onComplete, 5500);
-        }, 3000);
+
+            Animated.parallel([
+                Animated.timing(finalTextOpacity, {
+                    toValue: 1,
+                    duration: 700,
+                    easing: Easing.out(Easing.cubic),
+                    useNativeDriver: true,
+                }),
+                Animated.timing(finalTextTranslateY, {
+                    toValue: 0,
+                    duration: 700,
+                    easing: Easing.out(Easing.cubic),
+                    useNativeDriver: true,
+                }),
+            ]).start();
+
+            Animated.spring(openedScale, {
+                toValue: 1,
+                friction: 8,
+                tension: 34,
+                useNativeDriver: true,
+            }).start();
+
+            setTimeout(() => {
+                introPad.current?.stopAsync().catch(() => {});
+                onComplete();
+            }, 5200);
+        }, 3400);
     };
 
-    const renderMediaCard = (item: any, i: number) => {
+    const grayOverlayOpacity = holdProgress.interpolate({
+        inputRange: [0, 0.82, 1],
+        outputRange: [0.62, 0.36, 0],
+    });
+
+    const grayOverlayTranslateY = holdProgress.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0, -INTRO_CAPSULE_SIZE],
+    });
+
+    const liquidWaveTranslate = liquidWaveShift.interpolate({
+        inputRange: [-1, 0, 1],
+        outputRange: [-6, 0, 6],
+    });
+
+    const liquidWaveRotate = liquidWaveShift.interpolate({
+        inputRange: [-1, 1],
+        outputRange: ['-1deg', '1deg'],
+    });
+
+    const frontierTranslateY = holdProgress.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0, -INTRO_CAPSULE_SIZE],
+    });
+
+    const capsuleRotation = capsuleRotate.interpolate({
+        inputRange: [-1, 1],
+        outputRange: ['-1.6deg', '1.6deg'],
+    });
+
+    const renderMemoryCard = (item: any, i: number) => {
         const rotation = item.rotate.interpolate({
             inputRange: [0, 1],
-            outputRange: ['0deg', `${item.target.rot}deg`]
+            outputRange: ['0deg', `${item.target.rot}deg`],
         });
+
+        const isMain = i === 0;
 
         return (
             <Animated.View
-                key={i}
+                key={`memory-${i}`}
                 style={[
-                    styles.mediaCard,
+                    styles.memoryCard,
+                    isMain && styles.memoryCardMain,
                     {
                         opacity: item.opacity,
                         transform: [
                             { translateX: item.pos.x },
                             { translateY: item.pos.y },
                             { scale: item.scale },
-                            { rotate: rotation }
+                            { rotate: rotation },
                         ],
-                        zIndex: 1000 + i
-                    }
+                        zIndex: 1000 + i,
+                    },
                 ]}
             >
                 {item.type === 'image' || item.type === 'video' ? (
                     item.url ? (
-                        <Image source={{ uri: item.url }} style={styles.cardImg} contentFit="cover" cachePolicy="memory-disk" />
+                        <>
+                            <Image
+                                source={{ uri: item.url }}
+                                style={styles.cardImg}
+                                contentFit="cover"
+                                cachePolicy="memory-disk"
+                            />
+                            {item.type === 'video' && (
+                                <View style={styles.videoBadge}>
+                                    <Ionicons name="play" size={13} color={WHITE} />
+                                </View>
+                            )}
+                        </>
                     ) : (
-                        <View style={[styles.cardPlaceholder, { backgroundColor: activeTint + '20' }]}>
+                        <View style={[styles.cardPlaceholder, { backgroundColor: `${BRAND_PURPLE_HEX}16` }]}>
                             <Ionicons name="image-outline" size={24} color={activeTint} />
                         </View>
                     )
                 ) : item.type === 'audio' ? (
-                    <View style={[styles.cardPlaceholder, { backgroundColor: '#58CC02' + '20' }]}>
+                    <View style={[styles.cardPlaceholder, { backgroundColor: '#58CC0218' }]}>
                         <Ionicons name="mic-outline" size={24} color="#58CC02" />
                     </View>
                 ) : (
-                    <View style={[styles.cardPlaceholder, { backgroundColor: '#FFB800' + '20' }]}>
+                    <View style={[styles.cardPlaceholder, { backgroundColor: '#FFB80018' }]}>
                         <Ionicons name="reader-outline" size={24} color="#FFB800" />
                     </View>
                 )}
-                <View style={styles.cardEdge} />
+
+                <View style={[styles.cardBottomLine, { backgroundColor: activeTint }]} />
             </Animated.View>
         );
     };
 
+    const closedCapsuleUri = closedModelImg || modelImg;
+    const openedCapsuleUri = modelImg || closedModelImg;
+    const isOpenedModel = phase === 'memory_release' || phase === 'opened';
+
     return (
         <View style={styles.container}>
-            {/* BACKGROUNDS */}
-            <View style={[StyleSheet.absoluteFill, { backgroundColor: phase === 'intro_quote' ? BLACK : WHITE }]} />
+            <LinearGradient
+                colors={['#FFFFFF', '#FBF8FF', '#F7F1FF', '#FFFFFF']}
+                locations={[0, 0.42, 0.72, 1]}
+                style={StyleSheet.absoluteFill}
+            />
 
-            {/* INTRO QUOTE */}
-            {phase === 'intro_quote' && (
-                <Animated.View style={[styles.introBox, { opacity: introOpacity, backgroundColor: 'transparent' }]}>
-                    <Text style={styles.mainQuote}>
-                        "{t('detail.opening_quote')}"
+            <Animated.View
+                pointerEvents="none"
+                style={[
+                    styles.shimmer,
+                    {
+                        transform: [{ translateX: shimmerTranslate }, { rotate: '18deg' }],
+                    },
+                ]}
+            >
+                <LinearGradient
+                    colors={[
+                        'rgba(255,255,255,0)',
+                        'rgba(166,110,255,0.10)',
+                        'rgba(255,255,255,0)',
+                    ]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={StyleSheet.absoluteFill}
+                />
+            </Animated.View>
+
+            {phase === 'intro' && (
+                <Animated.View
+                    style={[
+                        styles.introBox,
+                        {
+                            opacity: introOpacity,
+                            transform: [{ translateY: introTranslateY }],
+                        },
+                    ]}
+                >
+                    <View style={[styles.introIconCircle, { borderColor: `${BRAND_PURPLE_HEX}30` }]}>
+                        <Ionicons name="lock-closed-outline" size={28} color={activeTint} />
+                    </View>
+
+                    <Text style={styles.introTitle}>
+                        {t('detail.opening_quote') || 'Esta cápsula ha estado esperando este momento'}
                     </Text>
+
+                    <Pressable
+                        disabled={!interactive || !canTriggerOpening}
+                        onPressIn={handlePressInCapsule}
+                        onPressOut={handlePressOutCapsule}
+                        style={styles.introCapsuleTapArea}
+                    >
+                        <Animated.View
+                            style={[
+                                styles.introCapsulePressFrame,
+                                { transform: [{ scale: introCapsulePressScale }] },
+                            ]}
+                        >
+                            <CapsuleWithTimer
+                                modelKey={modelKey}
+                                source={{ uri: closedCapsuleUri }}
+                                date={new Date().toISOString()}
+                                modelLayout={modelLayout}
+                                style={styles.introCapsuleModel}
+                                hideTimer
+                                hideParticles
+                                isOpened={false}
+                                disableAnimations
+                            />
+
+                            <Animated.View
+                                pointerEvents="none"
+                                style={[
+                                    styles.introCapsuleGrayOverlay,
+                                    {
+                                        opacity: grayOverlayOpacity,
+                                        transform: [{ translateY: grayOverlayTranslateY }],
+                                    },
+                                ]}
+                            >
+                                <LinearGradient
+                                    colors={[
+                                        'rgba(255,255,255,0.98)',
+                                        'rgba(243,241,248,0.96)',
+                                        'rgba(228,224,238,0.92)',
+                                    ]}
+                                    start={{ x: 0.5, y: 0 }}
+                                    end={{ x: 0.5, y: 1 }}
+                                    style={StyleSheet.absoluteFill}
+                                />
+                            </Animated.View>
+
+                            <Animated.View
+                                pointerEvents="none"
+                                style={[
+                                    styles.introFrontierLine,
+                                    {
+                                        backgroundColor: activeTint,
+                                        opacity: holdProgress.interpolate({
+                                            inputRange: [0, 0.04, 0.92, 1],
+                                            outputRange: [0, 0.78, 0.78, 0],
+                                        }),
+                                        transform: [
+                                            { translateY: frontierTranslateY },
+                                            { translateX: liquidWaveTranslate },
+                                            { rotate: liquidWaveRotate },
+                                        ],
+                                    },
+                                ]}
+                            >
+                                <LinearGradient
+                                    colors={[
+                                        'rgba(255,255,255,0)',
+                                        'rgba(255,255,255,0.75)',
+                                        'rgba(255,255,255,0)',
+                                    ]}
+                                    start={{ x: 0, y: 0.5 }}
+                                    end={{ x: 1, y: 0.5 }}
+                                    style={StyleSheet.absoluteFill}
+                                />
+                            </Animated.View>
+                        </Animated.View>
+                    </Pressable>
+
+                    <Animated.View
+                        style={[
+                            styles.timeBox,
+                            {
+                                opacity: timeLabelOpacity,
+                                transform: [{ translateY: timeLabelTranslateY }],
+                            },
+                        ]}
+                    >
+                        <Text style={styles.timeLabel}>Cerrada durante</Text>
+                        <Text style={[styles.timeValue, { color: activeTint }]}> 
+                            {lockedForText || `${countdown} días`}
+                        </Text>
+                    </Animated.View>
+
+                    <Text style={styles.introHint}>
+                        {!imagesLoaded
+                            ? 'Preparando la cápsula...'
+                            : !interactive
+                                ? spectatorLabel || 'La cápsula se está abriendo'
+                                : !canTriggerOpening
+                                    ? 'Un momento...'
+                                    : isPressingToOpen
+                                        ? 'Sigue manteniendo para revelar el color'
+                                        : 'Mantén pulsada la cápsula para abrirla'}
+                    </Text>
+
+                    {likeCount > 0 && (
+                        <View style={styles.introStatsRow}>
+                            <View style={styles.statPill}>
+                                <Ionicons name="heart" size={14} color="#F43F5E" />
+                                <Text style={styles.statPillText}>{likeCount}</Text>
+                            </View>
+                        </View>
+                    )}
                 </Animated.View>
             )}
 
-            {/* ── CENTRAL CAPSULE (Persistent through all active phases) ── */}
-            {phase !== 'intro_quote' && (
-                <Animated.View style={[
-                    styles.centerStage, 
-                    { 
-                        opacity: (phase === 'opened') ? openedOpacity : vibrateOpacity,
-                        transform: (phase === 'opened') ? [{ scale: openedScale }] : []
-                    }
-                ]}>
-                    {/* Particles - Visible during vibration and flash */}
-                    {(phase === 'vibrate' || phase === 'flash') && particles.map((p, i) => (
-                        <Animated.View
-                            key={i}
-                            style={[
-                                styles.particle,
-                                {
-                                    backgroundColor: activeTint,
-                                    opacity: p.opacity,
-                                    transform: [
-                                        { translateX: p.pos.x },
-                                        { translateY: p.pos.y },
-                                        { scale: p.scale }
-                                    ]
-                                }
-                            ]}
-                        />
-                    ))}
+            {phase !== 'intro' && (
+                <Animated.View
+                    style={[
+                        styles.centerStage,
+                        {
+                            opacity: stageOpacity,
+                        },
+                    ]}
+                >
+                    <Animated.View
+                        style={[
+                            styles.halo,
+                            {
+                                backgroundColor: activeTint,
+                                opacity: haloOpacity,
+                                transform: [{ scale: haloScale }],
+                            },
+                        ]}
+                    />
 
-                    <Animated.View style={{ 
-                        transform: [
-                            { translateX: vibratePos.x }, 
-                            { translateY: vibratePos.y }, 
-                            { scale: vibrateScale },
-                            { rotate: vibrateRot.interpolate({
-                                inputRange: [-10, 10],
-                                outputRange: ['-10deg', '10deg']
-                            })}
-                        ],
-                        zIndex: 100,
-                        backgroundColor: 'transparent'
-                    }}>
-                        <CapsuleWithTimer 
+                    <Animated.View
+                        style={[
+                            styles.unlockRing,
+                            {
+                                borderColor: activeTint,
+                                opacity: ringOpacity,
+                                transform: [{ scale: ringScale }],
+                            },
+                        ]}
+                    />
+
+                    {(phase === 'awakening' || phase === 'unlocking') &&
+                        particles.map((p, i) => (
+                            <Animated.View
+                                key={`particle-${i}`}
+                                style={[
+                                    styles.particle,
+                                    {
+                                        backgroundColor: activeTint,
+                                        opacity: p.opacity,
+                                        transform: [
+                                            { translateX: p.pos.x },
+                                            { translateY: p.pos.y },
+                                            { scale: p.scale },
+                                        ],
+                                    },
+                                ]}
+                            />
+                        ))}
+
+                    {(phase === 'memory_release' || phase === 'opened') &&
+                        openBurstParticles.map((p, i) => (
+                            <Animated.View
+                                key={`open-burst-${i}`}
+                                style={[
+                                    styles.openBurstParticle,
+                                    {
+                                        backgroundColor: i % 3 === 0 ? '#FFFFFF' : activeTint,
+                                        opacity: p.opacity,
+                                        transform: [
+                                            { translateX: p.pos.x },
+                                            { translateY: p.pos.y },
+                                            { scale: p.scale },
+                                        ],
+                                    },
+                                ]}
+                            />
+                        ))}
+
+                    <Animated.View
+                        style={[
+                            styles.capsuleWrapper,
+                            isOpenedModel
+                                ? {
+                                      opacity: 1,
+                                      transform: [
+                                          { translateY: capsuleFloat },
+                                          { scale: openedScale },
+                                          { rotate: capsuleRotation },
+                                      ],
+                                  }
+                                : {
+                                      opacity: 1,
+                                      transform: [
+                                          { translateY: capsuleFloat },
+                                          { scale: capsuleScale },
+                                          { rotate: capsuleRotation },
+                                      ],
+                                  },
+                        ]}
+                    >
+                        <CapsuleWithTimer
                             modelKey={modelKey}
-                            source={{ uri: (phase === 'outburst' || phase === 'opened') ? modelImg : closedModelImg }}
+                            source={{ uri: isOpenedModel ? openedCapsuleUri : closedCapsuleUri }}
                             date={new Date().toISOString()}
                             modelLayout={modelLayout}
                             style={styles.capsuleModel}
                             hideTimer
                             hideParticles
-                            isOpened={phase === 'outburst' || phase === 'opened'}
+                            isOpened={isOpenedModel}
                             disableAnimations
                         />
                     </Animated.View>
                 </Animated.View>
             )}
 
-            {/* OPENED REVEAL CARD OVERLAY (Text and UI only, no box background) */}
+            {(phase === 'memory_release' || phase === 'opened') && (
+                <View style={styles.memoryLayer} pointerEvents="none">
+                    {memoryItems.map((item, i) => renderMemoryCard(item, i))}
+                    {flashbackComments.slice(0, 2).map((comment, index) => (
+                        <Animated.View
+                            key={`flashback-comment-${index}`}
+                            style={[
+                                styles.flashbackBubble,
+                                index === 0 ? styles.flashbackBubbleLeft : styles.flashbackBubbleRight,
+                                {
+                                    opacity: openedOpacity,
+                                    transform: [
+                                        { scale: 1 },
+                                        { translateY: index === 0 ? -10 : 8 },
+                                    ],
+                                },
+                            ]}
+                        >
+                            <Ionicons name="chatbubble-ellipses-outline" size={14} color={activeTint} />
+                            <Text style={styles.flashbackText} numberOfLines={2}>
+                                {comment}
+                            </Text>
+                        </Animated.View>
+                    ))}
+                </View>
+            )}
+
             {phase === 'opened' && (
-                <Animated.View style={[styles.finalReveal, { opacity: openedOpacity, transform: [{ scale: openedScale }], backgroundColor: 'transparent' }]}>
-                    <View style={styles.revealContentWrapper}>
-                        <View style={styles.finalModelBox}>
-                            {/* Spacing for the capsule rendered by centerStage */}
-                            <View style={styles.fullCapsule} />
+                <Animated.View
+                    style={[
+                        styles.finalReveal,
+                        {
+                            opacity: finalTextOpacity,
+                            transform: [{ translateY: finalTextTranslateY }],
+                        },
+                    ]}
+                    pointerEvents="none"
+                >
+                    <View style={styles.finalGlassCard}>
+                        <Text style={[styles.successText, { color: activeTint }]}>Tu cápsula está abierta</Text>
+
+                        <Text style={styles.finalSubtitle}>Guardaste esto para este momento</Text>
+
+                        <View style={styles.finalStatsRow}>
+                            <View style={styles.statPill}>
+                                <Ionicons name="heart" size={14} color="#F43F5E" />
+                                <Text style={styles.statPillText}>{likeCount}</Text>
+                            </View>
+                            {!!flashbackComments[0] && (
+                                <View style={[styles.statPill, styles.commentPill]}>
+                                    <Ionicons name="chatbubble-outline" size={14} color={activeTint} />
+                                    <Text style={styles.statPillComment} numberOfLines={1}>
+                                        {flashbackComments[0]}
+                                    </Text>
+                                </View>
+                            )}
                         </View>
-                        <Text style={[styles.successText, { color: activeTint }]}>¡CÁPSULA ABIERTA!</Text>
-                        <Text style={styles.capsuleNameFinal}>{capsuleTitle}</Text>
-                        <View style={[styles.line, { backgroundColor: activeTint }]} />
+
+                        <Text style={styles.capsuleNameFinal} numberOfLines={2}>
+                            {capsuleTitle}
+                        </Text>
+
+                        <View style={[styles.finalLine, { backgroundColor: activeTint }]} />
                     </View>
                 </Animated.View>
             )}
 
-            {/* OUTBURST MEDIA CARDS */}
-            {(phase === 'outburst' || phase === 'opened') && (
-                <View style={styles.outburstContainer} pointerEvents="none">
-                    {outburstItems.map((item, i) => renderMediaCard(item, i))}
-                </View>
-            )}
-
-            {/* THE FLASH */}
-            <Animated.View 
+            <Animated.View
                 pointerEvents="none"
-                style={[StyleSheet.absoluteFill, { backgroundColor: WHITE, opacity: flashOpacity, zIndex: 9999 }]} 
+                style={[
+                    StyleSheet.absoluteFill,
+                    {
+                        backgroundColor: activeTint,
+                        opacity: flashOpacity,
+                        zIndex: 9998,
+                    },
+                ]}
+            />
+
+            <Animated.View
+                pointerEvents="none"
+                style={[
+                    StyleSheet.absoluteFill,
+                    {
+                        backgroundColor: WHITE,
+                        opacity: flashOpacity.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [0, 0.08],
+                        }),
+                        zIndex: 9999,
+                    },
+                ]}
             />
         </View>
     );
@@ -466,153 +1239,447 @@ const styles = StyleSheet.create({
         ...StyleSheet.absoluteFillObject,
         justifyContent: 'center',
         alignItems: 'center',
+        backgroundColor: WHITE,
+        overflow: 'hidden',
     },
+
+    shimmer: {
+        position: 'absolute',
+        width: width * 0.6,
+        height: height * 1.4,
+        top: -height * 0.2,
+        opacity: 0.9,
+    },
+
     introBox: {
         ...StyleSheet.absoluteFillObject,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: BLACK,
-        paddingHorizontal: '10%',
+        paddingHorizontal: 34,
         zIndex: 100,
     },
-    mainQuote: {
-        color: WHITE,
-        fontSize: 22,
-        fontWeight: '600',
-        textAlign: 'center',
-        lineHeight: 36,
-        fontStyle: 'italic',
+
+    introCapsuleTapArea: {
+        marginTop: 28,
+        marginBottom: 8,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
-    centerStage: {
+
+    introCapsulePressFrame: {
+        width: INTRO_CAPSULE_SIZE,
+        height: INTRO_CAPSULE_SIZE,
+        alignItems: 'center',
+        justifyContent: 'center',
+        overflow: 'hidden',
+        borderRadius: 34,
+    },
+
+    introCapsuleModel: {
+        width: INTRO_CAPSULE_SIZE,
+        height: INTRO_CAPSULE_SIZE,
+    },
+
+    introCapsuleGrayOverlay: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        width: INTRO_CAPSULE_SIZE,
+        height: INTRO_CAPSULE_SIZE,
+        overflow: 'hidden',
+        zIndex: 3,
+    },
+
+    introFrontierLine: {
+        position: 'absolute',
+        bottom: -1,
+        left: 38,
+        right: 38,
+        height: 7,
+        borderRadius: 999,
+        overflow: 'hidden',
+        zIndex: 4,
+    },
+
+    introIconCircle: {
+        width: 76,
+        height: 76,
+        borderRadius: 38,
+        backgroundColor: WHITE,
+        borderWidth: 1.5,
         justifyContent: 'center',
         alignItems: 'center',
-        zIndex: 10,
-        width: width,
-        height: height,
+        marginBottom: 26,
+        ...Platform.select({
+            ios: {
+                shadowColor: BRAND_PURPLE_HEX,
+                shadowOpacity: 0.18,
+                shadowRadius: 24,
+                shadowOffset: { width: 0, height: 12 },
+            },
+            android: {
+                elevation: 8,
+            },
+        }),
     },
-    capsuleModel: {
-        width: 320,
-        height: 320,
+
+    introTitle: {
+        color: SOFT_TEXT,
+        fontSize: 22,
+        fontWeight: '700',
+        textAlign: 'center',
+        lineHeight: 32,
+        maxWidth: 330,
     },
+
+    timeBox: {
+        marginTop: 34,
+        alignItems: 'center',
+        paddingHorizontal: 24,
+        paddingVertical: 16,
+        borderRadius: 28,
+        backgroundColor: WHITE,
+        borderWidth: 1,
+        borderColor: CARD_BORDER,
+        ...Platform.select({
+            ios: {
+                shadowColor: BRAND_PURPLE_HEX,
+                shadowOpacity: 0.12,
+                shadowRadius: 22,
+                shadowOffset: { width: 0, height: 10 },
+            },
+            android: {
+                elevation: 5,
+            },
+        }),
+    },
+
+    timeLabel: {
+        color: LIGHT_TEXT,
+        fontSize: 12,
+        fontWeight: '800',
+        letterSpacing: 1.1,
+        textTransform: 'uppercase',
+        marginBottom: 6,
+    },
+
+    timeValue: {
+        fontSize: 31,
+        fontWeight: '900',
+        letterSpacing: 0.2,
+    },
+
+    introHint: {
+        marginTop: 18,
+        color: LIGHT_TEXT,
+        fontSize: 14,
+        fontWeight: '700',
+        textAlign: 'center',
+    },
+
+    introStatsRow: {
+        flexDirection: 'row',
+        marginTop: 18,
+        gap: 10,
+    },
+
+    centerStage: {
+        position: 'absolute',
+        width,
+        height,
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 2200,
+    },
+
+    halo: {
+        position: 'absolute',
+        width: 260,
+        height: 260,
+        borderRadius: 130,
+        opacity: 0.22,
+        ...Platform.select({
+            ios: {
+                shadowColor: BRAND_PURPLE_HEX,
+                shadowOpacity: 0.18,
+                shadowRadius: 28,
+                shadowOffset: { width: 0, height: 0 },
+            },
+            android: {
+                elevation: 8,
+            },
+        }),
+    },
+
+    unlockRing: {
+        position: 'absolute',
+        width: 255,
+        height: 255,
+        borderRadius: 127.5,
+        borderWidth: 2,
+        zIndex: 1,
+    },
+
     particle: {
         position: 'absolute',
-        width: 8,
-        height: 8,
-        borderRadius: 4,
+        width: 7,
+        height: 7,
+        borderRadius: 3.5,
+        zIndex: 2,
     },
-    outburstContainer: {
+
+    capsuleWrapper: {
+        zIndex: 2300,
+        backgroundColor: 'transparent',
+        ...Platform.select({
+            ios: {
+                shadowColor: '#5D3AE8',
+                shadowOpacity: 0.18,
+                shadowRadius: 20,
+                shadowOffset: { width: 0, height: 10 },
+            },
+            android: {
+                elevation: 10,
+            },
+        }),
+    },
+
+    capsuleModel: {
+        width: 340,
+        height: 340,
+        opacity: 1,
+        zIndex: 1,
+    },
+
+    openBurstParticle: {
+        position: 'absolute',
+        width: 12,
+        height: 12,
+        borderRadius: 999,
+        zIndex: 2350,
+        shadowColor: '#FFFFFF',
+        shadowOpacity: 0.45,
+        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 0 },
+    },
+
+    memoryLayer: {
         ...StyleSheet.absoluteFillObject,
         justifyContent: 'center',
         alignItems: 'center',
-        zIndex: 2000,
+        zIndex: 1800,
     },
-    mediaCard: {
+
+    memoryCard: {
         position: 'absolute',
         width: 110,
-        height: 130,
+        height: 136,
         backgroundColor: WHITE,
-        borderRadius: 15,
-        padding: 6,
-        borderWidth: 1.5,
-        borderColor: '#F0F0F0',
+        borderRadius: 24,
+        padding: 7,
+        borderWidth: 1,
+        borderColor: CARD_BORDER,
+        overflow: 'hidden',
         ...Platform.select({
-            ios: { shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 15 },
-            android: { elevation: 8 }
-        })
+            ios: {
+                shadowColor: '#25134D',
+                shadowOpacity: 0.14,
+                shadowRadius: 22,
+                shadowOffset: { width: 0, height: 10 },
+            },
+            android: {
+                elevation: 9,
+            },
+        }),
     },
+
+    memoryCardMain: {
+        width: 124,
+        height: 150,
+        borderRadius: 26,
+    },
+
     cardImg: {
         width: '100%',
         height: '100%',
-        borderRadius: 10,
+        borderRadius: 16,
+        backgroundColor: '#F8F5FF',
     },
+
     cardPlaceholder: {
         width: '100%',
         height: '100%',
-        borderRadius: 10,
+        borderRadius: 16,
         justifyContent: 'center',
         alignItems: 'center',
     },
-    cardEdge: {
+
+    videoBadge: {
         position: 'absolute',
-        bottom: 0, left: 0, right: 0,
-        height: 5,
-        backgroundColor: 'rgba(0,0,0,0.04)',
-        borderBottomLeftRadius: 15,
-        borderBottomRightRadius: 15,
+        right: 12,
+        bottom: 12,
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+        backgroundColor: 'rgba(0,0,0,0.45)',
+        justifyContent: 'center',
+        alignItems: 'center',
     },
+
+    cardBottomLine: {
+        position: 'absolute',
+        left: 18,
+        right: 18,
+        bottom: 7,
+        height: 3,
+        borderRadius: 2,
+        opacity: 0.75,
+    },
+
+    finalGlassCard: {
+        width: width * 0.82,
+        backgroundColor: 'rgba(255,255,255,0.92)',
+        borderWidth: 1,
+        borderColor: 'rgba(240,236,255,0.95)',
+        borderRadius: 28,
+        paddingHorizontal: 20,
+        paddingVertical: 18,
+        alignItems: 'center',
+        ...Platform.select({
+            ios: {
+                shadowColor: '#25134D',
+                shadowOpacity: 0.1,
+                shadowRadius: 20,
+                shadowOffset: { width: 0, height: 10 },
+            },
+            android: {
+                elevation: 8,
+            },
+        }),
+    },
+
+    flashbackBubble: {
+        position: 'absolute',
+        maxWidth: width * 0.3,
+        backgroundColor: 'rgba(255,255,255,0.96)',
+        borderWidth: 1,
+        borderColor: CARD_BORDER,
+        borderRadius: 18,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        flexDirection: 'row',
+        gap: 8,
+        alignItems: 'flex-start',
+        ...Platform.select({
+            ios: {
+                shadowColor: '#25134D',
+                shadowOpacity: 0.12,
+                shadowRadius: 16,
+                shadowOffset: { width: 0, height: 8 },
+            },
+            android: {
+                elevation: 8,
+            },
+        }),
+    },
+
+    flashbackBubbleLeft: {
+        left: 18,
+        top: height * 0.22,
+    },
+
+    flashbackBubbleRight: {
+        right: 18,
+        bottom: height * 0.2,
+    },
+
+    flashbackText: {
+        flex: 1,
+        color: SOFT_TEXT,
+        fontSize: 12,
+        lineHeight: 16,
+        fontWeight: '700',
+    },
+
     finalReveal: {
         position: 'absolute',
-        justifyContent: 'center',
+        left: 24,
+        right: 24,
+        bottom: height * 0.045,
         alignItems: 'center',
-        zIndex: 50,
-        width: width,
-        height: height,
+        zIndex: 2700,
     },
-    revealCard: {
-        width: width * 0.88,
-        height: height * 0.70,
-        borderRadius: 45,
-        justifyContent: 'center',
-        alignItems: 'center',
-        borderWidth: 1.5,
-        padding: 25,
-        ...Platform.select({
-            ios: { shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 30 },
-            android: { elevation: 15 }
-        })
-    },
-    revealContentWrapper: {
-        width: width * 0.9,
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 20,
-    },
-    finalModelBox: {
-        width: '100%',
-        height: height * 0.45,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    fullCapsule: {
-        width: 340,
-        height: 340,
-    },
+
     successText: {
-        fontSize: 32,
+        fontSize: 26,
         fontWeight: '900',
-        marginTop: 10,
-        letterSpacing: 1.5,
-        textShadowColor: 'rgba(0,0,0,0.1)',
-        textShadowOffset: { width: 0, height: 2 },
-        textShadowRadius: 4,
+        textAlign: 'center',
+        letterSpacing: 0,
+        textShadowColor: 'rgba(255,255,255,0.5)',
+        textShadowOffset: { width: 0, height: 1 },
+        textShadowRadius: 6,
     },
-    capsuleNameFinal: {
-        fontSize: 18,
-        color: '#5C5778',
+
+    finalSubtitle: {
         marginTop: 8,
-        fontWeight: '600',
+        color: SOFT_TEXT,
+        fontSize: 15,
+        fontWeight: '700',
+        textAlign: 'center',
     },
-    line: {
-        width: 65,
+
+    finalStatsRow: {
+        flexDirection: 'row',
+        gap: 10,
+        marginTop: 16,
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexWrap: 'wrap',
+    },
+
+    statPill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        backgroundColor: 'rgba(255,255,255,0.92)',
+        borderWidth: 1,
+        borderColor: CARD_BORDER,
+        borderRadius: 999,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+    },
+
+    statPillText: {
+        color: SOFT_TEXT,
+        fontSize: 13,
+        fontWeight: '800',
+    },
+
+    commentPill: {
+        maxWidth: width * 0.56,
+    },
+
+    statPillComment: {
+        color: SOFT_TEXT,
+        fontSize: 12,
+        fontWeight: '700',
+        maxWidth: width * 0.34,
+    },
+
+    capsuleNameFinal: {
+        marginTop: 16,
+        color: SOFT_TEXT,
+        fontSize: 18,
+        lineHeight: 24,
+        fontWeight: '800',
+        textAlign: 'center',
+        maxWidth: width * 0.82,
+    },
+
+    finalLine: {
+        width: 64,
         height: 5,
-        borderRadius: 2.5,
-        marginTop: 25,
-    },
-    closeBtn: {
-        marginTop: 40,
-        paddingHorizontal: 40,
-        paddingVertical: 14,
-        borderRadius: 30,
-        elevation: 4,
-        shadowColor: '#000',
-        shadowOpacity: 0.2,
-        shadowRadius: 10,
-        shadowOffset: { width: 0, height: 4 },
-    },
-    closeBtnText: {
-        color: WHITE,
-        fontSize: 16,
-        fontWeight: 'bold',
-        letterSpacing: 0.5,
+        borderRadius: 3,
+        marginTop: 20,
     },
 });

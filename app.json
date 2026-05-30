@@ -7,7 +7,7 @@
       "android",
       "web"
     ],
-    "version": "2.3.0",
+    "version": "2.5.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -20,7 +20,11 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.kapsely.app",
-      "buildNumber": "4",
+      "buildNumber": "5",
+      "associatedDomains": [
+        "applinks:kapsely.com",
+        "applinks:www.kapsely.com"
+      ],
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSCameraUsageDescription": "Allow $(PRODUCT_NAME) to access your camera to capture memories for your capsules.",
@@ -31,7 +35,29 @@
     },
     "android": {
       "softwareKeyboardLayoutMode": "resize",
-      "versionCode": 6,
+      "versionCode": 7,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "kapsely.com",
+              "pathPrefix": "/capsules"
+            },
+            {
+              "scheme": "https",
+              "host": "www.kapsely.com",
+              "pathPrefix": "/capsules"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundColor": "#0a0a0f"

@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kapsely Splash Transition</title>
+</head>
+<body>
+  <div id="kapsely-splash-transition" data-composition-id="kapsely-splash-transition" data-start="0" data-duration="2.8" data-width="1080" data-height="1920" data-track-index="0">
+    <div class="stage" data-layout-ignore>
+      <img src="assets/android-icon-background.png" class="splash-base" data-layout-allow-overflow />
+      <div class="splash-glow" data-layout-ignore></div>
+
+      <div class="sparkles" data-layout-ignore>
+        <span style="--x:9%;--y:18%;--s:10px;"></span>
+        <span style="--x:84%;--y:15%;--s:9px;"></span>
+        <span style="--x:78%;--y:30%;--s:6px;"></span>
+        <span style="--x:16%;--y:62%;--s:8px;"></span>
+        <span style="--x:87%;--y:74%;--s:11px;"></span>
+        <span style="--x:30%;--y:84%;--s:8px;"></span>
+      </div>
+
+      <div class="soft-wash top" data-layout-ignore></div>
+      <div class="soft-wash bottom" data-layout-ignore></div>
+      <div class="light-sweep" data-layout-ignore></div>
+      <div class="reveal-haze" data-layout-ignore></div>
+    </div>
+
+    <style>
+      * { box-sizing: border-box; }
+      html, body { margin: 0; background: #f3f1fe; overflow: hidden; }
+
+      #kapsely-splash-transition {
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+        background: #f3f1fe;
+      }
+
+      .stage {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #f3f1fe;
+      }
+
+      .splash-base,
+      .splash-glow {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        transform-origin: 50% 50%;
+      }
+
+      .splash-base {
+        object-fit: cover;
+        z-index: 1;
+        filter: saturate(1.02) brightness(1.015);
+      }
+
+      .splash-glow {
+        z-index: 2;
+        opacity: 0;
+        background: center / cover no-repeat url('assets/android-icon-background.png');
+        filter: blur(22px) saturate(1.08) brightness(1.08);
+        mix-blend-mode: screen;
+      }
+
+      .sparkles {
+        position: absolute;
+        inset: 0;
+        z-index: 3;
+        pointer-events: none;
+      }
+
+      .sparkles span {
+        position: absolute;
+        left: var(--x);
+        top: var(--y);
+        width: var(--s);
+        height: var(--s);
+        border-radius: 999px;
+        background: rgba(255,255,255,0.94);
+        box-shadow:
+          0 0 18px rgba(255,255,255,0.96),
+          0 0 44px rgba(166,110,255,0.22);
+        opacity: 0;
+      }
+
+      .soft-wash {
+        position: absolute;
+        left: 0;
+        right: 0;
+        z-index: 4;
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .soft-wash.top {
+        top: 0;
+        height: 46%;
+        background: linear-gradient(180deg, rgba(255,255,255,0.34), rgba(255,255,255,0));
+      }
+
+      .soft-wash.bottom {
+        bottom: 0;
+        height: 40%;
+        background: linear-gradient(180deg, rgba(255,255,255,0), rgba(255,255,255,0.3));
+      }
+
+      .light-sweep {
+        position: absolute;
+        top: -18%;
+        left: -24%;
+        width: 52%;
+        height: 140%;
+        z-index: 5;
+        opacity: 0;
+        transform: rotate(13deg);
+        background: linear-gradient(
+          90deg,
+          rgba(255,255,255,0) 0%,
+          rgba(255,255,255,0.24) 34%,
+          rgba(255,255,255,0.5) 50%,
+          rgba(255,255,255,0.16) 64%,
+          rgba(255,255,255,0) 100%
+        );
+        filter: blur(12px);
+        pointer-events: none;
+      }
+
+      .reveal-haze {
+        position: absolute;
+        inset: 0;
+        z-index: 6;
+        opacity: 0;
+        background:
+          radial-gradient(circle at 50% 58%, rgba(255,255,255,0.2), rgba(255,255,255,0) 28%),
+          linear-gradient(180deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.16) 100%);
+        pointer-events: none;
+      }
+    </style>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      tl.set('.scene, .scene-content', { clearProps: 'all' });
+      tl.set('.splash-base', { opacity: 1, scale: 1, y: 0, filter: 'saturate(1.02) brightness(1.015)' });
+      tl.set('.splash-glow', { opacity: 0, scale: 1.01, y: 0 });
+      tl.set('.sparkles span', { opacity: 0, scale: 0.86 });
+      tl.set('.soft-wash', { opacity: 0 });
+      tl.set('.light-sweep', { opacity: 0, xPercent: -10 });
+      tl.set('.reveal-haze', { opacity: 0 });
+
+      tl.to('.sparkles span', {
+        opacity: 0.74,
+        scale: 1,
+        duration: 0.8,
+        stagger: 0.07,
+        ease: 'power2.out'
+      }, 0.08);
+
+      tl.to('.sparkles span', {
+        y: (i) => [-6, -10, -4, -8, -9, -5][i],
+        x: (i) => [3, -2, 2, -3, 4, -2][i],
+        duration: 1.9,
+        stagger: 0.05,
+        ease: 'sine.inOut',
+        overwrite: 'auto'
+      }, 0.22);
+
+      tl.to('.soft-wash.top', {
+        opacity: 1,
+        duration: 0.8,
+        ease: 'power2.out'
+      }, 0.22);
+
+      tl.to('.soft-wash.bottom', {
+        opacity: 1,
+        duration: 0.9,
+        ease: 'power2.out'
+      }, 0.34);
+
+      tl.to('.splash-base', {
+        scale: 1.018,
+        duration: 1.15,
+        ease: 'power2.inOut'
+      }, 0.16);
+
+      tl.to('.splash-glow', {
+        opacity: 0.42,
+        duration: 1.1,
+        ease: 'power2.out',
+        overwrite: 'auto'
+      }, 0.62);
+
+      tl.to('.light-sweep', {
+        opacity: 0.92,
+        xPercent: 128,
+        duration: 1.22,
+        ease: 'power2.inOut'
+      }, 1.02);
+
+      tl.to('.reveal-haze', {
+        opacity: 0.5,
+        duration: 0.8,
+        ease: 'power2.out'
+      }, 1.25);
+
+      tl.to('.splash-base', {
+        opacity: 0,
+        scale: 1.03,
+        y: -12,
+        filter: 'saturate(1.03) brightness(1.035)',
+        duration: 1.18,
+        ease: 'power2.inOut'
+      }, 1.34);
+
+      tl.to('.splash-glow', {
+        opacity: 0,
+        scale: 1.045,
+        y: -14,
+        duration: 1.08,
+        ease: 'power2.inOut',
+        overwrite: 'auto'
+      }, 1.46);
+
+      tl.to('.sparkles span', {
+        opacity: 0,
+        duration: 0.48,
+        stagger: 0.03,
+        ease: 'power1.out',
+        overwrite: 'auto'
+      }, 2.02);
+
+      tl.to('.soft-wash, .reveal-haze', {
+        opacity: 0,
+        duration: 0.6,
+        ease: 'power2.out'
+      }, 2.08);
+
+      window.__timelines['kapsely-splash-transition'] = tl;
+      window.addEventListener('load', () => {
+        setTimeout(() => tl.play(0), 60);
+      });
+    </script>
+  </div>
+</body>
+</html>

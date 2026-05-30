@@ -1,16 +1,14 @@
-import { supabase } from './supabase';
+import { getFriendlyAuthErrorMessage, safeSignOut, supabase } from './supabase';
 
 export interface RegisterData {
     email: string;
     password: string;
     username: string;
     displayName: string;
-    birthdate?: string; // ISO date string YYYY-MM-DD (optional)
+    birthdate?: string;
 }
 
 export async function signUp({ email, password, username, displayName, birthdate }: RegisterData) {
-    // Pass profile fields as raw_user_meta_data so the DB trigger (handle_new_user)
-    // can insert the profiles row with SECURITY DEFINER — bypasses RLS timing issues.
     const { data: authData, error: authError } = await supabase.auth.signUp({
         email,
         password,
@@ -29,15 +27,43 @@ export async function signUp({ email, password, username, displayName, birthdate
     return authData;
 }
 
-export async function signIn(email: string, password: string) {
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) throw error;
-    return data;
+const withTimeout = <T,>(promise: PromiseLike<T>, ms: number, label: string): Promise<T> =>
+    new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`${label} timed out`)), ms);
+        Promise.resolve(promise)
+            .then(value => {
+                clearTimeout(timer);
+                resolve(value);
+            })
+            .catch(error => {
+                clearTimeout(timer);
+                reject(error);
+            });
+    });
+
+type SignInOptions = {
+    resetLocalStateOnRetryable?: boolean;
+};
+
+export async function signIn(email: string, password: string, options: SignInOptions = {}) {
+    try {
+        const { data, error } = await withTimeout(
+            supabase.auth.signInWithPassword({ email, password }),
+            10000,
+            'signIn'
+        );
+        if (error) throw error;
+        return data;
+    } catch (error: any) {
+        if (options.resetLocalStateOnRetryable) {
+            console.warn('[Auth] Retryable sign-in failure; preserving local auth state');
+        }
+        throw new Error(getFriendlyAuthErrorMessage(error, 'No se pudo iniciar sesion.'));
+    }
 }
 
 export async function signOut() {
-    const { error } = await supabase.auth.signOut();
-    if (error) throw error;
+    await safeSignOut();
 }
 
 export async function getProfile(userId: string) {

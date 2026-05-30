@@ -13,6 +13,24 @@ interface FollowSuggestionsProps {
     onFollowUpdate?: () => void;
 }
 
+const FOLLOW_SUGGESTIONS_CACHE_TTL_MS = 10 * 60 * 1000;
+const NETWORK_SUGGESTIONS_DISABLED_UNTIL_STABLE = true;
+
+const withTimeout = async <T,>(promise: PromiseLike<T>, ms: number, fallback: T): Promise<T> => {
+    return await new Promise(resolve => {
+        const timer = setTimeout(() => resolve(fallback), ms);
+        Promise.resolve(promise)
+            .then(value => {
+                clearTimeout(timer);
+                resolve(value);
+            })
+            .catch(() => {
+                clearTimeout(timer);
+                resolve(fallback);
+            });
+    });
+};
+
 export const FollowSuggestions: React.FC<FollowSuggestionsProps> = ({ currentUserId, onFollowUpdate }) => {
     const { t } = useTranslation();
     const [suggestions, setSuggestions] = useState<any[]>([]);
@@ -26,142 +44,57 @@ export const FollowSuggestions: React.FC<FollowSuggestionsProps> = ({ currentUse
     const fetchSuggestions = async () => {
         setLoading(true);
         try {
-            const { data: { user } } = await supabase.auth.getUser();
-            if (!user) return;
-
             const dismissedKey = `dismissed_follow_suggestions_${currentUserId}`;
+            const cacheKey = `follow_suggestions_cache_${currentUserId}`;
             const dismissedRaw = await AsyncStorage.getItem(dismissedKey);
             const dismissedIds = new Set<string>(dismissedRaw ? JSON.parse(dismissedRaw) : []);
+            const cachedRaw = await AsyncStorage.getItem(cacheKey);
 
-            const { data: myFollowing } = await supabase
-                .from('follows')
-                .select('following_id')
-                .eq('follower_id', currentUserId);
-            
-            const followingIds = new Set(myFollowing?.map(f => f.following_id) || []);
-            followingIds.add(currentUserId);
-            dismissedIds.forEach(id => followingIds.add(id));
-            const peopleIFollow = (myFollowing?.map(f => f.following_id) || []).slice(0, 80);
-
-            const { data: myFollowers } = await supabase
-                .from('follows')
-                .select('follower_id')
-                .eq('following_id', currentUserId);
-            
-            const followerIds = new Set(myFollowers?.map(f => f.follower_id) || []);
-
-            const [
-                myRecentItemsRes,
-                likedOwnersRes,
-                commentedOwnersRes,
-                viewedOwnersRes,
-                mutualCandidatesRes,
-                followerProfilesRes,
-            ] = await Promise.all([
-                supabase
-                    .from('capsule_items')
-                    .select('location_name')
-                    .eq('owner_id', currentUserId)
-                    .not('location_name', 'is', null)
-                    .order('created_at', { ascending: false })
-                    .limit(10),
-                supabase
-                    .from('likes')
-                    .select('capsules!inner(owner_id, profiles!owner_id(*))')
-                    .eq('user_id', currentUserId)
-                    .order('created_at', { ascending: false })
-                    .limit(60),
-                supabase
-                    .from('comments')
-                    .select('capsules!inner(owner_id, profiles!owner_id(*))')
-                    .eq('user_id', currentUserId)
-                    .order('created_at', { ascending: false })
-                    .limit(60),
-                supabase
-                    .from('feed_impressions')
-                    .select('capsules!inner(owner_id, profiles!owner_id(*))')
-                    .eq('user_id', currentUserId)
-                    .limit(80),
-                peopleIFollow.length
-                    ? supabase
-                        .from('follows')
-                        .select('following_id, profiles!following_id(*)')
-                        .in('follower_id', peopleIFollow)
-                        .limit(160)
-                    : Promise.resolve({ data: [] as any[] }),
-                followerIds.size
-                    ? supabase
-                        .from('profiles')
-                        .select('*')
-                        .in('id', Array.from(followerIds).slice(0, 80))
-                    : Promise.resolve({ data: [] as any[] }),
-            ]);
-            
-            const myLocations = new Set(myRecentItemsRes.data?.map(i => i.location_name) || []);
-            let locationCandidates: any[] = [];
-            if (myLocations.size > 0) {
-                const { data: locData } = await supabase
-                    .from('capsule_items')
-                    .select('owner_id, profiles:owner_id(*)')
-                    .in('location_name', Array.from(myLocations))
-                    .neq('owner_id', currentUserId)
-                    .limit(50);
-                locationCandidates = locData || [];
+            if (cachedRaw && suggestions.length === 0) {
+                try {
+                    const cached = JSON.parse(cachedRaw);
+                    if (Date.now() - (cached.savedAt || 0) < FOLLOW_SUGGESTIONS_CACHE_TTL_MS) {
+                        const cachedData = (cached.data || []).filter((profile: any) => !dismissedIds.has(profile.id)).slice(0, 10);
+                        if (cachedData.length > 0) {
+                            setSuggestions(cachedData);
+                        }
+                    }
+                } catch {}
             }
 
-            const userScores: Record<string, { profile: any; score: number; reasons: string[] }> = {};
+            if (NETWORK_SUGGESTIONS_DISABLED_UNTIL_STABLE) {
+                setLoading(false);
+                return;
+            }
 
-            const processCandidate = (profile: any, points: number, reason: string) => {
-                if (!profile || followingIds.has(profile.id)) return;
-                if (!userScores[profile.id]) {
-                    userScores[profile.id] = { profile, score: 0, reasons: [] };
-                }
-                userScores[profile.id].score += points;
-                if (!userScores[profile.id].reasons.includes(reason)) {
-                    userScores[profile.id].reasons.push(reason);
-                }
-            };
+            const rpcResult = await withTimeout(
+                supabase.rpc('get_follow_suggestions', {
+                    p_limit: 14,
+                    p_seed: refreshSeed,
+                }),
+                3200,
+                null as any
+            );
 
-            followerProfilesRes.data?.forEach(p => processCandidate(p, 55, 'follows_you'));
-            mutualCandidatesRes.data?.forEach(f => {
-                const p = Array.isArray(f.profiles) ? f.profiles[0] : f.profiles;
-                processCandidate(p, 45, 'mutual_friends');
-            });
-            likedOwnersRes.data?.forEach((row: any) => {
-                const c = Array.isArray(row.capsules) ? row.capsules[0] : row.capsules;
-                const p = Array.isArray(c?.profiles) ? c.profiles[0] : c?.profiles;
-                processCandidate(p, 40, 'liked_content');
-            });
-            commentedOwnersRes.data?.forEach((row: any) => {
-                const c = Array.isArray(row.capsules) ? row.capsules[0] : row.capsules;
-                const p = Array.isArray(c?.profiles) ? c.profiles[0] : c?.profiles;
-                processCandidate(p, 50, 'commented_content');
-            });
-            viewedOwnersRes.data?.forEach((row: any) => {
-                const c = Array.isArray(row.capsules) ? row.capsules[0] : row.capsules;
-                const p = Array.isArray(c?.profiles) ? c.profiles[0] : c?.profiles;
-                processCandidate(p, 18, 'seen_content');
-            });
-            locationCandidates?.forEach(l => {
-                const p = Array.isArray(l.profiles) ? l.profiles[0] : l.profiles;
-                processCandidate(p, 16, 'same_location');
-            });
+            const rpcData = Array.isArray(rpcResult?.data)
+                ? rpcResult.data
+                : Array.isArray(rpcResult)
+                    ? rpcResult
+                    : [];
 
-            Object.values(userScores).forEach(entry => {
-                if (entry.profile.is_verified) entry.score += 8;
-                entry.score += Math.sin(refreshSeed + entry.profile.id.split('').reduce((a: number, ch: string) => a + ch.charCodeAt(0), 0)) * 12;
-            });
+            const nextSuggestions = rpcData
+                .filter((profile: any) => profile?.id && !dismissedIds.has(profile.id))
+                .slice(0, 10);
 
-            const sortedSuggestions = Object.values(userScores)
-                .sort((a, b) => b.score - a.score)
-                .slice(0, 10)
-                .map(entry => ({
-                    ...entry.profile,
-                    reason: entry.reasons[0] || 'popular',
-                    score: entry.score
+            if (nextSuggestions.length > 0) {
+                setSuggestions(nextSuggestions);
+                await AsyncStorage.setItem(cacheKey, JSON.stringify({
+                    savedAt: Date.now(),
+                    data: nextSuggestions,
                 }));
-
-            setSuggestions(sortedSuggestions);
+            } else if (!cachedRaw) {
+                setSuggestions([]);
+            }
 
         } catch (error) {
             console.error('Error fetching suggestions:', error);
@@ -240,6 +173,7 @@ export const FollowSuggestions: React.FC<FollowSuggestionsProps> = ({ currentUse
                                 {user.reason === 'liked_content' && t('profile.liked_content', 'Te gustó su contenido')}
                                 {user.reason === 'commented_content' && t('profile.commented_content', 'Comentaste su contenido')}
                                 {user.reason === 'seen_content' && t('profile.seen_content', 'Has visto su contenido')}
+                                {user.reason === 'followed_capsule' && t('profile.followed_capsule', 'Sigues sus cÃ¡psulas')}
                                 {user.reason === 'popular' && t('profile.popular', 'Popular en Kapsely')}
                             </Text>
                         </View>

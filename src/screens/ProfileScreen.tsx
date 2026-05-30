@@ -19,7 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Constants from 'expo-constants';
 import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
-import { supabase } from '../lib/supabase';
+import { getAuthSessionSnapshot, getAuthUserIdSnapshot, safeSignOut, supabase } from '../lib/supabase';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ProfileCapsuleCell } from '../components/profile/ProfileCapsuleCell';
 import { ProfileHeader } from '../components/profile/ProfileHeader';
@@ -44,11 +44,14 @@ import * as Localization from 'expo-localization';
 const { width } = Dimensions.get('window');
 const PROFILE_BOOT_CACHE_PREFIX = '@kapsely_profile_boot_v3';
 const PROFILE_BOOT_CACHE_TTL = 5 * 60 * 1000;
+const SIMPLE_FRONTEND_PROFILE = true;
+const DISABLE_PROFILE_SUGGESTIONS_UNTIL_STABLE = true;
+const SUPABASE_RELIEF_MODE = true;
 
-const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T | null> =>
+const withTimeout = <T,>(promise: PromiseLike<T>, ms: number): Promise<T | null> =>
     new Promise(resolve => {
         const timer = setTimeout(() => resolve(null), ms);
-        promise
+        Promise.resolve(promise)
             .then(value => {
                 clearTimeout(timer);
                 resolve(value);
@@ -59,13 +62,28 @@ const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T | null> =>
             });
     });
 
+const isLockedSealedCapsule = (capsule: any) => {
+    if (!capsule || capsule.status !== 'sealed') return false;
+    if (capsule.is_opening) return true;
+    if (!capsule.opens_at) return false;
+    return new Date(capsule.opens_at).getTime() <= Date.now();
+};
+
+const canAddContentToCapsule = (capsule: any) => {
+    if (!capsule) return false;
+    const isBornOpen = capsule.status === 'opened' && Number(capsule.duration_days || 0) === 0;
+    const isSealedAndNotReady = capsule.status === 'sealed' && !isLockedSealedCapsule(capsule);
+    return isBornOpen || isSealedAndNotReady;
+};
+
 type ProfileTab = 'all' | 'opened' | 'sealed';
 
-const TYPE_CONFIG = (t: any): Record<string, { icon: string; color: string; label: string }> => ({
+const TYPE_CONFIG = (t: any): Record<string, { icon: string; color: string; label: string; emoji?: string }> => ({
     instacap: { icon: 'camera', color: Colors.instaCap, label: t('create.instacap_label') },
     legacycap: { icon: 'time', color: Colors.legacyCap, label: t('create.legacycap_label') },
     eventcap: { icon: 'flash', color: Colors.eventCap, label: t('create.eventcap_label') || 'EventCap' },
     opencap: { icon: 'book', color: Colors.primary, label: t('create.opencap_label') || 'OpenCap' },
+    birthdaycap: { icon: 'gift', color: '#FF6FB7', label: t('create.birthdaycap_label') || 'BirthdayCap', emoji: '\uD83C\uDF82' },
 });
 
 const STICKER_POSITIONS = [
@@ -110,6 +128,7 @@ export default function ProfileScreen() {
     const [savedAccounts, setSavedAccounts] = useState<SavedAccount[]>([]);
     const [cachedProfileData, setCachedProfileData] = useState<any | null>(null);
     const [showFollowSuggestions, setShowFollowSuggestions] = useState(false);
+    const [deletedCapsuleIds, setDeletedCapsuleIds] = useState<string[]>([]);
 
     const queryClient = useQueryClient();
     const effectiveProfileId = targetUserId || currentUserId;
@@ -117,21 +136,134 @@ export default function ProfileScreen() {
 
     // ─── Fetch Function ──────────────────────────────────────────────────────
     const fetchProfile = async () => {
-        const result = await withTimeout(supabase.auth.getSession(), 900);
-        const session = result?.data?.session;
-        const myId = session?.user?.id;
+        const myId = currentUserId || getAuthUserIdSnapshot() || getAuthSessionSnapshot()?.user?.id || null;
         if (myId && !currentUserId) setCurrentUserId(myId);
 
         const idToLoad = targetUserId || myId;
         if (!idToLoad) throw new Error('No user ID to load');
 
-        const { data, error } = await supabase.rpc('get_profile_data_unified', {
-            p_target_id: idToLoad
-        });
+        if (SIMPLE_FRONTEND_PROFILE) {
+            return fetchProfileFallback(idToLoad, myId || null);
+        }
 
-        if (error) throw error;
+        const rpcResult = await withTimeout(supabase.rpc('get_profile_data_unified', {
+            p_target_id: idToLoad
+        }), 6500);
+
+        const data = rpcResult?.data;
+        const error = rpcResult?.error;
+
+        if (error || !data?.profile) {
+            console.warn('[Profile] Unified RPC unavailable, using direct fallback', error);
+            return fetchProfileFallback(idToLoad, myId || null);
+        }
+
 
         return data;
+    };
+
+    const fetchProfileFallback = async (idToLoad: string, myId: string | null) => {
+        const [
+            profileRes,
+            followersRes,
+            followingRes,
+            followRes,
+            capsulesRes,
+            memberInvitesRes,
+            storiesRes,
+            viewerInvitesRes,
+            stickersRes,
+        ] = await Promise.all([
+            supabase.from('profiles').select('*').eq('id', idToLoad).single(),
+            supabase.from('follows').select('follower_id', { count: 'exact', head: true }).eq('following_id', idToLoad),
+            supabase.from('follows').select('following_id', { count: 'exact', head: true }).eq('follower_id', idToLoad),
+            myId ? supabase.from('follows').select('following_id').eq('follower_id', myId).eq('following_id', idToLoad).maybeSingle() : Promise.resolve({ data: null } as any),
+            supabase.from('capsules').select('*').eq('owner_id', idToLoad).order('created_at', { ascending: false }),
+            supabase
+                .from('capsule_invites')
+                .select('capsule_id, cover_url, capsules:capsule_id(*)')
+                .eq('user_id', idToLoad)
+                .eq('status', 'accepted'),
+            supabase
+                .from('capsule_items')
+                .select('*, capsules:capsule_id(id, title, type, model)')
+                .eq('owner_id', idToLoad)
+                .eq('is_story', true)
+                .gt('expires_at', new Date().toISOString())
+                .order('created_at', { ascending: false }),
+            myId ? supabase.from('capsule_invites').select('capsule_id').eq('user_id', myId).eq('status', 'accepted') : Promise.resolve({ data: [] } as any),
+            supabase.from('profile_stickers').select('*, stickers(*)').eq('user_id', idToLoad),
+        ]);
+
+        if (profileRes.error) throw profileRes.error;
+
+        const ownerCapsules = capsulesRes.data || [];
+        const memberCapsules = (memberInvitesRes.data || [])
+            .map((invite: any) => ({
+                ...(Array.isArray(invite.capsules) ? invite.capsules[0] : invite.capsules),
+                member_cover_url: invite.cover_url,
+                is_member_capsule: true,
+                participant_count: 1,
+            }))
+            .filter((capsule: any) => capsule?.id && capsule.owner_id !== idToLoad);
+        const combinedCapsules = Array.from(
+            new Map([...ownerCapsules, ...memberCapsules].map((capsule: any) => [capsule.id, capsule])).values()
+        ).sort((a: any, b: any) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+
+        const capsuleIds = combinedCapsules.map((c: any) => c.id);
+        const [mediaRes, likesRes, commentsRes] = capsuleIds.length
+            ? await Promise.all([
+                supabase
+                    .from('capsule_items')
+                    .select('id, capsule_id, media_url, media_type, thumbnail_url, created_at')
+                    .in('capsule_id', capsuleIds)
+                    .eq('is_story', false)
+                    .neq('moderation_status', 'rejected')
+                    .in('media_type', ['image', 'video'])
+                    .order('created_at', { ascending: false }),
+                supabase.from('likes').select('capsule_id').in('capsule_id', capsuleIds),
+                supabase.from('comments').select('capsule_id').in('capsule_id', capsuleIds),
+            ])
+            : [{ data: [] }, { data: [] }, { data: [] }] as any;
+
+        const mediaByCapsule = new Map<string, any[]>();
+        (mediaRes.data || []).forEach((item: any) => {
+            const list = mediaByCapsule.get(item.capsule_id) || [];
+            if (list.length < 4) list.push(item);
+            mediaByCapsule.set(item.capsule_id, list);
+        });
+
+        const countByCapsule = (rows: any[] = []) => rows.reduce((acc: Record<string, number>, row: any) => {
+            acc[row.capsule_id] = (acc[row.capsule_id] || 0) + 1;
+            return acc;
+        }, {});
+
+        const likeCounts = countByCapsule(likesRes.data || []);
+        const commentCounts = countByCapsule(commentsRes.data || []);
+
+        return {
+            profile: {
+                ...profileRes.data,
+                followers_count: followersRes.count || 0,
+                following_count: followingRes.count || 0,
+            },
+            is_following: !!followRes.data,
+            stories: storiesRes.data || [],
+            capsules: combinedCapsules.map((capsule: any) => {
+                const media = mediaByCapsule.get(capsule.id) || [];
+                return {
+                    ...capsule,
+                    effective_cover_url: capsule.member_cover_url || capsule.cover_url || media[0]?.thumbnail_url || media[0]?.media_url,
+                    fallback_media: media,
+                    likes_count: likeCounts[capsule.id] || 0,
+                    comments_count: commentCounts[capsule.id] || 0,
+                    posts_count: media.length,
+                };
+            }),
+            my_reads: [],
+            my_accepted_invites: (viewerInvitesRes.data || []).map((invite: any) => invite.capsule_id),
+            stickers: stickersRes.data || [],
+        };
     };
 
     // ─── useQuery ────────────────────────────────────────────────────────────
@@ -152,7 +284,7 @@ export default function ProfileScreen() {
     const displayProfileData = profileDataUnified || cachedProfileData;
     const profile = displayProfileData?.profile;
     const isFollowingValue = displayProfileData?.is_following || false;
-    const capsulesData = displayProfileData?.capsules || [];
+    const capsulesData = (displayProfileData?.capsules || []).filter((capsule: any) => !deletedCapsuleIds.includes(capsule.id));
     const storiesData = displayProfileData?.stories || [];
     const stickersData = displayProfileData?.stickers || [];
     const readIds = new Set(displayProfileData?.my_reads || []);
@@ -172,6 +304,10 @@ export default function ProfileScreen() {
             .catch(() => {});
         return () => { alive = false; };
     }, [profileCacheKey]);
+
+    useEffect(() => {
+        setDeletedCapsuleIds([]);
+    }, [targetUserId, currentUserId]);
 
     useEffect(() => {
         if (!profileDataUnified || !profileCacheKey) return;
@@ -216,14 +352,40 @@ export default function ProfileScreen() {
     }, [showAccountPanel]);
 
     useEffect(() => {
-        const subDel = DeviceEventEmitter.addListener('capsule_deleted', () => refetch());
-        const subNew = DeviceEventEmitter.addListener('capsule_created', () => refetch());
+        const removeCapsuleFromProfileCaches = (capsuleId?: string | null) => {
+            if (!capsuleId) return;
+            setDeletedCapsuleIds(prev => prev.includes(capsuleId) ? prev : [...prev, capsuleId]);
+            const queryKey = ['profile', targetUserId || currentUserId];
+            queryClient.setQueryData(queryKey, (prev: any) => {
+                if (!prev?.capsules) return prev;
+                return {
+                    ...prev,
+                    capsules: prev.capsules.filter((capsule: any) => capsule.id !== capsuleId),
+                };
+            });
+            setCachedProfileData((prev: any) => {
+                if (!prev?.capsules) return prev;
+                return {
+                    ...prev,
+                    capsules: prev.capsules.filter((capsule: any) => capsule.id !== capsuleId),
+                };
+            });
+        };
+
+        const subDel = DeviceEventEmitter.addListener('capsule_deleted', (payload?: { capsuleId?: string }) => {
+            removeCapsuleFromProfileCaches(payload?.capsuleId || null);
+            if (!SUPABASE_RELIEF_MODE) refetch();
+        });
+        const subNew = DeviceEventEmitter.addListener('capsule_created', () => {
+            if (!SUPABASE_RELIEF_MODE) refetch();
+        });
         return () => { subDel.remove(); subNew.remove(); };
-    }, [refetch]);
+    }, [refetch, queryClient, targetUserId, currentUserId]);
 
     const lastFocusFetchRef = useRef(0);
     useFocusEffect(
         useCallback(() => {
+            if (SUPABASE_RELIEF_MODE) return;
             const now = Date.now();
             if (now - lastFocusFetchRef.current > 30_000) {
                 lastFocusFetchRef.current = now;
@@ -252,16 +414,12 @@ export default function ProfileScreen() {
             });
             if (authErr) throw new Error(t('profile.wrong_password'));
 
-            const { error: delErr } = await supabase.rpc('delete_user_permanently', { user_id_to_delete: currentUserId });
-            
-            if (delErr) {
-               await supabase.from('capsules').delete().eq('owner_id', currentUserId);
-               await supabase.from('profiles').delete().eq('id', currentUserId);
-            }
+            const { error: delErr } = await supabase.rpc('request_account_deletion');
+            if (delErr) throw delErr;
 
             await multiAccountService.logoutCurrentAndRemove();
             setShowDeleteModal(false);
-            Alert.alert(t('common.ready'), t('profile.account_deleted_success'));
+            Alert.alert(t('common.ready'), t('profile.account_deletion_scheduled'));
         } catch (e: any) {
             Alert.alert('Error', e.message);
         } finally {
@@ -321,19 +479,20 @@ export default function ProfileScreen() {
     const [activeStoryViewer, setActiveStoryViewer] = useState(false);
     const [isBlocked, setIsBlocked] = useState(false);
     const [showUserOptions, setShowUserOptions] = useState(false);
+    const [showCapsuleOptions, setShowCapsuleOptions] = useState(false);
+    const [selectedCapsuleOptions, setSelectedCapsuleOptions] = useState<any | null>(null);
     const [birthdayCongratsCount, setBirthdayCongratsCount] = useState(0);
     const [hasSentBirthdayCongrats, setHasSentBirthdayCongrats] = useState(false);
     const [birthdayGiftCounts, setBirthdayGiftCounts] = useState<Record<string, number>>({});
 
     useEffect(() => {
         const checkOwn = async () => {
-            const result = await withTimeout(supabase.auth.getSession(), 900);
-            const session = result?.data?.session;
-            if (session?.user?.id) {
-                setCurrentUserId(session.user.id);
+            const myId = getAuthUserIdSnapshot() || getAuthSessionSnapshot()?.user?.id || null;
+            if (myId) {
+                setCurrentUserId(myId);
                 if (targetUserId) {
-                    setIsOwnProfileState(targetUserId === session.user.id);
-                    safetyService.isBlocked(session.user.id, targetUserId).then(setIsBlocked);
+                    setIsOwnProfileState(targetUserId === myId);
+                    safetyService.isBlocked(myId, targetUserId).then(setIsBlocked);
                 } else setIsOwnProfileState(true);
             }
         };
@@ -341,6 +500,10 @@ export default function ProfileScreen() {
     }, [targetUserId]);
 
     useEffect(() => {
+        if (DISABLE_PROFILE_SUGGESTIONS_UNTIL_STABLE) {
+            setShowFollowSuggestions(false);
+            return;
+        }
         setShowFollowSuggestions(false);
         const task = InteractionManager.runAfterInteractions(() => {
             const timer = setTimeout(() => setShowFollowSuggestions(true), 500);
@@ -379,18 +542,60 @@ export default function ProfileScreen() {
         isAccessible: isOwnProfile || c.is_public || c.owner_id === currentUserId || myAcceptedCaps.has(c.id) || (c.invited_user_id === currentUserId && c.invite_status === 'accepted')
     })), [capsulesData, isOwnProfile, currentUserId, myAcceptedCaps]);
 
+    const handleProfileCapsuleLongPress = useCallback((cap: any) => {
+        setSelectedCapsuleOptions(cap);
+        setShowCapsuleOptions(true);
+    }, [isOwnProfile, currentUserId, myAcceptedCaps, t, navigation]);
+
+    const canManageProfileCapsule = useCallback((cap: any) => {
+        return !!cap && (
+            isOwnProfile ||
+            cap.owner_id === currentUserId ||
+            myAcceptedCaps.has(cap.id) ||
+            (cap.invited_user_id === currentUserId && cap.invite_status === 'accepted')
+        );
+    }, [isOwnProfile, currentUserId, myAcceptedCaps]);
+
+    const handleDeleteCapsuleFromSheet = useCallback((cap: any) => {
+        setShowCapsuleOptions(false);
+        const execDelete = async () => {
+            try {
+                if (cap?.is_shared) {
+                    const { data, error } = await supabase.rpc('vote_delete_capsule', { p_capsule_id: cap.id });
+                    if (error) throw error;
+                    if (data?.status === 'deleted') {
+                        DeviceEventEmitter.emit('capsule_deleted', { capsuleId: cap.id });
+                    } else {
+                        Alert.alert('Kapsely', t('detail.delete_vote_registered'));
+                    }
+                } else {
+                    const { error } = await supabase.rpc('delete_capsule', { p_capsule_id: cap.id });
+                    if (error) throw error;
+                    DeviceEventEmitter.emit('capsule_deleted', { capsuleId: cap.id });
+                }
+            } catch (error: any) {
+                Alert.alert(t('common.error'), error?.message || t('detail.delete_error'));
+            }
+        };
+
+        Alert.alert(t('detail.delete_capsule_title'), t('detail.delete_capsule_msg'), [
+            { text: t('detail.keep_it'), style: 'cancel' },
+            { text: t('common.delete'), style: 'destructive', onPress: execDelete },
+        ]);
+    }, [t]);
+
     useEffect(() => {
         const sub = DeviceEventEmitter.addListener('CAPSULE_UPDATED', () => {
             queryClient.invalidateQueries({ queryKey: ['profile', targetUserId || currentUserId] });
         });
         return () => sub.remove();
-    }, [targetUserId, currentUserId]);
+    }, [targetUserId, currentUserId, queryClient]);
 
     // Redundant batch-fetch removed (now handled by RPC)
 
     useEffect(() => {
         const idToLoad = targetUserId || currentUserId;
-        if (!idToLoad) return;
+        if (!idToLoad || SUPABASE_RELIEF_MODE) return;
 
         const channel = supabase.channel(`profile-${idToLoad}`)
             .on('postgres_changes', 
@@ -476,12 +681,12 @@ export default function ProfileScreen() {
 
     const handleLogout = async () => {
         if (Platform.OS === 'web') {
-            if (window.confirm('Are you sure you want to log out?')) { setShowSettings(false); await supabase.auth.signOut(); }
+            if (window.confirm('Are you sure you want to log out?')) { setShowSettings(false); await safeSignOut(); }
             return;
         }
         Alert.alert(t('profile.logout'), t('profile.logout_confirm'), [
             { text: t('common.cancel'), style: 'cancel' },
-            { text: t('profile.logout'), style: 'destructive', onPress: async () => { setShowSettings(false); await supabase.auth.signOut(); } }
+            { text: t('profile.logout'), style: 'destructive', onPress: async () => { setShowSettings(false); await safeSignOut(); } }
         ]);
     };
 
@@ -593,9 +798,10 @@ export default function ProfileScreen() {
         try {
             const ownerId = userStories.owner_id;
             const { data: fullStories } = await supabase
-                .from('stories')
+                .from('capsule_items')
                 .select('*, capsules:capsule_id(id, title, type, model)')
                 .eq('owner_id', ownerId)
+                .eq('is_story', true)
                 .gt('expires_at', new Date().toISOString())
                 .order('created_at', { ascending: true });
             if (fullStories?.length) {
@@ -728,6 +934,7 @@ export default function ProfileScreen() {
                             cap={item}
                             navigation={navigation}
                             isOwnProfile={isOwnProfile}
+                            canManage={canManageProfileCapsule(item)}
                             isSealed={item.status === 'sealed'}
                             cfg={TYPE_CONFIG(t)[item.type] || TYPE_CONFIG(t).instacap}
                             coverUrl={coverMap[item.id]}
@@ -738,6 +945,7 @@ export default function ProfileScreen() {
                             themeColor={accentColor}
                             capsuleMediaMap={capsuleMediaMap}
                             t={t}
+                            onLongPressCapsule={handleProfileCapsuleLongPress}
                         />
                     </View>
                 )}
@@ -779,6 +987,111 @@ export default function ProfileScreen() {
                             <Ionicons name="chevron-forward" size={16} color={Colors.textMuted} />
                         </TouchableOpacity>
                         <TouchableOpacity style={s.cancelBtn} activeOpacity={0.7} onPress={() => setShowUserOptions(false)}>
+                            <Text style={s.cancelBtnText}>{t('common.cancel')}</Text>
+                        </TouchableOpacity>
+                    </View>
+                </Pressable>
+            </Modal>
+
+            <Modal visible={showCapsuleOptions} transparent animationType="fade">
+                <Pressable
+                    style={s.overlay}
+                    onPress={() => {
+                        setShowCapsuleOptions(false);
+                        setSelectedCapsuleOptions(null);
+                    }}
+                >
+                    <View style={s.sheet}>
+                        <View style={s.sheetHandle} />
+                        <Text style={s.sheetTitle}>{selectedCapsuleOptions?.title || 'Kapsely'}</Text>
+                        {!!selectedCapsuleOptions?.status && (
+                            <Text style={s.capsuleSheetSub}>
+                                {selectedCapsuleOptions.status === 'opened' ? t('detail.opened') : t('detail.sealed')}
+                            </Text>
+                        )}
+
+                        <TouchableOpacity
+                            style={s.sheetItem}
+                            activeOpacity={0.7}
+                            onPress={() => {
+                                const cap = selectedCapsuleOptions;
+                                setShowCapsuleOptions(false);
+                                setSelectedCapsuleOptions(null);
+                                if (cap) navigation.navigate('InstagramShare', { capsule: cap });
+                            }}
+                        >
+                            <View style={[s.sheetItemIcon, { backgroundColor: '#E1306C12' }]}>
+                                <Ionicons name="logo-instagram" size={18} color="#E1306C" />
+                            </View>
+                            <Text style={s.sheetItemText}>{t('detail.share_instagram') || 'Compartir en Historia de Instagram'}</Text>
+                            <Ionicons name="chevron-forward" size={16} color={Colors.textMuted} />
+                        </TouchableOpacity>
+
+                        {!!selectedCapsuleOptions && canManageProfileCapsule(selectedCapsuleOptions) && (
+                            <>
+                                {canAddContentToCapsule(selectedCapsuleOptions) && (
+                                    <TouchableOpacity
+                                        style={s.sheetItem}
+                                        activeOpacity={0.7}
+                                        onPress={() => {
+                                            const cap = selectedCapsuleOptions;
+                                            setShowCapsuleOptions(false);
+                                            setSelectedCapsuleOptions(null);
+                                            if (cap) navigation.navigate('CreateSelection', { capsuleId: cap.id });
+                                        }}
+                                    >
+                                        <View style={[s.sheetItemIcon, { backgroundColor: Colors.primary + '12' }]}>
+                                            <Ionicons name="add-circle-outline" size={18} color={Colors.primary} />
+                                        </View>
+                                        <Text style={s.sheetItemText}>{t('detail.add_content') || 'Agregar contenido'}</Text>
+                                        <Ionicons name="chevron-forward" size={16} color={Colors.textMuted} />
+                                    </TouchableOpacity>
+                                )}
+
+                                {selectedCapsuleOptions.status === 'opened' && (capsuleMediaMap[selectedCapsuleOptions.id] || []).length > 0 && (
+                                    <TouchableOpacity
+                                        style={s.sheetItem}
+                                        activeOpacity={0.7}
+                                        onPress={() => {
+                                            const cap = selectedCapsuleOptions;
+                                            setShowCapsuleOptions(false);
+                                            setSelectedCapsuleOptions(null);
+                                            if (cap) setPickerCapsuleId(cap.id);
+                                        }}
+                                    >
+                                        <View style={[s.sheetItemIcon, { backgroundColor: Colors.primary + '12' }]}>
+                                            <Ionicons name="image-outline" size={18} color={Colors.primary} />
+                                        </View>
+                                        <Text style={s.sheetItemText}>{t('profile.setAsCover')}</Text>
+                                        <Ionicons name="chevron-forward" size={16} color={Colors.textMuted} />
+                                    </TouchableOpacity>
+                                )}
+
+                                <TouchableOpacity
+                                    style={s.sheetItem}
+                                    activeOpacity={0.7}
+                                    onPress={() => {
+                                        if (selectedCapsuleOptions) handleDeleteCapsuleFromSheet(selectedCapsuleOptions);
+                                        setSelectedCapsuleOptions(null);
+                                    }}
+                                >
+                                    <View style={[s.sheetItemIcon, { backgroundColor: Colors.error + '12' }]}>
+                                        <Ionicons name="trash-outline" size={18} color={Colors.error} />
+                                    </View>
+                                    <Text style={[s.sheetItemText, { color: Colors.error, fontFamily: Fonts.bold }]}>{t('common.delete')}</Text>
+                                    <Ionicons name="chevron-forward" size={16} color={Colors.textMuted} />
+                                </TouchableOpacity>
+                            </>
+                        )}
+
+                        <TouchableOpacity
+                            style={s.cancelBtn}
+                            activeOpacity={0.7}
+                            onPress={() => {
+                                setShowCapsuleOptions(false);
+                                setSelectedCapsuleOptions(null);
+                            }}
+                        >
                             <Text style={s.cancelBtnText}>{t('common.cancel')}</Text>
                         </TouchableOpacity>
                     </View>
@@ -1334,6 +1647,7 @@ const s = StyleSheet.create({
     },
     sheetHandle: { alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.divider, marginBottom: 18 },
     sheetTitle: { fontSize: 18, fontFamily: Fonts.bold, color: Colors.textPrimary, marginBottom: 16 },
+    capsuleSheetSub: { marginTop: -8, marginBottom: 12, fontSize: 13, fontFamily: Fonts.medium, color: Colors.textMuted, textAlign: 'center' },
     sheetNav: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
     sheetNavBack: { width: 34, height: 34, borderRadius: 17, backgroundColor: Colors.cardAlt, alignItems: 'center', justifyContent: 'center' },
     sheetNavTitle: { fontSize: 17, fontFamily: Fonts.bold, color: Colors.textPrimary },

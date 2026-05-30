@@ -6,6 +6,7 @@ import {
     Easing, Modal, Platform, Keyboard, KeyboardAvoidingView, DeviceEventEmitter,
     InteractionManager,
 } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
 import * as NavigationBar from 'expo-navigation-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Slider from '@react-native-community/slider';
@@ -34,6 +35,14 @@ const clampModelLayout = (model: any) => ({
     offsetX: Math.max(-80, Math.min(80, Number(model?.image_offset_x) || 0)),
     offsetY: Math.max(-80, Math.min(80, Number(model?.image_offset_y) || 0)),
 });
+
+const getModelPreviewUri = (model: any) => {
+    const directThumb = typeof model?.thumbnail_url === 'string' ? model.thumbnail_url : '';
+    if (directThumb) return directThumb;
+    const image = typeof model?.image === 'string' ? model.image : '';
+    if (!image) return '';
+    return image.replace(/\.(png|jpg|jpeg|webp)$/i, '_thumb.webp');
+};
 type Step = 'mode' | 'design' | 'identity' | 'timing' | 'review';
 const CLOSED_STEPS: Step[] = ['mode', 'design', 'identity', 'timing', 'review'];
 const OPEN_STEPS: Step[] = ['mode', 'design', 'identity', 'review'];
@@ -417,6 +426,20 @@ function ModelPickerModal({
         return groups;
     }, [filteredModels, drops]);
 
+    useEffect(() => {
+        if (!visible) return;
+        const task = InteractionManager.runAfterInteractions(() => {
+            const urls = filteredModels
+                .flatMap((model: any) => [model.thumbnail_url, model.image, model.image_open])
+                .filter((value, index, arr): value is string => !!value && arr.indexOf(value) === index)
+                .slice(0, 24);
+            if (urls.length > 0) {
+                void ExpoImage.prefetch(urls, 'memory-disk');
+            }
+        });
+        return () => task.cancel();
+    }, [visible, filteredModels]);
+
     return (
         <Modal visible={visible} transparent animationType="none" statusBarTranslucent>
             <TouchableOpacity
@@ -467,6 +490,7 @@ function ModelPickerModal({
                                         const isDropModel = !!model.active_drop_name;
                                         
                                         const isActive = selectedModel === model.id;
+                                        const modelLayout = clampModelLayout(model);
                                         return (
                                             <TouchableOpacity
                                                 key={model.id}
@@ -487,21 +511,7 @@ function ModelPickerModal({
                                                 )}
 
                                                 <View style={modalS.modelImgWrap}>
-                                                    <Image 
-                                                        source={{ uri: model.image }} 
-                                                        style={[
-                                                            modalS.modelImg,
-                                                            {
-                                                                transform: [
-                                                                    { translateX: clampModelLayout(model).offsetX * 0.38 },
-                                                                    { translateY: clampModelLayout(model).offsetY * 0.38 },
-                                                                    { scaleX: clampModelLayout(model).scale * clampModelLayout(model).scaleX },
-                                                                    { scaleY: clampModelLayout(model).scale * clampModelLayout(model).scaleY },
-                                                                ],
-                                                            },
-                                                        ]}
-                                                        resizeMode="contain" 
-                                                    />
+                                                    <ModelPreviewImage model={model} modelLayout={modelLayout} />
                                                 </View>
                                                 
                                                 <View style={modalS.modelInfo}>
@@ -559,6 +569,41 @@ function ModelPickerModal({
                 </ScrollView>
             </Animated.View>
         </Modal>
+    );
+}
+
+function ModelPreviewImage({ model, modelLayout }: { model: any; modelLayout: ReturnType<typeof clampModelLayout> }) {
+    const initialPreview = getModelPreviewUri(model);
+    const [uri, setUri] = useState(initialPreview || model?.image || '');
+
+    useEffect(() => {
+        setUri(initialPreview || model?.image || '');
+    }, [initialPreview, model?.image]);
+
+    return (
+        <ExpoImage
+            source={uri ? { uri } : undefined}
+            style={[
+                modalS.modelImg,
+                {
+                    transform: [
+                        { translateX: modelLayout.offsetX * 0.38 },
+                        { translateY: modelLayout.offsetY * 0.38 },
+                        { scaleX: modelLayout.scale * modelLayout.scaleX },
+                        { scaleY: modelLayout.scale * modelLayout.scaleY },
+                    ],
+                },
+            ]}
+            contentFit="contain"
+            cachePolicy="memory-disk"
+            transition={0}
+            priority="high"
+            onError={() => {
+                if (uri !== model?.image && model?.image) {
+                    setUri(model.image);
+                }
+            }}
+        />
     );
 }
 
@@ -686,8 +731,8 @@ const modalS = StyleSheet.create({
 });
 
 // ─── Seal Animation ───────────────────────────────────────────────────────────
-function SealAnimation({ accent, modelUri, modelOpenUri, onDone, isOpen }: {
-    accent: string; modelUri: string; modelOpenUri?: string; onDone: () => void; isOpen?: boolean;
+function SealAnimation({ accent, modelUri, modelOpenUri, onDone, isOpen, isBirthday }: {
+    accent: string; modelUri: string; modelOpenUri?: string; onDone: () => void; isOpen?: boolean; isBirthday?: boolean;
 }) {
     const { t } = useTranslation();
     const [stage, setStage] = useState<'enter' | 'filling' | 'sealed'>('enter');
@@ -714,12 +759,16 @@ function SealAnimation({ accent, modelUri, modelOpenUri, onDone, isOpen }: {
         Array.from({ length: 12 }, (_, i) => {
             const angle = (i / 12) * Math.PI * 2;
             const dist = 80 + Math.random() * 70;
+            const birthdayColors = ['#FF5C8A', '#FFD166', '#06D6A0', '#4D96FF', '#A855F7', '#FF8A3D', '#F9A8D4', '#67E8F9', '#FFFFFF', '#FDE68A', '#FB7185', '#C084FC'];
             return {
                 x: new Animated.Value(0), y: new Animated.Value(0),
                 op: new Animated.Value(0), sc: new Animated.Value(0),
+                rot: new Animated.Value(0),
                 tx: Math.cos(angle) * dist, ty: Math.sin(angle) * dist,
-                color: [accent, accent + 'BB', '#a855f7', '#818cf8', '#c084fc', '#6366f1', accent, '#ddd6fe', accent + 'DD', L.purple, '#7c3aed', accent][i],
+                color: isBirthday ? birthdayColors[i] : [accent, accent + 'BB', '#a855f7', '#818cf8', '#c084fc', '#6366f1', accent, '#ddd6fe', accent + 'DD', L.purple, '#7c3aed', accent][i],
                 size: 6 + Math.random() * 8,
+                isRect: isBirthday ? i % 2 === 0 : false,
+                layer: isBirthday && i % 3 === 0 ? 'back' : 'front',
             };
         })
     ).current;
@@ -815,6 +864,7 @@ function SealAnimation({ accent, modelUri, modelOpenUri, onDone, isOpen }: {
                                     Animated.spring(p.sc, { toValue: 1, friction: 4, tension: 120, useNativeDriver: true }),
                                     Animated.timing(p.x, { toValue: p.tx, duration: 520, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
                                     Animated.timing(p.y, { toValue: p.ty, duration: 520, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+                                    Animated.timing(p.rot, { toValue: 1, duration: 520, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
                                 ]),
                                 Animated.timing(p.op, { toValue: 0, duration: 300, useNativeDriver: true }),
                             ])
@@ -853,6 +903,23 @@ function SealAnimation({ accent, modelUri, modelOpenUri, onDone, isOpen }: {
             </Animated.View>
             {/* Flash */}
             <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: '#fff', opacity: flash }]} pointerEvents="none" />
+            {particles.filter(p => p.layer === 'back').map((p, i) => {
+                const rotDeg = p.rot.interpolate({ inputRange: [0, 1], outputRange: ['0deg', `${180 + i * 45}deg`] });
+                return (
+                    <Animated.View
+                        key={`back-${i}`}
+                        style={{
+                            position: 'absolute',
+                            width: p.isRect ? p.size * 1.8 : p.size,
+                            height: p.isRect ? p.size * 0.9 : p.size,
+                            borderRadius: p.isRect ? 2 : p.size / 2,
+                            backgroundColor: p.color,
+                            opacity: p.op,
+                            transform: [{ translateX: p.x }, { translateY: p.y }, { scale: p.sc }, { rotate: rotDeg }],
+                        }}
+                    />
+                );
+            })}
             {/* Sealed capsule — final stage */}
             <Animated.View style={{ position: 'absolute', opacity: sealedOpacity, transform: [{ scale: sealedScale }], alignItems: 'center', top: '18%' }}>
                 <View style={{ width: 260, height: 260, alignItems: 'center', justifyContent: 'center' }}>
@@ -865,18 +932,32 @@ function SealAnimation({ accent, modelUri, modelOpenUri, onDone, isOpen }: {
                         shadowColor: accent, shadowOpacity: 0.9, shadowRadius: 18, shadowOffset: { width: 0, height: 4 }, elevation: 16,
                         opacity: lockOpacity, transform: [{ scale: lockScale }],
                     }}>
-                        <Ionicons name="lock-closed" size={24} color="#fff" />
+                        {isBirthday ? <Text style={{ fontSize: 25 }}>{'\uD83C\uDF82'}</Text> : <Ionicons name="lock-closed" size={24} color="#fff" />}
                     </Animated.View>
                 </View>
             </Animated.View>
             {/* Particles */}
-            {particles.map((p, i) => (
-                <Animated.View key={i} style={{ position: 'absolute', width: p.size, height: p.size, borderRadius: p.size / 2, backgroundColor: p.color, opacity: p.op, transform: [{ translateX: p.x }, { translateY: p.y }, { scale: p.sc }] }} />
-            ))}
+            {particles.filter(p => p.layer === 'front').map((p, i) => {
+                const rotDeg = p.rot.interpolate({ inputRange: [0, 1], outputRange: ['0deg', `${180 + i * 45}deg`] });
+                return (
+                    <Animated.View
+                        key={`front-${i}`}
+                        style={{
+                            position: 'absolute',
+                            width: p.isRect ? p.size * 1.8 : p.size,
+                            height: p.isRect ? p.size * 0.9 : p.size,
+                            borderRadius: p.isRect ? 2 : p.size / 2,
+                            backgroundColor: p.color,
+                            opacity: p.op,
+                            transform: [{ translateX: p.x }, { translateY: p.y }, { scale: p.sc }, { rotate: rotDeg }],
+                        }}
+                    />
+                );
+            })}
             {/* Final message */}
             <Animated.View style={{ position: 'absolute', bottom: 90, alignItems: 'center', opacity: doneOpacity, width: '80%' }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: accent + '22', borderRadius: 50, paddingHorizontal: 18, paddingVertical: 8, borderWidth: 1, borderColor: accent + '55', marginBottom: 20 }}>
-                    <Ionicons name="lock-closed" size={11} color={accent} />
+                    {isBirthday ? <Text style={{ fontSize: 13 }}>{'\uD83C\uDF82'}</Text> : <Ionicons name="lock-closed" size={11} color={accent} />}
                     <Text style={{ fontSize: 11, color: accent, fontFamily: Fonts.bold, letterSpacing: 2.5, textTransform: 'uppercase' }}>
                         {t('create.capsule_locked')}
                     </Text>
@@ -1069,17 +1150,18 @@ export default function CapsuleCreationScreen() {
     const [activeInstaCapCount, setActiveInstaCapCount] = useState(0);
     const [isBirthdayToday, setIsBirthdayToday] = useState(false);
     const [loadingLimits, setLoadingLimits] = useState(true);
-    const [allModels, setAllModels] = useState<any[]>([...(timerConfigManager.models.length > 0 ? timerConfigManager.models : CAPSULE_MODELS)]);
+    const [allModels, setAllModels] = useState<any[]>([...((timerConfigManager.models.length > 0 ? timerConfigManager.models : CAPSULE_MODELS).filter((m: any) => !m?.is_hidden))]);
     const [drops, setDrops] = useState<any[]>([]);
     
     useEffect(() => {
         const unsubscribe = timerConfigManager.subscribe(() => {
-            setAllModels([...timerConfigManager.models]);
+            setAllModels([...timerConfigManager.models.filter((m: any) => !m?.is_hidden)]);
             setDrops(timerConfigManager.getDrops());
         });
         setDrops(timerConfigManager.getDrops());
         return unsubscribe;
     }, []);
+
     const [showModelPicker, setShowModelPicker] = useState(false);
 
     const [title, setTitle] = useState('');
@@ -1104,11 +1186,24 @@ export default function CapsuleCreationScreen() {
     const [capAngelSearchResults, setCapAngelSearchResults] = useState<any[]>([]);
     const [searchingCapAngel, setSearchingCapAngel] = useState(false);
 
-    const [availableModels, setAvailableModels] = useState<any[]>(timerConfigManager.models.length > 0 ? timerConfigManager.models : [...CAPSULE_MODELS]);
+    const [availableModels, setAvailableModels] = useState<any[]>((timerConfigManager.models.length > 0 ? timerConfigManager.models : [...CAPSULE_MODELS]).filter((m: any) => !m?.is_hidden));
     const [sealing, setSealing] = useState(false);
     const [showSealAnim, setShowSealAnim] = useState(false);
     const newCapsuleRef = useRef<any>(null);
     const [showDatePicker, setShowDatePicker] = useState(false);
+
+    useEffect(() => {
+        const task = InteractionManager.runAfterInteractions(() => {
+            const urls = availableModels
+                .flatMap((model: any) => [getModelPreviewUri(model), model.image, model.image_open])
+                .filter((value, index, arr): value is string => !!value && arr.indexOf(value) === index)
+                .slice(0, 40);
+            if (urls.length > 0) {
+                void ExpoImage.prefetch(urls, 'memory-disk');
+            }
+        });
+        return () => task.cancel();
+    }, [availableModels]);
 
     const slideAnim = useRef(new Animated.Value(0)).current;
     const capScaleAnim = useRef(new Animated.Value(1)).current;
@@ -1314,7 +1409,7 @@ export default function CapsuleCreationScreen() {
     }, []);
 
     useEffect(() => {
-        const syncModels = () => setAvailableModels([...(timerConfigManager.models.length > 0 ? timerConfigManager.models : [...CAPSULE_MODELS])]);
+        const syncModels = () => setAvailableModels([...(timerConfigManager.models.length > 0 ? timerConfigManager.models : [...CAPSULE_MODELS]).filter((m: any) => !m?.is_hidden)]);
         const sub = timerConfigManager.subscribe(syncModels);
         syncModels();
         return sub;
@@ -1426,6 +1521,11 @@ export default function CapsuleCreationScreen() {
                     image_scale_y: activeModel.image_scale_y ?? 1,
                     image_offset_x: activeModel.image_offset_x ?? 0,
                     image_offset_y: activeModel.image_offset_y ?? 0,
+                    image_open_scale: activeModel.image_open_scale ?? activeModel.image_scale ?? 1,
+                    image_open_scale_x: activeModel.image_open_scale_x ?? activeModel.image_scale_x ?? 1,
+                    image_open_scale_y: activeModel.image_open_scale_y ?? activeModel.image_scale_y ?? 1,
+                    image_open_offset_x: activeModel.image_open_offset_x ?? activeModel.image_offset_x ?? 0,
+                    image_open_offset_y: activeModel.image_open_offset_y ?? activeModel.image_offset_y ?? 0,
                     captured_at: new Date().toISOString(),
                 } : null,
                 cap_angel: (selectedMode === 'closed' && useCapAngel && selectedCapAngel) ? true : false,
@@ -1437,25 +1537,15 @@ export default function CapsuleCreationScreen() {
             DeviceEventEmitter.emit('capsule_created', { capsuleId: newCapsule.id });
 
             if (isShared && invitedUsers.length > 0 && newCapsule) {
-                const expiresAt = new Date(Date.now() + 3 * 86400000).toISOString();
+                const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
                 const inviteData = invitedUsers.map(u => ({ 
                     capsule_id: newCapsule.id, 
                     user_id: u.id, 
                     status: 'pending',
                     expires_at: expiresAt
                 }));
-                await supabase.from('capsule_invites').insert(inviteData);
-                
-                // Add notifications for each invited user
-                const notificationData = invitedUsers.map(u => ({
-                    user_id: u.id,
-                    sender_id: user.id,
-                    type: 'capsule_invite',
-                    capsule_id: newCapsule.id,
-                    message: `${ownerName} ${t('notifications.invited_you_msg') || 'invited you to collaborate on a capsule'}`,
-                    is_read: false
-                }));
-                await supabase.from('notifications').insert(notificationData);
+                const { error: inviteError } = await supabase.from('capsule_invites').insert(inviteData);
+                if (inviteError) throw inviteError;
 
                 // Send Push Notifications
                 for (const u of invitedUsers) {
@@ -2227,7 +2317,9 @@ export default function CapsuleCreationScreen() {
                                 ) : (
                                     <>
                                         <View style={s.sealBtnIconWrap}>
-                                            <Ionicons name={selectedType === 'opencap' ? 'book' : 'lock-closed'} size={18} color="#fff" />
+                                            {selectedType === 'birthdaycap'
+                                                ? <Text style={{ fontSize: 18 }}>{'\uD83C\uDF82'}</Text>
+                                                : <Ionicons name={selectedType === 'opencap' ? 'book' : 'lock-closed'} size={18} color="#fff" />}
                                         </View>
                                         <Text style={s.sealBtnText}>
                                             {selectedType === 'opencap' ? t('create.create_capsule_btn') : t('create.seal_capsule')}
@@ -2292,6 +2384,7 @@ export default function CapsuleCreationScreen() {
                     accent={accent}
                     modelUri={timerConfigManager.getModelImage(selectedModel) || activeModel?.image || ''}
                     modelOpenUri={timerConfigManager.getModelImageOpen(selectedModel) || activeModel?.image_open || activeModel?.image || ''}
+                    isBirthday={selectedType === 'birthdaycap'}
                     onDone={() => {
                         InteractionManager.runAfterInteractions(() => {
                             setShowSealAnim(false);

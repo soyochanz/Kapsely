@@ -20,6 +20,8 @@ export const CapsuleDetail: React.FC<CapsuleDetailProps> = ({ capsule: initialCa
   const [comments, setComments] = useState<any[]>([]);
   const [isLiked, setIsLiked] = useState(false);
   const [likeCount, setLikeCount] = useState(initialCapsule.likes_count || 0);
+  const [commentCount, setCommentCount] = useState(initialCapsule.comments_count || 0);
+  const [contributors, setContributors] = useState<any[]>(initialCapsule.shared_members || []);
   const [showAddItem, setShowAddItem] = useState(false);
   const [activeTab, setActiveTab] = useState<'content' | 'chat'>('content');
   const [userId, setUserId] = useState<string | null>(null);
@@ -32,6 +34,8 @@ export const CapsuleDetail: React.FC<CapsuleDetailProps> = ({ capsule: initialCa
   const [timeLeft, setTimeLeft] = useState<string>('');
   const [isOpening, setIsOpening] = useState(false);
   const [showUnsealAnim, setShowUnsealAnim] = useState(false);
+  const [canContribute, setCanContribute] = useState(false);
+  const capsuleId = capsule.capsule_id || String(capsule.id || '').replace(/^web-simple:/, '');
 
   const isOwner = userId === capsule.owner_id;
   const isSealed = capsule.status === 'sealed';
@@ -53,7 +57,39 @@ export const CapsuleDetail: React.FC<CapsuleDetailProps> = ({ capsule: initialCa
     fetchItems();
     fetchComments(0, true);
     checkIfLiked();
-  }, [capsule.id]);
+    fetchCountsAndContributors();
+  }, [capsuleId]);
+
+  useEffect(() => {
+    if (contributors.length <= 1 && activeTab === 'chat') {
+      setActiveTab('content');
+    }
+  }, [contributors.length, activeTab]);
+
+  useEffect(() => {
+    const checkContributionAccess = async () => {
+      if (!userId || !capsuleId) {
+        setCanContribute(false);
+        return;
+      }
+      if (userId === capsule.owner_id || capsule.is_participant) {
+        setCanContribute(true);
+        return;
+      }
+
+      const { data } = await supabase
+        .from('capsule_invites')
+        .select('id')
+        .eq('capsule_id', capsuleId)
+        .eq('user_id', userId)
+        .eq('status', 'accepted')
+        .maybeSingle();
+
+      setCanContribute(!!data);
+    };
+
+    checkContributionAccess();
+  }, [capsuleId, capsule.owner_id, capsule.is_participant, userId]);
 
   useEffect(() => {
     if (!isSealed) return;
@@ -77,7 +113,7 @@ export const CapsuleDetail: React.FC<CapsuleDetailProps> = ({ capsule: initialCa
       const { data, error } = await supabase
         .from('capsule_items')
         .select('*, profiles:owner_id(username, avatar_url, display_name)')
-        .eq('capsule_id', capsule.id)
+        .eq('capsule_id', capsuleId)
         .order('created_at', { ascending: true });
 
       if (error) throw error;
@@ -89,13 +125,36 @@ export const CapsuleDetail: React.FC<CapsuleDetailProps> = ({ capsule: initialCa
     }
   };
 
+  const fetchCountsAndContributors = async () => {
+    const [likesCountRes, commentsCountRes, invitesRes] = await Promise.all([
+      supabase.from('likes').select('*', { count: 'exact', head: true }).eq('capsule_id', capsuleId),
+      supabase.from('comments').select('*', { count: 'exact', head: true }).eq('capsule_id', capsuleId),
+      supabase
+        .from('capsule_invites')
+        .select('user_id, status, profiles:user_id(id, username, display_name, avatar_url, favorite_color, is_verified)')
+        .eq('capsule_id', capsuleId)
+        .eq('status', 'accepted'),
+    ]);
+
+    setLikeCount(likesCountRes.count || 0);
+    setCommentCount(commentsCountRes.count || 0);
+
+    const owner = capsule.profiles
+      ? { ...capsule.profiles, id: capsule.owner_id, role: 'owner' }
+      : null;
+    const acceptedMembers = (invitesRes.data || [])
+      .filter((invite: any) => invite?.profiles)
+      .map((invite: any) => ({ ...invite.profiles, id: invite.user_id, role: 'member' }));
+    setContributors(owner ? [owner, ...acceptedMembers] : acceptedMembers);
+  };
+
   const fetchComments = async (page: number, isRefresh = false) => {
     try {
       setLoadingComments(true);
       const { data, error } = await supabase
-        .from('capsule_comments')
+        .from('comments')
         .select('*, profiles:user_id(username, avatar_url, display_name, is_verified)')
-        .eq('capsule_id', capsule.id)
+        .eq('capsule_id', capsuleId)
         .order('created_at', { ascending: false })
         .range(page * COMMENTS_PAGE_SIZE, (page + 1) * COMMENTS_PAGE_SIZE - 1);
 
@@ -124,7 +183,7 @@ export const CapsuleDetail: React.FC<CapsuleDetailProps> = ({ capsule: initialCa
     const { data } = await supabase
       .from('likes')
       .select('id')
-      .eq('capsule_id', capsule.id)
+      .eq('capsule_id', capsuleId)
       .eq('user_id', user.id)
       .maybeSingle();
     setIsLiked(!!data);
@@ -135,17 +194,17 @@ export const CapsuleDetail: React.FC<CapsuleDetailProps> = ({ capsule: initialCa
 
     const wasLiked = isLiked;
     setIsLiked(!wasLiked);
-    setLikeCount(prev => wasLiked ? prev - 1 : prev + 1);
+    setLikeCount((prev: number) => wasLiked ? prev - 1 : prev + 1);
 
     try {
       if (wasLiked) {
-        await supabase.from('likes').delete().eq('capsule_id', capsule.id).eq('user_id', userId);
+        await supabase.from('likes').delete().eq('capsule_id', capsuleId).eq('user_id', userId);
       } else {
-        await supabase.from('likes').insert({ capsule_id: capsule.id, user_id: userId });
+        await supabase.from('likes').insert({ capsule_id: capsuleId, user_id: userId });
       }
     } catch (err) {
       setIsLiked(wasLiked);
-      setLikeCount(prev => wasLiked ? prev + 1 : prev - 1);
+      setLikeCount((prev: number) => wasLiked ? prev + 1 : prev - 1);
     }
   };
 
@@ -157,9 +216,9 @@ export const CapsuleDetail: React.FC<CapsuleDetailProps> = ({ capsule: initialCa
 
     try {
       const { data, error } = await supabase
-        .from('capsule_comments')
+        .from('comments')
         .insert({
-          capsule_id: capsule.id,
+          capsule_id: capsuleId,
           user_id: userId,
           content: text
         })
@@ -168,6 +227,7 @@ export const CapsuleDetail: React.FC<CapsuleDetailProps> = ({ capsule: initialCa
 
       if (error) throw error;
       setComments(prev => [data, ...prev]);
+      setCommentCount((prev: number) => prev + 1);
     } catch (err) {
       console.error('Error sending comment:', err);
     }
@@ -184,7 +244,7 @@ export const CapsuleDetail: React.FC<CapsuleDetailProps> = ({ capsule: initialCa
         const { error } = await supabase
           .from('capsules')
           .update({ status: 'opened' })
-          .eq('id', capsule.id);
+          .eq('id', capsuleId);
         
         if (error) throw error;
         setCapsule({ ...capsule, status: 'opened' });
@@ -199,7 +259,7 @@ export const CapsuleDetail: React.FC<CapsuleDetailProps> = ({ capsule: initialCa
   };
 
   const handleShare = () => {
-     const url = `https://kapsely.com/capsule/${capsule.id}`;
+     const url = `https://kapsely.com/capsules/${capsuleId}`;
      navigator.clipboard.writeText(url);
      alert('Link copied to clipboard!');
   };
@@ -338,7 +398,7 @@ export const CapsuleDetail: React.FC<CapsuleDetailProps> = ({ capsule: initialCa
                         <div className="empty-capsule-state">
                            <ImageIcon size={48} />
                            <h3>Nothing here yet</h3>
-                           <p>Be the first to contribute to this capsule.</p>
+                           <p>{canContribute ? 'Be the first to contribute to this capsule.' : 'This capsule has no visible memories yet.'}</p>
                         </div>
                       ) : (
                         items.map((item, idx) => (
@@ -351,6 +411,15 @@ export const CapsuleDetail: React.FC<CapsuleDetailProps> = ({ capsule: initialCa
                           >
                             {item.media_type === 'image' ? (
                               <img src={item.media_url} alt="" className="item-img" />
+                            ) : item.media_type === 'video' ? (
+                              <video
+                                src={item.media_url}
+                                poster={item.thumbnail_url || undefined}
+                                className="item-video"
+                                controls
+                                playsInline
+                                preload="metadata"
+                              />
                             ) : (
                               <div className="item-note-lg">
                                  <p>{item.content}</p>
@@ -364,10 +433,12 @@ export const CapsuleDetail: React.FC<CapsuleDetailProps> = ({ capsule: initialCa
                         ))
                       )}
 
-                      <button className="add-item-card-dashed" onClick={() => setShowAddItem(true)}>
-                         <Plus size={32} />
-                         <span>Add Memory</span>
-                      </button>
+                      {canContribute && (
+                        <button className="add-item-card-dashed" onClick={() => setShowAddItem(true)}>
+                           <Plus size={32} />
+                           <span>Add Memory</span>
+                        </button>
+                      )}
                    </div>
                 </motion.div>
               )}
@@ -400,7 +471,7 @@ export const CapsuleDetail: React.FC<CapsuleDetailProps> = ({ capsule: initialCa
                       </div>
                       <div className="stat-pill-sm">
                          <Users size={14} />
-                         <span>{capsule.participants_count || 1} members</span>
+                         <span>{contributors.length || 1} members</span>
                       </div>
                       <button className="share-btn-pill" onClick={handleShare}>
                          <Share2 size={14} />
@@ -413,10 +484,13 @@ export const CapsuleDetail: React.FC<CapsuleDetailProps> = ({ capsule: initialCa
              <div className="sidebar-tabs-premium">
                 <button className={activeTab === 'content' ? 'active' : ''} onClick={() => setActiveTab('content')}>
                    <MessageSquare size={16} /> Comments
+                   {commentCount > 0 && <span className="tab-count">{commentCount}</span>}
                 </button>
-                <button className={activeTab === 'chat' ? 'active' : ''} onClick={() => setActiveTab('chat')}>
-                   <Users size={16} /> Contributors
-                </button>
+                {contributors.length > 1 && (
+                  <button className={activeTab === 'chat' ? 'active' : ''} onClick={() => setActiveTab('chat')}>
+                     <Users size={16} /> Contributors
+                  </button>
+                )}
              </div>
 
              <div className="sidebar-content-area">
@@ -456,16 +530,18 @@ export const CapsuleDetail: React.FC<CapsuleDetailProps> = ({ capsule: initialCa
                        </div>
                      )}
                   </div>
-                ) : (
+                ) : contributors.length > 1 ? (
                   <div className="contributors-list-premium">
-                     <div className="contributor-card-sm owner">
-                        <img src={capsule.profiles?.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${capsule.profiles?.username}`} alt="" />
-                        <div className="contributor-info">
-                           <strong>{capsule.profiles?.display_name || capsule.profiles?.username}</strong>
-                           <span>Capsule Owner</span>
-                        </div>
-                        <div className="role-badge">Owner</div>
-                     </div>
+                     {contributors.map((person: any) => (
+                       <div key={person.id || person.username} className={`contributor-card-sm ${person.role === 'owner' ? 'owner' : ''}`}>
+                          <img src={person.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${person.username || person.id}`} alt="" />
+                          <div className="contributor-info">
+                             <strong>{person.display_name || person.username || 'User'}</strong>
+                             <span>@{person.username || 'member'}</span>
+                          </div>
+                          <div className="role-badge">{person.role === 'owner' ? 'Owner' : 'Member'}</div>
+                       </div>
+                     ))}
                      <p className="contributor-hint">Only participants can add content to this capsule.</p>
                      {isOwner && (
                        <button className="primary-btn-premium add-member-btn">
@@ -473,7 +549,7 @@ export const CapsuleDetail: React.FC<CapsuleDetailProps> = ({ capsule: initialCa
                        </button>
                      )}
                   </div>
-                )}
+                ) : null}
              </div>
 
              <div className="sidebar-footer-premium">
@@ -499,9 +575,9 @@ export const CapsuleDetail: React.FC<CapsuleDetailProps> = ({ capsule: initialCa
           </div>
         </div>
 
-        {showAddItem && (
+        {showAddItem && canContribute && (
           <AddItem 
-            capsuleId={capsule.id} 
+            capsuleId={capsuleId} 
             onClose={() => setShowAddItem(false)} 
             onSuccess={() => {
               setShowAddItem(false);
@@ -515,11 +591,11 @@ export const CapsuleDetail: React.FC<CapsuleDetailProps> = ({ capsule: initialCa
           .detail-layout { display: flex; height: 100%; }
           
           /* Media Pane */
-          .detail-media-pane { flex: 1; background: #0F0B1E; position: relative; overflow-y: auto; scrollbar-width: none; }
+          .detail-media-pane { flex: 1; background: #fff; position: relative; overflow-y: auto; scrollbar-width: none; }
           .detail-media-pane::-webkit-scrollbar { display: none; }
           
-          .sealed-hero-view { height: 100%; position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 40px; overflow: hidden; padding: 40px; }
-          .sealed-background-glow { position: absolute; inset: 0; background: radial-gradient(circle at center, rgba(124, 92, 191, 0.2) 0%, transparent 70%); }
+          .sealed-hero-view { height: 100%; position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 40px; overflow: hidden; padding: 40px; background: #fff; }
+          .sealed-background-glow { position: absolute; inset: 0; background: radial-gradient(circle at center, rgba(124, 92, 191, 0.14) 0%, transparent 70%); }
           
           .hero-model-container { position: relative; }
           
@@ -529,12 +605,13 @@ export const CapsuleDetail: React.FC<CapsuleDetailProps> = ({ capsule: initialCa
           .timer-hint { font-size: 14px; opacity: 0.5; margin: 0; }
           .unseal-action-btn { margin-top: 30px; padding: 20px 40px; border-radius: 100px; background: white; color: #0F0B1E; font-size: 18px; font-weight: 900; display: flex; align-items: center; gap: 12px; border: none; cursor: pointer; box-shadow: 0 15px 30px rgba(0,0,0,0.3); z-index: 10; position: relative; }
 
-          .opened-hero-view { padding: 40px; display: flex; flex-direction: column; gap: 40px; }
-          .opened-hero-top { display: flex; justify-content: center; width: 100%; margin-bottom: 20px; }
+          .opened-hero-view { padding: 42px; display: flex; flex-direction: column; gap: 42px; background: #fff; min-height: 100%; }
+          .opened-hero-top { display: flex; justify-content: center; width: 100%; margin-bottom: 24px; }
           .items-masonry-web { columns: 2; column-gap: 24px; }
-          .item-card-premium { break-inside: avoid; margin-bottom: 24px; background: #1A1530; border-radius: 24px; overflow: hidden; position: relative; box-shadow: 0 10px 30px rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.05); transition: transform 0.3s; }
+          .item-card-premium { break-inside: avoid; margin-bottom: 24px; background: #fff; border-radius: 24px; overflow: hidden; position: relative; box-shadow: 0 12px 32px rgba(26,21,48,0.08); border: 1px solid rgba(232,228,245,0.95); transition: transform 0.3s; }
           .item-card-premium:hover { transform: translateY(-5px); }
           .item-img { width: 100%; display: block; }
+          .item-video { width: 100%; display: block; max-height: 680px; background: #000; object-fit: contain; }
           .item-note-lg { padding: 40px; background: #FFF9E0; color: #5D4037; font-family: 'Georgia', serif; font-size: 1.2rem; font-style: italic; text-align: center; line-height: 1.6; }
           .item-footer-sm { position: absolute; bottom: 0; left: 0; right: 0; padding: 15px 20px; background: linear-gradient(transparent, rgba(0,0,0,0.8)); display: flex; align-items: center; gap: 10px; color: white; font-size: 0.85rem; font-weight: 700; opacity: 0; transition: opacity 0.3s; }
           .item-card-premium:hover .item-footer-sm { opacity: 1; }
@@ -563,6 +640,7 @@ export const CapsuleDetail: React.FC<CapsuleDetailProps> = ({ capsule: initialCa
           .sidebar-tabs-premium button { padding: 12px 0; background: none; border: none; font-weight: 800; font-size: 14px; color: var(--text-muted); display: flex; align-items: center; gap: 8px; cursor: pointer; position: relative; }
           .sidebar-tabs-premium button.active { color: var(--primary); }
           .sidebar-tabs-premium button.active::after { content: ''; position: absolute; bottom: -1px; left: 0; right: 0; height: 3px; background: var(--primary); border-radius: 3px; }
+          .tab-count { margin-left: -2px; padding: 1px 6px; border-radius: 999px; background: var(--primary-light); color: var(--primary); font-size: 11px; line-height: 1.4; }
 
           .sidebar-content-area { flex: 1; overflow-y: auto; padding: 0 30px 20px; }
           .comment-card-premium { display: flex; gap: 12px; margin-bottom: 20px; }
@@ -573,6 +651,15 @@ export const CapsuleDetail: React.FC<CapsuleDetailProps> = ({ capsule: initialCa
           .comment-content-wrap p { margin: 0; font-size: 14px; line-height: 1.5; color: var(--text); }
           
           .no-comments { padding: 40px 0; text-align: center; color: var(--text-muted); }
+          .contributors-list-premium { display: flex; flex-direction: column; gap: 12px; }
+          .contributor-card-sm { display: flex; align-items: center; gap: 12px; padding: 14px; border: 1px solid var(--border); background: var(--surface-alt); border-radius: 18px; }
+          .contributor-card-sm.owner { background: linear-gradient(135deg, var(--primary-light), #fff); border-color: rgba(124,92,191,0.24); }
+          .contributor-card-sm img { width: 46px; height: 46px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
+          .contributor-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+          .contributor-info strong { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+          .contributor-info span { font-size: 12px; color: var(--text-muted); }
+          .role-badge { padding: 5px 9px; border-radius: 999px; font-size: 11px; font-weight: 900; color: var(--primary); background: #fff; border: 1px solid rgba(124,92,191,0.14); }
+          .contributor-hint { margin: 6px 0 0; color: var(--text-muted); font-size: 13px; line-height: 1.45; }
 
           .sidebar-footer-premium { padding: 25px 30px; border-top: 1px solid var(--border); background: white; }
           .footer-actions { display: flex; align-items: center; gap: 15px; }

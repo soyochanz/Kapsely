@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search as SearchIcon, Globe, Heart, MessageCircle, X, Clock, ShieldCheck, TrendingUp, Sparkles, UserPlus } from 'lucide-react';
+import { Search as SearchIcon, Heart, MessageCircle, X, Clock, ShieldCheck, Sparkles, UserPlus } from 'lucide-react';
 import { getModelImage } from '../constants/models';
 
 interface SearchProps {
@@ -160,35 +160,30 @@ export const Search: React.FC<SearchProps> = ({ onSelectUser, onSelectCapsule })
           </div>
         ) : (
           <div className="search-landing-premium">
-            {recentSearches.length > 0 && (
-              <div className="recent-searches-premium">
-                <div className="recent-header-row">
-                   <h3>RECENT SEARCHES</h3>
-                   <button onClick={clearSearches}>CLEAR ALL</button>
+            <div className="recent-searches-premium">
+              <div className="recent-header-row">
+                 <h3>RECENT SEARCHES</h3>
+                 {recentSearches.length > 0 && <button onClick={clearSearches}>CLEAR ALL</button>}
+              </div>
+              {recentSearches.length === 0 ? (
+                <div className="recent-empty-state">
+                  <Clock size={22} />
+                  <span>Your latest searches will appear here.</span>
                 </div>
-                <div className="recent-pills-row">
+              ) : (
+                <div className="recent-list-web">
                    {recentSearches.map(item => (
-                     <div key={item.id} className="recent-pill-premium" onClick={() => onSelectUser(item.id)}>
-                        <Clock size={14} />
-                        <span>{item.display_name || item.username}</span>
-                        <button className="pill-remove-btn" onClick={(e) => { e.stopPropagation(); setRecentSearches(recentSearches.filter(i => i.id !== item.id)); }}><X size={12} /></button>
+                     <div key={item.id} className="recent-row-web" onClick={() => onSelectUser(item.id)}>
+                        <img src={item.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${item.username}`} alt="" />
+                        <div>
+                          <strong>{item.display_name || item.username}</strong>
+                          <span>@{item.username}</span>
+                        </div>
+                        <button className="pill-remove-btn" onClick={(e) => { e.stopPropagation(); setRecentSearches(recentSearches.filter(i => i.id !== item.id)); }}><X size={14} /></button>
                      </div>
                    ))}
                 </div>
-              </div>
-            )}
-            
-            <div className="search-explore-grid">
-               <div className="explore-card-lg trending">
-                  <TrendingUp size={32} />
-                  <h3>Trending Now</h3>
-                  <p>Discover capsules that are capturing the world's attention.</p>
-               </div>
-               <div className="explore-card-lg discover">
-                  <Globe size={32} />
-                  <h3>Global Memories</h3>
-                  <p>Explore public time capsules from creators around the globe.</p>
-               </div>
+              )}
             </div>
           </div>
         )}
@@ -231,7 +226,7 @@ export const Search: React.FC<SearchProps> = ({ onSelectUser, onSelectCapsule })
         .cap-card-meta-sm { display: flex; gap: 15px; color: var(--text-muted); font-size: 12px; font-weight: 700; }
         .cap-meta-item { display: flex; align-items: center; gap: 6px; }
 
-        .recent-searches-premium { margin-bottom: 60px; }
+        .recent-searches-premium { max-width: 680px; margin: 0 auto 60px; }
         .recent-header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
         .recent-header-row h3 { font-size: 13px; font-weight: 900; color: var(--text-muted); letter-spacing: 1.5px; }
         .recent-header-row button { font-size: 13px; font-weight: 800; color: var(--primary); }
@@ -240,14 +235,13 @@ export const Search: React.FC<SearchProps> = ({ onSelectUser, onSelectCapsule })
         .recent-pill-premium { display: flex; align-items: center; gap: 10px; padding: 10px 20px; background: white; border: 1px solid var(--border); border-radius: 100px; cursor: pointer; font-size: 14px; font-weight: 700; transition: all 0.2s; }
         .recent-pill-premium:hover { border-color: var(--primary); background: var(--primary-light); color: var(--primary); }
         .pill-remove-btn { color: var(--text-muted); margin-left: 5px; }
-
-        .search-explore-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-top: 40px; }
-        .explore-card-lg { padding: 40px; border-radius: 32px; color: white; display: flex; flex-direction: column; gap: 15px; transition: transform 0.3s; cursor: pointer; }
-        .explore-card-lg:hover { transform: scale(1.02); }
-        .explore-card-lg.trending { background: linear-gradient(135deg, #7C5CBF 0%, #FF4D8D 100%); box-shadow: 0 20px 40px rgba(124, 92, 191, 0.2); }
-        .explore-card-lg.discover { background: linear-gradient(135deg, #3B82F6 0%, #10B981 100%); box-shadow: 0 20px 40px rgba(59, 130, 246, 0.2); }
-        .explore-card-lg h3 { font-size: 24px; font-weight: 900; margin: 0; }
-        .explore-card-lg p { font-size: 15px; opacity: 0.9; line-height: 1.5; margin: 0; }
+        .recent-empty-state { min-height: 120px; border: 1px dashed var(--border); border-radius: 22px; display: flex; align-items: center; justify-content: center; gap: 10px; color: var(--text-muted); font-weight: 800; background: rgba(255,255,255,0.72); }
+        .recent-list-web { display: flex; flex-direction: column; gap: 10px; }
+        .recent-row-web { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 18px; background: #fff; border: 1px solid var(--border); cursor: pointer; }
+        .recent-row-web img { width: 42px; height: 42px; border-radius: 50%; object-fit: cover; }
+        .recent-row-web div { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+        .recent-row-web strong { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .recent-row-web span { font-size: 12px; color: var(--text-muted); font-weight: 700; }
       `}</style>
     </div>
   );

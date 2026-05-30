@@ -1,0 +1,14 @@
+{
+  "name": "kapsely-splash-opening",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npx --yes hyperframes@0.6.7 preview",
+    "check": "npx --yes hyperframes@0.6.7 lint && npx --yes hyperframes@0.6.7 validate && npx --yes hyperframes@0.6.7 inspect",
+    "render": "npx --yes hyperframes@0.6.7 render",
+    "publish": "npx --yes hyperframes@0.6.7 publish"
+  },
+  "devDependencies": {
+    "playwright": "^1.60.0"
+  }
+}

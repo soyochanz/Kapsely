@@ -16,11 +16,12 @@ import { BlurView } from 'expo-blur';
 import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Shadow } from '../theme';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { supabase } from '../lib/supabase';
+import { getAuthSessionSnapshot, getAuthUserIdSnapshot, supabase } from '../lib/supabase';
 import { useInfiniteQuery, useMutation, useQueryClient, onlineManager } from '@tanstack/react-query';
 import { safetyService } from '../utils/safety';
 import { useWebDragScroll } from '../utils/useWebDragScroll';
 import { feedScrollBus } from '../utils/feedScrollBus';
+import { rankAndDiversifyFeed } from '../utils/feedRanking';
 import StoryViewer from '../components/StoryViewer';
 import InteractiveTour from '../components/InteractiveTour';
 import { sendPushNotification } from '../utils/pushNotifications';
@@ -61,6 +62,24 @@ const FEED_CACHE_TTL = 5 * 60 * 1000;
 const IMPRESSION_FLUSH_MS = 8000;
 const PAGE_SIZE = 15;
 const FEED_BOOT_CACHE_PREFIX = '@kapsely_feed_boot_v4';
+const FEED_RPC_TIMEOUT_MS = 6500;
+const SIMPLE_FRONTEND_FEED = true;
+const DISABLE_FEED_IMPRESSIONS_UNTIL_STABLE = true;
+const SUPABASE_RELIEF_MODE = true;
+
+const withTimeout = <T,>(promise: PromiseLike<T>, ms: number, label: string): Promise<T> =>
+    new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`${label} timed out`)), ms);
+        Promise.resolve(promise)
+            .then(value => {
+                clearTimeout(timer);
+                resolve(value);
+            })
+            .catch(error => {
+                clearTimeout(timer);
+                reject(error);
+            });
+    });
 
 const FILTER_KEYS: FilterType[] = ['all', 'closed', 'open'];
 const FILTER_META: Record<FilterType, { icon: string; label: (t: any) => string; iconColor?: string }> = {
@@ -244,17 +263,536 @@ export default function FeedScreen() {
     const [isOffline, setIsOffline] = useState(false);
     const [cachedFeedData, setCachedFeedData] = useState<any | null>(null);
     const [cachedFeedKey, setCachedFeedKey] = useState<string | null>(null);
+    const [feedLoadTimedOut, setFeedLoadTimedOut] = useState(false);
 
     const queryClient = useQueryClient();
     const feedCacheKey = `${FEED_BOOT_CACHE_PREFIX}_${activeTab}_${activeFilter}`;
     const feedSessionId = useRef(`feed-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
     const refreshModeRef = useRef<'initial_load' | 'pull_to_refresh'>('initial_load');
+    const feedRpcPreferenceRef = useRef<'unknown' | 'v2' | 'v1'>('unknown');
+    const getSafeEmptyFeed = useCallback(() => ({
+        feed: [],
+        stories: [],
+        following_ids: [],
+        liked_ids: [],
+        blocked_ids: [],
+        participant_ids: [],
+    }), []);
+
+    const runQueryOrDefault = useCallback(async <T,>(promise: PromiseLike<T>, ms: number, fallback: T): Promise<T> => {
+        try {
+            return await withTimeout(promise, ms, 'feed query');
+        } catch {
+            return fallback;
+        }
+    }, []);
+
+    useEffect(() => {
+        let alive = true;
+        const bootstrapAuth = async () => {
+            const id = getAuthUserIdSnapshot();
+            if (alive && id) setCurrentUserId(prev => prev || id);
+        };
+
+        bootstrapAuth();
+
+        const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+            if (!alive) return;
+            const nextId = session?.user?.id ?? null;
+            setCurrentUserId(prev => (prev === nextId ? prev : nextId));
+        });
+
+        return () => {
+            alive = false;
+            listener.subscription.unsubscribe();
+        };
+    }, []);
+
+    const fetchFeedFallback = async (myId: string) => {
+        const fallbackBoot = cachedFeedKey === feedCacheKey ? cachedFeedData?.pages?.[0] : null;
+
+        let bootstrap: any[] | null = null;
+        try {
+            bootstrap = await withTimeout(
+                Promise.all([
+                    supabase.from('follows').select('following_id').eq('follower_id', myId),
+                    supabase.from('capsule_invites').select('capsule_id').eq('user_id', myId).eq('status', 'accepted'),
+                    withTimeout(
+                        safetyService.getAllSafetyUserIds(myId).catch(() => []),
+                        1200,
+                        'feed fallback blocked ids'
+                    ).catch(() => []),
+                ]),
+                3500,
+                'feed fallback bootstrap'
+            );
+        } catch (error) {
+            console.warn('[Feed] Fallback bootstrap timed out', error);
+            return fallbackBoot || getSafeEmptyFeed();
+        }
+
+        if (!bootstrap) {
+            return fallbackBoot || getSafeEmptyFeed();
+        }
+
+        const [followingRes, participantRes, blockedIds] = bootstrap;
+
+        const followingIds = (followingRes.data || []).map((f: any) => f.following_id);
+        const participantIds = (participantRes.data || []).map((p: any) => p.capsule_id);
+        const ownerIds = activeTab === 'following'
+            ? Array.from(new Set([myId, ...followingIds]))
+            : [];
+
+        if (activeTab === 'following' && ownerIds.length === 0) {
+            return {
+                ...getSafeEmptyFeed(),
+                blocked_ids: blockedIds || [],
+                participant_ids: participantIds,
+                following_ids: followingIds,
+            };
+        }
+
+        let capsulesQuery = supabase
+            .from('capsules')
+            .select('*, profiles:owner_id(id, username, display_name, avatar_url, favorite_color, is_verified)')
+            .order('created_at', { ascending: false })
+            .limit(PAGE_SIZE);
+
+        if (activeTab === 'following') {
+            capsulesQuery = capsulesQuery.in('owner_id', ownerIds);
+        } else {
+            capsulesQuery = capsulesQuery.eq('is_public', true);
+        }
+
+        if (activeFilter === 'open') capsulesQuery = capsulesQuery.eq('status', 'opened');
+        if (activeFilter === 'closed') capsulesQuery = capsulesQuery.eq('status', 'sealed');
+        if (blockedIds.length > 0) capsulesQuery = capsulesQuery.not('owner_id', 'in', `(${blockedIds.join(',')})`);
+
+        let capsulesData: any[] = [];
+        let capsulesError: any = null;
+        try {
+            const capsulesRes = await withTimeout(capsulesQuery, 4200, 'feed fallback capsules');
+            capsulesData = capsulesRes.data || [];
+            capsulesError = capsulesRes.error;
+        } catch (error) {
+            console.warn('[Feed] Fallback capsules timed out', error);
+            return fallbackBoot || getSafeEmptyFeed();
+        }
+        if (capsulesError) throw capsulesError;
+
+        const capsuleIds = (capsulesData || []).map((c: any) => c.id);
+        let mediaData: any[] = [];
+        if (capsuleIds.length) {
+            try {
+                const mediaRes = await withTimeout(
+                    supabase
+                        .from('capsule_items')
+                        .select('id, capsule_id, owner_id, media_url, media_type, thumbnail_url, created_at, profiles:owner_id(id, username, display_name, avatar_url, favorite_color, is_verified)')
+                        .in('capsule_id', capsuleIds)
+                        .eq('is_story', false)
+                        .neq('moderation_status', 'rejected')
+                        .in('media_type', ['image', 'video'])
+                        .order('created_at', { ascending: false }),
+                    3000,
+                    'feed fallback media'
+                );
+                mediaData = mediaRes.data || [];
+            } catch (error) {
+                console.warn('[Feed] Fallback media timed out', error);
+            }
+        }
+
+        const mediaByCapsule = new Map<string, any[]>();
+        (mediaData || []).forEach((item: any) => {
+            const list = mediaByCapsule.get(item.capsule_id) || [];
+            if (list.length < 4) list.push(item);
+            mediaByCapsule.set(item.capsule_id, list);
+        });
+
+        let membersData: any[] = [];
+        if (capsuleIds.length) {
+            try {
+                const membersRes = await withTimeout(
+                    supabase
+                        .from('capsule_invites')
+                        .select('capsule_id, user_id, profiles:user_id(id, username, display_name, avatar_url, favorite_color, is_verified)')
+                        .in('capsule_id', capsuleIds)
+                        .eq('status', 'accepted'),
+                    2500,
+                    'feed fallback members'
+                );
+                membersData = membersRes.data || [];
+            } catch (error) {
+                console.warn('[Feed] Fallback members timed out', error);
+            }
+        }
+
+        const membersByCapsule = new Map<string, any[]>();
+        (capsulesData || []).forEach((capsule: any) => {
+            if (capsule?.id && capsule.profiles) {
+                membersByCapsule.set(capsule.id, [{ ...capsule.profiles, id: capsule.owner_id }]);
+            }
+        });
+        (membersData || []).forEach((member: any) => {
+            if (!member?.capsule_id || !member?.profiles) return;
+            const list = membersByCapsule.get(member.capsule_id) || [];
+            if (!list.some((profile: any) => profile.id === member.user_id)) {
+                list.push({ ...member.profiles, id: member.user_id });
+            }
+            membersByCapsule.set(member.capsule_id, list);
+        });
+
+        let storiesData: any[] = [];
+        try {
+            const storiesRes = await withTimeout(
+                supabase
+                    .from('capsule_items')
+                    .select('*, profiles:owner_id(id, username, display_name, avatar_url, favorite_color, is_verified), capsules:capsule_id(id, title, type, model)')
+                    .eq('is_story', true)
+                    .gt('expires_at', new Date().toISOString())
+                    .order('created_at', { ascending: false })
+                    .limit(50),
+                3000,
+                'feed fallback stories'
+            );
+            storiesData = storiesRes.data || [];
+        } catch (error) {
+            console.warn('[Feed] Fallback stories timed out', error);
+        }
+
+        return {
+            feed: (capsulesData || []).map((capsule: any) => {
+                const media = mediaByCapsule.get(capsule.id) || [];
+                return {
+                    ...capsule,
+                    feed_type: 'capsule',
+                    feed_item_key: capsule.id,
+                    capsule_id: capsule.id,
+                    latest_item: media[0] || null,
+                    collage_items: media,
+                    shared_members: membersByCapsule.get(capsule.id) || [],
+                    posts_count: media.length,
+                    likes_count: capsule.likes_count || 0,
+                    comments_count: capsule.comments_count || 0,
+                    is_participant: participantIds.includes(capsule.id),
+                };
+            }),
+            stories: (storiesData || []).map((story: any) => ({ ...story, is_read: false })),
+            following_ids: followingIds,
+            liked_ids: [],
+            blocked_ids: blockedIds,
+            participant_ids: participantIds,
+        };
+    };
+
+    const fetchFeedSimpleFrontend = async (myId: string, pageParam: FeedCursor | null) => {
+        const page = pageParam?.page ?? 0;
+        const offset = page * PAGE_SIZE;
+        const candidateLimit = PAGE_SIZE * 3;
+
+        const [
+            followingRes,
+            participantRes,
+            capsuleFollowRes,
+            blockedIds,
+        ] = await Promise.all([
+            runQueryOrDefault(
+                supabase.from('follows').select('following_id').eq('follower_id', myId),
+                1400,
+                { data: [], error: null } as any
+            ),
+            runQueryOrDefault(
+                supabase.from('capsule_invites').select('capsule_id').eq('user_id', myId).eq('status', 'accepted'),
+                1400,
+                { data: [], error: null } as any
+            ),
+            runQueryOrDefault(
+                supabase.from('capsule_followers').select('capsule_id').eq('user_id', myId),
+                1400,
+                { data: [], error: null } as any
+            ),
+            runQueryOrDefault(
+                safetyService.getAllSafetyUserIds(myId).catch(() => []),
+                800,
+                [] as string[]
+            ),
+        ]);
+
+        const followingIds = (followingRes.data || []).map((f: any) => f.following_id);
+        const participantIds = (participantRes.data || []).map((p: any) => p.capsule_id);
+        const followedCapsuleIds = (capsuleFollowRes.data || []).map((c: any) => c.capsule_id);
+        const ownerIds = Array.from(new Set([myId, ...followingIds]));
+        const blockedSet = new Set(blockedIds || []);
+        const followedCapsuleSet = new Set(followedCapsuleIds);
+        const followingSetLocal = new Set(followingIds);
+
+        const statusFilter = activeFilter === 'open'
+            ? 'opened'
+            : activeFilter === 'closed'
+                ? 'sealed'
+                : null;
+
+        const buildCapsuleQuery = () => {
+            let query = supabase
+                .from('capsules')
+                .select('*, profiles:owner_id(id, username, display_name, avatar_url, favorite_color, is_verified)')
+                .order('updated_at', { ascending: false })
+                .range(offset, offset + candidateLimit - 1);
+
+            if (statusFilter) query = query.eq('status', statusFilter);
+            return query;
+        };
+
+        const capsuleSources: any[] = [];
+
+        if (activeTab === 'following') {
+            if (ownerIds.length > 0) {
+                capsuleSources.push(
+                    runQueryOrDefault(
+                        buildCapsuleQuery().in('owner_id', ownerIds),
+                        2500,
+                        { data: [], error: null } as any
+                    )
+                );
+            }
+            if (followedCapsuleIds.length > 0) {
+                capsuleSources.push(
+                    runQueryOrDefault(
+                        buildCapsuleQuery().in('id', followedCapsuleIds),
+                        2500,
+                        { data: [], error: null } as any
+                    )
+                );
+            }
+        } else {
+            capsuleSources.push(
+                runQueryOrDefault(
+                    buildCapsuleQuery().eq('is_public', true).neq('owner_id', myId),
+                    2500,
+                    { data: [], error: null } as any
+                )
+            );
+        }
+
+        const capsuleResults = capsuleSources.length > 0
+            ? await Promise.all(capsuleSources)
+            : [{ data: [], error: null }];
+
+        const rawCapsules = capsuleResults.flatMap((res: any) => res.data || []);
+        const dedupedCapsules = Array.from(
+            new Map(
+                rawCapsules
+                    .filter((capsule: any) => capsule?.id && !blockedSet.has(capsule.owner_id))
+                    .map((capsule: any) => [capsule.id, capsule])
+            ).values()
+        );
+
+        const capsuleIds = dedupedCapsules.map((c: any) => c.id);
+
+        const [
+            mediaRes,
+            likesRes,
+            commentsRes,
+            followersRes,
+            membersRes,
+        ] = capsuleIds.length
+            ? await Promise.all([
+                runQueryOrDefault(
+                    supabase
+                        .from('capsule_items')
+                        .select('id, capsule_id, owner_id, media_url, media_type, thumbnail_url, created_at, profiles:owner_id(id, username, display_name, avatar_url, favorite_color, is_verified)')
+                        .in('capsule_id', capsuleIds)
+                        .eq('is_story', false)
+                        .neq('moderation_status', 'rejected')
+                        .in('media_type', ['image', 'video'])
+                        .order('created_at', { ascending: false }),
+                    2500,
+                    { data: [], error: null } as any
+                ),
+                runQueryOrDefault(
+                    supabase
+                        .from('likes')
+                        .select('capsule_id, user_id')
+                        .in('capsule_id', capsuleIds),
+                    1800,
+                    { data: [], error: null } as any
+                ),
+                runQueryOrDefault(
+                    supabase
+                        .from('comments')
+                        .select('capsule_id')
+                        .in('capsule_id', capsuleIds),
+                    1800,
+                    { data: [], error: null } as any
+                ),
+                runQueryOrDefault(
+                    supabase
+                        .from('capsule_followers')
+                        .select('capsule_id')
+                        .in('capsule_id', capsuleIds),
+                    1800,
+                    { data: [], error: null } as any
+                ),
+                runQueryOrDefault(
+                    supabase
+                        .from('capsule_invites')
+                        .select('capsule_id, user_id, profiles:user_id(id, username, display_name, avatar_url, favorite_color, is_verified)')
+                        .in('capsule_id', capsuleIds)
+                        .eq('status', 'accepted'),
+                    1800,
+                    { data: [], error: null } as any
+                ),
+            ])
+            : [
+                { data: [] as any[] },
+                { data: [] as any[] },
+                { data: [] as any[] },
+                { data: [] as any[] },
+                { data: [] as any[] },
+            ];
+
+        const mediaByCapsule = new Map<string, any[]>();
+        (mediaRes.data || []).forEach((item: any) => {
+            const list = mediaByCapsule.get(item.capsule_id) || [];
+            if (list.length < 4) list.push(item);
+            mediaByCapsule.set(item.capsule_id, list);
+        });
+
+        const countByCapsule = (rows: any[]) => {
+            const counts = new Map<string, number>();
+            rows.forEach((row: any) => {
+                if (!row?.capsule_id) return;
+                counts.set(row.capsule_id, (counts.get(row.capsule_id) || 0) + 1);
+            });
+            return counts;
+        };
+
+        const likesByCapsule = countByCapsule(likesRes.data || []);
+        const commentsByCapsule = countByCapsule(commentsRes.data || []);
+        const followersByCapsule = countByCapsule(followersRes.data || []);
+        const membersByCapsule = new Map<string, any[]>();
+        dedupedCapsules.forEach((capsule: any) => {
+            if (capsule?.id && capsule.profiles) {
+                membersByCapsule.set(capsule.id, [{ ...capsule.profiles, id: capsule.owner_id }]);
+            }
+        });
+        (membersRes.data || []).forEach((member: any) => {
+            if (!member?.capsule_id || !member?.profiles) return;
+            const list = membersByCapsule.get(member.capsule_id) || [];
+            if (!list.some((profile: any) => profile.id === member.user_id)) {
+                list.push({ ...member.profiles, id: member.user_id });
+            }
+            membersByCapsule.set(member.capsule_id, list);
+        });
+        const likedIds = Array.from(new Set(
+            (likesRes.data || [])
+                .filter((like: any) => like.user_id === myId)
+                .map((like: any) => like.capsule_id)
+                .filter(Boolean)
+        ));
+
+        const scoreCapsule = (capsule: any) => {
+            const media = mediaByCapsule.get(capsule.id) || [];
+            const latestMediaAt = media[0]?.created_at ? new Date(media[0].created_at).getTime() : 0;
+            const activityAt = Math.max(
+                latestMediaAt,
+                capsule.updated_at ? new Date(capsule.updated_at).getTime() : 0,
+                capsule.created_at ? new Date(capsule.created_at).getTime() : 0
+            );
+            let score = 0;
+            if (capsule.owner_id === myId) score += 60;
+            if (followingSetLocal.has(capsule.owner_id)) score += 40;
+            if (followedCapsuleSet.has(capsule.id)) score += 55;
+            if (participantIds.includes(capsule.id)) score += 28;
+            if (capsule.status === 'opened') score += 35;
+            else score += 12;
+            if (media.length > 0) score += Math.min(media.length * 5, 20);
+            if (capsule.cover_url) score += 8;
+            score += Math.min(25, Math.max(0, (Date.now() - activityAt) < 1000 * 60 * 60 * 24 ? 25 : (Date.now() - activityAt) < 1000 * 60 * 60 * 24 * 3 ? 12 : 4));
+            return { score, activityAt };
+        };
+
+        const ranked = dedupedCapsules
+            .map((capsule: any) => {
+                const media = mediaByCapsule.get(capsule.id) || [];
+                const { score, activityAt } = scoreCapsule(capsule);
+                return {
+                    ...capsule,
+                    id: `simple:${capsule.id}`,
+                    feed_item_key: `simple:${capsule.id}`,
+                    feed_event_id: `simple:${capsule.id}`,
+                    feed_type: 'capsule',
+                    event_type: capsule.status === 'opened' ? 'capsule_opened' : 'capsule_created',
+                    capsule_id: capsule.id,
+                    latest_item: media[0] || null,
+                    collage_items: media,
+                    shared_members: membersByCapsule.get(capsule.id) || [],
+                    posts_count: media.length,
+                    likes_count: likesByCapsule.get(capsule.id) || 0,
+                    comments_count: commentsByCapsule.get(capsule.id) || 0,
+                    capsule_followers_count: followersByCapsule.get(capsule.id) || 0,
+                    is_liked: likedIds.includes(capsule.id),
+                    is_followed_capsule: followedCapsuleSet.has(capsule.id),
+                    is_participant: participantIds.includes(capsule.id),
+                    has_seen: false,
+                    final_score: score,
+                    cursor_score: score,
+                    cursor_activity_date: new Date(activityAt || Date.now()).toISOString(),
+                    cursor_id: `simple:${capsule.id}`,
+                };
+            })
+            .sort((a: any, b: any) => {
+                if (b.final_score !== a.final_score) return b.final_score - a.final_score;
+                return new Date(b.cursor_activity_date).getTime() - new Date(a.cursor_activity_date).getTime();
+            });
+
+        const pagedFeed = ranked.slice(0, PAGE_SIZE);
+
+        const storyOwnerIds = activeTab === 'following'
+            ? ownerIds
+            : [myId];
+
+        const storiesRes = storyOwnerIds.length
+            ? await runQueryOrDefault(
+                supabase
+                    .from('capsule_items')
+                    .select('*, profiles:owner_id(id, username, display_name, avatar_url, favorite_color, is_verified), capsules:capsule_id(id, title, type, model)')
+                    .eq('is_story', true)
+                    .in('owner_id', storyOwnerIds)
+                    .gt('expires_at', new Date().toISOString())
+                    .order('created_at', { ascending: false })
+                    .limit(50),
+                1800,
+                { data: [], error: null } as any
+            )
+            : { data: [] as any[] };
+
+        return {
+            feed: pagedFeed,
+            stories: (storiesRes.data || []).filter((story: any) => !blockedSet.has(story.owner_id)).map((story: any) => ({ ...story, is_read: false })),
+            following_ids: followingIds,
+            liked_ids: likedIds,
+            blocked_ids: Array.from(blockedSet),
+            participant_ids: participantIds,
+        };
+    };
 
     // ─── Fetch Function ──────────────────────────────────────────────────────
     const fetchFeed = async ({ pageParam = null }: { pageParam?: FeedCursor | null }) => {
-        const { data: { session } } = await supabase.auth.getSession();
-        const myId = session?.user?.id;
+        const myId = currentUserId || getAuthUserIdSnapshot() || getAuthSessionSnapshot()?.user?.id || null;
         if (myId && !currentUserId) setCurrentUserId(myId);
+
+        if (!myId) {
+            const fallbackBoot = cachedFeedKey === feedCacheKey ? cachedFeedData?.pages?.[0] : null;
+            return fallbackBoot || getSafeEmptyFeed();
+        }
+
+        if (SIMPLE_FRONTEND_FEED) {
+            if (!pageParam) {
+                setFeedLoadTimedOut(false);
+            }
+            return fetchFeedSimpleFrontend(myId, pageParam);
+        }
 
         const isInfiniteScroll = !!pageParam;
         const refreshMode = isInfiniteScroll ? 'infinite_scroll' : refreshModeRef.current;
@@ -271,24 +809,101 @@ export default function FeedScreen() {
             p_cursor_id: pageParam?.id ?? null,
         };
 
-        let { data, error } = await supabase.rpc('get_combined_feed_data', params);
-        if (error?.message?.includes('p_refresh_mode') || error?.message?.includes('p_session_id') || error?.message?.includes('p_cursor_score')) {
-            const { p_refresh_mode, p_session_id, p_cursor_score, p_cursor_activity_date, p_cursor_id, ...legacyParams } = params;
-            legacyParams.p_offset = isInfiniteScroll ? (pageParam?.page ?? 1) * PAGE_SIZE : 0;
-            const fallback = await supabase.rpc('get_combined_feed_data', legacyParams);
-            data = fallback.data;
-            error = fallback.error;
+        const callFeedRpcV1 = async () => {
+            let rpcData: any = null;
+            let rpcError: any = null;
+
+            const result = await withTimeout(
+                supabase.rpc('get_combined_feed_data', params),
+                FEED_RPC_TIMEOUT_MS,
+                'get_combined_feed_data'
+            );
+            rpcData = result.data;
+            rpcError = result.error;
+
+            if (rpcError?.message?.includes('p_refresh_mode') || rpcError?.message?.includes('p_session_id') || rpcError?.message?.includes('p_cursor_score')) {
+                const { p_refresh_mode, p_session_id, p_cursor_score, p_cursor_activity_date, p_cursor_id, ...legacyParams } = params;
+                legacyParams.p_offset = isInfiniteScroll ? (pageParam?.page ?? 1) * PAGE_SIZE : 0;
+                const fallback = await withTimeout(
+                    supabase.rpc('get_combined_feed_data', legacyParams),
+                    FEED_RPC_TIMEOUT_MS,
+                    'get_combined_feed_data legacy'
+                );
+                rpcData = fallback.data;
+                rpcError = fallback.error;
+            }
+
+            if (rpcError?.message?.includes('p_seed')) {
+                const { p_seed, p_refresh_mode, p_session_id, p_cursor_score, p_cursor_activity_date, p_cursor_id, ...legacyParams } = params;
+                legacyParams.p_offset = isInfiniteScroll ? (pageParam?.page ?? 1) * PAGE_SIZE : 0;
+                const fallback = await withTimeout(
+                    supabase.rpc('get_combined_feed_data', legacyParams),
+                    FEED_RPC_TIMEOUT_MS,
+                    'get_combined_feed_data seed legacy'
+                );
+                rpcData = fallback.data;
+                rpcError = fallback.error;
+            }
+
+            return { data: rpcData, error: rpcError };
+        };
+
+        let data: any = null;
+        let error: any = null;
+        let v2FailedWith: any = null;
+
+        if (feedRpcPreferenceRef.current !== 'v1') {
+            try {
+                const result = await withTimeout(
+                    supabase.rpc('get_combined_feed_data_v2', params),
+                    Math.min(FEED_RPC_TIMEOUT_MS, 4200),
+                    'get_combined_feed_data_v2'
+                );
+                data = result.data;
+                error = result.error;
+
+                const missingV2 =
+                    typeof error?.message === 'string' &&
+                    error.message.includes('get_combined_feed_data_v2') &&
+                    (
+                        error.message.includes('Could not find the function') ||
+                        error.message.includes('does not exist') ||
+                        error.message.includes('schema cache')
+                    );
+
+                if (!error) {
+                    feedRpcPreferenceRef.current = 'v2';
+                } else if (missingV2) {
+                    feedRpcPreferenceRef.current = 'v1';
+                } else {
+                    v2FailedWith = error;
+                }
+            } catch (rpcError) {
+                v2FailedWith = rpcError;
+            }
         }
-        if (error?.message?.includes('p_seed')) {
-            const { p_seed, p_refresh_mode, p_session_id, p_cursor_score, p_cursor_activity_date, p_cursor_id, ...legacyParams } = params;
-            legacyParams.p_offset = isInfiniteScroll ? (pageParam?.page ?? 1) * PAGE_SIZE : 0;
-            const fallback = await supabase.rpc('get_combined_feed_data', legacyParams);
-            data = fallback.data;
-            error = fallback.error;
+
+        if (!data || error) {
+            try {
+                const fallback = await callFeedRpcV1();
+                data = fallback.data;
+                error = fallback.error;
+            } catch (rpcError) {
+                console.warn('[Feed] Ranked RPC failed, using direct fallback', v2FailedWith || rpcError);
+                if (myId) return fetchFeedFallback(myId);
+                throw rpcError;
+            }
         }
         if (!isInfiniteScroll) refreshModeRef.current = 'initial_load';
 
-        if (error) throw error;
+        if (error) {
+            console.warn('[Feed] RPC returned error, using direct fallback', error, v2FailedWith);
+            if (myId) return fetchFeedFallback(myId);
+            throw error;
+        }
+        if (v2FailedWith && feedRpcPreferenceRef.current !== 'v1') {
+            console.warn('[Feed] Falling back to legacy RPC for this request', v2FailedWith);
+        }
         return data;
     };
 
@@ -318,8 +933,9 @@ export default function FeedScreen() {
         status,
         refetch,
     } = useInfiniteQuery({
-        queryKey: ['feed', activeTab, activeFilter, shuffleSeed],
+        queryKey: ['feed', currentUserId || 'anon', activeTab, activeFilter, shuffleSeed],
         queryFn: fetchFeed,
+        enabled: !!currentUserId,
         getNextPageParam: (lastPage, allPages) => {
             const feed = lastPage.feed || [];
             if (feed.length < PAGE_SIZE) return undefined;
@@ -336,11 +952,25 @@ export default function FeedScreen() {
         gcTime: 30 * 60 * 1000,
     });
 
-    const capsules = useMemo(() => {
+    const trackedImpressions = useRef<Set<string>>(new Set());
+    const seenCapsuleIdsRef = useRef<Set<string>>(new Set());
+    const impressionBufferRef = useRef<Map<string, { capsuleId: string | null; eventType: string; position: number | null }>>(new Map());
+
+    const rawCapsules = useMemo(() => {
         const pages = queryData?.pages || (cachedFeedKey === feedCacheKey ? cachedFeedData?.pages : null);
         if (!pages) return [];
         return pages.flatMap((page: any) => page.feed || []);
     }, [queryData, cachedFeedData, cachedFeedKey, feedCacheKey]);
+
+    const capsules = useMemo(() => {
+        return rankAndDiversifyFeed(rawCapsules, {
+            tab: activeTab,
+            followingOwnerIds: followingSet,
+            participantCapsuleIds: participantCapsules,
+            sessionSeenKeys: trackedImpressions.current,
+            sessionSeenCapsuleIds: seenCapsuleIdsRef.current,
+        });
+    }, [rawCapsules, activeTab, followingSet, participantCapsules]);
 
     useEffect(() => {
         if (!queryData?.pages?.[0]) return;
@@ -367,13 +997,19 @@ export default function FeedScreen() {
         }
     }, [queryData, cachedFeedData, cachedFeedKey, feedCacheKey, currentUserId]);
 
-    const hasBootData = capsules.length > 0;
+    const hasBootData = rawCapsules.length > 0;
     const isLoading = status === 'pending' && !hasBootData;
     const isRefreshing = status === 'pending' && !!queryData;
     const isError = status === 'error';
 
-    const trackedImpressions = useRef<Set<string>>(new Set());
-    const impressionBufferRef = useRef<Map<string, { capsuleId: string | null; eventType: string; position: number | null }>>(new Map());
+    useEffect(() => {
+        if (!isLoading) {
+            setFeedLoadTimedOut(false);
+            return;
+        }
+        const timer = setTimeout(() => setFeedLoadTimedOut(true), 9000);
+        return () => clearTimeout(timer);
+    }, [isLoading]);
 
     const onViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: any[] }) => {
         if (!currentUserId) return;
@@ -381,8 +1017,12 @@ export default function FeedScreen() {
             .filter(v => v.isViewable && v.item?.id && !trackedImpressions.current.has(v.item.id))
             .forEach(v => {
                 trackedImpressions.current.add(v.item.id);
+                const capsuleId = v.item.capsule_id || v.item.id || null;
+                if (capsuleId) {
+                    seenCapsuleIdsRef.current.add(capsuleId);
+                }
                 impressionBufferRef.current.set(v.item.id, {
-                    capsuleId: v.item.capsule_id || null,
+                    capsuleId,
                     eventType: v.item.event_type || v.item.feed_type || 'unknown',
                     position: typeof v.index === 'number' ? v.index : null,
                 });
@@ -402,7 +1042,7 @@ export default function FeedScreen() {
     const filterScrollRef = useRef<ScrollView>(null);
     const pinTopAfterRefreshRef = useRef(false);
 
-    const keyExtractor = useCallback((item: any) => item.id, []);
+    const keyExtractor = useCallback((item: any) => item.feed_item_key || item.feed_event_id || item.id, []);
 
     const pinFeedToTop = useCallback((animated = false) => {
         flatListRef.current?.scrollToOffset?.({ offset: 0, animated });
@@ -530,6 +1170,7 @@ export default function FeedScreen() {
 
     // ─── Impression flush ─────────────────────────────────────────────────────
     useEffect(() => {
+        if (DISABLE_FEED_IMPRESSIONS_UNTIL_STABLE) return;
         const flushImpressions = async () => {
             if (!currentUserId || impressionBufferRef.current.size === 0) return;
             const entries = Array.from(impressionBufferRef.current.entries());
@@ -555,6 +1196,7 @@ export default function FeedScreen() {
 
     // ─── Capsule real-time sync ───────────────────────────────────────────────
     useEffect(() => {
+        if (SUPABASE_RELIEF_MODE) return;
         const subDel = DeviceEventEmitter.addListener('capsule_deleted', () => refetch());
         const subNew = DeviceEventEmitter.addListener('capsule_created', () => refetch());
         return () => { subDel.remove(); subNew.remove(); };
@@ -563,6 +1205,7 @@ export default function FeedScreen() {
     // SWR: refetch when screen regains focus (max once per 30s)
     const lastFocusFetchRef = useRef(0);
     useEffect(() => {
+        if (SUPABASE_RELIEF_MODE) return;
         if (!isFocused) return;
         const now = Date.now();
         if (now - lastFocusFetchRef.current > 30_000) {
@@ -631,20 +1274,19 @@ export default function FeedScreen() {
 
     useEffect(() => {
         const init = async () => {
-            try {
-                const { data: { session } } = await supabase.auth.getSession();
-                const user = session?.user;
-                if (user) {
-                    const { count } = await supabase.from('follows')
-                        .select('*', { count: 'exact', head: true })
-                        .eq('follower_id', user.id);
-                    setActiveTab(count && count > 0 ? 'following' : 'explore');
-                    setCurrentUserId(user.id);
-                }
-            } catch (e) { console.error('[Feed] init error:', e); }
+            if (!currentUserId) return;
+            const followsResult = await withTimeout(
+                supabase.from('follows')
+                    .select('*', { count: 'exact', head: true })
+                    .eq('follower_id', currentUserId),
+                1500,
+                'feed init follows count'
+            ).catch(() => null);
+            const count = followsResult?.count;
+            setActiveTab(count && count > 0 ? 'following' : 'explore');
         };
         init();
-    }, []);
+    }, [currentUserId]);
 
     // ─── Realtime updates ─────────────────────────────────────────────────────
     useEffect(() => {
@@ -668,6 +1310,10 @@ export default function FeedScreen() {
     }, [queryClient]);
 
     useEffect(() => {
+        if (SUPABASE_RELIEF_MODE) {
+            setHasUnread(false);
+            return;
+        }
         const checkUnread = async () => {
             const { data: { session } } = await supabase.auth.getSession();
             const user = session?.user;
@@ -727,6 +1373,7 @@ export default function FeedScreen() {
     }, [isFocused]);
 
     const flushImpressionsNow = useCallback(async () => {
+        if (DISABLE_FEED_IMPRESSIONS_UNTIL_STABLE) return;
         if (!currentUserId || impressionBufferRef.current.size === 0) return;
         const entries = Array.from(impressionBufferRef.current.entries());
         impressionBufferRef.current.clear();
@@ -744,6 +1391,7 @@ export default function FeedScreen() {
     }, [currentUserId, activeTab]);
 
     const recordFeedOpen = useCallback((item: any) => {
+        if (DISABLE_FEED_IMPRESSIONS_UNTIL_STABLE) return;
         if (!currentUserId || !item?.id) return;
         impressionBufferRef.current.delete(item.id);
         (async () => {
@@ -765,6 +1413,7 @@ export default function FeedScreen() {
 
     const onRefresh = useCallback(async () => {
         const nextSeed = Date.now();
+        setFeedLoadTimedOut(false);
         pinTopAfterRefreshRef.current = true;
         pinFeedToTop(false);
         refreshModeRef.current = 'pull_to_refresh';
@@ -842,16 +1491,18 @@ export default function FeedScreen() {
         },
         onMutate: async ({ activityId, wasLiked }) => {
             await queryClient.cancelQueries({ queryKey: ['feed'] });
-            const previousFeed = queryClient.getQueryData(['feed']);
+            const previousFeeds = queryClient.getQueriesData({ queryKey: ['feed'] });
+            const previousLiked = likedCapsules;
 
-            queryClient.setQueryData(['feed'], (old: any) => {
+            queryClient.setQueriesData({ queryKey: ['feed'] }, (old: any) => {
                 if (!old) return old;
                 return {
                     ...old,
                     pages: old.pages.map((page: any) => ({
                         ...page,
                         feed: page.feed.map((item: any) => {
-                            if (item.id === activityId || item.capsule_id === activityId) {
+                            const targetCapsuleId = item.capsule_id || item.id;
+                            if (item.id === activityId || item.feed_item_key === activityId || targetCapsuleId === activityId) {
                                 return {
                                     ...item,
                                     is_liked: !wasLiked,
@@ -864,11 +1515,35 @@ export default function FeedScreen() {
                 };
             });
 
-            return { previousFeed };
+            setLikedCapsules(prev => {
+                const activity = capsules.find((c: any) => c.id === activityId || c.feed_item_key === activityId || c.capsule_id === activityId);
+                const targetCapsuleId = activity?.capsule_id || activityId;
+                const next = new Set(prev);
+                if (wasLiked) next.delete(targetCapsuleId);
+                else next.add(targetCapsuleId);
+                return next;
+            });
+
+            return { previousFeeds, previousLiked };
+        },
+        onSuccess: (_data, { activityId, wasLiked }) => {
+            const activity = capsules.find((c: any) => c.id === activityId || c.feed_item_key === activityId || c.capsule_id === activityId);
+            const targetCapsuleId = activity?.capsule_id || activityId;
+            setLikedCapsules(prev => {
+                const next = new Set(prev);
+                if (wasLiked) next.delete(targetCapsuleId);
+                else next.add(targetCapsuleId);
+                return next;
+            });
         },
         onError: (err, variables, context) => {
-            if (context?.previousFeed) {
-                queryClient.setQueryData(['feed'], context.previousFeed);
+            if (context?.previousFeeds) {
+                context.previousFeeds.forEach(([queryKey, data]: any) => {
+                    queryClient.setQueryData(queryKey, data);
+                });
+            }
+            if (context?.previousLiked) {
+                setLikedCapsules(context.previousLiked);
             }
             Alert.alert('Error', 'Could not update like. Please try again.');
         }
@@ -902,7 +1577,7 @@ export default function FeedScreen() {
             );
         }
         const isFollowed = followingSet.has(item.owner_id);
-        const isLiked = likedCapsules.has(item.id) || likedCapsules.has(item.capsule_id);
+        const isLiked = !!item.is_liked || likedCapsules.has(item.id) || likedCapsules.has(item.feed_item_key) || likedCapsules.has(item.capsule_id);
         const hasAccess = item.is_public
             || item.owner_id === currentUserId
             || participantCapsules.has(item.id)
@@ -1087,8 +1762,38 @@ export default function FeedScreen() {
                     ) : null
                 }
                 ListEmptyComponent={() =>
-                    isLoading ? (
+                    isLoading && !feedLoadTimedOut ? (
                         <FeedSkeleton />
+                    ) : feedLoadTimedOut ? (
+                        <View style={s.emptyState}>
+                            <LinearGradient
+                                colors={[Colors.error + '14', Colors.error + '06']}
+                                style={s.emptyIconWrap}
+                            >
+                                <Ionicons name="cloud-offline-outline" size={38} color={Colors.error} />
+                            </LinearGradient>
+                            <Text style={s.emptyTitle}>No se pudo cargar el feed</Text>
+                            <Text style={s.emptySub}>La app ha dejado de esperar para que no se quede bloqueada. Vamos a reintentarlo.</Text>
+                            <TouchableOpacity
+                                activeOpacity={0.85}
+                                onPress={() => {
+                                    setFeedLoadTimedOut(false);
+                                    refreshModeRef.current = 'initial_load';
+                                    queryClient.invalidateQueries({ queryKey: ['feed'] });
+                                }}
+                                style={s.emptyBtn}
+                            >
+                                <LinearGradient
+                                    colors={[Colors.primary, Colors.primaryDark]}
+                                    style={s.emptyBtnGrad}
+                                    start={{ x: 0, y: 0 }}
+                                    end={{ x: 1, y: 0 }}
+                                >
+                                    <Ionicons name="refresh" size={16} color="#fff" />
+                                    <Text style={s.emptyBtnText}>Reintentar</Text>
+                                </LinearGradient>
+                            </TouchableOpacity>
+                        </View>
                     ) : (
                         <View style={s.emptyState}>
                             <LinearGradient

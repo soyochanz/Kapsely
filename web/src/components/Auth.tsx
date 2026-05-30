@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { supabase } from '../lib/supabase';
+import { getFriendlyAuthErrorMessage, supabase } from '../lib/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Mail, Lock, User, AtSign, ArrowRight, Sparkles, LogIn, ChevronLeft } from 'lucide-react';
 
@@ -14,6 +14,20 @@ export const Auth = () => {
   const [username, setUsername] = useState('');
   const [displayName, setDisplayName] = useState('');
 
+  const withTimeout = <T,>(promise: PromiseLike<T>, ms: number, label: string): Promise<T> =>
+    new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`${label} timed out`)), ms);
+      Promise.resolve(promise)
+        .then(value => {
+          clearTimeout(timer);
+          resolve(value);
+        })
+        .catch(error => {
+          clearTimeout(timer);
+          reject(error);
+        });
+    });
+
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -21,31 +35,39 @@ export const Auth = () => {
 
     try {
       if (mode === 'login') {
-        const { error } = await supabase.auth.signInWithPassword({
-          email: email.trim(),
-          password,
-        });
+        const { error } = await withTimeout(
+          supabase.auth.signInWithPassword({
+            email: email.trim(),
+            password,
+          }),
+          10000,
+          'web signIn'
+        );
         if (error) throw error;
       } else {
         // Validation for registration
         if (!username.trim() || username.includes(' ')) throw new Error('Invalid username');
         if (!displayName.trim()) throw new Error('Public name is required');
 
-        const { error } = await supabase.auth.signUp({
-          email: email.trim(),
-          password,
-          options: {
-            data: {
-              username: username.trim().toLowerCase(),
-              display_name: displayName.trim(),
+        const { error } = await withTimeout(
+          supabase.auth.signUp({
+            email: email.trim(),
+            password,
+            options: {
+              data: {
+                username: username.trim().toLowerCase(),
+                display_name: displayName.trim(),
+              }
             }
-          }
-        });
+          }),
+          12000,
+          'web signUp'
+        );
         if (error) throw error;
         setError('Check your email for the confirmation link!');
       }
     } catch (err: any) {
-      setError(err.message);
+      setError(getFriendlyAuthErrorMessage(err));
     } finally {
       setLoading(false);
     }

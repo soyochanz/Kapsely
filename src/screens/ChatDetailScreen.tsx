@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
 import {
     View, Text, StyleSheet, TouchableOpacity, TextInput, Modal, Alert,
     KeyboardAvoidingView, Platform, StatusBar, ActivityIndicator, Keyboard,
-    ScrollView, Linking, Animated as RNAnimated, FlatList
+    ScrollView, Linking, Animated as RNAnimated, FlatList, AppState
 } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
 import { Image } from 'expo-image';
@@ -593,6 +593,30 @@ export default function ChatDetailScreen() {
             updateActiveStatus(null);
         };
     }, [isFocused, conversationId, currentUserId]);
+
+    useEffect(() => {
+        if (Platform.OS === 'web') return;
+
+        const updateActiveStatus = async (id: string | null) => {
+            const userId = currentUserIdRef.current;
+            if (!userId) return;
+            try {
+                await supabase.from('profiles').update({ active_conversation_id: id }).eq('id', userId);
+            } catch (e) { /* ignore if column doesn't exist yet */ }
+        };
+
+        const sub = AppState.addEventListener('change', (nextState) => {
+            if (nextState !== 'active') {
+                updateActiveStatus(null);
+                return;
+            }
+            if (isFocused && conversationId && conversationId !== 'new') {
+                updateActiveStatus(conversationId);
+            }
+        });
+
+        return () => sub.remove();
+    }, [isFocused, conversationId]);
 
     // Keyboard listeners
     useEffect(() => {

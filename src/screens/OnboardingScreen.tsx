@@ -156,7 +156,9 @@ export default function OnboardingScreen() {
 
     React.useEffect(() => {
         // Initialize timer config manager to load models from DB
-        timerConfigManager.init();
+        if (!SUPABASE_RELIEF_MODE) {
+            timerConfigManager.init();
+        }
         const unsub = timerConfigManager.subscribe(() => setConfigVersion(v => v + 1));
 
         Animated.loop(
@@ -796,3 +798,4 @@ const s = StyleSheet.create({
         fontSize: 14,
     },
 });
+const SUPABASE_RELIEF_MODE = true;

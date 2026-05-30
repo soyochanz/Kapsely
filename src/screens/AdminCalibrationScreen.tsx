@@ -16,10 +16,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors, Fonts, Shadow } from '../theme';
 import { timerConfigManager, ModelTimerConfig, DEFAULT_CONFIGS } from '../utils/timerConfig';
 import { optimizeImageForUpload, optimizeThumbnailForUpload } from '../utils/mediaOptimization';
-import { supabase } from '../lib/supabase';
+import { getAuthUserIdSnapshot, supabase } from '../lib/supabase';
 import LiveTimer from '../components/LiveTimer';
+import CapsuleWithTimer from '../components/CapsuleWithTimer';
 import { LinearGradient } from 'expo-linear-gradient';
 import { CAPSULE_MODELS } from '../constants/models';
+import { safetyService } from '../utils/safety';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const MODELS = CAPSULE_MODELS as unknown as any[];
@@ -34,7 +36,13 @@ const MODEL_LAYOUT_PRESET_KEY = 'admin_model_layout_default_preset';
 const MODEL_LAYOUT_AUTO_APPLY_KEY = 'admin_model_layout_auto_apply';
 
 const PRESET_COLORS = ['#ffffff', '#000000', '#a269ff', '#6abf69', '#ff9f1c', '#ff5252', '#d4a017', '#e2e2e2'];
-const PRESET_THEME_COLORS = ['#a269ff', '#6abf69', '#ff9f1c', '#00d2ff', '#e67e22', '#ff5252', '#d4a017', '#2d2d2d', '#ec4899', '#ff78b8'];
+const PRESET_THEME_COLORS = ['#a269ff', '#6abf69', '#ff9f1c', '#00d2ff', '#e67e22', '#ff5252', '#d4a017', '#2d2d2d', '#ec4899', '#ff78b8', '#14b8a6', '#3b82f6', '#8b5cf6', '#22c55e', '#f59e0b', '#ef4444', '#06b6d4', '#84cc16', '#f97316', '#0f172a', '#f43f5e', '#a3e635'];
+const MODEL_EFFECT_OPTIONS = [
+    { id: 'none', label: 'None', icon: 'close-circle-outline' as const },
+    { id: 'glow', label: 'Glow', icon: 'sunny-outline' as const },
+    { id: 'fire', label: 'Fire', icon: 'flame-outline' as const },
+    { id: 'sparkles', label: 'Sparkles', icon: 'sparkles-outline' as const },
+];
 const FONTS = [
     { id: 'monospace', label: 'Retro', font: 'monospace' },
     { id: 'Inter_700Bold', label: 'Modern', font: Fonts.bold },
@@ -51,6 +59,14 @@ const getModelImageLayout = (model: any) => ({
     offsetY: clampNumber(Number(model?.image_offset_y) || 0, MIN_MODEL_IMAGE_OFFSET, MAX_MODEL_IMAGE_OFFSET),
 });
 
+const getOpenModelImageLayout = (model: any) => ({
+    scale: clampNumber(Number(model?.image_open_scale) || Number(model?.image_scale) || 1, MIN_MODEL_IMAGE_SCALE, MAX_MODEL_IMAGE_SCALE),
+    scaleX: clampNumber(Number(model?.image_open_scale_x) || Number(model?.image_scale_x) || 1, MIN_MODEL_IMAGE_SCALE, MAX_MODEL_IMAGE_SCALE),
+    scaleY: clampNumber(Number(model?.image_open_scale_y) || Number(model?.image_scale_y) || 1, MIN_MODEL_IMAGE_SCALE, MAX_MODEL_IMAGE_SCALE),
+    offsetX: clampNumber(Number(model?.image_open_offset_x) || Number(model?.image_offset_x) || 0, MIN_MODEL_IMAGE_OFFSET, MAX_MODEL_IMAGE_OFFSET),
+    offsetY: clampNumber(Number(model?.image_open_offset_y) || Number(model?.image_offset_y) || 0, MIN_MODEL_IMAGE_OFFSET, MAX_MODEL_IMAGE_OFFSET),
+});
+
 const getModelImageTransform = (model: any) => {
     const layout = getModelImageLayout(model);
     return [
@@ -61,7 +77,26 @@ const getModelImageTransform = (model: any) => {
     ];
 };
 
-type AdminTab = 'models' | 'timer' | 'chain' | 'drops' | 'stickers';
+const getOpenModelImageTransform = (model: any) => {
+    const layout = getOpenModelImageLayout(model);
+    return [
+        { translateX: layout.offsetX },
+        { translateY: layout.offsetY },
+        { scaleX: layout.scale * layout.scaleX },
+        { scaleY: layout.scale * layout.scaleY },
+    ];
+};
+
+const extractStoragePath = (bucket: string, url?: string | null) => {
+    if (!url) return null;
+    const marker = `/storage/v1/object/public/${bucket}/`;
+    const index = url.indexOf(marker);
+    if (index === -1) return null;
+    const path = url.slice(index + marker.length).split('?')[0];
+    return path || null;
+};
+
+type AdminTab = 'models' | 'timer' | 'chain' | 'drops' | 'stickers' | 'moderation';
 type ModelLayoutPreset = {
     image_scale: number;
     image_scale_x: number;
@@ -70,12 +105,21 @@ type ModelLayoutPreset = {
     image_offset_y: number;
 };
 
+type OpenModelLayoutPreset = {
+    image_open_scale: number;
+    image_open_scale_x: number;
+    image_open_scale_y: number;
+    image_open_offset_x: number;
+    image_open_offset_y: number;
+};
+
 const ADMIN_TABS: Array<{ id: AdminTab; label: string; icon: keyof typeof Ionicons.glyphMap; hint: string }> = [
     { id: 'models', label: 'Library', icon: 'cube', hint: 'Create and edit capsule designs' },
     { id: 'timer', label: 'Timer', icon: 'time', hint: 'Position the opening timer' },
     { id: 'chain', label: 'Chains', icon: 'link', hint: 'Place chain accessories' },
     { id: 'drops', label: 'Drops', icon: 'flash', hint: 'Schedule design drops' },
     { id: 'stickers', label: 'Stickers', icon: 'sparkles', hint: 'Profile sticker library' },
+    { id: 'moderation', label: 'Moderation', icon: 'shield-checkmark', hint: 'Review blocked or doubtful AI decisions' },
 ];
 
 const DEFAULT_MODEL_LAYOUT: ModelLayoutPreset = {
@@ -86,6 +130,14 @@ const DEFAULT_MODEL_LAYOUT: ModelLayoutPreset = {
     image_offset_y: 0,
 };
 
+const DEFAULT_OPEN_MODEL_LAYOUT: OpenModelLayoutPreset = {
+    image_open_scale: 1,
+    image_open_scale_x: 1,
+    image_open_scale_y: 1,
+    image_open_offset_x: 0,
+    image_open_offset_y: 0,
+};
+
 const extractModelLayoutPreset = (model: any): ModelLayoutPreset => ({
     image_scale: getModelImageLayout(model).scale,
     image_scale_x: getModelImageLayout(model).scaleX,
@@ -94,11 +146,19 @@ const extractModelLayoutPreset = (model: any): ModelLayoutPreset => ({
     image_offset_y: getModelImageLayout(model).offsetY,
 });
 
+const extractOpenModelLayoutPreset = (model: any): OpenModelLayoutPreset => ({
+    image_open_scale: getOpenModelImageLayout(model).scale,
+    image_open_scale_x: getOpenModelImageLayout(model).scaleX,
+    image_open_scale_y: getOpenModelImageLayout(model).scaleY,
+    image_open_offset_x: getOpenModelImageLayout(model).offsetX,
+    image_open_offset_y: getOpenModelImageLayout(model).offsetY,
+});
+
 export default function AdminCalibrationScreen() {
     const navigation = useNavigation<any>();
     const insets = useSafeAreaInsets();
-    const [selectedModel, setSelectedModel] = useState<any>(MODELS[0]);
-    const [allModels, setAllModels] = useState<any[]>(timerConfigManager.models.length > 0 ? timerConfigManager.models : MODELS);
+    const [selectedModel, setSelectedModel] = useState<any>((timerConfigManager.models.filter((m: any) => !m?.is_hidden)[0]) || MODELS[0]);
+    const [allModels, setAllModels] = useState<any[]>((timerConfigManager.models.filter((m: any) => !m?.is_hidden)).length > 0 ? timerConfigManager.models.filter((m: any) => !m?.is_hidden) : MODELS);
     const [activeTab, setActiveTab] = useState<AdminTab>('models');
     const [selectedChainId, setSelectedChainId] = useState<string | null>(null);
     const [isDragging, setIsDragging] = useState(false);
@@ -130,6 +190,18 @@ export default function AdminCalibrationScreen() {
         image_scale_y: number;
         image_offset_x: number;
         image_offset_y: number;
+        image_open_scale: number;
+        image_open_scale_x: number;
+        image_open_scale_y: number;
+        image_open_offset_x: number;
+        image_open_offset_y: number;
+        effect_type: string;
+        effect_tint: string;
+        effect_scale: number;
+        effect_offset_x: number;
+        effect_offset_y: number;
+        effect_opacity: number;
+        effect_layer: 'behind' | 'front';
         event_start: string;
         event_end: string;
         event_title: string;
@@ -143,6 +215,8 @@ export default function AdminCalibrationScreen() {
         category: 'Vibe', tint: '#a269ff', is_active: true, is_event: false, is_birthday: false,
         is_trending: false, is_new: false,
         image_scale: 1, image_scale_x: 1, image_scale_y: 1, image_offset_x: 0, image_offset_y: 0,
+        image_open_scale: 1, image_open_scale_x: 1, image_open_scale_y: 1, image_open_offset_x: 0, image_open_offset_y: 0,
+        effect_type: 'none', effect_tint: '#a269ff', effect_scale: 1, effect_offset_x: 0, effect_offset_y: 0, effect_opacity: 1, effect_layer: 'behind',
         event_start: '', event_end: '', event_title: '', event_description: '',
         drop_id: null
     });
@@ -255,6 +329,13 @@ export default function AdminCalibrationScreen() {
     const [newDrop, setNewDrop] = useState({
         id: '', name: '', start_date: '', end_date: '', is_active: true
     });
+    const [moderationFilter, setModerationFilter] = useState<'open' | 'blocked' | 'all'>('open');
+    const [moderationReviews, setModerationReviews] = useState<any[]>([]);
+    const [moderationLoading, setModerationLoading] = useState(false);
+    const [moderationBusyId, setModerationBusyId] = useState<string | null>(null);
+    const [blockedOwnerIds, setBlockedOwnerIds] = useState<string[]>([]);
+    const [moderationSearchType, setModerationSearchType] = useState<'owner' | 'capsule'>('owner');
+    const [moderationSearchValue, setModerationSearchValue] = useState('');
 
     // Per-model configurations initialized from manager
     const [configs, setConfigs] = useState<Record<string, ModelTimerConfig>>(() => {
@@ -274,7 +355,7 @@ export default function AdminCalibrationScreen() {
     }, [selectedModel.id]);
 
     const syncConfigs = () => {
-        const dbModels = timerConfigManager.models;
+        const dbModels = timerConfigManager.models.filter((m: any) => !m?.is_hidden && m?.is_active !== false && !!(m?.image_cover || m?.image));
         if (dbModels.length > 0) {
             setAllModels([...dbModels]);
         }
@@ -300,6 +381,12 @@ export default function AdminCalibrationScreen() {
     }, []);
 
     useEffect(() => {
+        if (!allModels.find(m => m.id === selectedModel?.id) && allModels.length > 0) {
+            setSelectedModel(allModels[0]);
+        }
+    }, [allModels, selectedModel?.id]);
+
+    useEffect(() => {
         const loadLayoutPreset = async () => {
             try {
                 const [presetRaw, autoApplyRaw] = await Promise.all([
@@ -317,9 +404,157 @@ export default function AdminCalibrationScreen() {
         loadLayoutPreset();
     }, []);
 
+    useEffect(() => {
+        if (activeTab === 'moderation') {
+            loadModerationQueue();
+        }
+    }, [activeTab, moderationFilter, moderationSearchType, moderationSearchValue]);
+
     const loadStickers = async () => {
         const { data } = await supabase.from('stickers').select('*').order('created_at', { ascending: false });
         if (data) setStickers(data);
+    };
+
+    const loadModerationQueue = async () => {
+        setModerationLoading(true);
+        try {
+            const trimmedSearch = moderationSearchValue.trim();
+            const isSearchMode = trimmedSearch.length > 0;
+            const statuses = moderationFilter === 'open'
+                ? ['needs_review', 'error']
+                : moderationFilter === 'blocked'
+                    ? ['rejected']
+                    : ['needs_review', 'error', 'rejected', 'approved'];
+
+            const adminId = getAuthUserIdSnapshot() || (await supabase.auth.getUser()).data.user?.id || null;
+            let reviewsQuery = supabase
+                .from('content_moderation_reviews')
+                .select(`
+                    *,
+                    item:item_id(id, media_url, thumbnail_url, media_type, content),
+                    owner:owner_id(id, username, display_name, avatar_url),
+                    capsule:capsule_id(id, title, model)
+                `)
+                .order('created_at', { ascending: false })
+                .limit(isSearchMode ? 120 : 100);
+
+            if (isSearchMode) {
+                reviewsQuery = moderationSearchType === 'owner'
+                    ? reviewsQuery.eq('owner_id', trimmedSearch)
+                    : reviewsQuery.eq('capsule_id', trimmedSearch);
+            } else {
+                reviewsQuery = reviewsQuery
+                    .in('status', statuses)
+                    .is('resolved_at', null);
+            }
+
+            const [reviewsResult, blockedResult] = await Promise.all([
+                reviewsQuery,
+                adminId
+                    ? supabase.from('blocks').select('blocked_id').eq('blocker_id', adminId)
+                    : Promise.resolve({ data: [], error: null } as any),
+            ]);
+
+            if (reviewsResult.error) {
+                throw reviewsResult.error;
+            }
+
+            setModerationReviews(reviewsResult.data || []);
+            setBlockedOwnerIds(((blockedResult as any)?.data || []).map((entry: any) => entry.blocked_id));
+        } catch (error: any) {
+            console.error('Failed to load moderation reviews', error);
+            setModerationReviews([]);
+            Alert.alert('Error', error?.message || 'Could not load moderation queue.');
+        } finally {
+            setModerationLoading(false);
+        }
+    };
+
+    const resolveModerationReview = async (review: any, decision: 'approved' | 'rejected') => {
+        setModerationBusyId(review.id);
+        try {
+            const adminId = getAuthUserIdSnapshot() || (await supabase.auth.getUser()).data.user?.id;
+            const nowIso = new Date().toISOString();
+            const item = review.item || {};
+            const mediaPaths = [
+                extractStoragePath('capsule-media', item.media_url || review.media_url),
+                extractStoragePath('capsule-media', item.thumbnail_url),
+            ].filter(Boolean) as string[];
+            const { error: reviewError } = await supabase
+                .from('content_moderation_reviews')
+                .update({
+                    status: decision,
+                    action: decision === 'approved' ? 'allow' : 'block',
+                    admin_notes: decision === 'approved'
+                        ? 'Approved from Calibration Tool moderation queue'
+                        : 'Rejected from Calibration Tool moderation queue',
+                    media_url: null,
+                    resolved_at: nowIso,
+                    resolved_by: adminId || null,
+                })
+                .eq('id', review.id);
+
+            if (reviewError) throw reviewError;
+
+            if (review.item_id) {
+                if (mediaPaths.length > 0) {
+                    const { error: storageError } = await supabase.storage.from('capsule-media').remove(Array.from(new Set(mediaPaths)));
+                    if (storageError) {
+                        console.warn('Could not remove moderated media from storage', storageError);
+                    }
+                }
+                const { error: itemError } = await supabase
+                    .from('capsule_items')
+                    .update({
+                        moderation_status: decision === 'approved' ? 'approved' : 'rejected',
+                        moderation_reason: review.reason || (decision === 'approved' ? 'Approved by admin review' : 'Rejected by admin review'),
+                        moderated_at: nowIso,
+                        moderation_review_id: review.id,
+                        media_url: '',
+                        thumbnail_url: '',
+                    })
+                    .eq('id', review.item_id);
+
+                if (itemError) throw itemError;
+            }
+
+            setModerationReviews(prev => prev.filter(item => item.id !== review.id));
+        } catch (error: any) {
+            Alert.alert('Error', error?.message || 'Could not update moderation review.');
+        } finally {
+            setModerationBusyId(null);
+        }
+    };
+
+    const blockModerationUser = async (review: any) => {
+        const ownerId = review?.owner_id;
+        if (!ownerId) {
+            Alert.alert('Error', 'This review has no user to block.');
+            return;
+        }
+
+        const adminId = getAuthUserIdSnapshot() || (await supabase.auth.getUser()).data.user?.id;
+        if (!adminId) {
+            Alert.alert('Error', 'Admin session not available.');
+            return;
+        }
+
+        if (blockedOwnerIds.includes(ownerId)) {
+            Alert.alert('Blocked', 'This user is already blocked by this admin account.');
+            return;
+        }
+
+        setModerationBusyId(review.id);
+        try {
+            const { error } = await safetyService.blockUser(adminId, ownerId);
+            if (error) throw error;
+            setBlockedOwnerIds(prev => prev.includes(ownerId) ? prev : [...prev, ownerId]);
+            Alert.alert('User blocked', `@${review?.owner?.username || review?.owner?.display_name || 'user'} has been blocked.`);
+        } catch (error: any) {
+            Alert.alert('Error', error?.message || 'Could not block this user.');
+        } finally {
+            setModerationBusyId(null);
+        }
     };
 
     const applyLayoutPresetToForm = (preset: ModelLayoutPreset | null) => {
@@ -350,6 +585,8 @@ export default function AdminCalibrationScreen() {
             category: 'Vibe', tint: '#a269ff', is_active: true, is_event: false, is_birthday: false,
             is_trending: false, is_new: false,
             ...layout,
+            ...DEFAULT_OPEN_MODEL_LAYOUT,
+            effect_type: 'none', effect_tint: '#a269ff', effect_scale: 1, effect_offset_x: 0, effect_offset_y: 0, effect_opacity: 1, effect_layer: 'behind',
             event_start: '', event_end: '', event_title: '', event_description: '',
             drop_id: null
         });
@@ -378,6 +615,18 @@ export default function AdminCalibrationScreen() {
             image_scale_y: Number(model.image_scale_y) || 1,
             image_offset_x: Number(model.image_offset_x) || 0,
             image_offset_y: Number(model.image_offset_y) || 0,
+            image_open_scale: Number(model.image_open_scale) || Number(model.image_scale) || 1,
+            image_open_scale_x: Number(model.image_open_scale_x) || Number(model.image_scale_x) || 1,
+            image_open_scale_y: Number(model.image_open_scale_y) || Number(model.image_scale_y) || 1,
+            image_open_offset_x: Number(model.image_open_offset_x) || Number(model.image_offset_x) || 0,
+            image_open_offset_y: Number(model.image_open_offset_y) || Number(model.image_offset_y) || 0,
+            effect_type: model.effect_type || 'none',
+            effect_tint: model.effect_tint || model.tint || '#a269ff',
+            effect_scale: Number(model.effect_scale) || 1,
+            effect_offset_x: Number(model.effect_offset_x) || 0,
+            effect_offset_y: Number(model.effect_offset_y) || 0,
+            effect_opacity: Number(model.effect_opacity) || 1,
+            effect_layer: model.effect_layer === 'front' ? 'front' : 'behind',
             is_active: model.is_active !== false,
             drop_id: model.drop_id || null
         });
@@ -689,6 +938,18 @@ export default function AdminCalibrationScreen() {
         modelToSave.image_scale_y = clampNumber(Number(modelToSave.image_scale_y) || 1, MIN_MODEL_IMAGE_SCALE, MAX_MODEL_IMAGE_SCALE);
         modelToSave.image_offset_x = clampNumber(Number(modelToSave.image_offset_x) || 0, MIN_MODEL_IMAGE_OFFSET, MAX_MODEL_IMAGE_OFFSET);
         modelToSave.image_offset_y = clampNumber(Number(modelToSave.image_offset_y) || 0, MIN_MODEL_IMAGE_OFFSET, MAX_MODEL_IMAGE_OFFSET);
+        modelToSave.image_open_scale = clampNumber(Number(modelToSave.image_open_scale) || modelToSave.image_scale || 1, MIN_MODEL_IMAGE_SCALE, MAX_MODEL_IMAGE_SCALE);
+        modelToSave.image_open_scale_x = clampNumber(Number(modelToSave.image_open_scale_x) || modelToSave.image_scale_x || 1, MIN_MODEL_IMAGE_SCALE, MAX_MODEL_IMAGE_SCALE);
+        modelToSave.image_open_scale_y = clampNumber(Number(modelToSave.image_open_scale_y) || modelToSave.image_scale_y || 1, MIN_MODEL_IMAGE_SCALE, MAX_MODEL_IMAGE_SCALE);
+        modelToSave.image_open_offset_x = clampNumber(Number(modelToSave.image_open_offset_x) || modelToSave.image_offset_x || 0, MIN_MODEL_IMAGE_OFFSET, MAX_MODEL_IMAGE_OFFSET);
+        modelToSave.image_open_offset_y = clampNumber(Number(modelToSave.image_open_offset_y) || modelToSave.image_offset_y || 0, MIN_MODEL_IMAGE_OFFSET, MAX_MODEL_IMAGE_OFFSET);
+        modelToSave.effect_type = modelToSave.effect_type || 'none';
+        modelToSave.effect_tint = modelToSave.effect_tint || modelToSave.tint || '#a269ff';
+        modelToSave.effect_scale = clampNumber(Number(modelToSave.effect_scale) || 1, 0.4, 2.2);
+        modelToSave.effect_offset_x = clampNumber(Number(modelToSave.effect_offset_x) || 0, -120, 120);
+        modelToSave.effect_offset_y = clampNumber(Number(modelToSave.effect_offset_y) || 0, -120, 120);
+        modelToSave.effect_opacity = clampNumber(Number(modelToSave.effect_opacity) || 1, 0, 1);
+        modelToSave.effect_layer = modelToSave.effect_layer === 'front' ? 'front' : 'behind';
 
         const success = await timerConfigManager.saveModel(modelToSave);
         if (success) {
@@ -702,7 +963,9 @@ export default function AdminCalibrationScreen() {
             Alert.alert('Success', editingModelId ? 'Model updated successfully' : 'Model created successfully');
         } else {
             console.error('Failed to save model:', timerConfigManager.lastError);
-            Alert.alert('Error', 'Could not save model to database. Column missing?');
+            const dbError = timerConfigManager.lastError as any;
+            const details = [dbError?.message, dbError?.details, dbError?.hint].filter(Boolean).join('\n');
+            Alert.alert('Error', details || 'Could not save model to database.');
         }
     };
 
@@ -1012,7 +1275,202 @@ export default function AdminCalibrationScreen() {
 
                     <View style={styles.divider} /></>}
 
-                    {activeTab === 'timer' ? (
+                    {activeTab === 'moderation' ? (
+                        <View style={styles.moderationSection}>
+                            <View style={styles.sectionHeaderInner}>
+                                <View>
+                                    <Text style={styles.label}>Moderation Queue</Text>
+                                    <Text style={styles.sectionSub}>Blocked content and items the AI was unsure about.</Text>
+                                </View>
+                                <TouchableOpacity style={styles.addModelBtn} activeOpacity={0.75} onPress={loadModerationQueue}>
+                                    <Ionicons name="refresh" size={18} color={Colors.primary} />
+                                    <Text style={styles.addModelBtnText}>Refresh</Text>
+                                </TouchableOpacity>
+                            </View>
+
+                            <View style={styles.moderationFilterRow}>
+                                {[
+                                    { id: 'open', label: 'Review' },
+                                    { id: 'blocked', label: 'Blocked' },
+                                    { id: 'all', label: 'All' },
+                                ].map(option => (
+                                    <TouchableOpacity
+                                        key={option.id}
+                                        style={[styles.moderationFilterBtn, moderationFilter === option.id && styles.moderationFilterBtnActive]}
+                                        activeOpacity={0.78}
+                                        onPress={() => setModerationFilter(option.id as 'open' | 'blocked' | 'all')}
+                                    >
+                                        <Text style={[styles.moderationFilterText, moderationFilter === option.id && styles.moderationFilterTextActive]}>
+                                            {option.label}
+                                        </Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+
+                            <View style={styles.moderationSearchCard}>
+                                <Text style={styles.moderationSearchLabel}>Search archived moderation</Text>
+                                <View style={styles.moderationSearchTypeRow}>
+                                    {[
+                                        { id: 'owner', label: 'User ID' },
+                                        { id: 'capsule', label: 'Capsule ID' },
+                                    ].map(option => (
+                                        <TouchableOpacity
+                                            key={option.id}
+                                            style={[styles.moderationSearchTypeBtn, moderationSearchType === option.id && styles.moderationSearchTypeBtnActive]}
+                                            activeOpacity={0.78}
+                                            onPress={() => setModerationSearchType(option.id as 'owner' | 'capsule')}
+                                        >
+                                            <Text style={[styles.moderationSearchTypeText, moderationSearchType === option.id && styles.moderationSearchTypeTextActive]}>
+                                                {option.label}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    ))}
+                                </View>
+                                <View style={styles.searchContainer}>
+                                    <Ionicons name="search" size={18} color={Colors.textMuted} style={styles.searchIcon} />
+                                    <TextInput
+                                        style={styles.searchInput}
+                                        placeholder={moderationSearchType === 'owner' ? 'Paste user ID to see archived reviews...' : 'Paste capsule ID to see archived reviews...'}
+                                        placeholderTextColor={Colors.textMuted}
+                                        value={moderationSearchValue}
+                                        onChangeText={setModerationSearchValue}
+                                        autoCapitalize="none"
+                                        autoCorrect={false}
+                                    />
+                                    {moderationSearchValue.length > 0 && (
+                                        <TouchableOpacity onPress={() => setModerationSearchValue('')}>
+                                            <Ionicons name="close-circle" size={18} color={Colors.textMuted} />
+                                        </TouchableOpacity>
+                                    )}
+                                </View>
+                                <Text style={styles.moderationSearchHint}>
+                                    Resolved content leaves this queue. Archived cases only appear when you search by exact user or capsule ID.
+                                </Text>
+                            </View>
+
+                            {moderationLoading ? (
+                                <View style={styles.moderationEmptyState}>
+                                    <ActivityIndicator color={Colors.primary} />
+                                    <Text style={styles.moderationEmptyTitle}>Loading moderation queue...</Text>
+                                </View>
+                            ) : moderationReviews.length === 0 ? (
+                                <View style={styles.moderationEmptyState}>
+                                    <Ionicons name="checkmark-done-circle" size={30} color="#22c55e" />
+                                    <Text style={styles.moderationEmptyTitle}>All clear</Text>
+                                    <Text style={styles.moderationEmptyText}>There is nothing pending in this filter right now.</Text>
+                                </View>
+                            ) : (
+                                <View style={styles.moderationList}>
+                                    {moderationReviews.map(review => {
+                                        const owner = review.owner || {};
+                                        const capsule = review.capsule || {};
+                                        const item = review.item || {};
+                                        const previewType = item.media_type || review.media_type;
+                                        const previewUrl = item.thumbnail_url || item.media_url || review.media_url || '';
+                                        const fullMediaUrl = item.media_url || review.media_url || '';
+                                        const topScoreEntry = Object.entries(review.category_scores || {})
+                                            .sort((a: any, b: any) => Number(b[1]) - Number(a[1]))[0] as [string, any] | undefined;
+                                        const isBusy = moderationBusyId === review.id;
+                                        const alreadyBlocked = blockedOwnerIds.includes(review.owner_id);
+
+                                        return (
+                                            <View key={review.id} style={styles.moderationCard}>
+                                                <View style={styles.moderationPreview}>
+                                                    {previewType === 'image' && previewUrl ? (
+                                                        <Image source={{ uri: previewUrl }} style={styles.moderationPreviewMedia} resizeMode="contain" />
+                                                    ) : previewType === 'video' && (previewUrl || fullMediaUrl) ? (
+                                                        <Image source={{ uri: previewUrl || fullMediaUrl }} style={styles.moderationPreviewMedia} resizeMode="contain" />
+                                                    ) : previewType === 'note' && (item.content || review.content_excerpt) ? (
+                                                        <View style={styles.moderationTextPreview}>
+                                                            <Ionicons name="document-text" size={24} color={Colors.primary} />
+                                                            <Text style={styles.moderationTextPreviewLabel}>Note preview</Text>
+                                                            <Text style={styles.moderationTextPreviewContent} numberOfLines={6}>
+                                                                {item.content || review.content_excerpt}
+                                                            </Text>
+                                                        </View>
+                                                    ) : previewType === 'audio' ? (
+                                                        <View style={styles.moderationVideoPlaceholder}>
+                                                            <Ionicons name="mic" size={24} color={Colors.primary} />
+                                                            <Text style={styles.moderationVideoText}>Audio clip</Text>
+                                                        </View>
+                                                    ) : (
+                                                        <View style={styles.moderationVideoPlaceholder}>
+                                                            <Ionicons name="document-text" size={24} color={Colors.primary} />
+                                                            <Text style={styles.moderationVideoText}>{previewType || 'Text'}</Text>
+                                                        </View>
+                                                    )}
+                                                    <View style={[
+                                                        styles.moderationStatusPill,
+                                                        review.status === 'rejected'
+                                                            ? styles.moderationStatusRejected
+                                                            : review.status === 'approved'
+                                                                ? styles.moderationStatusApproved
+                                                                : styles.moderationStatusReview
+                                                    ]}>
+                                                        <Text style={styles.moderationStatusText}>{review.status}</Text>
+                                                    </View>
+                                                </View>
+
+                                                <View style={styles.moderationBody}>
+                                                    <Text style={styles.moderationCapsuleTitle}>{capsule.title || 'Untitled capsule'}</Text>
+                                                    <Text style={styles.moderationOwnerText}>
+                                                        @{owner.username || owner.display_name || 'user'}
+                                                    </Text>
+                                                    {!!review.content_excerpt && (
+                                                        <Text style={styles.moderationExcerpt} numberOfLines={3}>{review.content_excerpt}</Text>
+                                                    )}
+                                                    <View style={styles.moderationReasonRow}>
+                                                        <Ionicons name="alert-circle" size={15} color="#f97316" />
+                                                        <Text style={styles.moderationReasonText}>
+                                                            {review.reason || 'The AI could not confidently auto-approve this content.'}
+                                                        </Text>
+                                                    </View>
+                                                    {topScoreEntry ? (
+                                                        <Text style={styles.moderationScoreText}>
+                                                            Strongest signal: {topScoreEntry[0]} ({Math.round(Number(topScoreEntry[1]) * 100)}%)
+                                                        </Text>
+                                                    ) : null}
+
+                                                    <View style={styles.moderationActionRow}>
+                                                        <TouchableOpacity
+                                                            style={[styles.moderationApproveBtn, isBusy && styles.moderationActionDisabled]}
+                                                            activeOpacity={0.8}
+                                                            disabled={isBusy}
+                                                            onPress={() => resolveModerationReview(review, 'approved')}
+                                                        >
+                                                            {isBusy ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="checkmark" size={16} color="#fff" />}
+                                                            <Text style={styles.moderationApproveText}>Approve</Text>
+                                                        </TouchableOpacity>
+                                                        <TouchableOpacity
+                                                            style={[styles.moderationRejectBtn, isBusy && styles.moderationActionDisabled]}
+                                                            activeOpacity={0.8}
+                                                            disabled={isBusy}
+                                                            onPress={() => resolveModerationReview(review, 'rejected')}
+                                                        >
+                                                            <Ionicons name="close" size={16} color="#fff" />
+                                                            <Text style={styles.moderationRejectText}>Reject</Text>
+                                                        </TouchableOpacity>
+                                                    </View>
+
+                                                    <TouchableOpacity
+                                                        style={[styles.moderationBlockBtn, alreadyBlocked && styles.moderationBlockBtnDisabled, isBusy && styles.moderationActionDisabled]}
+                                                        activeOpacity={0.78}
+                                                        disabled={alreadyBlocked || isBusy}
+                                                        onPress={() => blockModerationUser(review)}
+                                                    >
+                                                        <Ionicons name={alreadyBlocked ? 'shield-checkmark' : 'ban'} size={15} color={alreadyBlocked ? '#64748b' : '#ef4444'} />
+                                                        <Text style={[styles.moderationBlockText, alreadyBlocked && styles.moderationBlockTextDisabled]}>
+                                                            {alreadyBlocked ? 'User already blocked' : 'Block user'}
+                                                        </Text>
+                                                    </TouchableOpacity>
+                                                </View>
+                                            </View>
+                                        );
+                                    })}
+                                </View>
+                            )}
+                        </View>
+                    ) : activeTab === 'timer' ? (
                         <View style={styles.timerCalibration}>
                             <View style={styles.grid}>
                                 <View style={styles.col}>
@@ -1387,7 +1845,10 @@ export default function AdminCalibrationScreen() {
                                                             syncConfigs();
                                                             Alert.alert('Success', 'Model deleted successfully');
                                                         } else {
-                                                            Alert.alert('Error', 'Could not delete model. Check dependencies.');
+                                                            const errorMessage =
+                                                                (timerConfigManager as any).lastError?.message ||
+                                                                'Could not delete model. Check dependencies or admin permissions.';
+                                                            Alert.alert('Error', errorMessage);
                                                         }
                                                     };
 
@@ -1628,17 +2089,16 @@ export default function AdminCalibrationScreen() {
                                         </View>
                                     ) : null}
                                     {newModel.image ? (
-                                        <Image
+                                        <CapsuleWithTimer
+                                            modelKey={newModel.id || 'base_kap'}
                                             source={{ uri: newModel.image }}
-                                            style={[
-                                                styles.modelLayoutPreviewImage,
-                                                {
-                                                    transform: [
-                                                        ...getModelImageTransform(newModel),
-                                                    ],
-                                                },
-                                            ]}
-                                            resizeMode="contain"
+                                            date={new Date(Date.now() + 1000 * 3600 * 24).toISOString()}
+                                            modelLayout={newModel}
+                                            preferModelLayout
+                                            style={styles.modelLayoutPreviewImage}
+                                            hideTimer
+                                            hideParticles
+                                            disableAnimations
                                         />
                                     ) : (
                                         <Ionicons name="image-outline" size={38} color={Colors.textMuted} />
@@ -1837,6 +2297,357 @@ export default function AdminCalibrationScreen() {
                                         >
                                             <Ionicons name="arrow-down" size={17} color={Colors.textPrimary} />
                                         </TouchableOpacity>
+                                    </View>
+                                </View>
+                            </View>
+
+                            <View style={[styles.inputSection, { marginTop: 18 }]}>
+                                <View style={styles.layoutSectionHeader}>
+                                    <View>
+                                        <Text style={styles.innerLabel}>Open Image Layout</Text>
+                                        <Text style={styles.switchSub}>Adjust the opened version independently. If there is no open art yet, this still calibrates the fallback view.</Text>
+                                    </View>
+                                    <TouchableOpacity
+                                        style={styles.layoutResetBtn}
+                                        activeOpacity={0.75}
+                                        onPress={() => setNewModel(p => ({
+                                            ...p,
+                                            image_open_scale: p.image_scale || 1,
+                                            image_open_scale_x: p.image_scale_x || 1,
+                                            image_open_scale_y: p.image_scale_y || 1,
+                                            image_open_offset_x: p.image_offset_x || 0,
+                                            image_open_offset_y: p.image_offset_y || 0,
+                                        }))}
+                                    >
+                                        <Ionicons name="refresh" size={14} color={Colors.primary} />
+                                        <Text style={styles.layoutResetText}>Match Closed</Text>
+                                    </TouchableOpacity>
+                                </View>
+
+                                <View style={styles.modelLayoutPreview}>
+                                    <View pointerEvents="none" style={styles.layoutGuideLayer}>
+                                        <View style={[styles.layoutGuideLine, styles.layoutGuideVertical]} />
+                                        <View style={[styles.layoutGuideLine, styles.layoutGuideHorizontal]} />
+                                        <View style={[styles.layoutGuideLineSoft, styles.layoutGuideVerticalLeft]} />
+                                        <View style={[styles.layoutGuideLineSoft, styles.layoutGuideVerticalRight]} />
+                                        <View style={[styles.layoutGuideLineSoft, styles.layoutGuideHorizontalTop]} />
+                                        <View style={[styles.layoutGuideLineSoft, styles.layoutGuideHorizontalBottom]} />
+                                        <View style={styles.layoutGuideCenterDot} />
+                                    </View>
+                                    {newModel.image_open || newModel.image ? (
+                                        <CapsuleWithTimer
+                                            modelKey={newModel.id || 'base_kap'}
+                                            source={{ uri: newModel.image_open || newModel.image }}
+                                            date={new Date(Date.now() + 1000 * 3600 * 24).toISOString()}
+                                            modelLayout={newModel}
+                                            preferModelLayout
+                                            style={styles.modelLayoutPreviewImage}
+                                            hideTimer
+                                            hideParticles
+                                            isOpened
+                                            disableAnimations
+                                        />
+                                    ) : (
+                                        <Ionicons name="image-outline" size={38} color={Colors.textMuted} />
+                                    )}
+                                    {showLayoutTimerReference && layoutTimerReference ? (
+                                        <View
+                                            pointerEvents="none"
+                                            style={[
+                                                styles.layoutTimerReference,
+                                                {
+                                                    left: layoutTimerReference.x * LAYOUT_PREVIEW_SIZE,
+                                                    top: layoutTimerReference.y * LAYOUT_PREVIEW_SIZE,
+                                                    width: layoutTimerReference.w * LAYOUT_PREVIEW_SIZE,
+                                                    height: layoutTimerReference.h * LAYOUT_PREVIEW_SIZE,
+                                                },
+                                            ]}
+                                        >
+                                            <LiveTimer
+                                                date={new Date(Date.now() + 1000 * 3600 * 2.25).toISOString()}
+                                                modelId="__GLOBAL__"
+                                                configOverride={layoutTimerReference}
+                                                style={{ fontSize: Math.max(7, (LAYOUT_PREVIEW_SIZE * layoutTimerReference.h) * 0.48) }}
+                                                hideLabel
+                                                isOpened
+                                            />
+                                        </View>
+                                    ) : null}
+                                    {showLayoutChainReference && punkRabbitChain?.image_url && layoutChainReference ? (
+                                        <View
+                                            pointerEvents="none"
+                                            style={[
+                                                styles.layoutChainReference,
+                                                {
+                                                    left: layoutChainReference.x * LAYOUT_PREVIEW_SIZE,
+                                                    top: layoutChainReference.y * LAYOUT_PREVIEW_SIZE,
+                                                    width: LAYOUT_PREVIEW_SIZE * layoutChainReference.scale,
+                                                    height: LAYOUT_PREVIEW_SIZE * layoutChainReference.scale,
+                                                    transform: [
+                                                        { translateX: -(LAYOUT_PREVIEW_SIZE * layoutChainReference.scale) / 2 },
+                                                        { translateY: -(LAYOUT_PREVIEW_SIZE * layoutChainReference.scale) / 2 },
+                                                    ],
+                                                },
+                                            ]}
+                                        >
+                                            <Image source={{ uri: punkRabbitChain.image_url }} style={styles.layoutChainReferenceImage} resizeMode="contain" />
+                                        </View>
+                                    ) : null}
+                                </View>
+
+                                <View style={styles.layoutQuickActions}>
+                                    <TouchableOpacity
+                                        style={styles.layoutQuickBtn}
+                                        activeOpacity={0.75}
+                                        onPress={() => {
+                                            const openLayout = getOpenModelImageLayout(newModel);
+                                            setNewModel(p => ({
+                                                ...p,
+                                                image_open_scale: openLayout.scale,
+                                                image_open_scale_x: openLayout.scaleX,
+                                                image_open_scale_y: openLayout.scaleY,
+                                                image_open_offset_x: openLayout.offsetX,
+                                                image_open_offset_y: openLayout.offsetY,
+                                            }));
+                                        }}
+                                    >
+                                        <Ionicons name="sparkles-outline" size={14} color={Colors.primary} />
+                                        <Text style={styles.layoutQuickText}>Keep open values</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={styles.layoutQuickBtn}
+                                        activeOpacity={0.75}
+                                        onPress={() => {
+                                            const closedLayout = extractModelLayoutPreset(newModel);
+                                            setNewModel(p => ({
+                                                ...p,
+                                                image_open_scale: closedLayout.image_scale,
+                                                image_open_scale_x: closedLayout.image_scale_x,
+                                                image_open_scale_y: closedLayout.image_scale_y,
+                                                image_open_offset_x: closedLayout.image_offset_x,
+                                                image_open_offset_y: closedLayout.image_offset_y,
+                                            }));
+                                        }}
+                                    >
+                                        <Ionicons name="copy-outline" size={14} color={Colors.primary} />
+                                        <Text style={styles.layoutQuickText}>Copy closed layout</Text>
+                                    </TouchableOpacity>
+                                </View>
+
+                                <View style={styles.layoutControl}>
+                                    <Text style={styles.layoutControlLabel}>Open Overall Size</Text>
+                                    <View style={styles.layoutStepper}>
+                                        <TouchableOpacity
+                                            style={styles.layoutStepBtn}
+                                            activeOpacity={0.75}
+                                            onPress={() => setNewModel(p => ({ ...p, image_open_scale: clampNumber((Number(p.image_open_scale) || 1) - 0.01, MIN_MODEL_IMAGE_SCALE, MAX_MODEL_IMAGE_SCALE) }))}
+                                        >
+                                            <Ionicons name="remove" size={18} color={Colors.textPrimary} />
+                                        </TouchableOpacity>
+                                        <Text style={styles.layoutValue}>{Math.round(getOpenModelImageLayout(newModel).scale * 100)}%</Text>
+                                        <TouchableOpacity
+                                            style={styles.layoutStepBtn}
+                                            activeOpacity={0.75}
+                                            onPress={() => setNewModel(p => ({ ...p, image_open_scale: clampNumber((Number(p.image_open_scale) || 1) + 0.01, MIN_MODEL_IMAGE_SCALE, MAX_MODEL_IMAGE_SCALE) }))}
+                                        >
+                                            <Ionicons name="add" size={18} color={Colors.textPrimary} />
+                                        </TouchableOpacity>
+                                    </View>
+                                </View>
+
+                                <View style={styles.layoutControl}>
+                                    <Text style={styles.layoutControlLabel}>Open Width Stretch</Text>
+                                    <View style={styles.layoutStepper}>
+                                        <TouchableOpacity
+                                            style={styles.layoutStepBtn}
+                                            activeOpacity={0.75}
+                                            onPress={() => setNewModel(p => ({ ...p, image_open_scale_x: clampNumber((Number(p.image_open_scale_x) || 1) - 0.01, MIN_MODEL_IMAGE_SCALE, MAX_MODEL_IMAGE_SCALE) }))}
+                                        >
+                                            <Ionicons name="contract-outline" size={17} color={Colors.textPrimary} />
+                                        </TouchableOpacity>
+                                        <Text style={styles.layoutValue}>{Math.round(getOpenModelImageLayout(newModel).scaleX * 100)}%</Text>
+                                        <TouchableOpacity
+                                            style={styles.layoutStepBtn}
+                                            activeOpacity={0.75}
+                                            onPress={() => setNewModel(p => ({ ...p, image_open_scale_x: clampNumber((Number(p.image_open_scale_x) || 1) + 0.01, MIN_MODEL_IMAGE_SCALE, MAX_MODEL_IMAGE_SCALE) }))}
+                                        >
+                                            <Ionicons name="resize-outline" size={17} color={Colors.textPrimary} />
+                                        </TouchableOpacity>
+                                    </View>
+                                </View>
+
+                                <View style={styles.layoutControl}>
+                                    <Text style={styles.layoutControlLabel}>Open Height Stretch</Text>
+                                    <View style={styles.layoutStepper}>
+                                        <TouchableOpacity
+                                            style={styles.layoutStepBtn}
+                                            activeOpacity={0.75}
+                                            onPress={() => setNewModel(p => ({ ...p, image_open_scale_y: clampNumber((Number(p.image_open_scale_y) || 1) - 0.01, MIN_MODEL_IMAGE_SCALE, MAX_MODEL_IMAGE_SCALE) }))}
+                                        >
+                                            <Ionicons name="contract-outline" size={17} color={Colors.textPrimary} />
+                                        </TouchableOpacity>
+                                        <Text style={styles.layoutValue}>{Math.round(getOpenModelImageLayout(newModel).scaleY * 100)}%</Text>
+                                        <TouchableOpacity
+                                            style={styles.layoutStepBtn}
+                                            activeOpacity={0.75}
+                                            onPress={() => setNewModel(p => ({ ...p, image_open_scale_y: clampNumber((Number(p.image_open_scale_y) || 1) + 0.01, MIN_MODEL_IMAGE_SCALE, MAX_MODEL_IMAGE_SCALE) }))}
+                                        >
+                                            <Ionicons name="resize-outline" size={17} color={Colors.textPrimary} />
+                                        </TouchableOpacity>
+                                    </View>
+                                </View>
+
+                                <View style={styles.layoutControl}>
+                                    <Text style={styles.layoutControlLabel}>Open Move Horizontal</Text>
+                                    <View style={styles.layoutStepper}>
+                                        <TouchableOpacity
+                                            style={styles.layoutStepBtn}
+                                            activeOpacity={0.75}
+                                            onPress={() => setNewModel(p => ({ ...p, image_open_offset_x: clampNumber((Number(p.image_open_offset_x) || 0) - 1, MIN_MODEL_IMAGE_OFFSET, MAX_MODEL_IMAGE_OFFSET) }))}
+                                        >
+                                            <Ionicons name="arrow-back" size={17} color={Colors.textPrimary} />
+                                        </TouchableOpacity>
+                                        <Text style={styles.layoutValue}>{Math.round(getOpenModelImageLayout(newModel).offsetX)}px</Text>
+                                        <TouchableOpacity
+                                            style={styles.layoutStepBtn}
+                                            activeOpacity={0.75}
+                                            onPress={() => setNewModel(p => ({ ...p, image_open_offset_x: clampNumber((Number(p.image_open_offset_x) || 0) + 1, MIN_MODEL_IMAGE_OFFSET, MAX_MODEL_IMAGE_OFFSET) }))}
+                                        >
+                                            <Ionicons name="arrow-forward" size={17} color={Colors.textPrimary} />
+                                        </TouchableOpacity>
+                                    </View>
+                                </View>
+
+                                <View style={styles.layoutControl}>
+                                    <Text style={styles.layoutControlLabel}>Open Move Vertical</Text>
+                                    <View style={styles.layoutStepper}>
+                                        <TouchableOpacity
+                                            style={styles.layoutStepBtn}
+                                            activeOpacity={0.75}
+                                            onPress={() => setNewModel(p => ({ ...p, image_open_offset_y: clampNumber((Number(p.image_open_offset_y) || 0) - 1, MIN_MODEL_IMAGE_OFFSET, MAX_MODEL_IMAGE_OFFSET) }))}
+                                        >
+                                            <Ionicons name="arrow-up" size={17} color={Colors.textPrimary} />
+                                        </TouchableOpacity>
+                                        <Text style={styles.layoutValue}>{Math.round(getOpenModelImageLayout(newModel).offsetY)}px</Text>
+                                        <TouchableOpacity
+                                            style={styles.layoutStepBtn}
+                                            activeOpacity={0.75}
+                                            onPress={() => setNewModel(p => ({ ...p, image_open_offset_y: clampNumber((Number(p.image_open_offset_y) || 0) + 1, MIN_MODEL_IMAGE_OFFSET, MAX_MODEL_IMAGE_OFFSET) }))}
+                                        >
+                                            <Ionicons name="arrow-down" size={17} color={Colors.textPrimary} />
+                                        </TouchableOpacity>
+                                    </View>
+                                </View>
+                            </View>
+
+                            <View style={styles.inputSection}>
+                                <View style={styles.layoutSectionHeader}>
+                                    <View>
+                                        <Text style={styles.innerLabel}>Model Effect</Text>
+                                        <Text style={styles.switchSub}>Add glow, fire or sparkles and position them around the design.</Text>
+                                    </View>
+                                </View>
+
+                                <View style={styles.effectOptionRow}>
+                                    {MODEL_EFFECT_OPTIONS.map(option => (
+                                        <TouchableOpacity
+                                            key={option.id}
+                                            style={[styles.effectOptionBtn, newModel.effect_type === option.id && styles.effectOptionBtnActive]}
+                                            activeOpacity={0.8}
+                                            onPress={() => setNewModel(p => ({ ...p, effect_type: option.id }))}
+                                        >
+                                            <Ionicons name={option.icon} size={16} color={newModel.effect_type === option.id ? '#fff' : Colors.primary} />
+                                            <Text style={[styles.effectOptionText, newModel.effect_type === option.id && styles.effectOptionTextActive]}>{option.label}</Text>
+                                        </TouchableOpacity>
+                                    ))}
+                                </View>
+
+                                <Text style={styles.label}>Effect Color</Text>
+                                <View style={styles.colorPalette}>
+                                    {PRESET_THEME_COLORS.map(c => (
+                                        <TouchableOpacity
+                                            key={`effect-${c}`}
+                                            style={[styles.colorBubble, { backgroundColor: c }, newModel.effect_tint === c && styles.activeColorBubble]}
+                                            activeOpacity={0.7}
+                                            onPress={() => setNewModel(p => ({ ...p, effect_tint: c }))}
+                                        />
+                                    ))}
+                                </View>
+
+                                <View style={styles.referenceToggleRow}>
+                                    <View style={styles.referenceToggleCopy}>
+                                        <Ionicons name="layers-outline" size={16} color={Colors.primary} />
+                                        <Text style={styles.referenceToggleText}>Effect Layer</Text>
+                                    </View>
+                                    <View style={styles.effectLayerRow}>
+                                        <TouchableOpacity
+                                            style={[styles.referenceLayerBtn, newModel.effect_layer === 'behind' && styles.activeReferenceLayerBtn]}
+                                            activeOpacity={0.75}
+                                            onPress={() => setNewModel(p => ({ ...p, effect_layer: 'behind' }))}
+                                        >
+                                            <Text style={[styles.referenceLayerText, newModel.effect_layer === 'behind' && styles.activeReferenceLayerText]}>Behind</Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                            style={[styles.referenceLayerBtn, newModel.effect_layer === 'front' && styles.activeReferenceLayerBtn]}
+                                            activeOpacity={0.75}
+                                            onPress={() => setNewModel(p => ({ ...p, effect_layer: 'front' }))}
+                                        >
+                                            <Text style={[styles.referenceLayerText, newModel.effect_layer === 'front' && styles.activeReferenceLayerText]}>Front</Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                </View>
+
+                                <View style={styles.grid}>
+                                    <View style={styles.col}>
+                                        <Text style={styles.layoutControlLabel}>Effect Scale</Text>
+                                        <View style={styles.layoutStepper}>
+                                            <TouchableOpacity style={styles.layoutStepBtn} activeOpacity={0.75} onPress={() => setNewModel(p => ({ ...p, effect_scale: clampNumber((Number(p.effect_scale) || 1) - 0.02, 0.4, 2.2) }))}>
+                                                <Ionicons name="remove" size={18} color={Colors.textPrimary} />
+                                            </TouchableOpacity>
+                                            <Text style={styles.layoutValue}>{Math.round((Number(newModel.effect_scale) || 1) * 100)}%</Text>
+                                            <TouchableOpacity style={styles.layoutStepBtn} activeOpacity={0.75} onPress={() => setNewModel(p => ({ ...p, effect_scale: clampNumber((Number(p.effect_scale) || 1) + 0.02, 0.4, 2.2) }))}>
+                                                <Ionicons name="add" size={18} color={Colors.textPrimary} />
+                                            </TouchableOpacity>
+                                        </View>
+                                    </View>
+                                    <View style={styles.col}>
+                                        <Text style={styles.layoutControlLabel}>Effect Opacity</Text>
+                                        <View style={styles.layoutStepper}>
+                                            <TouchableOpacity style={styles.layoutStepBtn} activeOpacity={0.75} onPress={() => setNewModel(p => ({ ...p, effect_opacity: clampNumber((Number(p.effect_opacity) || 1) - 0.05, 0, 1) }))}>
+                                                <Ionicons name="remove" size={18} color={Colors.textPrimary} />
+                                            </TouchableOpacity>
+                                            <Text style={styles.layoutValue}>{Math.round((Number(newModel.effect_opacity) || 1) * 100)}%</Text>
+                                            <TouchableOpacity style={styles.layoutStepBtn} activeOpacity={0.75} onPress={() => setNewModel(p => ({ ...p, effect_opacity: clampNumber((Number(p.effect_opacity) || 1) + 0.05, 0, 1) }))}>
+                                                <Ionicons name="add" size={18} color={Colors.textPrimary} />
+                                            </TouchableOpacity>
+                                        </View>
+                                    </View>
+                                </View>
+
+                                <View style={styles.grid}>
+                                    <View style={styles.col}>
+                                        <Text style={styles.layoutControlLabel}>Effect Move Horizontal</Text>
+                                        <View style={styles.layoutStepper}>
+                                            <TouchableOpacity style={styles.layoutStepBtn} activeOpacity={0.75} onPress={() => setNewModel(p => ({ ...p, effect_offset_x: clampNumber((Number(p.effect_offset_x) || 0) - 1, -120, 120) }))}>
+                                                <Ionicons name="arrow-back" size={17} color={Colors.textPrimary} />
+                                            </TouchableOpacity>
+                                            <Text style={styles.layoutValue}>{Math.round(Number(newModel.effect_offset_x) || 0)}px</Text>
+                                            <TouchableOpacity style={styles.layoutStepBtn} activeOpacity={0.75} onPress={() => setNewModel(p => ({ ...p, effect_offset_x: clampNumber((Number(p.effect_offset_x) || 0) + 1, -120, 120) }))}>
+                                                <Ionicons name="arrow-forward" size={17} color={Colors.textPrimary} />
+                                            </TouchableOpacity>
+                                        </View>
+                                    </View>
+                                    <View style={styles.col}>
+                                        <Text style={styles.layoutControlLabel}>Effect Move Vertical</Text>
+                                        <View style={styles.layoutStepper}>
+                                            <TouchableOpacity style={styles.layoutStepBtn} activeOpacity={0.75} onPress={() => setNewModel(p => ({ ...p, effect_offset_y: clampNumber((Number(p.effect_offset_y) || 0) - 1, -120, 120) }))}>
+                                                <Ionicons name="arrow-up" size={17} color={Colors.textPrimary} />
+                                            </TouchableOpacity>
+                                            <Text style={styles.layoutValue}>{Math.round(Number(newModel.effect_offset_y) || 0)}px</Text>
+                                            <TouchableOpacity style={styles.layoutStepBtn} activeOpacity={0.75} onPress={() => setNewModel(p => ({ ...p, effect_offset_y: clampNumber((Number(p.effect_offset_y) || 0) + 1, -120, 120) }))}>
+                                                <Ionicons name="arrow-down" size={17} color={Colors.textPrimary} />
+                                            </TouchableOpacity>
+                                        </View>
                                     </View>
                                 </View>
                             </View>
@@ -2402,6 +3213,54 @@ const styles = StyleSheet.create({
     saveBtnText: { color: '#fff', fontFamily: Fonts.bold, fontSize: 15 },
     timerCalibration: { gap: 15 },
     stickerSection: { marginTop: 10 },
+    moderationSection: { gap: 14, marginTop: 10 },
+    moderationFilterRow: { flexDirection: 'row', gap: 8, marginBottom: 4 },
+    moderationFilterBtn: { flex: 1, paddingVertical: 11, borderRadius: 14, borderWidth: 1, borderColor: '#ece7fb', backgroundColor: '#f8f7fc', alignItems: 'center', justifyContent: 'center' },
+    moderationFilterBtnActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
+    moderationFilterText: { fontSize: 12, fontFamily: Fonts.bold, color: Colors.textMuted },
+    moderationFilterTextActive: { color: '#fff' },
+    moderationSearchCard: { padding: 12, borderRadius: 16, borderWidth: 1, borderColor: '#ece7fb', backgroundColor: '#faf9fe', gap: 10 },
+    moderationSearchLabel: { fontSize: 12, fontFamily: Fonts.bold, color: Colors.textPrimary, textTransform: 'uppercase' },
+    moderationSearchTypeRow: { flexDirection: 'row', gap: 8 },
+    moderationSearchTypeBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, backgroundColor: '#fff', borderWidth: 1, borderColor: '#ece7fb' },
+    moderationSearchTypeBtnActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
+    moderationSearchTypeText: { fontSize: 12, fontFamily: Fonts.bold, color: Colors.textMuted },
+    moderationSearchTypeTextActive: { color: '#fff' },
+    moderationSearchHint: { fontSize: 11, lineHeight: 16, fontFamily: Fonts.medium, color: Colors.textMuted },
+    moderationEmptyState: { alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 34, paddingHorizontal: 18, borderRadius: 18, backgroundColor: '#faf9fe', borderWidth: 1, borderColor: '#efe9ff' },
+    moderationEmptyTitle: { fontSize: 15, fontFamily: Fonts.bold, color: Colors.textPrimary, textAlign: 'center' },
+    moderationEmptyText: { fontSize: 12, fontFamily: Fonts.medium, color: Colors.textMuted, textAlign: 'center', maxWidth: 260 },
+    moderationList: { gap: 12 },
+    moderationCard: { backgroundColor: '#fff', borderRadius: 20, overflow: 'hidden', borderWidth: 1, borderColor: '#eee', ...Shadow.small },
+    moderationPreview: { height: 190, backgroundColor: '#f5f3fb', alignItems: 'center', justifyContent: 'center', position: 'relative' },
+    moderationPreviewMedia: { width: '100%', height: '100%' },
+    moderationVideoPlaceholder: { alignItems: 'center', justifyContent: 'center', gap: 8 },
+    moderationVideoText: { fontSize: 12, fontFamily: Fonts.bold, color: Colors.textMuted },
+    moderationTextPreview: { flex: 1, width: '100%', paddingHorizontal: 18, paddingVertical: 16, alignItems: 'flex-start', justifyContent: 'center', gap: 8 },
+    moderationTextPreviewLabel: { fontSize: 12, fontFamily: Fonts.bold, color: Colors.primary },
+    moderationTextPreviewContent: { fontSize: 13, lineHeight: 20, fontFamily: Fonts.medium, color: Colors.textPrimary, width: '100%' },
+    moderationStatusPill: { position: 'absolute', top: 12, right: 12, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12 },
+    moderationStatusReview: { backgroundColor: '#f97316' },
+    moderationStatusRejected: { backgroundColor: '#ef4444' },
+    moderationStatusApproved: { backgroundColor: '#22c55e' },
+    moderationStatusText: { fontSize: 10, fontFamily: Fonts.bold, color: '#fff', textTransform: 'uppercase' },
+    moderationBody: { padding: 15, gap: 8 },
+    moderationCapsuleTitle: { fontSize: 16, fontFamily: Fonts.bold, color: Colors.textPrimary },
+    moderationOwnerText: { fontSize: 13, fontFamily: Fonts.medium, color: Colors.primary },
+    moderationExcerpt: { fontSize: 13, lineHeight: 19, fontFamily: Fonts.regular, color: Colors.textSecondary },
+    moderationReasonRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: '#fff7ed', borderRadius: 12, padding: 10 },
+    moderationReasonText: { flex: 1, fontSize: 12, lineHeight: 17, fontFamily: Fonts.medium, color: '#9a3412' },
+    moderationScoreText: { fontSize: 11, fontFamily: Fonts.bold, color: Colors.textMuted },
+    moderationActionRow: { flexDirection: 'row', gap: 10, marginTop: 4 },
+    moderationApproveBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12, borderRadius: 14, backgroundColor: '#22c55e' },
+    moderationRejectBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12, borderRadius: 14, backgroundColor: '#ef4444' },
+    moderationApproveText: { fontSize: 13, fontFamily: Fonts.bold, color: '#fff' },
+    moderationRejectText: { fontSize: 13, fontFamily: Fonts.bold, color: '#fff' },
+    moderationBlockBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingVertical: 11, borderRadius: 14, borderWidth: 1, borderColor: '#fecaca', backgroundColor: '#fff5f5' },
+    moderationBlockBtnDisabled: { borderColor: '#e5e7eb', backgroundColor: '#f8fafc' },
+    moderationBlockText: { fontSize: 12, fontFamily: Fonts.bold, color: '#ef4444' },
+    moderationBlockTextDisabled: { color: '#64748b' },
+    moderationActionDisabled: { opacity: 0.6 },
     stickerGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
     stickerCard: { width: (SCREEN_WIDTH - 64) / 3, backgroundColor: '#fff', borderRadius: 15, padding: 10, alignItems: 'center', position: 'relative', borderWidth: 1, borderColor: '#eee' },
     stickerImg: { width: 60, height: 60 },
@@ -2503,6 +3362,34 @@ const styles = StyleSheet.create({
     activeDropOption: { backgroundColor: Colors.primary, borderColor: Colors.primary },
     dropOptionText: { fontSize: 12, fontFamily: Fonts.medium, color: Colors.textSecondary },
     activeDropOptionText: { color: '#fff', fontFamily: Fonts.bold },
+    effectOptionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 14 },
+    effectOptionBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        borderRadius: 12,
+        backgroundColor: '#fff',
+        borderWidth: 1,
+        borderColor: '#ece7fb',
+    },
+    effectOptionBtnActive: {
+        backgroundColor: Colors.primary,
+        borderColor: Colors.primary,
+    },
+    effectOptionText: {
+        fontSize: 12,
+        fontFamily: Fonts.bold,
+        color: Colors.primary,
+    },
+    effectOptionTextActive: {
+        color: '#fff',
+    },
+    effectLayerRow: {
+        flexDirection: 'row',
+        gap: 8,
+    },
     inputLabel: { fontSize: 13, fontFamily: Fonts.bold, color: Colors.textPrimary, marginBottom: 5 },
     webDatePickerContainer: {
         backgroundColor: '#fff',

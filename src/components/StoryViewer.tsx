@@ -244,7 +244,7 @@ const ls = StyleSheet.create({
 });
 
 // ─── Viewers bottom sheet ──────────────────────────────────────────────────────
-function ViewersSheet({ visible, onClose, storyId }: { visible: boolean; onClose: () => void; storyId: string }) {
+function ViewersSheet({ visible, onClose, storyId, ownerId }: { visible: boolean; onClose: () => void; storyId: string; ownerId?: string }) {
     const { t } = useTranslation();
     const insets = useSafeAreaInsets();
     const [viewers, setViewers] = useState<any[]>([]);
@@ -255,12 +255,18 @@ function ViewersSheet({ visible, onClose, storyId }: { visible: boolean; onClose
         if (!visible) return;
         setLoading(true);
         Animated.spring(slideAnim, { toValue: 0, friction: 9, tension: 50, useNativeDriver: true }).start();
-        supabase.from('story_views')
-            .select('user_id, viewed_at, profiles:user_id(id, username, display_name, avatar_url)')
-            .eq('story_id', storyId)
-            .order('viewed_at', { ascending: false })
-            .then(({ data }) => { if (data) setViewers(data.map((d: any) => ({ ...d.profiles, viewed_at: d.viewed_at }))); setLoading(false); });
-    }, [visible, storyId]);
+        let query = supabase
+            .from('story_reads')
+            .select('user_id, profiles:user_id(id, username, display_name, avatar_url)')
+            .eq('story_id', storyId);
+
+        if (ownerId) query = query.neq('user_id', ownerId);
+
+        query.then(({ data }) => {
+            if (data) setViewers(data.map((d: any) => d.profiles));
+            setLoading(false);
+        });
+    }, [visible, storyId, ownerId]);
 
     if (!visible) return null;
 
@@ -441,7 +447,14 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
     };
 
     const fetchViews = async (sid: string) => {
-        const { count } = await supabase.from('story_views').select('*', { count: 'exact', head: true }).eq('story_id', sid);
+        let query = supabase
+            .from('story_reads')
+            .select('*', { count: 'exact', head: true })
+            .eq('story_id', sid);
+
+        if (ownerId) query = query.neq('user_id', ownerId);
+
+        const { count } = await query;
         setViewsData(p => ({ ...p, [sid]: count || 0 }));
     };
 
@@ -450,10 +463,12 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
         trackedViewsRef.current.add(sid);
         // Don't track your own views
         if (ownerId && ownerId === currentUserId) return;
-        await supabase.from('story_views').upsert(
-            { story_id: sid, user_id: currentUserId, viewed_at: new Date().toISOString() },
-            { onConflict: 'story_id,user_id' }
-        );
+        if (!onStoryRead) {
+            await supabase.from('story_reads').upsert(
+                { story_id: sid, user_id: currentUserId },
+                { onConflict: 'user_id,story_id' }
+            );
+        }
         // Refresh count
         fetchViews(sid);
     };
@@ -830,6 +845,7 @@ export default function StoryViewer({ visible, userGroup, onClose, onNextUser, o
                 visible={!!showViewersId}
                 onClose={() => { setShowViewersId(null); setIsPaused(false); }}
                 storyId={showViewersId || ''}
+                ownerId={ownerId}
             />
         </Modal>
     );
