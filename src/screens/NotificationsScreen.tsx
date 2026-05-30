@@ -20,6 +20,7 @@ import { safetyService } from '../utils/safety';
 const { width, height } = Dimensions.get('window');
 
 const AnyFlashList = FlashList as any;
+const INVITE_EXPIRY_MS = 48 * 60 * 60 * 1000;
 
 // ─── Ripple success animation component ──────────────────────────────────────
 function MarkAllRipple({ visible, onDone }: { visible: boolean; onDone: () => void }) {
@@ -125,44 +126,74 @@ export default function NotificationsScreen() {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return;
 
-        const start = isRefresh ? 0 : page * PAGE_SIZE;
-        const end = start + PAGE_SIZE - 1;
+        const startPage = isRefresh ? 0 : page;
 
         if (!isRefresh) setLoadingMore(true);
         else setLoading(true);
 
         const blocked = await safetyService.getAllSafetyUserIds(user.id);
+        try {
+            await supabase.rpc('reject_expired_capsule_invites');
+        } catch {}
         const { data: followedCapsules } = await supabase
             .from('capsule_followers')
             .select('capsule_id')
             .eq('user_id', user.id);
         const followedCapsuleIds = new Set((followedCapsules || []).map((row: any) => row.capsule_id));
-
-        const { data, error } = await supabase
-            .from('notifications')
-            .select('*, sender:sender_id(username, display_name, avatar_url, favorite_color), capsules(title, type, model, chain_id, opens_at, owner_id)')
+        const { data: participantCapsules } = await supabase
+            .from('capsule_invites')
+            .select('capsule_id')
             .eq('user_id', user.id)
-            .order('created_at', { ascending: false })
-            .range(start, end);
+            .eq('status', 'accepted');
+        const participantCapsuleIds = new Set((participantCapsules || []).map((row: any) => row.capsule_id));
+        const { data: pendingInviteRows } = await supabase
+            .from('capsule_invites')
+            .select('capsule_id, expires_at, status')
+            .eq('user_id', user.id)
+            .eq('status', 'pending');
+        const pendingInvitesByCapsule = new Map(
+            (pendingInviteRows || []).map((invite: any) => [invite.capsule_id, invite])
+        );
 
-        if (error) {
-            console.error('Error loading notifications:', error);
-            setLoading(false);
-            setLoadingMore(false);
-            return;
-        }
+        let nextPage = startPage;
+        let lastRawCount = 0;
+        let mapped: Notification[] = [];
+        let firstError: any = null;
+        const maxRawPages = 5;
 
-        if (data) {
-            const mapped: Notification[] = data
+        while (mapped.length < PAGE_SIZE && nextPage < startPage + maxRawPages) {
+            const start = nextPage * PAGE_SIZE;
+            const end = start + PAGE_SIZE - 1;
+            const { data, error } = await supabase
+                .from('notifications')
+                .select('*, sender:sender_id(username, display_name, avatar_url, favorite_color), capsules(title, type, model, chain_id, opens_at, owner_id)')
+                .eq('user_id', user.id)
+                .order('created_at', { ascending: false })
+                .range(start, end);
+
+            if (error) {
+                firstError = error;
+                break;
+            }
+
+            const rawRows = data || [];
+            lastRawCount = rawRows.length;
+            nextPage += 1;
+
+            const visibleRows: Notification[] = rawRows
                 .filter(n => {
                     if (blocked.includes(n.sender_id) || n.conversation_id) return false;
                     if (['chat', 'message', 'capsule_chat', 'chat_message'].includes(n.type)) return false;
-                    if (n.type === 'new_item') return !!n.capsule_id && followedCapsuleIds.has(n.capsule_id);
+                    if (n.type === 'new_item') return !!n.capsule_id && (followedCapsuleIds.has(n.capsule_id) || participantCapsuleIds.has(n.capsule_id));
+                    if (n.type === 'opening_soon') return !!n.capsule_id && followedCapsuleIds.has(n.capsule_id);
                     return true;
                 })
                 .map(n => {
                     const createdDate = new Date(n.created_at);
-                    const expiryDate = new Date(createdDate.getTime() + 3 * 86400000);
+                    const pendingInvite = n.capsule_id ? pendingInvitesByCapsule.get(n.capsule_id) : null;
+                    const expiryDate = pendingInvite?.expires_at
+                        ? new Date(pendingInvite.expires_at)
+                        : new Date(createdDate.getTime() + INVITE_EXPIRY_MS);
                     
                     let displayMessage = n.message || '';
                     const capTitle = n.capsules?.title ? `"${n.capsules.title}"` : '';
@@ -173,10 +204,16 @@ export default function NotificationsScreen() {
                             : t('common.started_following_you');
                     } else if (n.type === 'new_item') {
                         displayMessage = `${t('detail.added_new_memory_to')} ${capTitle}`;
+                    } else if (n.type === 'opening_soon') {
+                        displayMessage = `${t('notifications.capsule_opening_soon')} ${capTitle}`;
+                    } else if (n.type === 'capsule_deleted_empty') {
+                        displayMessage = t('notifications.capsule_deleted_empty');
                     } else if (n.type === 'capsule_invite') {
                         displayMessage = `${t('detail.invited_you_to_capsule', { title: '' })} ${capTitle}`.trim();
                     } else if (n.type === 'like' || n.type === 'liked_capsule') {
                         displayMessage = `${t('detail.liked_your_capsule')} ${capTitle}`;
+                    } else if (n.type === 'comment_reply') {
+                        displayMessage = n.message || `${t('notifications.comment_reply_body')} ${capTitle}`;
                     } else if (n.type === 'comment' || n.type === 'commented_capsule') {
                         displayMessage = `${t('notifications.commented_capsule')} ${capTitle}`;
                     }
@@ -205,32 +242,43 @@ export default function NotificationsScreen() {
                         expiryDate,
                     };
                 });
-            
-            if (isRefresh) {
-                setNotifications(mapped);
-                setPage(1);
-                setHasMore(data.length === PAGE_SIZE);
 
-                // Cleanup expired invitations from DB
-                const expiredIds = mapped.filter(n => n.type === 'capsule_invite' && n.isExpired).map(n => n.capsuleId).filter(Boolean);
-                if (expiredIds.length > 0) {
-                    supabase.from('capsule_invites')
-                        .delete()
-                        .eq('user_id', user.id)
-                        .in('capsule_id', expiredIds)
-                        .eq('status', 'pending')
-                        .then(({ error }) => {
-                            if (!error) {
-                                // Also remove from UI if desired, but here we just clean DB
-                                // The next refresh will show them gone.
-                            }
-                        });
-                }
-            } else {
-                setNotifications(prev => [...prev, ...mapped]);
-                setPage(p => p + 1);
-                setHasMore(data.length === PAGE_SIZE);
+            mapped = [...mapped, ...visibleRows];
+
+            if (lastRawCount < PAGE_SIZE) break;
+        }
+
+        if (firstError) {
+            console.error('Error loading notifications:', firstError);
+            setLoading(false);
+            setLoadingMore(false);
+            return;
+        }
+
+        if (isRefresh) {
+            setNotifications(mapped);
+            setPage(nextPage);
+            setHasMore(lastRawCount === PAGE_SIZE);
+
+            // Expire invitations in DB without deleting history.
+            const expiredIds = mapped.filter(n => n.type === 'capsule_invite' && n.isExpired).map(n => n.capsuleId).filter(Boolean);
+            if (expiredIds.length > 0) {
+                supabase.from('capsule_invites')
+                    .update({ status: 'rejected' })
+                    .eq('user_id', user.id)
+                    .in('capsule_id', expiredIds)
+                    .eq('status', 'pending')
+                    .then(({ error }) => {
+                        if (!error) {
+                            // Also remove from UI if desired, but here we just clean DB
+                            // The next refresh will show them gone.
+                        }
+                    });
             }
+        } else {
+            setNotifications(prev => [...prev, ...mapped]);
+            setPage(nextPage);
+            setHasMore(lastRawCount === PAGE_SIZE);
         }
         setLoading(false);
         setLoadingMore(false);
@@ -252,8 +300,15 @@ export default function NotificationsScreen() {
                     .eq('user_id', user.id)
                     .eq('type', 'new_item')
                     .eq('is_read', false);
-                const hiddenUploadUnread = (unreadUploads || []).filter((n: any) => !n.capsule_id || !followedCapsuleIds.has(n.capsule_id)).length;
-                setTotalUnread(Math.max(0, (count || 0) - hiddenUploadUnread));
+                const hiddenUploadUnread = (unreadUploads || []).filter((n: any) => !n.capsule_id || (!followedCapsuleIds.has(n.capsule_id) && !participantCapsuleIds.has(n.capsule_id))).length;
+                const { data: unreadOpeningSoon } = await supabase
+                    .from('notifications')
+                    .select('id, capsule_id')
+                    .eq('user_id', user.id)
+                    .eq('type', 'opening_soon')
+                    .eq('is_read', false);
+                const hiddenOpeningSoonUnread = (unreadOpeningSoon || []).filter((n: any) => !n.capsule_id || !followedCapsuleIds.has(n.capsule_id)).length;
+                setTotalUnread(Math.max(0, (count || 0) - hiddenUploadUnread - hiddenOpeningSoonUnread));
             }
         }
     };

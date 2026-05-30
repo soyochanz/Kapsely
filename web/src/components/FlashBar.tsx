@@ -15,24 +15,22 @@ export const FlashBar: React.FC<FlashBarProps> = ({
   onPressStory 
 }) => {
   return (
-    <div className="flash-bar">
-      {/* Your Story */}
-      <div className="flash-item" onClick={onPressMyStory}>
-        <div className={`flash-ring ${myStory ? '' : 'seen'}`} style={{ background: !myStory ? 'var(--border)' : undefined }}>
+    <div className="flash-strip" aria-label="Flashes">
+      <button className="flash-bubble add-flash" onClick={onPressMyStory}>
+        <div className={`flash-ring ${myStory ? '' : 'seen'}`}>
           {myStory ? (
             <img src={myStory.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${myStory.username}`} className="flash-avatar" alt="My Story" />
           ) : (
-            <div className="flash-avatar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--surface-alt)' }}>
-              <Plus size={24} color="var(--primary)" />
+            <div className="flash-avatar flash-add-avatar">
+              <Plus size={24} />
             </div>
           )}
         </div>
-        <span className="flash-name">Your Flash</span>
-      </div>
+        <span>Tu flash</span>
+      </button>
 
-      {/* Others Stories */}
       {stories.map((user) => (
-        <div key={user.owner_id} className="flash-item" onClick={() => onPressStory(user)}>
+        <button key={user.owner_id} className="flash-bubble" onClick={() => onPressStory(user)}>
           <div className={`flash-ring ${user.all_read ? 'seen' : ''}`}>
             <img 
               src={user.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.username}`} 
@@ -40,8 +38,8 @@ export const FlashBar: React.FC<FlashBarProps> = ({
               alt={user.username} 
             />
           </div>
-          <span className="flash-name">{user.display_name || user.username}</span>
-        </div>
+          <span>{user.display_name || user.username}</span>
+        </button>
       ))}
     </div>
   );

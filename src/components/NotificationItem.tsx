@@ -15,12 +15,16 @@ const typeConfig = {
     eventcap: { color: Colors.eventCap },
     legacycap: { color: Colors.legacyCap },
 };
+const INVITE_EXPIRY_MS = 48 * 60 * 60 * 1000;
 
 const notifIcons: Record<string, { name: string; color: string }> = {
     like: { name: 'heart', color: '#e84545' },
     comment: { name: 'chatbubble', color: Colors.primaryLight },
+    comment_reply: { name: 'return-down-forward', color: Colors.primary },
     follow: { name: 'person-add', color: Colors.primary },
     capsule_opened: { name: 'lock-open', color: Colors.legacyCap },
+    opening_soon: { name: 'time', color: Colors.primary },
+    capsule_deleted_empty: { name: 'trash', color: '#EF4444' },
     capsule_invite: { name: 'mail', color: Colors.eventCap },
     memory: { name: 'sparkles', color: Colors.legacyCap },
     chat_message: { name: 'chatbubbles', color: Colors.primary },
@@ -56,8 +60,10 @@ export default function NotificationItem({ notification, onMarkRead, onAcceptInv
     };
 
     const isInvite = notification.type === 'capsule_invite';
-    const isExpired = notification.createdAt
-        ? new Date(notification.createdAt).getTime() < Date.now() - 3 * 24 * 60 * 60 * 1000
+    const isExpired = notification.expiryDate
+        ? notification.expiryDate.getTime() <= Date.now()
+        : notification.createdAt
+        ? new Date(notification.createdAt).getTime() < Date.now() - INVITE_EXPIRY_MS
         : false;
 
     return (
@@ -113,10 +119,10 @@ export default function NotificationItem({ notification, onMarkRead, onAcceptInv
                 {isInvite && !isExpired && onAcceptInvite && onRejectInvite && (
                     <View style={styles.inviteActions}>
                         <TouchableOpacity style={styles.rejectBtn} activeOpacity={0.7} onPress={() => onRejectInvite(notification)}>
-                            <Text style={styles.rejectBtnText}>{t('common.reject') || 'Rechazar'}</Text>
+                            <Text style={styles.rejectBtnText}>{t('common.reject', { defaultValue: 'Rechazar' })}</Text>
                         </TouchableOpacity>
                         <TouchableOpacity style={styles.acceptBtn} activeOpacity={0.8} onPress={() => onAcceptInvite(notification)}>
-                            <Text style={styles.acceptBtnText}>{t('common.accept') || 'Aceptar'}</Text>
+                            <Text style={styles.acceptBtnText}>{t('common.accept', { defaultValue: 'Aceptar' })}</Text>
                         </TouchableOpacity>
                     </View>
                 )}

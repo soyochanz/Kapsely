@@ -17,7 +17,7 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Spacing, BorderRadius, Shadow } from '../theme';
 import { Image } from 'expo-image';
-import { supabase, Profile, SUPABASE_URL } from '../lib/supabase';
+import { safeSignOut, supabase, Profile, SUPABASE_URL } from '../lib/supabase';
 
 
 // ── Color palette ─────────────────────────────────────────────────────────────
@@ -297,7 +297,7 @@ export default function EditProfileScreen({ onClose, initialData }: Props) {
                 text: t('common.logout') || 'Log Out',
                 style: 'destructive',
                 onPress: async () => {
-                    await supabase.auth.signOut();
+                    await safeSignOut();
                 }
             }
         ]);
@@ -305,18 +305,6 @@ export default function EditProfileScreen({ onClose, initialData }: Props) {
 
     const handleDeleteAccount = async () => {
         if (!userId) return;
-        
-        // IMPORTANT: For true permanent deletion from Supabase Auth, 
-        // the user MUST add this function in their Supabase SQL Editor:
-        /*
-        CREATE OR REPLACE FUNCTION delete_user_permanently()
-        RETURNS void AS $$
-        BEGIN
-          DELETE FROM auth.users WHERE id = auth.uid();
-        END;
-        $$ LANGUAGE plpgsql SECURITY DEFINER;
-        */
-
         Alert.alert(
             t('profile.deleteAccount'),
             t('profile.deleteAccountConfirm'),
@@ -339,26 +327,10 @@ export default function EditProfileScreen({ onClose, initialData }: Props) {
                                         try {
                                             if (!userId) throw new Error('User info not loaded');
 
-                                            // 1. Full data wipe (Activity, Content, Capsules)
-                                            await supabase.from('likes').delete().eq('user_id', userId);
-                                            await supabase.from('comments').delete().eq('user_id', userId);
-                                            await supabase.from('story_reads').delete().eq('user_id', userId);
-                                            await supabase.from('notifications').delete().or(`user_id.eq.${userId},sender_id.eq.${userId}`);
-                                            await supabase.from('capsule_invites').delete().eq('user_id', userId);
-                                            await supabase.from('capsule_items').delete().eq('owner_id', userId);
-                                            await supabase.from('capsules').delete().eq('owner_id', userId);
-                                            await supabase.from('follows').delete().or(`follower_id.eq.${userId},following_id.eq.${userId}`);
-                                            await supabase.from('profiles').delete().eq('id', userId);
-
-                                            // 2. Auth deletion (Requires SQL function)
-                                            const { error: rpcError } = await supabase.rpc('delete_user_permanently');
-                                            await supabase.auth.signOut();
-                                            
-                                            if (rpcError) {
-                                                Alert.alert('✅ Wiped', 'Your data was deleted. Note: Login remains active unless backend function is installed.');
-                                            } else {
-                                                Alert.alert('✅ Terminated', 'Account and data permanently destroyed.');
-                                            }
+                                            const { error: rpcError } = await supabase.rpc('request_account_deletion');
+                                            if (rpcError) throw rpcError;
+                                            await safeSignOut();
+                                            Alert.alert(t('common.ready'), t('profile.account_deletion_scheduled'));
                                         } catch (e: any) {
                                             console.error('Delete flow failure:', e);
                                             Alert.alert('Error', e.message || 'Deletion failed. Please contact support.');

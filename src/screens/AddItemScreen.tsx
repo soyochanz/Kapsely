@@ -41,6 +41,13 @@ const createUploadBatchId = () =>
 const stripBatchMarker = (value?: string | null) =>
     (value || '').replace(/!!b:[^\s]+/g, '').trim();
 
+const isLockedSealedCapsule = (capsule: any) => {
+    if (!capsule || capsule.status !== 'sealed') return false;
+    if (capsule.is_opening) return true;
+    if (!capsule.opens_at) return false;
+    return new Date(capsule.opens_at).getTime() <= Date.now();
+};
+
 // ─── Design Tokens ────────────────────────────────────────────────────────────
 // Imported from ../theme/DesignTokens
 // ─────────────────────────────────────────────────────────────────────────────
@@ -164,7 +171,7 @@ export default function AddItemScreen() {
         if (user) {
             // Fetch capsules where I am owner OR I am a member (accepted invite)
             const { data, error } = await supabase.rpc('get_my_available_capsules', { p_user_id: user.id });
-            if (data) setMyCapsules(data);
+            if (data) setMyCapsules((data || []).filter((cap: any) => !isLockedSealedCapsule(cap)));
             else if (error) {
                 // Fallback to owned capsules if RPC fails
                 const { data: owned } = await supabase
@@ -172,7 +179,7 @@ export default function AddItemScreen() {
                     .select('*, profiles:owner_id(username, avatar_url, display_name)')
                     .eq('owner_id', user.id)
                     .order('created_at', { ascending: false });
-                if (owned) setMyCapsules(owned);
+                if (owned) setMyCapsules((owned || []).filter((cap: any) => !isLockedSealedCapsule(cap)));
             }
         }
         setIsLoadingCapsules(false);
@@ -186,6 +193,15 @@ export default function AddItemScreen() {
             .single();
         if (data) setSelectedCapsule(data);
     };
+
+    useEffect(() => {
+        if (!selectedCapsule || !isLockedSealedCapsule(selectedCapsule)) return;
+        Alert.alert(
+            'Cápsula bloqueada',
+            'Esta cápsula sellada ya está lista para abrirse y no admite más contenido.',
+            [{ text: 'Entendido', onPress: () => navigation.goBack() }]
+        );
+    }, [selectedCapsule, navigation]);
 
     useEffect(() => {
         const fetchLocation = async () => {
@@ -410,6 +426,10 @@ export default function AddItemScreen() {
 
     const handleUpload = async () => {
         if (loading || isUndoOverlayVisible) return;
+        if (isLockedSealedCapsule(selectedCapsule)) {
+            Alert.alert('No disponible', 'Esta cápsula sellada ya está lista para abrirse y no admite más contenido.');
+            return;
+        }
         if (contentType === 'note' && !text && (!isHandwriting || paths.length === 0)) return;
         if (contentType === 'audio' && !recordedUri) return;
         if ((contentType === 'image' || contentType === 'video') && mediaList.length === 0) return;
@@ -433,6 +453,9 @@ export default function AddItemScreen() {
 
     const performActualUpload = async () => {
         if (loading) return;
+        if (isLockedSealedCapsule(selectedCapsule)) {
+            throw new Error('Esta cápsula sellada ya está lista para abrirse y no admite más contenido.');
+        }
         if (contentType === 'note' && !text && (!isHandwriting || paths.length === 0)) return;
         if (contentType === 'audio' && !recordedUri) return;
         if ((contentType === 'image' || contentType === 'video') && mediaList.length === 0) return;
@@ -525,13 +548,31 @@ export default function AddItemScreen() {
                 });
 
                 if (moderationError) {
-                    throw new Error('MODERATION_UNAVAILABLE');
+                    moderatedEntries.push({
+                        ...entry,
+                        moderation_status: 'pending',
+                        moderation_reason: 'Moderation temporarily unavailable',
+                        moderation_review_id: null,
+                        moderated_at: null,
+                    });
+                    continue;
                 }
 
-                if (!moderation?.ok || moderation?.action === 'block') {
+                if (moderation?.action === 'block') {
                     const blockedError = new Error(moderation?.reason || 'CONTENT_BLOCKED');
                     (blockedError as any).code = 'CONTENT_BLOCKED';
                     throw blockedError;
+                }
+
+                if (!moderation?.ok || moderation?.action === 'review' || moderation?.status === 'error') {
+                    moderatedEntries.push({
+                        ...entry,
+                        moderation_status: moderation?.status === 'error' ? 'pending' : 'needs_review',
+                        moderation_reason: moderation?.reason || 'Pending moderation review',
+                        moderation_review_id: moderation?.review_id || null,
+                        moderated_at: new Date().toISOString(),
+                    });
+                    continue;
                 }
 
                 moderatedEntries.push({

@@ -1,15 +1,18 @@
-import React, { RefObject } from 'react';
+import React, { RefObject, useState } from 'react';
 import { StyleSheet, Dimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withTiming,
   runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
 } from 'react-native-reanimated';
 import { Image } from 'expo-image';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const MIN_SCALE = 1;
+const MAX_SCALE = 4;
+const DOUBLE_TAP_SCALE = 2.4;
 
 interface ZoomableImageProps {
   uri: string;
@@ -19,87 +22,144 @@ interface ZoomableImageProps {
   simultaneousGesture?: RefObject<any>;
 }
 
-const ZoomableImage = ({ uri, style, onInteractionStart, onInteractionEnd, simultaneousGesture }: ZoomableImageProps) => {
+const clamp = (value: number, min: number, max: number) => {
+  'worklet';
+  return Math.max(min, Math.min(max, value));
+};
+
+const clampTranslate = (value: number, scale: number, axisSize: number) => {
+  'worklet';
+  const maxOffset = Math.max(0, ((axisSize * scale) - axisSize) / 2);
+  return clamp(value, -maxOffset, maxOffset);
+};
+
+const ZoomableImage = ({
+  uri,
+  style,
+  onInteractionStart,
+  onInteractionEnd,
+  simultaneousGesture,
+}: ZoomableImageProps) => {
+  const [isZoomed, setIsZoomed] = useState(false);
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
   const savedTranslateX = useSharedValue(0);
   const savedTranslateY = useSharedValue(0);
-  const focalX = useSharedValue(0);
-  const focalY = useSharedValue(0);
+  const isInteracting = useSharedValue(false);
+
+  const finishInteractionIfNeeded = () => {
+    'worklet';
+    if (isInteracting.value) {
+      isInteracting.value = false;
+      if (onInteractionEnd) {
+        runOnJS(onInteractionEnd)();
+      }
+    }
+  };
+
+  const startInteractionIfNeeded = () => {
+    'worklet';
+    if (!isInteracting.value) {
+      isInteracting.value = true;
+      if (onInteractionStart) {
+        runOnJS(onInteractionStart)();
+      }
+    }
+  };
+
+  const animateTo = (nextScale: number, nextX: number, nextY: number) => {
+    'worklet';
+    scale.value = withTiming(nextScale, { duration: 220 });
+    translateX.value = withTiming(nextX, { duration: 220 });
+    translateY.value = withTiming(nextY, { duration: 220 });
+    savedScale.value = nextScale;
+    savedTranslateX.value = nextX;
+    savedTranslateY.value = nextY;
+    runOnJS(setIsZoomed)(nextScale > 1.02);
+  };
 
   const pinchGesture = Gesture.Pinch()
     .onStart(() => {
-      if (onInteractionStart) runOnJS(onInteractionStart)();
+      startInteractionIfNeeded();
     })
     .onUpdate((event) => {
-      scale.value = savedScale.value * event.scale;
-      
-      // Focal point zoom logic
-      translateX.value = savedTranslateX.value + (1 - event.scale) * (event.focalX - SCREEN_WIDTH / 2);
-      translateY.value = savedTranslateY.value + (1 - event.scale) * (event.focalY - SCREEN_HEIGHT / 2);
+      const nextScale = clamp(savedScale.value * event.scale, MIN_SCALE, MAX_SCALE);
+      const relativeScale = nextScale / savedScale.value;
+
+      const nextTranslateX = savedTranslateX.value + (1 - relativeScale) * (event.focalX - SCREEN_WIDTH / 2);
+      const nextTranslateY = savedTranslateY.value + (1 - relativeScale) * (event.focalY - SCREEN_HEIGHT / 2);
+
+      scale.value = nextScale;
+      translateX.value = clampTranslate(nextTranslateX, nextScale, SCREEN_WIDTH);
+      translateY.value = clampTranslate(nextTranslateY, nextScale, SCREEN_HEIGHT);
     })
     .onEnd(() => {
-      if (scale.value < 1) {
-        scale.value = withTiming(1);
-        translateX.value = withTiming(0);
-        translateY.value = withTiming(0);
-        savedScale.value = 1;
-        savedTranslateX.value = 0;
-        savedTranslateY.value = 0;
+      if (scale.value <= 1.02) {
+        animateTo(1, 0, 0);
+        finishInteractionIfNeeded();
       } else {
         savedScale.value = scale.value;
-        savedTranslateX.value = translateX.value;
-        savedTranslateY.value = translateY.value;
-      }
-      if (scale.value <= 1 && onInteractionEnd) {
-        runOnJS(onInteractionEnd)();
+        savedTranslateX.value = clampTranslate(translateX.value, scale.value, SCREEN_WIDTH);
+        savedTranslateY.value = clampTranslate(translateY.value, scale.value, SCREEN_HEIGHT);
+        translateX.value = savedTranslateX.value;
+        translateY.value = savedTranslateY.value;
+        runOnJS(setIsZoomed)(true);
       }
     });
 
   const panGesture = Gesture.Pan()
-    .minPointers(1)
-    .activeOffsetX([-15, 15])
-    .activeOffsetY([-15, 15])
+    .minDistance(4)
+    .maxPointers(1)
     .onStart(() => {
-      if (scale.value > 1 && onInteractionStart) {
-        runOnJS(onInteractionStart)();
+      if (scale.value > 1) {
+        startInteractionIfNeeded();
       }
     })
     .onUpdate((event) => {
-      if (scale.value > 1) {
-        translateX.value = savedTranslateX.value + event.translationX;
-        translateY.value = savedTranslateY.value + event.translationY;
-      }
+      if (scale.value <= 1) return;
+      translateX.value = clampTranslate(savedTranslateX.value + event.translationX, scale.value, SCREEN_WIDTH);
+      translateY.value = clampTranslate(savedTranslateY.value + event.translationY, scale.value, SCREEN_HEIGHT);
     })
     .onEnd(() => {
-      if (scale.value > 1) {
-        savedTranslateX.value = translateX.value;
-        savedTranslateY.value = translateY.value;
+      if (scale.value <= 1) {
+        finishInteractionIfNeeded();
+        return;
       }
-      if (scale.value <= 1 && onInteractionEnd) {
-        runOnJS(onInteractionEnd)();
-      }
+      savedTranslateX.value = clampTranslate(translateX.value, scale.value, SCREEN_WIDTH);
+      savedTranslateY.value = clampTranslate(translateY.value, scale.value, SCREEN_HEIGHT);
+      translateX.value = savedTranslateX.value;
+      translateY.value = savedTranslateY.value;
     });
 
   const doubleTapGesture = Gesture.Tap()
     .numberOfTaps(2)
-    .onStart(() => {
-      if (scale.value !== 1) {
-        scale.value = withTiming(1);
-        translateX.value = withTiming(0);
-        translateY.value = withTiming(0);
-        savedScale.value = 1;
-        savedTranslateX.value = 0;
-        savedTranslateY.value = 0;
-        if (onInteractionEnd) runOnJS(onInteractionEnd)();
-      } else {
-        scale.value = withTiming(2);
-        savedScale.value = 2;
-        if (onInteractionStart) runOnJS(onInteractionStart)();
+    .maxDuration(250)
+    .onStart((event) => {
+      if (scale.value > 1.02) {
+        animateTo(1, 0, 0);
+        finishInteractionIfNeeded();
+        return;
       }
+
+      startInteractionIfNeeded();
+      const nextScale = DOUBLE_TAP_SCALE;
+      const targetX = clampTranslate((SCREEN_WIDTH / 2 - event.x) * (nextScale - 1), nextScale, SCREEN_WIDTH);
+      const targetY = clampTranslate((SCREEN_HEIGHT / 2 - event.y) * (nextScale - 1), nextScale, SCREEN_HEIGHT);
+      animateTo(nextScale, targetX, targetY);
     });
+
+  const pinch = simultaneousGesture
+    ? pinchGesture.simultaneousWithExternalGesture(simultaneousGesture)
+    : pinchGesture;
+  const pan = simultaneousGesture
+    ? panGesture.simultaneousWithExternalGesture(simultaneousGesture)
+    : panGesture;
+
+  const composed = isZoomed
+    ? Gesture.Exclusive(doubleTapGesture, Gesture.Simultaneous(pinch, pan))
+    : Gesture.Exclusive(doubleTapGesture, pinch);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [
@@ -108,14 +168,6 @@ const ZoomableImage = ({ uri, style, onInteractionStart, onInteractionEnd, simul
       { scale: scale.value },
     ],
   }));
-
-  const pinch = simultaneousGesture ? pinchGesture.simultaneousWithExternalGesture(simultaneousGesture) : pinchGesture;
-  const pan = simultaneousGesture ? panGesture.simultaneousWithExternalGesture(simultaneousGesture) : panGesture;
-
-  const composed = Gesture.Race(
-    doubleTapGesture,
-    Gesture.Simultaneous(pinch, pan)
-  );
 
   return (
     <GestureDetector gesture={composed}>

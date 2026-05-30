@@ -24,6 +24,7 @@ export const Profile: React.FC<ProfileProps> = ({
   onClose, 
   onSelectCapsule 
 }) => {
+  const SIMPLE_FRONTEND_PROFILE = true;
   const [profile, setProfile] = useState<any>(null);
   const [capsules, setCapsules] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -39,6 +40,66 @@ export const Profile: React.FC<ProfileProps> = ({
   const fetchProfileData = async () => {
     try {
       setLoading(true);
+      if (SIMPLE_FRONTEND_PROFILE) {
+        const [
+          profileRes,
+          followersRes,
+          followingRes,
+          followRes,
+          ownedCapsulesRes,
+          memberInvitesRes,
+        ] = await Promise.all([
+          supabase.from('profiles').select('*').eq('id', userId).single(),
+          supabase.from('follows').select('follower_id', { count: 'exact', head: true }).eq('following_id', userId),
+          supabase.from('follows').select('following_id', { count: 'exact', head: true }).eq('follower_id', userId),
+          currentUserId !== userId
+            ? supabase.from('follows').select('id').eq('follower_id', currentUserId).eq('following_id', userId).maybeSingle()
+            : Promise.resolve({ data: null } as any),
+          supabase.from('capsules').select('*').eq('owner_id', userId).order('created_at', { ascending: false }),
+          supabase.from('capsule_invites').select('capsule_id').eq('user_id', userId).eq('status', 'accepted'),
+        ]);
+
+        const ownedCapsules = ownedCapsulesRes.data || [];
+        const memberCapsuleIds = (memberInvitesRes.data || []).map((invite: any) => invite.capsule_id).filter(Boolean);
+        const memberCapsulesRes = memberCapsuleIds.length
+          ? await supabase.from('capsules').select('*').in('id', memberCapsuleIds).order('created_at', { ascending: false })
+          : { data: [] as any[] };
+        const mergedCapsules = Array.from(
+          new Map([...ownedCapsules, ...(memberCapsulesRes.data || [])].map((capsule: any) => [capsule.id, capsule])).values()
+        );
+        const capsuleIds = mergedCapsules.map((capsule: any) => capsule.id);
+        const mediaRes = capsuleIds.length
+          ? await supabase.from('capsule_items')
+              .select('id, capsule_id, media_url, thumbnail_url, media_type, created_at')
+              .in('capsule_id', capsuleIds)
+              .eq('is_story', false)
+              .neq('moderation_status', 'rejected')
+              .order('created_at', { ascending: false })
+          : { data: [] as any[] };
+
+        const mediaByCapsule = new Map<string, any[]>();
+        (mediaRes.data || []).forEach((item: any) => {
+          const list = mediaByCapsule.get(item.capsule_id) || [];
+          if (list.length < 4) list.push(item);
+          mediaByCapsule.set(item.capsule_id, list);
+        });
+
+        setProfile(profileRes.data ? {
+          ...profileRes.data,
+          followers_count: followersRes.count || 0,
+          following_count: followingRes.count || 0,
+          capsules_count: mergedCapsules.length,
+        } : null);
+        setCapsules(mergedCapsules.map((capsule: any) => ({
+          ...capsule,
+          is_member_capsule: capsule.owner_id !== userId,
+          effective_cover_url: capsule.cover_url || mediaByCapsule.get(capsule.id)?.[0]?.thumbnail_url || mediaByCapsule.get(capsule.id)?.[0]?.media_url,
+          fallback_media: mediaByCapsule.get(capsule.id) || [],
+        })).sort((a: any, b: any) => +new Date(b.created_at) - +new Date(a.created_at)));
+        setIsFollowing(!!followRes.data);
+        return;
+      }
+
       const { data, error } = await supabase.rpc('get_profile_data_unified', {
         p_target_id: userId
       });
@@ -104,7 +165,7 @@ export const Profile: React.FC<ProfileProps> = ({
       className="profile-view-premium"
     >
       <div className="profile-top-nav">
-         <button className="back-circle-btn" onClick={onClose}><X /></button>
+         <div className="profile-top-spacer" />
          <div className="nav-user-title">
             <strong>{profile?.username}</strong>
             {profile?.is_verified && <VerifiedBadge size={14} />}
@@ -113,6 +174,11 @@ export const Profile: React.FC<ProfileProps> = ({
       </div>
 
       <header className="profile-hero-section">
+        <div className="profile-banner-web">
+          <span className="profile-sticker s1">✦</span>
+          <span className="profile-sticker s2">♡</span>
+          <span className="profile-sticker s3">⌁</span>
+        </div>
         <div className="profile-avatar-premium">
           <img 
             src={profile?.avatar_url || 'https://api.dicebear.com/7.x/avataaars/svg?seed=' + profile?.username} 
@@ -185,7 +251,7 @@ export const Profile: React.FC<ProfileProps> = ({
           const isClosed = capsule.status === 'sealed';
           const collageItems = capsule.collage_items || capsule.fallback_media || [];
           const effectiveCover = capsule.effective_cover_url || capsule.cover_url;
-          const hasMedia = !!(effectiveCover || collageItems.length > 0);
+          const hasMedia = !isClosed && !!(effectiveCover || collageItems.length > 0);
           const timeLeft = isClosed ? calculateTimeLeft(capsule.opens_at) : null;
 
           return (
@@ -198,7 +264,20 @@ export const Profile: React.FC<ProfileProps> = ({
               onClick={() => onSelectCapsule(capsule)}
             >
               <div className="grid-card-media" style={{ backgroundColor: isClosed ? '#1a1530' : '#f8f7ff', position: 'relative', overflow: 'hidden' }}>
-                {hasMedia ? (
+                {isClosed ? (
+                  <div className="grid-model-full-wrap sealed-profile-model" onContextMenu={e => e.preventDefault()}>
+                    <CapsuleWithTimer 
+                      modelKey={capsule.model}
+                      source={getModelImage(capsule.model)}
+                      date={capsule.opens_at}
+                      modelLayout={capsule.model_snapshot}
+                      chainId={capsule.chain_id}
+                      style={{ width: '88%', height: '88%' }}
+                      isOpened={false}
+                      lightweight={true}
+                    />
+                  </div>
+                ) : hasMedia ? (
                    <div className="grid-media-mode" style={{ width: '100%', height: '100%', position: 'relative' }}>
                       {/* Background (Blurred if sealed) */}
                       <div className={`media-background ${isClosed ? 'is-blurred secure-locked-media' : ''}`} style={{ width: '100%', height: '100%' }}>
@@ -226,11 +305,8 @@ export const Profile: React.FC<ProfileProps> = ({
                         )}
                       </div>
 
-                      {/* Security Overlay */}
-                      {isClosed && <div className="security-overlay" />}
-
                       {/* Corner Model */}
-                      <div className="mini-model-badge" style={{ position: 'absolute', bottom: '10px', right: '10px', width: '45px', height: '45px', zIndex: 6 }}>
+                      <div className="mini-model-badge" style={{ position: 'absolute', bottom: '8px', right: '8px', width: '62px', height: '62px', zIndex: 6 }}>
                         <CapsuleWithTimer 
                           modelKey={capsule.model}
                           source={isClosed ? getModelImage(capsule.model) : getModelImageOpen(capsule.model)}
@@ -260,13 +336,6 @@ export const Profile: React.FC<ProfileProps> = ({
                   </div>
                 )}
 
-                {isClosed && (
-                  <div className="grid-sealed-overlay">
-                    <Lock size={20} color="#fff" />
-                    {timeLeft && <span className="grid-timer" style={{ fontSize: '10px' }}>{timeLeft}</span>}
-                  </div>
-                )}
-                
                 <div className="grid-card-hover">
                    <div className="hover-stat"><Heart size={18} fill="white" /> {capsule.likes_count || 0}</div>
                    <div className="hover-stat"><MessageCircle size={18} fill="white" /> {capsule.comments_count || 0}</div>
@@ -307,16 +376,22 @@ export const Profile: React.FC<ProfileProps> = ({
         .profile-view-premium { width: 100%; max-width: 950px; margin: 0 auto; padding-bottom: 100px; }
         
         .profile-top-nav { display: flex; align-items: center; justify-content: space-between; padding: 20px 0; margin-bottom: 20px; }
+        .profile-top-spacer { width: 44px; height: 44px; }
         .back-circle-btn { width: 44px; height: 44px; border-radius: 50%; background: white; border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; color: var(--text); }
         .nav-user-title { display: flex; align-items: center; gap: 6px; }
         .nav-user-title strong { font-size: 16px; font-weight: 800; }
 
-        .profile-hero-section { display: flex; gap: 60px; align-items: flex-start; margin-bottom: 60px; padding: 0 20px; }
-        .profile-avatar-premium { width: 160px; height: 160px; border-radius: 50%; position: relative; flex-shrink: 0; }
+        .profile-hero-section { position: relative; display: flex; gap: 60px; align-items: flex-start; margin-bottom: 60px; padding: 116px 20px 0; overflow: hidden; border-radius: 28px; }
+        .profile-banner-web { position: absolute; inset: 0 0 auto; height: 178px; border-radius: 28px; background: radial-gradient(circle at 18% 20%, rgba(255,77,141,0.22), transparent 28%), radial-gradient(circle at 80% 18%, rgba(124,92,191,0.28), transparent 30%), linear-gradient(135deg, #f7f2ff, #ffffff 48%, #eef9ff); border: 1px solid rgba(232,228,245,0.9); }
+        .profile-sticker { position: absolute; display: grid; place-items: center; width: 42px; height: 42px; border-radius: 16px; background: rgba(255,255,255,0.78); color: var(--primary); font-weight: 900; box-shadow: 0 12px 28px rgba(124,92,191,0.12); }
+        .profile-sticker.s1 { left: 7%; top: 24px; transform: rotate(-10deg); }
+        .profile-sticker.s2 { right: 14%; top: 34px; transform: rotate(8deg); color: var(--secondary); }
+        .profile-sticker.s3 { right: 32%; top: 96px; transform: rotate(-5deg); }
+        .profile-avatar-premium { width: 160px; height: 160px; border-radius: 50%; position: relative; flex-shrink: 0; z-index: 1; }
         .profile-avatar-premium img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; border: 4px solid white; box-shadow: 0 15px 35px rgba(124, 92, 191, 0.15); }
         .avatar-edit-badge { position: absolute; bottom: 5px; right: 5px; width: 36px; height: 36px; border-radius: 50%; background: var(--primary); color: white; display: flex; align-items: center; justify-content: center; border: 3px solid white; box-shadow: 0 5px 15px rgba(0,0,0,0.1); }
 
-        .profile-info-premium { flex: 1; }
+        .profile-info-premium { flex: 1; position: relative; z-index: 1; padding-top: 58px; }
         .profile-name-group { display: flex; flex-direction: column; gap: 20px; margin-bottom: 25px; }
         .profile-name-group h1 { font-size: 28px; font-weight: 300; margin: 0; }
         .profile-actions-row { display: flex; gap: 10px; }
@@ -347,7 +422,8 @@ export const Profile: React.FC<ProfileProps> = ({
         .heart-stat { color: #F43F5E; }
         .comment-stat { color: #0EA5E9; }
         .image-stat { color: #A855F7; }
-        .grid-model-full-wrap { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; transform: translateY(5px); }
+        .grid-model-full-wrap { position: absolute; inset: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; transform: translateY(5px); background: #f8f7ff; }
+        .sealed-profile-model { transform: none; }
         .grid-sealed-overlay { position: absolute; inset: 0; background: rgba(15,11,30,0.15); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: white; pointer-events: none; }
         .grid-timer { display: none; }
 
@@ -367,8 +443,8 @@ export const Profile: React.FC<ProfileProps> = ({
         .collage-grid.items-3 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
         .collage-grid.items-3 img:nth-child(1) { grid-row: span 2; }
         .collage-grid.items-4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
-        .mini-model-badge { position: absolute; bottom: 12px; right: 12px; width: 40px; height: 40px; background: white; border-radius: 12px; display: flex; align-items: center; justify-content: center; box-shadow: 0 5px 15px rgba(0,0,0,0.2); }
-        .mini-model-badge img { width: 80%; height: 80%; object-fit: contain; }
+        .mini-model-badge { background: transparent !important; border-radius: 0; display: flex; align-items: center; justify-content: center; box-shadow: none; pointer-events: none; }
+        .mini-model-badge img { width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 8px 14px rgba(15,11,30,0.22)); }
       `}</style>
     </motion.div>
   );

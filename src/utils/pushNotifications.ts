@@ -52,20 +52,26 @@ export async function registerForPushNotificationsAsync() {
 }
 
 export async function savePushToken(userId: string, token: string) {
-    // We use the RPC to handle multi-device registration and last_seen updates
-    const { error } = await supabase.rpc('register_push_token', {
-        p_user_id: userId,
-        p_token: token,
-        p_device_id: Platform.OS + '-' + (Constants?.sessionId || 'unknown')
-    });
+    try {
+        const { error } = await supabase.rpc('register_push_token', {
+            p_user_id: userId,
+            p_token: token,
+            p_device_id: Platform.OS + '-' + (Constants?.sessionId || 'unknown')
+        });
 
-    if (error) {
-        console.error('Error saving push token:', error);
-        // Fallback for legacy compatibility
-        await supabase
-            .from('profiles')
-            .update({ push_token: token })
-            .eq('id', userId);
+        if (error) {
+            console.warn('Error saving push token via RPC:', error);
+            const fallback = await supabase
+                .from('profiles')
+                .update({ push_token: token })
+                .eq('id', userId);
+
+            if (fallback.error) {
+                console.warn('Error saving push token via fallback:', fallback.error);
+            }
+        }
+    } catch (error) {
+        console.warn('Error saving push token:', error);
     }
 }
 

@@ -20,6 +20,18 @@ interface CapsuleWithTimerProps {
         image_scale_y?: number | string | null;
         image_offset_x?: number | string | null;
         image_offset_y?: number | string | null;
+        image_open_scale?: number | string | null;
+        image_open_scale_x?: number | string | null;
+        image_open_scale_y?: number | string | null;
+        image_open_offset_x?: number | string | null;
+        image_open_offset_y?: number | string | null;
+        effect_type?: string | null;
+        effect_tint?: string | null;
+        effect_scale?: number | string | null;
+        effect_offset_x?: number | string | null;
+        effect_offset_y?: number | string | null;
+        effect_opacity?: number | string | null;
+        effect_layer?: string | null;
     } | null;
     chainId?: string | null; // Selected chain ID
     configOverride?: ModelTimerConfig; // Used by the calibration tool
@@ -32,6 +44,7 @@ interface CapsuleWithTimerProps {
     lightweight?: boolean; // Mode for off-screen or secondary cards
     disableAnimations?: boolean; // Stop pendulum/glint to save CPU
     isMinimal?: boolean; // Minimal mode for thumbnails
+    preferModelLayout?: boolean; // In editors, use the passed modelLayout exactly as-is
 }
 
 const CapsuleWithTimer = React.memo(({
@@ -51,6 +64,7 @@ const CapsuleWithTimer = React.memo(({
     lightweight,
     disableAnimations,
     isMinimal,
+    preferModelLayout,
 }: CapsuleWithTimerProps) => {
     const [configVersion, setConfigVersion] = useState(0);
     
@@ -97,14 +111,76 @@ const CapsuleWithTimer = React.memo(({
     };
 
     const { width, height } = layoutSize;
-    const resolvedModelLayout = modelLayout || timerConfigManager.getModel(modelKey);
+    const liveModelLayout = preferModelLayout ? null : timerConfigManager.getModel(modelKey);
+    const snapshotLayout = modelLayout || null;
+    const snapshotImage = typeof (snapshotLayout as any)?.image === 'string' ? ((snapshotLayout as any).image as string) : '';
+    const snapshotOpenImage = typeof (snapshotLayout as any)?.image_open === 'string' ? ((snapshotLayout as any).image_open as string) : '';
+    const liveImage = typeof (liveModelLayout as any)?.image === 'string' ? ((liveModelLayout as any).image as string) : '';
+    const liveOpenImage = typeof (liveModelLayout as any)?.image_open === 'string' ? ((liveModelLayout as any).image_open as string) : '';
+    const snapshotHasDistinctOpenArt = !!snapshotOpenImage && snapshotOpenImage !== snapshotImage;
+    const liveHasDistinctOpenArt = !!liveOpenImage && liveOpenImage !== liveImage;
+    const shouldUseLiveClosedFallback =
+        !!isOpened &&
+        !snapshotHasDistinctOpenArt &&
+        !liveHasDistinctOpenArt &&
+        !!liveModelLayout;
+    const shouldUseLiveOpenLayout = !!isOpened && !!liveModelLayout;
+
+    // Opened capsules should reflect the latest open-layout calibration from the model editor.
+    // If there is no dedicated open art, they should still inherit the latest closed-layout fallback.
+    const resolvedModelLayout = preferModelLayout
+        ? snapshotLayout
+        : shouldUseLiveClosedFallback
+        ? {
+            ...snapshotLayout,
+            ...liveModelLayout,
+            image_open_scale: (liveModelLayout as any)?.image_open_scale ?? (liveModelLayout as any)?.image_scale ?? (snapshotLayout as any)?.image_open_scale ?? (snapshotLayout as any)?.image_scale,
+            image_open_scale_x: (liveModelLayout as any)?.image_open_scale_x ?? (liveModelLayout as any)?.image_scale_x ?? (snapshotLayout as any)?.image_open_scale_x ?? (snapshotLayout as any)?.image_scale_x,
+            image_open_scale_y: (liveModelLayout as any)?.image_open_scale_y ?? (liveModelLayout as any)?.image_scale_y ?? (snapshotLayout as any)?.image_open_scale_y ?? (snapshotLayout as any)?.image_scale_y,
+            image_open_offset_x: (liveModelLayout as any)?.image_open_offset_x ?? (liveModelLayout as any)?.image_offset_x ?? (snapshotLayout as any)?.image_open_offset_x ?? (snapshotLayout as any)?.image_offset_x,
+            image_open_offset_y: (liveModelLayout as any)?.image_open_offset_y ?? (liveModelLayout as any)?.image_offset_y ?? (snapshotLayout as any)?.image_open_offset_y ?? (snapshotLayout as any)?.image_offset_y,
+        }
+        : shouldUseLiveOpenLayout
+            ? {
+                ...snapshotLayout,
+                ...liveModelLayout,
+                image_open_scale: (liveModelLayout as any)?.image_open_scale ?? (snapshotLayout as any)?.image_open_scale ?? (liveModelLayout as any)?.image_scale ?? (snapshotLayout as any)?.image_scale,
+                image_open_scale_x: (liveModelLayout as any)?.image_open_scale_x ?? (snapshotLayout as any)?.image_open_scale_x ?? (liveModelLayout as any)?.image_scale_x ?? (snapshotLayout as any)?.image_scale_x,
+                image_open_scale_y: (liveModelLayout as any)?.image_open_scale_y ?? (snapshotLayout as any)?.image_open_scale_y ?? (liveModelLayout as any)?.image_scale_y ?? (snapshotLayout as any)?.image_scale_y,
+                image_open_offset_x: (liveModelLayout as any)?.image_open_offset_x ?? (snapshotLayout as any)?.image_open_offset_x ?? (liveModelLayout as any)?.image_offset_x ?? (snapshotLayout as any)?.image_offset_x,
+                image_open_offset_y: (liveModelLayout as any)?.image_open_offset_y ?? (snapshotLayout as any)?.image_open_offset_y ?? (liveModelLayout as any)?.image_offset_y ?? (snapshotLayout as any)?.image_offset_y,
+            }
+        : (snapshotLayout || liveModelLayout);
     const imageFrameSize = Math.max(1, Math.min(width || initialWidth || 300, height || initialHeight || 300));
     const layoutOffsetScale = imageFrameSize / 300;
-    const imageScale = Math.max(0.5, Math.min(1.8, Number(resolvedModelLayout?.image_scale) || 1));
-    const imageScaleX = Math.max(0.5, Math.min(1.8, Number(resolvedModelLayout?.image_scale_x) || 1));
-    const imageScaleY = Math.max(0.5, Math.min(1.8, Number(resolvedModelLayout?.image_scale_y) || 1));
-    const imageOffsetX = Math.max(-80, Math.min(80, Number(resolvedModelLayout?.image_offset_x) || 0));
-    const imageOffsetY = Math.max(-80, Math.min(80, Number(resolvedModelLayout?.image_offset_y) || 0));
+    const openScale = Number(resolvedModelLayout?.image_open_scale);
+    const openScaleX = Number(resolvedModelLayout?.image_open_scale_x);
+    const openScaleY = Number(resolvedModelLayout?.image_open_scale_y);
+    const openOffsetX = Number(resolvedModelLayout?.image_open_offset_x);
+    const openOffsetY = Number(resolvedModelLayout?.image_open_offset_y);
+    const useOpenLayout = !!isOpened && (
+        Number.isFinite(openScale) ||
+        Number.isFinite(openScaleX) ||
+        Number.isFinite(openScaleY) ||
+        Number.isFinite(openOffsetX) ||
+        Number.isFinite(openOffsetY)
+    );
+    const imageScale = Math.max(0.5, Math.min(1.8, useOpenLayout ? (openScale || 1) : (Number(resolvedModelLayout?.image_scale) || 1)));
+    const imageScaleX = Math.max(0.5, Math.min(1.8, useOpenLayout ? (openScaleX || 1) : (Number(resolvedModelLayout?.image_scale_x) || 1)));
+    const imageScaleY = Math.max(0.5, Math.min(1.8, useOpenLayout ? (openScaleY || 1) : (Number(resolvedModelLayout?.image_scale_y) || 1)));
+    const imageOffsetX = Math.max(-80, Math.min(80, useOpenLayout ? (openOffsetX || 0) : (Number(resolvedModelLayout?.image_offset_x) || 0)));
+    const imageOffsetY = Math.max(-80, Math.min(80, useOpenLayout ? (openOffsetY || 0) : (Number(resolvedModelLayout?.image_offset_y) || 0)));
+    const effectSource = { ...(liveModelLayout || {}), ...(resolvedModelLayout || {}) };
+    const activeTint = (MODEL_TINTS as Record<string, string>)[modelKey] || '#a269ff';
+    const effectType = String((effectSource as any)?.effect_type || 'none');
+    const effectTint = String((effectSource as any)?.effect_tint || activeTint);
+    const effectScale = Math.max(0.4, Math.min(2.2, Number((effectSource as any)?.effect_scale) || 1));
+    const effectOffsetX = Math.max(-120, Math.min(120, Number((effectSource as any)?.effect_offset_x) || 0));
+    const effectOffsetY = Math.max(-120, Math.min(120, Number((effectSource as any)?.effect_offset_y) || 0));
+    const effectOpacity = Math.max(0, Math.min(1, Number((effectSource as any)?.effect_opacity) || 1));
+    const effectLayer = String((effectSource as any)?.effect_layer || 'behind');
+    const effectFrameSize = imageFrameSize * effectScale;
+    const shouldRenderEffect = effectType !== 'none' && effectOpacity > 0.01;
 
     // Calculate absolute position based on normalized config (0..1)
     const containerStyle = [styles.container, style];
@@ -153,14 +229,13 @@ const CapsuleWithTimer = React.memo(({
         outputRange: [-((width * config.w) * 1.5), (width * config.w) * 1.5]
     });
 
-    const activeTint = (MODEL_TINTS as Record<string, string>)[modelKey] || '#a269ff';
     const isBirthdayCapsule = capsuleType === 'birthdaycap' || modelKey === 'birthday_candy_kap';
 
     return (
         <View style={containerStyle} onLayout={onLayout}>
-            {/* Particles - Hide if lightweight or explicitly requested */}
-            {width > 0 && !hideParticles && !lightweight && !isMinimal && <Particles activeTint={activeTint} capsuleType={capsuleType} />}
-            {width > 0 && isBirthdayCapsule && <BirthdayConfetti />}
+            {/* Birthday capsules use animated confetti instead of the standard particles */}
+            {width > 0 && isBirthdayCapsule && !hideParticles && !lightweight && !isMinimal && <BirthdayConfetti layer="back" />}
+            {width > 0 && !isBirthdayCapsule && !hideParticles && !lightweight && !isMinimal && <Particles activeTint={activeTint} capsuleType={capsuleType} />}
 
             {/* Shadow: behind everything via zIndex */}
             {width > 0 && (
@@ -170,6 +245,17 @@ const CapsuleWithTimer = React.memo(({
                     bottom: -(width * 0.33),
                     backgroundColor: darkerShadow ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.05)',
                 }]} />
+            )}
+
+            {width > 0 && shouldRenderEffect && effectLayer !== 'front' && (
+                <CapsuleEffectLayer
+                    type={effectType}
+                    tint={effectTint}
+                    frameSize={effectFrameSize}
+                    opacity={effectOpacity}
+                    offsetX={effectOffsetX * layoutOffsetScale}
+                    offsetY={effectOffsetY * layoutOffsetScale}
+                />
             )}
 
 
@@ -193,6 +279,19 @@ const CapsuleWithTimer = React.memo(({
                 cachePolicy="memory-disk"
                 transition={0} // Disable transition to avoid additional flicker on mount
             />
+
+            {width > 0 && isBirthdayCapsule && !hideParticles && !lightweight && !isMinimal && <BirthdayConfetti layer="front" />}
+
+            {width > 0 && shouldRenderEffect && effectLayer === 'front' && (
+                <CapsuleEffectLayer
+                    type={effectType}
+                    tint={effectTint}
+                    frameSize={effectFrameSize}
+                    opacity={effectOpacity}
+                    offsetX={effectOffsetX * layoutOffsetScale}
+                    offsetY={effectOffsetY * layoutOffsetScale}
+                />
+            )}
 
             {width > 0 && !hideTimer && (
                 <View style={[timerStyle, { zIndex: 2 }]}>
@@ -250,32 +349,157 @@ const CapsuleWithTimer = React.memo(({
 
 export default CapsuleWithTimer;
 
-const BirthdayConfetti = React.memo(() => {
-    const pieces: Array<[string, `${number}%`, `${number}%`, `${number}deg`]> = [
-        ['#FF5DA2', '9%', '17%', '8deg'], ['#7AD7FF', '19%', '9%', '-14deg'],
-        ['#FFD166', '81%', '14%', '20deg'], ['#8B5CF6', '91%', '31%', '-18deg'],
-        ['#34D399', '84%', '72%', '11deg'], ['#FF8A4C', '12%', '76%', '-20deg'],
-        ['#F472B6', '29%', '88%', '16deg'], ['#60A5FA', '70%', '91%', '-10deg'],
-        ['#FDE68A', '5%', '48%', '25deg'], ['#C084FC', '94%', '54%', '-24deg'],
+const CapsuleEffectLayer = React.memo(({
+    type,
+    tint,
+    frameSize,
+    opacity,
+    offsetX,
+    offsetY,
+}: {
+    type: string;
+    tint: string;
+    frameSize: number;
+    opacity: number;
+    offsetX: number;
+    offsetY: number;
+}) => {
+    const commonStyle = [
+        styles.effectWrap,
+        {
+            width: frameSize,
+            height: frameSize,
+            opacity,
+            transform: [{ translateX: offsetX }, { translateY: offsetY }],
+        },
     ];
 
-    return (
-        <View pointerEvents="none" style={styles.birthdayConfetti}>
-            {pieces.map(([color, left, top, rotate], index) => (
-                <View
-                    key={`${color}-${index}`}
-                    style={[
-                        styles.confettiPiece,
-                        {
-                            backgroundColor: color,
-                            left,
-                            top,
-                            transform: [{ rotate }],
-                            borderRadius: index % 3 === 0 ? 999 : 2,
-                        },
-                    ]}
+    if (type === 'glow') {
+        return (
+            <View pointerEvents="none" style={commonStyle}>
+                <View style={[styles.effectGlowCore, { backgroundColor: tint + '55' }]} />
+                <View style={[styles.effectGlowOuter, { backgroundColor: tint + '22' }]} />
+            </View>
+        );
+    }
+
+    if (type === 'fire') {
+        return (
+            <View pointerEvents="none" style={commonStyle}>
+                <LinearGradient
+                    colors={['rgba(255,255,255,0)', '#FFD166', '#FF7A18', '#FF3D6E']}
+                    start={{ x: 0.5, y: 0 }}
+                    end={{ x: 0.5, y: 1 }}
+                    style={styles.effectFire}
                 />
-            ))}
+                <LinearGradient
+                    colors={['rgba(255,255,255,0)', tint + '55', tint + '12']}
+                    start={{ x: 0.5, y: 0 }}
+                    end={{ x: 0.5, y: 1 }}
+                    style={styles.effectFireGlow}
+                />
+            </View>
+        );
+    }
+
+    if (type === 'sparkles') {
+        const sparkles = [
+            { left: '18%', top: '22%', size: 7 },
+            { left: '72%', top: '16%', size: 9 },
+            { left: '82%', top: '52%', size: 6 },
+            { left: '25%', top: '68%', size: 8 },
+            { left: '62%', top: '78%', size: 7 },
+        ];
+        return (
+            <View pointerEvents="none" style={commonStyle}>
+                {sparkles.map((item, index) => (
+                    <View
+                        key={`${type}-${index}`}
+                        style={[
+                            styles.effectSparkle,
+                            {
+                                left: item.left as any,
+                                top: item.top as any,
+                                width: item.size,
+                                height: item.size,
+                                backgroundColor: tint,
+                            },
+                        ]}
+                    />
+                ))}
+            </View>
+        );
+    }
+
+    return null;
+});
+
+const BirthdayConfetti = React.memo(({ layer }: { layer: 'back' | 'front' }) => {
+    const CONFETTI_COLORS = ['#FF5C8A', '#FFD166', '#06D6A0', '#4D96FF', '#A855F7', '#FF8A3D'];
+    const particles = useRef(
+        Array.from({ length: 18 }, (_, i) => ({
+            id: i,
+            left: `${(i * 37) % 96}%`,
+            delay: (i % 6) * 180,
+            size: 5 + (i % 4),
+            color: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+            layer: i % 3 === 0 ? 'back' : 'front',
+        }))
+    ).current;
+    const anims = useRef(particles.map(() => new Animated.Value(0))).current;
+
+    useEffect(() => {
+        const loops = anims.map((anim, index) =>
+            Animated.loop(
+                Animated.sequence([
+                    Animated.delay(particles[index].delay),
+                    Animated.timing(anim, {
+                        toValue: 1,
+                        duration: 3600 + (index % 4) * 260,
+                        easing: Easing.inOut(Easing.quad),
+                        useNativeDriver: true,
+                    }),
+                    Animated.timing(anim, { toValue: 0, duration: 0, useNativeDriver: true }),
+                ])
+            )
+        );
+        loops.forEach(loop => loop.start());
+        return () => {
+            loops.forEach(loop => loop.stop());
+        };
+    }, [anims, particles]);
+
+    return (
+        <View pointerEvents="none" style={[styles.birthdayConfetti, layer === 'back' ? styles.birthdayConfettiBack : styles.birthdayConfettiFront]}>
+            {particles.filter(particle => particle.layer === layer).map((particle) => {
+                const index = particle.id;
+                const translateY = anims[index].interpolate({ inputRange: [0, 1], outputRange: [-20, 215] });
+                const translateX = anims[index].interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, index % 2 ? 14 : -14, 0] });
+                const rotate = anims[index].interpolate({ inputRange: [0, 1], outputRange: ['0deg', index % 2 ? '220deg' : '-220deg'] });
+                const opacity = anims[index].interpolate({ inputRange: [0, 0.1, 0.82, 1], outputRange: [0, 1, 1, 0] });
+
+                return (
+                    <Animated.View
+                        key={particle.id}
+                        style={[
+                            styles.confettiPiece,
+                            {
+                                left: particle.left as any,
+                                width: particle.size,
+                                height: particle.size * 1.6,
+                                backgroundColor: particle.color,
+                                opacity,
+                                top: -24,
+                                transform: [
+                                    { translateX },
+                                    { translateY },
+                                    { rotate },
+                                ],
+                            },
+                        ]}
+                    />
+                );
+            })}
         </View>
     );
 });
@@ -299,6 +523,12 @@ const styles = StyleSheet.create({
     },
     birthdayConfetti: {
         ...StyleSheet.absoluteFillObject,
+    },
+    birthdayConfettiBack: {
+        zIndex: 0,
+        opacity: 0.72,
+    },
+    birthdayConfettiFront: {
         zIndex: 4,
     },
     confettiPiece: {
@@ -309,5 +539,53 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.08,
         shadowRadius: 4,
         shadowOffset: { width: 0, height: 1 },
-    }
+    },
+    effectWrap: {
+        position: 'absolute',
+        zIndex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        pointerEvents: 'none' as any,
+    },
+    effectGlowCore: {
+        position: 'absolute',
+        width: '68%',
+        height: '68%',
+        borderRadius: 999,
+        shadowColor: '#fff',
+        shadowOpacity: 0.18,
+        shadowRadius: 24,
+        shadowOffset: { width: 0, height: 0 },
+    },
+    effectGlowOuter: {
+        position: 'absolute',
+        width: '94%',
+        height: '94%',
+        borderRadius: 999,
+    },
+    effectFire: {
+        position: 'absolute',
+        bottom: '6%',
+        width: '72%',
+        height: '42%',
+        borderTopLeftRadius: 120,
+        borderTopRightRadius: 120,
+        borderBottomLeftRadius: 70,
+        borderBottomRightRadius: 70,
+    },
+    effectFireGlow: {
+        position: 'absolute',
+        bottom: '0%',
+        width: '90%',
+        height: '52%',
+        borderRadius: 140,
+    },
+    effectSparkle: {
+        position: 'absolute',
+        borderRadius: 999,
+        shadowColor: '#fff',
+        shadowOpacity: 0.5,
+        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 0 },
+    },
 });

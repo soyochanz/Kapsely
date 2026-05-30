@@ -1,7 +1,7 @@
 import React, { useRef, useState } from 'react';
 import {
     View, Text, StyleSheet, TouchableOpacity, Image,
-    Dimensions, Platform, ScrollView, Alert, ActivityIndicator
+    Dimensions, Platform, ScrollView, Alert, ActivityIndicator, Animated, Easing
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -10,6 +10,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import ViewShot from 'react-native-view-shot';
 import * as Sharing from 'expo-sharing';
 import * as MediaLibrary from 'expo-media-library';
+import * as FileSystem from 'expo-file-system/legacy';
 import QRCode from 'react-native-qrcode-svg';
 import { Colors, Fonts, Spacing, Shadow } from '../theme';
 import CapsuleWithTimer from '../components/CapsuleWithTimer';
@@ -18,10 +19,26 @@ import { MODEL_IMAGES, MODEL_IMAGES_OPEN } from '../constants/models';
 import { timerConfigManager } from '../utils/timerConfig';
 import { supabase } from '../lib/supabase';
 import { BlurView } from 'expo-blur';
+import { buildCapsuleShareUrl } from '../utils/deepLinks';
 
 const { width } = Dimensions.get('window');
 const CANVAS_WIDTH = 300;
 const CANVAS_HEIGHT = CANVAS_WIDTH * (16 / 9);
+const KAPSELY_LOGO = 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/website/Logomain.png';
+const VIDEO_FRAME_COUNT = 36;
+const VIDEO_FRAME_DELAY_MS = 120;
+const VIDEO_FRAME_RATE = 12;
+
+const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const toFFmpegPath = (uri: string) => `"${uri.replace(/^file:\/\//, '').replace(/"/g, '\\"')}"`;
+
+const getFFmpegKit = () => {
+    try {
+        const kit = require('ffmpeg-kit-react-native');
+        if (kit?.FFmpegKit && kit?.ReturnCode) return kit;
+    } catch {}
+    return null;
+};
 
 // ── Dot grid decoration ───────────────────────────────────────────────────────
 const DotGrid = ({ rows = 5, cols = 8, opacity = 0.12 }: { rows?: number; cols?: number; opacity?: number }) => (
@@ -46,6 +63,26 @@ export default function InstagramShareScreen() {
     const [sharing, setSharing] = useState(false);
     const { capsule } = route.params || {};
     const [previewImages, setPreviewImages] = useState<string[]>([]);
+    const pulse = useRef(new Animated.Value(0)).current;
+    const float = useRef(new Animated.Value(0)).current;
+    const shimmer = useRef(new Animated.Value(0)).current;
+    const sparkle = useRef(new Animated.Value(0)).current;
+
+    React.useEffect(() => {
+        Animated.loop(Animated.sequence([
+            Animated.timing(pulse, { toValue: 1, duration: 3600, easing: Easing.inOut(Easing.cubic), useNativeDriver: true }),
+            Animated.timing(pulse, { toValue: 0, duration: 3600, easing: Easing.inOut(Easing.cubic), useNativeDriver: true }),
+        ])).start();
+        Animated.loop(Animated.sequence([
+            Animated.timing(float, { toValue: 1, duration: 5200, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+            Animated.timing(float, { toValue: 0, duration: 5200, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        ])).start();
+        Animated.loop(Animated.timing(shimmer, { toValue: 1, duration: 7200, easing: Easing.inOut(Easing.sin), useNativeDriver: true })).start();
+        Animated.loop(Animated.sequence([
+            Animated.timing(sparkle, { toValue: 1, duration: 2100, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+            Animated.timing(sparkle, { toValue: 0, duration: 2500, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
+        ])).start();
+    }, [float, pulse, shimmer, sparkle]);
 
     React.useEffect(() => {
         if (!capsule?.id) return;
@@ -83,7 +120,7 @@ export default function InstagramShareScreen() {
         );
     }
 
-    const qrUrl = `https://kapsely.com/capsules/${capsule.id}`;
+    const qrUrl = buildCapsuleShareUrl(String(capsule.id));
     const capsuleOpensAt = capsule.opens_at || capsule.target_date || new Date().toISOString();
     const isSealed = capsule.status === 'sealed';
 
@@ -101,52 +138,123 @@ export default function InstagramShareScreen() {
         : 0;
 
     const cleanDesc = capsule.description ? capsule.description.replace(/\[STYLE:(OPEN|CLOSED)\]/gi, '').trim() : '';
+    const themeColor = timerConfigManager.getModelThemeColor(capsule.model, capsule.model_snapshot, '#7C5CBF');
+    const secondaryColor = capsule.type === 'eventcap' ? '#F59E0B' : capsule.type === 'birthdaycap' ? '#FF6FB7' : '#22D3EE';
+    const typeLabel = capsule.type === 'instacap'
+        ? 'INSTACAP'
+        : capsule.type === 'eventcap'
+            ? 'EVENTCAP'
+            : capsule.type === 'birthdaycap'
+                ? 'BIRTHDAYCAP'
+                : capsule.type === 'opencap'
+                    ? 'OPENCAP'
+                    : 'LEGACYCAP';
+    const floatY = float.interpolate({ inputRange: [0, 1], outputRange: [0, -7] });
+    const pulseScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1.045] });
+    const pulseOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.24, 0.54] });
+    const shimmerX = shimmer.interpolate({ inputRange: [0, 1], outputRange: [-CANVAS_WIDTH * 0.85, CANVAS_WIDTH * 0.85] });
+    const sparkleScale = sparkle.interpolate({ inputRange: [0, 1], outputRange: [0.82, 1.08] });
+    const sparkleOpacity = sparkle.interpolate({ inputRange: [0, 1], outputRange: [0.18, 0.58] });
 
     const modelImg = isSealed
         ? timerConfigManager.getModelImage(capsule.model) || (MODEL_IMAGES as any)[capsule.model]
         : timerConfigManager.getModelImageOpen(capsule.model) || (MODEL_IMAGES_OPEN as any)[capsule.model] || (MODEL_IMAGES as any)[capsule.model];
 
-    const captureImage = async () => {
+    const captureFrame = async () => {
         try {
             if (viewShotRef.current?.capture) return await viewShotRef.current.capture();
             return null;
         } catch (error) {
-            Alert.alert(t('common.error'), 'No se pudo generar la imagen.');
             return null;
+        }
+    };
+
+    const createStoryVideo = async () => {
+        const ffmpeg = getFFmpegKit();
+        if (!ffmpeg) {
+            throw new Error('Video encoder unavailable');
+        }
+
+        const cacheDir = FileSystem.cacheDirectory;
+        if (!cacheDir) throw new Error('Cache directory unavailable');
+
+        const frameDir = `${cacheDir}kapsely-story-${capsule.id}-${Date.now()}/`;
+        const outputUri = `${cacheDir}kapsely-story-${capsule.id}-${Date.now()}.mp4`;
+        await FileSystem.makeDirectoryAsync(frameDir, { intermediates: true });
+
+        try {
+            for (let i = 0; i < VIDEO_FRAME_COUNT; i += 1) {
+                const frameUri = await captureFrame();
+                if (!frameUri) throw new Error('Frame capture failed');
+                const framePath = `${frameDir}frame_${String(i).padStart(3, '0')}.jpg`;
+                await FileSystem.moveAsync({ from: frameUri, to: framePath });
+                await wait(VIDEO_FRAME_DELAY_MS);
+            }
+
+            const command = [
+                '-y',
+                '-framerate', String(VIDEO_FRAME_RATE),
+                '-i', toFFmpegPath(`${frameDir}frame_%03d.jpg`),
+                '-vf', '"scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=0x120A24,fps=30,format=yuv420p"',
+                '-c:v', 'mpeg4',
+                '-q:v', '3',
+                '-movflags', '+faststart',
+                toFFmpegPath(outputUri),
+            ].join(' ');
+
+            const session = await ffmpeg.FFmpegKit.execute(command);
+            const returnCode = await session.getReturnCode();
+            if (!returnCode || !ffmpeg.ReturnCode.isSuccess(returnCode)) {
+                throw new Error('Video encoding failed');
+            }
+
+            return outputUri;
+        } finally {
+            await FileSystem.deleteAsync(frameDir, { idempotent: true }).catch(() => {});
         }
     };
 
     const handleSave = async () => {
         setSaving(true);
-        const perm = await MediaLibrary.requestPermissionsAsync();
-        if (perm.status === 'granted') {
-            const uri = await captureImage();
-            if (uri) {
-                try {
-                    await MediaLibrary.saveToLibraryAsync(uri);
-                    Alert.alert(t('detail.share.image_saved'), t('detail.share.image_saved_desc'));
-                } catch { Alert.alert(t('common.error'), t('detail.share.save_failed')); }
+        try {
+            const perm = await MediaLibrary.requestPermissionsAsync();
+            if (perm.status !== 'granted') {
+                Alert.alert(t('detail.share.permission_denied'), t('detail.share.permission_hint'));
+                return;
             }
-        } else {
-            Alert.alert(t('detail.share.permission_denied'), t('detail.share.permission_hint'));
+            const uri = await createStoryVideo();
+            await MediaLibrary.saveToLibraryAsync(uri);
+            Alert.alert(t('detail.share.video_saved'), t('detail.share.video_saved_desc'));
+        } catch (error: any) {
+            const message = error?.message === 'Video encoder unavailable'
+                ? t('detail.share.video_requires_dev_build')
+                : t('detail.share.video_failed');
+            Alert.alert(t('common.error'), message);
+        } finally {
+            setSaving(false);
         }
-        setSaving(false);
     };
 
     const handleShare = async () => {
         setSharing(true);
         try {
-            const uri = await captureImage();
+            const uri = await createStoryVideo();
             if (uri) {
                 const isAvailable = await Sharing.isAvailableAsync();
                 if (isAvailable) {
-                    await Sharing.shareAsync(uri, { dialogTitle: t('detail.share.share'), mimeType: 'image/jpeg', UTI: 'public.jpeg' });
+                    await Sharing.shareAsync(uri, { dialogTitle: t('detail.share.share'), mimeType: 'video/mp4', UTI: 'public.mpeg-4' });
                 } else {
                     Alert.alert(t('common.error'), t('detail.share.device_error'));
                 }
             }
-        } catch { }
-        setSharing(false);
+        } catch (error: any) {
+            const message = error?.message === 'Video encoder unavailable'
+                ? t('detail.share.video_requires_dev_build')
+                : t('detail.share.video_failed');
+            Alert.alert(t('common.error'), message);
+        } finally {
+            setSharing(false);
+        }
     };
 
     return (
@@ -170,44 +278,69 @@ export default function InstagramShareScreen() {
                 >
                     {/* Light background with purple touches */}
                     <LinearGradient
-                        colors={['#ffffff', '#fcfcff', '#f5f5fa']}
+                        colors={['#120A24', '#24104B', themeColor, secondaryColor]}
                         style={StyleSheet.absoluteFill}
                         start={{ x: 0, y: 0 }}
                         end={{ x: 1, y: 1 }}
                     />
 
                     {/* Accent glow — top left */}
-                    <View style={s.glowTopLeft} />
+                    <Animated.View style={[s.auraBack, { backgroundColor: themeColor, opacity: pulseOpacity, transform: [{ scale: pulseScale }] }]} />
                     {/* Accent glow — bottom right */}
-                    <View style={s.glowBottomRight} />
+                    <Animated.View style={[s.auraFront, { backgroundColor: secondaryColor, opacity: pulseOpacity, transform: [{ scale: pulseScale }] }]} />
+                    <Animated.View style={[s.shimmerBeam, { transform: [{ translateX: shimmerX }, { rotate: '-18deg' }] }]}>
+                        <LinearGradient
+                            colors={['transparent', 'rgba(255,255,255,0.28)', 'transparent']}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 0 }}
+                            style={StyleSheet.absoluteFill}
+                        />
+                    </Animated.View>
 
                     {/* Dot grid — top right decoration */}
                     <View style={{ position: 'absolute', top: 18, right: 14 }}>
-                        <DotGrid rows={4} cols={6} opacity={0.10} />
+                        <DotGrid rows={4} cols={6} opacity={0.18} />
                     </View>
                     {/* Dot grid — bottom left */}
                     <View style={{ position: 'absolute', bottom: 54, left: 14 }}>
-                        <DotGrid rows={3} cols={5} opacity={0.08} />
+                        <DotGrid rows={3} cols={5} opacity={0.12} />
                     </View>
+
+                    {[0, 1, 2, 3, 4, 5].map(i => (
+                        <Animated.View
+                            key={i}
+                            style={[
+                                s.sparkleDot,
+                                {
+                                    left: [24, 238, 52, 252, 36, 220][i],
+                                    top: [86, 110, 360, 310, 232, 430][i],
+                                    opacity: i % 2 ? pulseOpacity : sparkleOpacity,
+                                    transform: [{ scale: i % 2 ? pulseScale : sparkleScale }],
+                                },
+                            ]}
+                        />
+                    ))}
 
                     {/* ── Top bar: branding ── */}
                     <View style={s.topBar}>
                         <Image
-                            source={{ uri: 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/website/Logomain.png' }}
+                            source={{ uri: KAPSELY_LOGO }}
                             style={s.logoImg}
                             resizeMode="contain"
                         />
                         <Text style={s.appName}>kapsely</Text>
                         <View style={s.topBarDivider} />
                         <Text style={s.topBarType}>
-                            {capsule.type === 'instacap' ? 'INSTACAP' : capsule.type === 'eventcap' ? 'EVENTCAP' : 'LEGACYCAP'}
+                            {typeLabel}
                         </Text>
                     </View>
 
                     {/* ── Capsule hero ── */}
-                    <View style={s.capsuleHero}>
+                    <Animated.View style={[s.capsuleHero, { transform: [{ translateY: floatY }] }]}>
                         {/* Radial glow behind capsule */}
-                        <View style={s.capsuleGlow} />
+                        <Animated.View style={[s.capsuleGlow, { backgroundColor: themeColor + '55', opacity: pulseOpacity, transform: [{ scale: pulseScale }] }]} />
+                        <View style={[s.orbitRing, { borderColor: secondaryColor + '55' }]} />
+                        <View style={[s.orbitRingSmall, { borderColor: '#FFFFFF33' }]} />
                         <CapsuleWithTimer
                             modelKey={capsule.model}
                             source={modelImg ? { uri: modelImg } : undefined}
@@ -221,12 +354,12 @@ export default function InstagramShareScreen() {
                             hideTimer={!isSealed}
                             lightweight={true}
                         />
-                    </View>
+                    </Animated.View>
 
                     {/* ── Title block ── */}
                     <View style={s.titleBlock}>
                         {/* Thin accent line */}
-                        <View style={s.accentLine} />
+                        <LinearGradient colors={[secondaryColor, '#FFFFFF']} style={s.accentLine} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} />
                         <Text style={s.capsuleTitle} numberOfLines={2}>{capsule.title}</Text>
                         {cleanDesc ? (
                             <Text style={s.capsuleDesc} numberOfLines={2}>{cleanDesc}</Text>
@@ -272,7 +405,7 @@ export default function InstagramShareScreen() {
 
                         {/* CTA text */}
                         <View style={s.ctaBlock}>
-                            <Text style={s.ctaHeadline}>What's{'\n'}inside? ✨</Text>
+                            <Text style={s.ctaHeadline}>{isSealed ? 'Unlock the' : 'Open the'}{'\n'}memory</Text>
                             <Text style={s.ctaSub}>Kapsely.com</Text>
                         </View>
                     </View>
@@ -286,7 +419,7 @@ export default function InstagramShareScreen() {
                             ? <ActivityIndicator size="small" color={Colors.textPrimary} />
                             : <>
                                 <Ionicons name="download-outline" size={20} color={Colors.textPrimary} />
-                                <Text style={s.actionBtnSecondaryText}>{t('detail.share.save_image')}</Text>
+                                <Text style={s.actionBtnSecondaryText}>{t('detail.share.save_story')}</Text>
                             </>
                         }
                     </TouchableOpacity>
@@ -303,7 +436,7 @@ export default function InstagramShareScreen() {
                 </View>
 
                 {/* Hint */}
-                <Text style={s.hint}>Share to Instagram Stories and tag @kapsely.app</Text>
+                <Text style={s.hint}>El movimiento es intencionadamente suave para que la story respire mejor.</Text>
             </ScrollView>
         </View>
     );
@@ -337,16 +470,30 @@ const s = StyleSheet.create({
         }),
     },
 
-    // Glows
-    glowTopLeft: {
-        position: 'absolute', top: -60, left: -60,
-        width: 200, height: 200, borderRadius: 100,
-        backgroundColor: 'rgba(124, 92, 191, 0.08)',
+    auraBack: {
+        position: 'absolute', top: 58, left: 24,
+        width: 252, height: 252, borderRadius: 126,
     },
-    glowBottomRight: {
-        position: 'absolute', bottom: -40, right: -40,
-        width: 160, height: 160, borderRadius: 80,
-        backgroundColor: 'rgba(225, 48, 108, 0.06)',
+    auraFront: {
+        position: 'absolute', bottom: -34, right: -34,
+        width: 190, height: 190, borderRadius: 95,
+    },
+    shimmerBeam: {
+        position: 'absolute',
+        top: -40,
+        bottom: -40,
+        width: 86,
+    },
+    sparkleDot: {
+        position: 'absolute',
+        width: 7,
+        height: 7,
+        borderRadius: 4,
+        backgroundColor: '#fff',
+        shadowColor: '#fff',
+        shadowOpacity: 0.9,
+        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 0 },
     },
 
     // Top bar
@@ -356,14 +503,14 @@ const s = StyleSheet.create({
     },
     logoImg: { width: 22, height: 22 },
     appName: {
-        fontSize: 16, fontFamily: Fonts.bold, color: '#111',
+        fontSize: 16, fontFamily: Fonts.bold, color: '#fff',
         letterSpacing: 0.5, opacity: 0.9,
     },
     topBarDivider: {
-        width: 1, height: 12, backgroundColor: 'rgba(0,0,0,0.15)', marginHorizontal: 4,
+        width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.30)', marginHorizontal: 4,
     },
     topBarType: {
-        fontSize: 10, fontFamily: Fonts.bold, color: 'rgba(0,0,0,0.35)',
+        fontSize: 10, fontFamily: Fonts.bold, color: 'rgba(255,255,255,0.72)',
         letterSpacing: 1.5,
     },
 
@@ -375,10 +522,25 @@ const s = StyleSheet.create({
     capsuleGlow: {
         position: 'absolute',
         width: 180, height: 180, borderRadius: 90,
-        backgroundColor: 'rgba(124, 92, 191, 0.1)',
         ...Platform.select({
             ios: { shadowColor: '#7C5CBF', shadowOpacity: 0.3, shadowRadius: 40, shadowOffset: { width: 0, height: 0 } },
         }),
+    },
+    orbitRing: {
+        position: 'absolute',
+        width: 210,
+        height: 122,
+        borderRadius: 100,
+        borderWidth: 1,
+        transform: [{ rotate: '-18deg' }],
+    },
+    orbitRingSmall: {
+        position: 'absolute',
+        width: 168,
+        height: 96,
+        borderRadius: 100,
+        borderWidth: 1,
+        transform: [{ rotate: '22deg' }],
     },
     capsuleImg: { width: 180, height: 180 },
 
@@ -391,12 +553,15 @@ const s = StyleSheet.create({
         backgroundColor: '#7C5CBF', marginBottom: 4,
     },
     capsuleTitle: {
-        fontSize: 26, fontFamily: Fonts.bold, color: '#111',
+        fontSize: 26, fontFamily: Fonts.bold, color: '#fff',
         letterSpacing: -0.5, lineHeight: 30,
+        textShadowColor: 'rgba(0,0,0,0.20)',
+        textShadowRadius: 10,
+        textShadowOffset: { width: 0, height: 2 },
     },
     capsuleDesc: {
         fontSize: 13, fontFamily: Fonts.regular,
-        color: '#666', lineHeight: 18,
+        color: 'rgba(255,255,255,0.76)', lineHeight: 18,
     },
 
     // Photo strip
@@ -406,14 +571,14 @@ const s = StyleSheet.create({
     },
     photoCell: {
         flex: 1, height: 56, borderRadius: 10,
-        overflow: 'hidden', backgroundColor: 'rgba(0,0,0,0.03)',
+        overflow: 'hidden', backgroundColor: 'rgba(255,255,255,0.10)',
         alignItems: 'center', justifyContent: 'center',
         borderWidth: StyleSheet.hairlineWidth,
-        borderColor: 'rgba(0,0,0,0.06)',
+        borderColor: 'rgba(255,255,255,0.22)',
     },
     photoLock: {
         width: 20, height: 20, borderRadius: 10,
-        backgroundColor: 'rgba(0,0,0,0.15)',
+        backgroundColor: 'rgba(255,255,255,0.42)',
         alignItems: 'center', justifyContent: 'center',
     },
 
@@ -431,16 +596,16 @@ const s = StyleSheet.create({
     },
     qrLabel: {
         fontSize: 8, fontFamily: Fonts.bold,
-        color: '#7C5CBF', letterSpacing: 1.2, marginTop: 2,
+        color: 'rgba(255,255,255,0.84)', letterSpacing: 1.2, marginTop: 2,
     },
     ctaBlock: { flex: 1, paddingLeft: 6 },
     ctaHeadline: {
-        fontSize: 22, fontFamily: Fonts.bold, color: '#111',
+        fontSize: 22, fontFamily: Fonts.bold, color: '#fff',
         lineHeight: 26, letterSpacing: -0.3,
     },
     ctaSub: {
         fontSize: 12, fontFamily: Fonts.semiBold,
-        color: '#7C5CBF', marginTop: 4,
+        color: 'rgba(255,255,255,0.78)', marginTop: 4,
         letterSpacing: 0.5, textTransform: 'uppercase'
     },
 

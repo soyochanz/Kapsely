@@ -12,7 +12,7 @@ import { Colors, Fonts, Spacing, BorderRadius, Shadow, Gradients } from '../../t
 import { signIn } from '../../lib/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { multiAccountService } from '../../utils/multiAccount';
-import { supabase } from '../../lib/supabase';
+import { safeLocalSignOut } from '../../lib/supabase';
 
 interface Props {
     onNavigateToRegister: () => void;
@@ -48,14 +48,14 @@ export default function LoginScreen({ onNavigateToRegister, onNavigateBack }: Pr
         setLoading(true);
         try {
             await AsyncStorage.setItem('keep_connected', JSON.stringify(keepConnected));
-            await signIn(email.trim().toLowerCase(), password);
+            const authData = await signIn(email.trim().toLowerCase(), password, { resetLocalStateOnRetryable: Platform.OS === 'web' });
             
             // After successful sign in, try to save to multi-account list to check limits
             try {
-                await multiAccountService.saveCurrentAccount();
+                await multiAccountService.saveCurrentAccount(authData.session ?? null);
             } catch (limitErr: any) {
                 // If limit reached, log out and show error
-                await supabase.auth.signOut();
+                await safeLocalSignOut();
                 setError(limitErr.message);
             }
         } catch (e: any) {

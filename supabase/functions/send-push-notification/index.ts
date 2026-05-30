@@ -14,11 +14,12 @@ serve(async (req: Request) => {
         const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
         // 1. Get ALL push tokens for this user
-        const { data: tokens, error: tokenError } = await supabase
+        const { data: registeredTokens, error: tokenError } = await supabase
             .from('user_push_tokens')
             .select('token')
             .eq('user_id', record.user_id)
 
+        let tokens = registeredTokens ?? []
         if (tokenError || !tokens || tokens.length === 0) {
             // Fallback to profiles table for legacy
             const { data: profile } = await supabase
