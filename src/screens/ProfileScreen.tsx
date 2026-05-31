@@ -211,7 +211,7 @@ export default function ProfileScreen() {
         ).sort((a: any, b: any) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
 
         const capsuleIds = combinedCapsules.map((c: any) => c.id);
-        const [mediaRes, likesRes, commentsRes] = capsuleIds.length
+        const [mediaRes, likesRes, commentsRes, capsuleFollowersRes] = capsuleIds.length
             ? await Promise.all([
                 supabase
                     .from('capsule_items')
@@ -223,11 +223,14 @@ export default function ProfileScreen() {
                     .order('created_at', { ascending: false }),
                 supabase.from('likes').select('capsule_id').in('capsule_id', capsuleIds),
                 supabase.from('comments').select('capsule_id').in('capsule_id', capsuleIds),
+                supabase.from('capsule_followers').select('capsule_id').in('capsule_id', capsuleIds),
             ])
-            : [{ data: [] }, { data: [] }, { data: [] }] as any;
+            : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }] as any;
 
         const mediaByCapsule = new Map<string, any[]>();
+        const mediaCounts: Record<string, number> = {};
         (mediaRes.data || []).forEach((item: any) => {
+            mediaCounts[item.capsule_id] = (mediaCounts[item.capsule_id] || 0) + 1;
             const list = mediaByCapsule.get(item.capsule_id) || [];
             if (list.length < 4) list.push(item);
             mediaByCapsule.set(item.capsule_id, list);
@@ -240,6 +243,7 @@ export default function ProfileScreen() {
 
         const likeCounts = countByCapsule(likesRes.data || []);
         const commentCounts = countByCapsule(commentsRes.data || []);
+        const capsuleFollowerCounts = countByCapsule(capsuleFollowersRes.data || []);
 
         return {
             profile: {
@@ -257,7 +261,8 @@ export default function ProfileScreen() {
                     fallback_media: media,
                     likes_count: likeCounts[capsule.id] || 0,
                     comments_count: commentCounts[capsule.id] || 0,
-                    posts_count: media.length,
+                    posts_count: mediaCounts[capsule.id] || 0,
+                    capsule_followers_count: capsuleFollowerCounts[capsule.id] || 0,
                 };
             }),
             my_reads: [],
@@ -922,6 +927,7 @@ export default function ProfileScreen() {
             </Modal>
 
             <AnyFlashList
+                key={`profile-capsules-${activeTab}`}
                 data={sortedTabData}
                 keyExtractor={(item: any) => item.id}
                 numColumns={3}

@@ -96,6 +96,14 @@ const extractStoragePath = (bucket: string, url?: string | null) => {
     return path || null;
 };
 
+const isScheduleActive = (start?: string | null, end?: string | null) => {
+    if (!start) return false;
+    const now = Date.now();
+    const startsAt = new Date(start).getTime();
+    const endsAt = end ? new Date(end).getTime() : Number.POSITIVE_INFINITY;
+    return now >= startsAt && now <= endsAt;
+};
+
 type AdminTab = 'models' | 'timer' | 'chain' | 'drops' | 'stickers' | 'moderation';
 type ModelLayoutPreset = {
     image_scale: number;
@@ -157,8 +165,8 @@ const extractOpenModelLayoutPreset = (model: any): OpenModelLayoutPreset => ({
 export default function AdminCalibrationScreen() {
     const navigation = useNavigation<any>();
     const insets = useSafeAreaInsets();
-    const [selectedModel, setSelectedModel] = useState<any>((timerConfigManager.models.filter((m: any) => !m?.is_hidden)[0]) || MODELS[0]);
-    const [allModels, setAllModels] = useState<any[]>((timerConfigManager.models.filter((m: any) => !m?.is_hidden)).length > 0 ? timerConfigManager.models.filter((m: any) => !m?.is_hidden) : MODELS);
+    const [selectedModel, setSelectedModel] = useState<any>(timerConfigManager.models.find((m: any) => !m?.is_hidden) || timerConfigManager.models[0] || MODELS[0]);
+    const [allModels, setAllModels] = useState<any[]>(timerConfigManager.models.length > 0 ? timerConfigManager.models : MODELS);
     const [activeTab, setActiveTab] = useState<AdminTab>('models');
     const [selectedChainId, setSelectedChainId] = useState<string | null>(null);
     const [isDragging, setIsDragging] = useState(false);
@@ -181,6 +189,7 @@ export default function AdminCalibrationScreen() {
         category: string;
         tint: string;
         is_active: boolean;
+        is_hidden?: boolean;
         is_event: boolean;
         is_birthday: boolean;
         is_trending: boolean;
@@ -355,7 +364,7 @@ export default function AdminCalibrationScreen() {
     }, [selectedModel.id]);
 
     const syncConfigs = () => {
-        const dbModels = timerConfigManager.models.filter((m: any) => !m?.is_hidden && m?.is_active !== false && !!(m?.image_cover || m?.image));
+        const dbModels = timerConfigManager.models.filter((m: any) => !!(m?.image_cover || m?.image));
         if (dbModels.length > 0) {
             setAllModels([...dbModels]);
         }
@@ -805,6 +814,16 @@ export default function AdminCalibrationScreen() {
     const layoutChainReference = punkRabbitChain ? timerConfigManager.getChainConfig('__GLOBAL_TEMPLATE__', punkRabbitChain.id) : undefined;
     const getDropName = (dropId?: string | null) => drops.find(d => d.id === dropId)?.name || null;
     const getDropModels = (dropId: string) => allModels.filter(m => m.drop_id === dropId);
+    const getDrop = (dropId?: string | null) => dropId ? drops.find(d => d.id === dropId) : null;
+    const getModelAvailabilityState = (model: any) => {
+        const activeDrop = isScheduleActive(getDrop(model.drop_id)?.start_date, getDrop(model.drop_id)?.end_date) && getDrop(model.drop_id)?.is_active !== false;
+        const activeEvent = !!model.is_event && isScheduleActive(model.event_start, model.event_end);
+        const activeBirthday = !!model.is_birthday;
+        if (model.is_hidden) return { label: 'Hidden', bg: '#fff5f5', color: '#e53e3e' };
+        if (model.is_active !== false) return { label: 'Active', bg: '#e6fffa', color: '#319795' };
+        if (activeDrop || activeEvent || activeBirthday) return { label: 'Active special', bg: '#eef2ff', color: '#4A6BE0' };
+        return { label: 'Unavailable', bg: '#f7fafc', color: Colors.textMuted };
+    };
 
     const pan = useRef(new Animated.ValueXY({ x: activeConfig.x * FRAME_SIZE, y: activeConfig.y * FRAME_SIZE })).current;
 
@@ -928,6 +947,7 @@ export default function AdminCalibrationScreen() {
 
         // Clean up empty strings to prevent Postgres type errors
         if (!modelToSave.image_open) modelToSave.image_open = modelToSave.image;
+        if (modelToSave.is_active !== false) modelToSave.is_hidden = false;
         if (!modelToSave.event_start) modelToSave.event_start = null;
         if (!modelToSave.event_end) modelToSave.event_end = null;
         if (!modelToSave.drop_id) modelToSave.drop_id = null;
@@ -1749,15 +1769,18 @@ export default function AdminCalibrationScreen() {
                                                 </View>
                                             </View>
                                             <View style={styles.dropModelList}>
-                                                {dropModels.length > 0 ? dropModels.map((m: any) => (
-                                                    <View key={m.id} style={styles.dropModelChip}>
-                                                        <Image source={{ uri: m.image_cover || m.image }} style={styles.dropModelThumb} />
-                                                        <Text style={styles.dropModelName} numberOfLines={1}>{m.label || m.id}</Text>
-                                                        <Text style={[styles.dropModelState, { color: m.is_active === false ? Colors.error : '#319795' }]}>
-                                                            {m.is_active === false ? 'Hidden' : 'Active'}
-                                                        </Text>
-                                                    </View>
-                                                )) : (
+                                                {dropModels.length > 0 ? dropModels.map((m: any) => {
+                                                    const state = getModelAvailabilityState(m);
+                                                    return (
+                                                        <View key={m.id} style={styles.dropModelChip}>
+                                                            <Image source={{ uri: m.image_cover || m.image }} style={styles.dropModelThumb} />
+                                                            <Text style={styles.dropModelName} numberOfLines={1}>{m.label || m.id}</Text>
+                                                            <Text style={[styles.dropModelState, { color: state.color }]}>
+                                                                {state.label}
+                                                            </Text>
+                                                        </View>
+                                                    );
+                                                }) : (
                                                     <View style={styles.dropEmptyState}>
                                                         <Ionicons name="cube-outline" size={15} color={Colors.textMuted} />
                                                         <Text style={styles.dropEmptyText}>No capsules assigned to this drop</Text>
@@ -1799,16 +1822,17 @@ export default function AdminCalibrationScreen() {
                             </View>
 
                             <View>
-                                {filteredModels.map((m: any) => (
+                                {filteredModels.map((m: any) => {
+                                    const state = getModelAvailabilityState(m);
+                                    return (
                                     <View key={m.id} style={styles.modelLibraryCard}>
                                         <Image source={{ uri: m.image_cover || m.image }} style={styles.modelLibraryThumb} />
                                         <View style={{ flex: 1, gap: 2 }}>
                                             <Text style={styles.modelLibraryLabel}>{m.label || m.id}</Text>
                                             <View style={{ flexDirection: 'row', gap: 8 }}>
-                                                {m.is_active ?
-                                                    <View style={[styles.statusTag, { backgroundColor: '#e6fffa' }]}><Text style={[styles.statusTagText, { color: '#319795' }]}>Active</Text></View> :
-                                                    <View style={[styles.statusTag, { backgroundColor: '#fff5f5' }]}><Text style={[styles.statusTagText, { color: '#e53e3e' }]}>Hidden</Text></View>
-                                                }
+                                                <View style={[styles.statusTag, { backgroundColor: state.bg }]}>
+                                                    <Text style={[styles.statusTagText, { color: state.color }]}>{state.label}</Text>
+                                                </View>
                                                 {m.is_event &&
                                                     <View style={[styles.statusTag, { backgroundColor: '#fffaf0' }]}><Text style={[styles.statusTagText, { color: '#dd6b20' }]}>Event</Text></View>
                                                 }
@@ -1868,7 +1892,7 @@ export default function AdminCalibrationScreen() {
                                             </TouchableOpacity>
                                         </View>
                                     </View>
-                                ))}
+                                );})}
                             </View>
                         </View>
                     )}
@@ -2658,7 +2682,7 @@ export default function AdminCalibrationScreen() {
                                         <Text style={styles.switchLabel}>Available in Creation</Text>
                                         <Text style={styles.switchSub}>Users can pick this in the grid</Text>
                                     </View>
-                                    <Switch value={newModel.is_active} onValueChange={v => setNewModel(p => ({ ...p, is_active: v }))} trackColor={{ true: Colors.primary }} />
+                                    <Switch value={newModel.is_active} onValueChange={v => setNewModel(p => ({ ...p, is_active: v, is_hidden: v ? false : p.is_hidden }))} trackColor={{ true: Colors.primary }} />
                                 </View>
 
                                 <View style={[styles.switchRow, { marginTop: 12 }]}>

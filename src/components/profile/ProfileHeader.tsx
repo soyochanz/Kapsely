@@ -346,7 +346,7 @@ export const ProfileHeader = React.memo(({
                                 </Text>
                             </TouchableOpacity>
                             <TouchableOpacity style={s.iconBtn} activeOpacity={0.7} onPress={onNavigateToConversation}>
-                                <Ionicons name="chatbubble-outline" size={19} color={Colors.textSecondary} />
+                                <Ionicons name="paper-plane-outline" size={20} color={Colors.textSecondary} />
                             </TouchableOpacity>
                         </>
                     )}

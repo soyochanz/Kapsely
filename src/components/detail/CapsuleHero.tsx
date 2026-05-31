@@ -1,8 +1,7 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Dimensions, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Dimensions, Platform, Animated, Easing } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Colors, Fonts } from '../../theme';
 import LiveTimer from '../LiveTimer';
 import CapsuleWithTimer from '../CapsuleWithTimer';
@@ -52,6 +51,23 @@ export const CapsuleHero = React.memo(({
     setCapsule, onAddContent, t, collaborators
 }: CapsuleHeroProps) => {
     const canAddContent = isMember && (isBornOpen || (isSealed && !canBeOpened && !isOpening));
+    const hasCapsuleCrowd = Number(followerCount || 0) > 49;
+    const emberPulse = React.useRef(new Animated.Value(0)).current;
+
+    React.useEffect(() => {
+        if (!hasCapsuleCrowd) return;
+        emberPulse.setValue(0);
+        const loop = Animated.loop(
+            Animated.timing(emberPulse, {
+                toValue: 1,
+                duration: 2600,
+                easing: Easing.inOut(Easing.cubic),
+                useNativeDriver: true,
+            })
+        );
+        loop.start();
+        return () => loop.stop();
+    }, [emberPulse, hasCapsuleCrowd]);
 
     return (
         <View style={s.heroSection}>
@@ -61,6 +77,35 @@ export const CapsuleHero = React.memo(({
                 onPress={canAddContent ? onAddContent : undefined}
                 style={s.capsuleStage}
             >
+                {hasCapsuleCrowd && (
+                    <View style={s.emberField} pointerEvents="none">
+                        {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((dot) => (
+                            <Animated.View
+                                key={dot}
+                                style={[
+                                    s.emberDot,
+                                    {
+                                        backgroundColor: dot % 3 === 0 ? '#FF4D8D' : dot % 3 === 1 ? '#FFB86B' : tint,
+                                        left: `${14 + (dot * 13) % 72}%`,
+                                        top: `${20 + (dot * 17) % 58}%`,
+                                        opacity: emberPulse.interpolate({
+                                            inputRange: [0, 0.5, 1],
+                                            outputRange: [0.08 + (dot % 3) * 0.04, 0.40 + (dot % 4) * 0.05, 0.08 + (dot % 3) * 0.04],
+                                        }),
+                                        transform: [
+                                            { translateY: emberPulse.interpolate({ inputRange: [0, 1], outputRange: [14 + (dot % 3) * 5, -24 - (dot % 4) * 6] }) },
+                                            { translateX: emberPulse.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, dot % 2 === 0 ? 12 : -12, 0] }) },
+                                            { rotate: emberPulse.interpolate({ inputRange: [0, 1], outputRange: ['0deg', dot % 2 === 0 ? '16deg' : '-16deg'] }) },
+                                            { scale: emberPulse.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.58, 0.96 + (dot % 5) * 0.08, 0.58] }) },
+                                        ],
+                                    },
+                                    dot % 4 === 0 && s.emberDotLarge,
+                                    dot % 4 === 1 && s.emberDotTiny,
+                                ]}
+                            />
+                        ))}
+                    </View>
+                )}
                 <View style={[s.capsuleGlow, { backgroundColor: tint + '12' }]} />
                 <View style={[s.capsuleGlowInner, { backgroundColor: tint + '08' }]} />
                 <CapsuleWithTimer
@@ -85,7 +130,12 @@ export const CapsuleHero = React.memo(({
             <View style={s.heroMeta}>
                 <View style={s.statRow}>
                     <StatPill icon="heart-outline" label={`${likeCount}`} />
-                    <StatPill icon="person-outline" label={`${followerCount}`} />
+                    <StatPill
+                        icon={hasCapsuleCrowd ? 'flame' : 'person-outline'}
+                        label={`${followerCount}`}
+                        iconColor={hasCapsuleCrowd ? '#FF4D8D' : undefined}
+                        textColor={hasCapsuleCrowd ? '#FF4D8D' : undefined}
+                    />
                     <View style={s.statPill}>
                         <Ionicons name={isSealed ? "lock-closed" : "lock-open"} size={16} color={isSealed ? "#EF4444" : "#10B981"} />
                     </View>
@@ -170,16 +220,36 @@ export const CapsuleHero = React.memo(({
     );
 });
 
-const StatPill = ({ icon, label }: any) => (
+const StatPill = ({ icon, label, iconColor, textColor }: any) => (
     <View style={s.statPill}>
-        <Ionicons name={icon} size={15} color={D.textMuted} />
-        <Text style={s.statPillText}>{label}</Text>
+        <Ionicons name={icon} size={15} color={iconColor || D.textMuted} />
+        <Text style={[s.statPillText, textColor && { color: textColor }]}>{label}</Text>
     </View>
 );
 
 const s = StyleSheet.create({
-    heroSection: { alignItems: 'center', paddingTop: 28, paddingBottom: 28, paddingHorizontal: 22 },
+    heroSection: { alignItems: 'center', paddingTop: 28, paddingBottom: 28, paddingHorizontal: 22, position: 'relative', overflow: 'hidden' },
     capsuleStage: { alignItems: 'center', justifyContent: 'center', width: '100%', marginBottom: 8 },
+    emberField: {
+        position: 'absolute',
+        width: 292,
+        height: 252,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    emberDot: {
+        position: 'absolute',
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        ...Platform.select({
+            ios: { shadowColor: '#FF4D8D', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.42, shadowRadius: 10 },
+            android: { elevation: 2 },
+            web: { boxShadow: '0 0 14px rgba(255,77,141,0.30)' },
+        }),
+    },
+    emberDotLarge: { width: 12, height: 12, borderRadius: 6 },
+    emberDotTiny: { width: 5, height: 5, borderRadius: 3 },
     capsuleGlow: { position: 'absolute', width: 260, height: 260, borderRadius: 130 },
     capsuleGlowInner: { position: 'absolute', width: 190, height: 190, borderRadius: 95 },
     heroMeta: { width: '100%', alignItems: 'center', marginTop: 12 },

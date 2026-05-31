@@ -37,22 +37,10 @@ export const ProfileCapsuleCell = React.memo(({
     setPickerCapsuleId, themeColor, capsuleMediaMap, t, onLongPressCapsule
 }: ProfileCapsuleCellProps) => {
     const [configVersion, setConfigVersion] = useState(0);
-    const [modelImg, setModelImg] = useState(() =>
-        isSealed
-            ? (timerConfigManager.getModelImage(cap.model) || MODEL_IMAGES[cap.model] || (MODEL_IMAGES as any).basicred_kap)
-            : (timerConfigManager.getModelImageOpen(cap.model) || MODEL_IMAGES_OPEN[cap.model] || MODEL_IMAGES[cap.model] || (MODEL_IMAGES as any).basicred_kap)
-    );
 
     useEffect(() => {
-        const update = () => {
-            setModelImg(isSealed
-                ? (timerConfigManager.getModelImage(cap.model) || MODEL_IMAGES[cap.model] || (MODEL_IMAGES as any).basicred_kap)
-                : (timerConfigManager.getModelImageOpen(cap.model) || MODEL_IMAGES_OPEN[cap.model] || MODEL_IMAGES[cap.model] || (MODEL_IMAGES as any).basicred_kap)
-            );
-            setConfigVersion(v => v + 1);
-        };
-        return timerConfigManager.subscribe(update);
-    }, [cap.model, isSealed]);
+        return timerConfigManager.subscribe(() => setConfigVersion(v => v + 1));
+    }, []);
 
     const isToday = React.useMemo(() => {
         if (!cap.opens_at || !isSealed) return false;
@@ -68,6 +56,14 @@ export const ProfileCapsuleCell = React.memo(({
             cfg.color || Colors.primary
         );
     }, [cap.model, cap.model_snapshot, cfg.color, configVersion]);
+    const modelImg = React.useMemo(() => (
+        isSealed
+            ? (timerConfigManager.getModelImage(cap.model) || MODEL_IMAGES[cap.model] || (MODEL_IMAGES as any).basicred_kap)
+            : (timerConfigManager.getModelImageOpen(cap.model) || MODEL_IMAGES_OPEN[cap.model] || MODEL_IMAGES[cap.model] || (MODEL_IMAGES as any).basicred_kap)
+    ), [cap.id, cap.model, isSealed, configVersion]);
+    const capsuleFollowersCount = Number(cap.capsule_followers_count || cap.followers_count || 0);
+    const showFollowerHeat = capsuleFollowersCount > 49;
+    const renderKey = `${cap.id}-${cap.model}-${isSealed ? 'sealed' : 'open'}-${configVersion}`;
 
     return (
         <TouchableOpacity
@@ -93,6 +89,7 @@ export const ProfileCapsuleCell = React.memo(({
                 />
                 {isSealed ? (
                     <CapsuleWithTimer
+                        key={`sealed-${renderKey}`}
                         modelKey={cap.model}
                         source={{ uri: modelImg }}
                         date={cap.opens_at}
@@ -129,6 +126,7 @@ export const ProfileCapsuleCell = React.memo(({
                     }
                     return (
                         <CapsuleWithTimer
+                            key={`opened-${renderKey}`}
                             modelKey={cap.model}
                             source={{ uri: modelImg }}
                             date={cap.opens_at}
@@ -161,6 +159,7 @@ export const ProfileCapsuleCell = React.memo(({
                 <View style={[s.lockStatus, { backgroundColor: isSealed ? '#F87171' : '#4ADE80' }]}>
                     <Ionicons name={isSealed ? "lock-closed" : "lock-open"} size={10} color="#fff" />
                 </View>
+
             </View>
 
             <View style={s.capsuleMeta}>
@@ -179,6 +178,12 @@ export const ProfileCapsuleCell = React.memo(({
                         <Ionicons name="images" size={10} color="#A855F7" />
                         <Text style={[s.statText, { color: '#A855F7' }]}>{itemsCount}</Text>
                     </View>
+                    {showFollowerHeat && (
+                        <View style={s.statItem}>
+                            <Ionicons name="flame" size={10} color="#FF4D8D" />
+                            <Text style={[s.statText, { color: '#FF4D8D' }]}>{capsuleFollowersCount}</Text>
+                        </View>
+                    )}
                 </View>
 
             </View>
@@ -225,7 +230,6 @@ const s = StyleSheet.create({
         alignItems: 'center', justifyContent: 'center',
         borderWidth: 1.5, borderColor: Colors.surface,
     },
-
     capsuleMeta: {
         height: CELL_META_HEIGHT,
         paddingHorizontal: 7,

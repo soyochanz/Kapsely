@@ -243,27 +243,31 @@ class TimerConfigManager {
 
     private mergeModels(models: any[] = [], includeDefaults = true) {
         const merged = new Map<string, any>();
-        const hiddenIds = new Set(
-            [
-                ...Array.from(this.hiddenModelIds),
-                ...models
-                .filter(model => !!model?.id && (model?.is_hidden === true || model?.is_active === false))
+        const explicitDbIds = new Set(models.filter(model => !!model?.id).map(model => model.id));
+        const hiddenIds = new Set([
+            ...Array.from(this.hiddenModelIds).filter(id => !explicitDbIds.has(id)),
+            ...models
+                .filter(model => !!model?.id && model?.is_hidden === true)
                 .map(model => model.id),
-            ]
-        );
+        ]);
         if (includeDefaults) {
             DEFAULT_MODELS.forEach(model => {
-                if (hiddenIds.has(model.id)) return;
-                merged.set(model.id, model);
+                let m = { ...model };
+                if (hiddenIds.has(model.id)) {
+                    m.is_hidden = true;
+                    m.is_active = false;
+                }
+                merged.set(model.id, m);
             });
         }
         models.forEach(model => {
             if (!model?.id) return;
+            let m = { ...(merged.get(model.id) || {}), ...model };
             if (hiddenIds.has(model.id)) {
-                merged.delete(model.id);
-                return;
+                m.is_hidden = true;
+                m.is_active = false;
             }
-            merged.set(model.id, { ...(merged.get(model.id) || {}), ...model });
+            merged.set(model.id, m);
         });
         return Array.from(merged.values());
     }
@@ -584,7 +588,7 @@ class TimerConfigManager {
                 this.lastError = error;
                 throw error;
             }
-            if (payload.is_hidden || payload.is_active === false) {
+            if (payload.is_hidden) {
                 this.hiddenModelIds.add(payload.id);
             } else {
                 this.hiddenModelIds.delete(payload.id);
@@ -721,7 +725,9 @@ class TimerConfigManager {
 
                 this.hiddenModelIds.add(modelId);
                 await this.persistHiddenModelIds();
-                this.models = this.models.filter(model => model.id !== modelId);
+                this.models = this.models.map(model => 
+                    model.id === modelId ? { ...model, is_hidden: true, is_active: false } : model
+                );
                 this.scheduleCacheSave();
                 this.notify();
                 await this.refresh(['models', 'model_configs', 'model_chain_configs']);
@@ -747,7 +753,9 @@ class TimerConfigManager {
 
             this.hiddenModelIds.add(modelId);
             await this.persistHiddenModelIds();
-            this.models = this.models.filter(model => model.id !== modelId);
+            this.models = this.models.map(model => 
+                model.id === modelId ? { ...model, is_hidden: true, is_active: false } : model
+            );
             this.scheduleCacheSave();
             this.notify();
             await this.refresh(['models', 'model_configs', 'model_chain_configs']);

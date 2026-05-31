@@ -322,6 +322,8 @@ const CapsuleCard = React.memo(({
     const profile = capsule.profiles || { username: 'user', avatar_url: null };
     const isOpened = capsule.status === 'opened';
     const isSealed = capsule.status === 'sealed';
+    const capsuleFollowersCount = Number(capsule.capsule_followers_count || capsule.followers_count || 0);
+    const hasCapsuleCrowd = capsuleFollowersCount > 49;
     const hasPlayableMedia = latestItemLoaded && (latestItem?.media_type === 'video' || latestItem?.media_type === 'image') &&
                         (latestItem?.thumbnail_url || latestItem?.media_url || mediaCollage.length > 0);
     const isOpenedMediaCapsule = isOpened && hasPlayableMedia;
@@ -378,7 +380,6 @@ const CapsuleCard = React.memo(({
                     <View style={[s.gridStatusBadge, { backgroundColor: isOpened ? '#4ADE80' : '#F87171' }]}>
                         <Ionicons name={isOpened ? "lock-open" : "lock-closed"} size={10} color="#fff" />
                     </View>
-
                 </View>
 
                 {/* ── Middle: 3-column post preview ── */}
@@ -717,6 +718,13 @@ const CapsuleCard = React.memo(({
                         <Text style={s.actionNum}>{postsCount}</Text>
                     </View>
 
+                    {hasCapsuleCrowd && (
+                        <View style={s.actionBtn}>
+                            <Ionicons name="flame" size={14} color="#FF4D8D" />
+                            <Text style={[s.actionNum, { color: '#FF4D8D' }]}>{capsuleFollowersCount}</Text>
+                        </View>
+                    )}
+
                     <TouchableOpacity 
                         style={[s.actionBtn, { marginLeft: 12 }]} 
                         onPress={handleShare}
@@ -768,7 +776,6 @@ const s = StyleSheet.create({
             web: { boxShadow: '0 2px 10px rgba(0,0,0,0.045)' },
         }),
     },
-
     visual: {
         width: '100%',
         height: Math.min(430, Math.max(310, width * 0.92)),
@@ -852,7 +859,6 @@ const s = StyleSheet.create({
         alignItems: 'center', justifyContent: 'center',
         borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.surface,
     },
-
     // Body
     body: { paddingHorizontal: 10, paddingTop: 10, paddingBottom: 10 },
 
@@ -951,7 +957,6 @@ const s = StyleSheet.create({
             android: { elevation: 3 },
         }),
     },
-
     // Top zone with capsule model
     gridTopZone: {
         height: GRID_ITEM_WIDTH * 0.7,
@@ -995,7 +1000,6 @@ const s = StyleSheet.create({
         borderWidth: 1.5,
         borderColor: Colors.surface,
     },
-
     // 2×2 post preview
     gridPreviewRow: {
         flexDirection: 'row',

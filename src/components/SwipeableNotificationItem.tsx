@@ -35,6 +35,7 @@ export default function SwipeableNotificationItem({
     const translateX  = useSharedValue(0);
     const itemHeight  = useSharedValue(-1);   // -1 = not yet measured; collapses to 0 on delete
     const itemOpacity = useSharedValue(1);
+    const swipeActive = useSharedValue(false);
 
     // ── Actions ──────────────────────────────────────────────────────────────
     const doDelete = (id: string) => {
@@ -69,14 +70,18 @@ export default function SwipeableNotificationItem({
 
     // ── Gesture ───────────────────────────────────────────────────────────────
     const gesture = Gesture.Pan()
-        .activeOffsetX([-14, 14])
-        .failOffsetY([-90, 90])
-        .minDistance(8)
-        .onStart(() => {
-            if (onSwipeStart) runOnJS(onSwipeStart)();
+        .activeOffsetX([-22, 22])
+        .failOffsetY([-12, 12])
+        .minDistance(10)
+        .onBegin(() => {
+            swipeActive.value = false;
         })
         .onUpdate((e) => {
-            if (Math.abs(e.translationY) > Math.abs(e.translationX) * 1.25) return;
+            if (Math.abs(e.translationY) > Math.abs(e.translationX) * 0.7) return;
+            if (!swipeActive.value && Math.abs(e.translationX) > 18) {
+                swipeActive.value = true;
+                if (onSwipeStart) runOnJS(onSwipeStart)();
+            }
             // Resist right swipe slightly
             if (e.translationX > 0) {
                 translateX.value = e.translationX * 0.85;
@@ -92,15 +97,16 @@ export default function SwipeableNotificationItem({
                 triggerRead();
             } else {
                 translateX.value = withSpring(0, { damping: 20, stiffness: 250 });
-                if (onSwipeEnd) runOnJS(onSwipeEnd)();
+                if (swipeActive.value && onSwipeEnd) runOnJS(onSwipeEnd)();
             }
         })
         .onFinalize((_e, success) => {
             // If gesture was cancelled / stolen by ScrollView, snap back
             if (!success) {
                 translateX.value = withSpring(0, { damping: 22, stiffness: 260 });
-                if (onSwipeEnd) runOnJS(onSwipeEnd)();
+                if (swipeActive.value && onSwipeEnd) runOnJS(onSwipeEnd)();
             }
+            swipeActive.value = false;
         });
 
     // ── Animated styles ───────────────────────────────────────────────────────

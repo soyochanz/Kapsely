@@ -19,6 +19,7 @@ BEGIN
         SELECT cf.user_id
           FROM public.capsule_followers cf
          WHERE cf.capsule_id = NEW.capsule_id
+           AND cf.created_at <= COALESCE(NEW.created_at, NOW())
 
         UNION
 

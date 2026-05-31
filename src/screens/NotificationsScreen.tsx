@@ -14,6 +14,7 @@ import SwipeableNotificationItem from '../components/SwipeableNotificationItem';
 import { Notification } from '../data/mockNotifications';
 import { supabase } from '../lib/supabase';
 import { FlashList } from '@shopify/flash-list';
+import { useFocusEffect } from '@react-navigation/native';
 import { clearBadgeCount } from '../utils/pushNotifications';
 import { safetyService } from '../utils/safety';
 
@@ -87,7 +88,6 @@ export default function NotificationsScreen() {
     const { t } = useTranslation();
     const [notifications, setNotifications] = useState<Notification[]>([]);
     const [loading, setLoading] = useState(true);
-    const [scrollEnabled, setScrollEnabled] = useState(true);
     const [showRipple, setShowRipple] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
     const [totalUnread, setTotalUnread] = useState(0);
@@ -137,9 +137,10 @@ export default function NotificationsScreen() {
         } catch {}
         const { data: followedCapsules } = await supabase
             .from('capsule_followers')
-            .select('capsule_id')
+            .select('capsule_id, created_at')
             .eq('user_id', user.id);
         const followedCapsuleIds = new Set((followedCapsules || []).map((row: any) => row.capsule_id));
+        const followedSinceByCapsule = new Map((followedCapsules || []).map((row: any) => [row.capsule_id, row.created_at]));
         const { data: participantCapsules } = await supabase
             .from('capsule_invites')
             .select('capsule_id')
@@ -184,8 +185,17 @@ export default function NotificationsScreen() {
                 .filter(n => {
                     if (blocked.includes(n.sender_id) || n.conversation_id) return false;
                     if (['chat', 'message', 'capsule_chat', 'chat_message'].includes(n.type)) return false;
-                    if (n.type === 'new_item') return !!n.capsule_id && (followedCapsuleIds.has(n.capsule_id) || participantCapsuleIds.has(n.capsule_id));
-                    if (n.type === 'opening_soon') return !!n.capsule_id && followedCapsuleIds.has(n.capsule_id);
+                    if (n.type === 'new_item') {
+                        if (!n.capsule_id) return false;
+                        if (participantCapsuleIds.has(n.capsule_id)) return true;
+                        const followedSince = followedSinceByCapsule.get(n.capsule_id);
+                        return !!followedSince && new Date(n.created_at) >= new Date(followedSince);
+                    }
+                    if (n.type === 'opening_soon') {
+                        if (!n.capsule_id) return false;
+                        const followedSince = followedSinceByCapsule.get(n.capsule_id);
+                        return !!followedSince && new Date(n.created_at) >= new Date(followedSince);
+                    }
                     return true;
                 })
                 .map(n => {
@@ -318,9 +328,15 @@ export default function NotificationsScreen() {
         loadNotifications();
     };
 
-    useEffect(() => {
+    useFocusEffect(useCallback(() => {
+        setPage(0);
+        setHasMore(true);
+        setNotifications([]);
         loadNotifications(true);
         if (Platform.OS !== 'web') clearBadgeCount();
+    }, []));
+
+    useEffect(() => {
         const channel = supabase.channel('notifications_realtime')
             .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, () => loadNotifications(true))
             .subscribe();
@@ -397,16 +413,21 @@ export default function NotificationsScreen() {
     };
 
     const unreadCount = totalUnread;
+    const renderLoadingSkeleton = () => (
+        <View style={s.skeletonWrap}>
+            {Array.from({ length: 7 }).map((_, index) => (
+                <View key={index} style={s.skeletonItem}>
+                    <View style={s.skeletonAvatar} />
+                    <View style={s.skeletonLines}>
+                        <View style={[s.skeletonLine, { width: index % 2 === 0 ? '74%' : '58%' }]} />
+                        <View style={[s.skeletonLineSmall, { width: index % 3 === 0 ? '44%' : '32%' }]} />
+                    </View>
+                </View>
+            ))}
+        </View>
+    );
 
     // ─── Render ────────────────────────────────────────────────────────────
-    if (loading && page === 0) {
-        return (
-            <View style={[s.root, s.centered]}>
-                <ActivityIndicator color={Colors.primary} size="large" />
-            </View>
-        );
-    }
-
     return (
         <GestureHandlerRootView style={{ flex: 1 }}>
         <View style={s.root}>
@@ -457,7 +478,9 @@ export default function NotificationsScreen() {
 
             {/* ── LIST ────────────────────────────────────────────────── */}
             <View style={{ flex: 1 }}>
-                {notifications.length === 0 && !loading ? (
+                {loading && page === 0 ? (
+                    renderLoadingSkeleton()
+                ) : notifications.length === 0 ? (
                     <View style={s.emptyState}>
                         <View style={s.emptyIconWrap}>
                             <Ionicons name="notifications-off-outline" size={36} color={Colors.textMuted} />
@@ -470,7 +493,8 @@ export default function NotificationsScreen() {
                         data={notifications}
                         estimatedItemSize={90}
                         keyExtractor={(item: Notification) => item.id}
-                        scrollEnabled={scrollEnabled}
+                        scrollEnabled={true}
+                        onEndReached={handleLoadMore}
                         onEndReachedThreshold={0.1}
                         showsVerticalScrollIndicator={false}
                         contentContainerStyle={[s.scrollContent, { paddingBottom: insets.bottom + 110 }]}
@@ -511,8 +535,8 @@ export default function NotificationsScreen() {
                                     onMarkRead={handleMarkRead}
                                     onAcceptInvite={handleAcceptInvite}
                                     onRejectInvite={handleRejectInvite}
-                                    onSwipeStart={() => setScrollEnabled(false)}
-                                    onSwipeEnd={() => setScrollEnabled(true)}
+                                    onSwipeStart={() => {}}
+                                    onSwipeEnd={() => {}}
                                 />
                             </Animated.View>
                         )}
@@ -569,6 +593,21 @@ const s = StyleSheet.create({
     // Scroll
     scroll: { flex: 1 },
     scrollContent: { paddingTop: 8 },
+    skeletonWrap: { paddingHorizontal: 20, paddingTop: 14, gap: 12 },
+    skeletonItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        padding: 14,
+        borderRadius: 18,
+        backgroundColor: Colors.surface,
+        borderWidth: 1,
+        borderColor: Colors.borderLight || Colors.divider,
+    },
+    skeletonAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: Colors.cardAlt },
+    skeletonLines: { flex: 1, gap: 8 },
+    skeletonLine: { height: 12, borderRadius: 6, backgroundColor: Colors.cardAlt },
+    skeletonLineSmall: { height: 10, borderRadius: 5, backgroundColor: Colors.cardAlt },
 
     // Section headers
     sectionHeader: {

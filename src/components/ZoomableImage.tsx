@@ -1,10 +1,11 @@
-import React, { RefObject, useState } from 'react';
+import React, { RefObject } from 'react';
 import { StyleSheet, Dimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
+  withDecay,
   withTiming,
 } from 'react-native-reanimated';
 import { Image } from 'expo-image';
@@ -40,7 +41,6 @@ const ZoomableImage = ({
   onInteractionEnd,
   simultaneousGesture,
 }: ZoomableImageProps) => {
-  const [isZoomed, setIsZoomed] = useState(false);
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
   const translateX = useSharedValue(0);
@@ -77,7 +77,6 @@ const ZoomableImage = ({
     savedScale.value = nextScale;
     savedTranslateX.value = nextX;
     savedTranslateY.value = nextY;
-    runOnJS(setIsZoomed)(nextScale > 1.02);
   };
 
   const pinchGesture = Gesture.Pinch()
@@ -105,12 +104,11 @@ const ZoomableImage = ({
         savedTranslateY.value = clampTranslate(translateY.value, scale.value, SCREEN_HEIGHT);
         translateX.value = savedTranslateX.value;
         translateY.value = savedTranslateY.value;
-        runOnJS(setIsZoomed)(true);
       }
     });
 
   const panGesture = Gesture.Pan()
-    .minDistance(4)
+    .minDistance(1)
     .maxPointers(1)
     .onStart(() => {
       if (scale.value > 1) {
@@ -122,15 +120,19 @@ const ZoomableImage = ({
       translateX.value = clampTranslate(savedTranslateX.value + event.translationX, scale.value, SCREEN_WIDTH);
       translateY.value = clampTranslate(savedTranslateY.value + event.translationY, scale.value, SCREEN_HEIGHT);
     })
-    .onEnd(() => {
+    .onEnd((event) => {
       if (scale.value <= 1) {
         finishInteractionIfNeeded();
         return;
       }
-      savedTranslateX.value = clampTranslate(translateX.value, scale.value, SCREEN_WIDTH);
-      savedTranslateY.value = clampTranslate(translateY.value, scale.value, SCREEN_HEIGHT);
-      translateX.value = savedTranslateX.value;
-      translateY.value = savedTranslateY.value;
+      const maxX = Math.max(0, ((SCREEN_WIDTH * scale.value) - SCREEN_WIDTH) / 2);
+      const maxY = Math.max(0, ((SCREEN_HEIGHT * scale.value) - SCREEN_HEIGHT) / 2);
+      translateX.value = withDecay({ velocity: event.velocityX, clamp: [-maxX, maxX], deceleration: 0.996 }, () => {
+        savedTranslateX.value = translateX.value;
+      });
+      translateY.value = withDecay({ velocity: event.velocityY, clamp: [-maxY, maxY], deceleration: 0.996 }, () => {
+        savedTranslateY.value = translateY.value;
+      });
     });
 
   const doubleTapGesture = Gesture.Tap()
@@ -157,9 +159,7 @@ const ZoomableImage = ({
     ? panGesture.simultaneousWithExternalGesture(simultaneousGesture)
     : panGesture;
 
-  const composed = isZoomed
-    ? Gesture.Exclusive(doubleTapGesture, Gesture.Simultaneous(pinch, pan))
-    : Gesture.Exclusive(doubleTapGesture, pinch);
+  const composed = Gesture.Exclusive(doubleTapGesture, Gesture.Simultaneous(pinch, pan));
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [

@@ -188,6 +188,14 @@ function isDropActive(drop?: any) {
     return now >= startsAt && now <= endsAt;
 }
 
+const isModelAvailableForCreation = (model: any, drops: any[] = []) => {
+    if (!model || model.is_hidden) return false;
+    const activeDrop = model.drop_id ? isDropActive(drops.find(drop => drop.id === model.drop_id)) : false;
+    const activeEvent = !!model.is_event && isEventActive(model.event_start, model.event_end);
+    const birthdayDesign = !!model.is_birthday || model.category === 'Birthday';
+    return model.is_active !== false || activeDrop || activeEvent || birthdayDesign;
+};
+
 // ─── Floating orb background decoration ──────────────────────────────────────
 function AmbientOrbs({ accent }: { accent: string }) {
     return (
@@ -398,7 +406,9 @@ function ModelPickerModal({
 
     const filteredModels = models.filter(m => {
         const activeDrop = getModelActiveDrop(m);
-        if (m.is_active === false && !activeDrop) return false;
+        const activeEvent = !!m.is_event && isEventActive(m.event_start, m.event_end);
+        const birthdayDesign = !!m.is_birthday || m.category === 'Birthday';
+        if (m.is_active === false && !activeDrop && !activeEvent && !birthdayDesign) return false;
         
         // If it's an event capsule, only show event models
         if (selectedType === 'eventcap') return m.is_event;
@@ -1150,12 +1160,13 @@ export default function CapsuleCreationScreen() {
     const [activeInstaCapCount, setActiveInstaCapCount] = useState(0);
     const [isBirthdayToday, setIsBirthdayToday] = useState(false);
     const [loadingLimits, setLoadingLimits] = useState(true);
-    const [allModels, setAllModels] = useState<any[]>([...((timerConfigManager.models.length > 0 ? timerConfigManager.models : CAPSULE_MODELS).filter((m: any) => !m?.is_hidden))]);
+    const [allModels, setAllModels] = useState<any[]>([...((timerConfigManager.models.length > 0 ? timerConfigManager.models : CAPSULE_MODELS).filter((m: any) => isModelAvailableForCreation(m, timerConfigManager.getDrops())))]);
     const [drops, setDrops] = useState<any[]>([]);
     
     useEffect(() => {
         const unsubscribe = timerConfigManager.subscribe(() => {
-            setAllModels([...timerConfigManager.models.filter((m: any) => !m?.is_hidden)]);
+            const nextDrops = timerConfigManager.getDrops();
+            setAllModels([...timerConfigManager.models.filter((m: any) => isModelAvailableForCreation(m, nextDrops))]);
             setDrops(timerConfigManager.getDrops());
         });
         setDrops(timerConfigManager.getDrops());
@@ -1186,7 +1197,7 @@ export default function CapsuleCreationScreen() {
     const [capAngelSearchResults, setCapAngelSearchResults] = useState<any[]>([]);
     const [searchingCapAngel, setSearchingCapAngel] = useState(false);
 
-    const [availableModels, setAvailableModels] = useState<any[]>((timerConfigManager.models.length > 0 ? timerConfigManager.models : [...CAPSULE_MODELS]).filter((m: any) => !m?.is_hidden));
+    const [availableModels, setAvailableModels] = useState<any[]>((timerConfigManager.models.length > 0 ? timerConfigManager.models : [...CAPSULE_MODELS]).filter((m: any) => isModelAvailableForCreation(m, timerConfigManager.getDrops())));
     const [sealing, setSealing] = useState(false);
     const [showSealAnim, setShowSealAnim] = useState(false);
     const newCapsuleRef = useRef<any>(null);
@@ -1409,7 +1420,10 @@ export default function CapsuleCreationScreen() {
     }, []);
 
     useEffect(() => {
-        const syncModels = () => setAvailableModels([...(timerConfigManager.models.length > 0 ? timerConfigManager.models : [...CAPSULE_MODELS]).filter((m: any) => !m?.is_hidden)]);
+        const syncModels = () => {
+            const nextDrops = timerConfigManager.getDrops();
+            setAvailableModels([...(timerConfigManager.models.length > 0 ? timerConfigManager.models : [...CAPSULE_MODELS]).filter((m: any) => isModelAvailableForCreation(m, nextDrops))]);
+        };
         const sub = timerConfigManager.subscribe(syncModels);
         syncModels();
         return sub;

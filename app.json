@@ -7,7 +7,7 @@
       "android",
       "web"
     ],
-    "version": "2.5.1",
+    "version": "2.5.2",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -20,7 +20,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.kapsely.app",
-      "buildNumber": "5",
+      "buildNumber": "6",
       "associatedDomains": [
         "applinks:kapsely.com",
         "applinks:www.kapsely.com"
@@ -35,7 +35,7 @@
     },
     "android": {
       "softwareKeyboardLayoutMode": "resize",
-      "versionCode": 7,
+      "versionCode": 8,
       "intentFilters": [
         {
           "action": "VIEW",
