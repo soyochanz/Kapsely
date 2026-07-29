@@ -682,7 +682,7 @@ const CapsuleCard = React.memo(({
                     <View style={{ marginBottom: 9 }}>
                         {latestItem?.caption ? (
                             <Text style={[s.desc, { marginBottom: 4, fontFamily: Fonts.semiBold, color: Colors.primary }]} numberOfLines={1}>
-                                {latestItem.caption.replace(/!!b:[a-z0-9]+/g, '').trim()}
+                                {latestItem.caption.replace(/!!b:[^\s]+/g, '').trim()}
                             </Text>
                         ) : null}
                         <View style={s.videoRow}>

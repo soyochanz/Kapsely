@@ -149,12 +149,68 @@ export default function NotificationsScreen() {
         const participantCapsuleIds = new Set((participantCapsules || []).map((row: any) => row.capsule_id));
         const { data: pendingInviteRows } = await supabase
             .from('capsule_invites')
-            .select('capsule_id, expires_at, status')
+            .select('capsule_id, expires_at, status, created_at')
             .eq('user_id', user.id)
             .eq('status', 'pending');
         const pendingInvitesByCapsule = new Map(
             (pendingInviteRows || []).map((invite: any) => [invite.capsule_id, invite])
         );
+        const activePendingInvites = (pendingInviteRows || []).filter((invite: any) => {
+            const expiryDate = invite.expires_at
+                ? new Date(invite.expires_at)
+                : new Date(new Date(invite.created_at || Date.now()).getTime() + INVITE_EXPIRY_MS);
+            return expiryDate > new Date();
+        });
+        const activePendingCapsuleIds = activePendingInvites.map((invite: any) => invite.capsule_id).filter(Boolean);
+        const { data: activeInviteCapsules } = activePendingCapsuleIds.length
+            ? await supabase
+                .from('capsules')
+                .select('id, title, type, model, chain_id, opens_at, owner_id')
+                .in('id', activePendingCapsuleIds)
+            : { data: [] as any[] };
+        const ownerIds = Array.from(new Set((activeInviteCapsules || []).map((cap: any) => cap.owner_id).filter(Boolean)));
+        const { data: activeInviteOwners } = ownerIds.length
+            ? await supabase
+                .from('profiles')
+                .select('id, username, display_name, avatar_url, favorite_color')
+                .in('id', ownerIds)
+            : { data: [] as any[] };
+        const capsuleById = new Map((activeInviteCapsules || []).map((cap: any) => [cap.id, cap]));
+        const ownerById = new Map((activeInviteOwners || []).map((profile: any) => [profile.id, profile]));
+        const activeInviteNotifications: Notification[] = activePendingInvites
+            .map((invite: any) => {
+                const cap = capsuleById.get(invite.capsule_id);
+                if (!cap) return null;
+                const owner = ownerById.get(cap.owner_id) || {};
+                const createdAt = invite.created_at || new Date().toISOString();
+                const expiryDate = invite.expires_at
+                    ? new Date(invite.expires_at)
+                    : new Date(new Date(createdAt).getTime() + INVITE_EXPIRY_MS);
+                const capTitle = cap.title ? `"${cap.title}"` : '';
+                return {
+                    id: `active-invite-${invite.capsule_id}`,
+                    type: 'capsule_invite' as any,
+                    user: {
+                        id: cap.owner_id,
+                        username: owner.display_name || owner.username || 'Kapsely',
+                        avatar: Colors.getAvatarUrl(owner.avatar_url, owner.display_name || owner.username, owner.favorite_color),
+                    },
+                    message: `${t('detail.invited_you_to_capsule', { title: '' })} ${capTitle}`.trim(),
+                    time: formatTime(createdAt),
+                    isRead: false,
+                    capsuleId: invite.capsule_id,
+                    capsuleTitle: cap.title,
+                    capsuleType: cap.type,
+                    capsuleModel: cap.model,
+                    capsuleChainId: cap.chain_id,
+                    capsuleOpensAt: cap.opens_at,
+                    capsuleOwnerId: cap.owner_id,
+                    createdAt,
+                    isExpired: false,
+                    expiryDate,
+                };
+            })
+            .filter(Boolean) as Notification[];
 
         let nextPage = startPage;
         let lastRawCount = 0;
@@ -253,7 +309,10 @@ export default function NotificationsScreen() {
                     };
                 });
 
-            mapped = [...mapped, ...visibleRows];
+            mapped = [
+                ...mapped,
+                ...visibleRows.filter(n => !(n.type === 'capsule_invite' && n.capsuleId && pendingInvitesByCapsule.has(n.capsuleId))),
+            ];
 
             if (lastRawCount < PAGE_SIZE) break;
         }
@@ -266,7 +325,7 @@ export default function NotificationsScreen() {
         }
 
         if (isRefresh) {
-            setNotifications(mapped);
+            setNotifications([...activeInviteNotifications, ...mapped]);
             setPage(nextPage);
             setHasMore(lastRawCount === PAGE_SIZE);
 

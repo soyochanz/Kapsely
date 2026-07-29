@@ -10,7 +10,6 @@ import { LinearGradient } from 'expo-linear-gradient';
 import ViewShot from 'react-native-view-shot';
 import * as Sharing from 'expo-sharing';
 import * as MediaLibrary from 'expo-media-library';
-import * as FileSystem from 'expo-file-system/legacy';
 import QRCode from 'react-native-qrcode-svg';
 import { Colors, Fonts, Spacing, Shadow } from '../theme';
 import CapsuleWithTimer from '../components/CapsuleWithTimer';
@@ -25,20 +24,6 @@ const { width } = Dimensions.get('window');
 const CANVAS_WIDTH = 300;
 const CANVAS_HEIGHT = CANVAS_WIDTH * (16 / 9);
 const KAPSELY_LOGO = 'https://tnvpostnyyjejexnghfp.supabase.co/storage/v1/object/public/website/Logomain.png';
-const VIDEO_FRAME_COUNT = 36;
-const VIDEO_FRAME_DELAY_MS = 120;
-const VIDEO_FRAME_RATE = 12;
-
-const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-const toFFmpegPath = (uri: string) => `"${uri.replace(/^file:\/\//, '').replace(/"/g, '\\"')}"`;
-
-const getFFmpegKit = () => {
-    try {
-        const kit = require('ffmpeg-kit-react-native');
-        if (kit?.FFmpegKit && kit?.ReturnCode) return kit;
-    } catch {}
-    return null;
-};
 
 // ── Dot grid decoration ───────────────────────────────────────────────────────
 const DotGrid = ({ rows = 5, cols = 8, opacity = 0.12 }: { rows?: number; cols?: number; opacity?: number }) => (
@@ -160,57 +145,12 @@ export default function InstagramShareScreen() {
         ? timerConfigManager.getModelImage(capsule.model) || (MODEL_IMAGES as any)[capsule.model]
         : timerConfigManager.getModelImageOpen(capsule.model) || (MODEL_IMAGES_OPEN as any)[capsule.model] || (MODEL_IMAGES as any)[capsule.model];
 
-    const captureFrame = async () => {
+    const captureStoryImage = async () => {
         try {
             if (viewShotRef.current?.capture) return await viewShotRef.current.capture();
             return null;
         } catch (error) {
             return null;
-        }
-    };
-
-    const createStoryVideo = async () => {
-        const ffmpeg = getFFmpegKit();
-        if (!ffmpeg) {
-            throw new Error('Video encoder unavailable');
-        }
-
-        const cacheDir = FileSystem.cacheDirectory;
-        if (!cacheDir) throw new Error('Cache directory unavailable');
-
-        const frameDir = `${cacheDir}kapsely-story-${capsule.id}-${Date.now()}/`;
-        const outputUri = `${cacheDir}kapsely-story-${capsule.id}-${Date.now()}.mp4`;
-        await FileSystem.makeDirectoryAsync(frameDir, { intermediates: true });
-
-        try {
-            for (let i = 0; i < VIDEO_FRAME_COUNT; i += 1) {
-                const frameUri = await captureFrame();
-                if (!frameUri) throw new Error('Frame capture failed');
-                const framePath = `${frameDir}frame_${String(i).padStart(3, '0')}.jpg`;
-                await FileSystem.moveAsync({ from: frameUri, to: framePath });
-                await wait(VIDEO_FRAME_DELAY_MS);
-            }
-
-            const command = [
-                '-y',
-                '-framerate', String(VIDEO_FRAME_RATE),
-                '-i', toFFmpegPath(`${frameDir}frame_%03d.jpg`),
-                '-vf', '"scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=0x120A24,fps=30,format=yuv420p"',
-                '-c:v', 'mpeg4',
-                '-q:v', '3',
-                '-movflags', '+faststart',
-                toFFmpegPath(outputUri),
-            ].join(' ');
-
-            const session = await ffmpeg.FFmpegKit.execute(command);
-            const returnCode = await session.getReturnCode();
-            if (!returnCode || !ffmpeg.ReturnCode.isSuccess(returnCode)) {
-                throw new Error('Video encoding failed');
-            }
-
-            return outputUri;
-        } finally {
-            await FileSystem.deleteAsync(frameDir, { idempotent: true }).catch(() => {});
         }
     };
 
@@ -222,14 +162,12 @@ export default function InstagramShareScreen() {
                 Alert.alert(t('detail.share.permission_denied'), t('detail.share.permission_hint'));
                 return;
             }
-            const uri = await createStoryVideo();
+            const uri = await captureStoryImage();
+            if (!uri) throw new Error('Image capture failed');
             await MediaLibrary.saveToLibraryAsync(uri);
-            Alert.alert(t('detail.share.video_saved'), t('detail.share.video_saved_desc'));
+            Alert.alert(t('detail.share.image_saved'), t('detail.share.image_saved_desc'));
         } catch (error: any) {
-            const message = error?.message === 'Video encoder unavailable'
-                ? t('detail.share.video_requires_dev_build')
-                : t('detail.share.video_failed');
-            Alert.alert(t('common.error'), message);
+            Alert.alert(t('common.error'), t('detail.share.save_failed'));
         } finally {
             setSaving(false);
         }
@@ -238,20 +176,17 @@ export default function InstagramShareScreen() {
     const handleShare = async () => {
         setSharing(true);
         try {
-            const uri = await createStoryVideo();
+            const uri = await captureStoryImage();
             if (uri) {
                 const isAvailable = await Sharing.isAvailableAsync();
                 if (isAvailable) {
-                    await Sharing.shareAsync(uri, { dialogTitle: t('detail.share.share'), mimeType: 'video/mp4', UTI: 'public.mpeg-4' });
+                    await Sharing.shareAsync(uri, { dialogTitle: t('detail.share.share'), mimeType: 'image/png', UTI: 'public.png' });
                 } else {
                     Alert.alert(t('common.error'), t('detail.share.device_error'));
                 }
             }
         } catch (error: any) {
-            const message = error?.message === 'Video encoder unavailable'
-                ? t('detail.share.video_requires_dev_build')
-                : t('detail.share.video_failed');
-            Alert.alert(t('common.error'), message);
+            Alert.alert(t('common.error'), t('detail.share.save_failed'));
         } finally {
             setSharing(false);
         }
@@ -273,7 +208,7 @@ export default function InstagramShareScreen() {
                 {/* ── Story Canvas ── */}
                 <ViewShot
                     ref={viewShotRef}
-                    options={{ format: 'jpg', quality: 1.0 }}
+                    options={{ format: 'png', quality: 1.0 }}
                     style={s.canvas}
                 >
                     {/* Light background with purple touches */}

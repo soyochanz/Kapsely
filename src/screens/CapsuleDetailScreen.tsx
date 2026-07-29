@@ -3,7 +3,7 @@ import {
     View, Text, StyleSheet, ScrollView, TouchableOpacity,
     TextInput, Dimensions, Animated, Easing, StatusBar, Alert, ActivityIndicator,
     Modal, FlatList, KeyboardAvoidingView, Platform, Pressable, SectionList, Keyboard, InteractionManager,
-    DeviceEventEmitter, Vibration, Share
+    DeviceEventEmitter, Vibration, Share, PanResponder
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -762,8 +762,39 @@ function CapsuleDetailScreen() {
     const [viewerScrollEnabled, setViewerScrollEnabled] = useState(true);
     const [showBigHeart, setShowBigHeart] = useState(false);
     const [invitedUsers, setInvitedUsers] = useState<any[]>([]);
+    const viewerDismissY = useRef(new Animated.Value(0)).current;
+    const viewerScrollEnabledRef = useRef(true);
     const bigHeartScale = useRef(new Animated.Value(0)).current;
     const bigHeartOpacity = useRef(new Animated.Value(0)).current;
+    useEffect(() => {
+        viewerScrollEnabledRef.current = viewerScrollEnabled;
+    }, [viewerScrollEnabled]);
+    const closeViewer = useCallback(() => {
+        Animated.timing(viewerDismissY, { toValue: 0, duration: 120, useNativeDriver: true }).start();
+        setViewerVisible(false);
+        setViewerScrollEnabled(true);
+    }, [viewerDismissY]);
+    const viewerDismissResponder = useRef(
+        PanResponder.create({
+            onMoveShouldSetPanResponder: (_, gesture) => {
+                if (!viewerScrollEnabledRef.current) return false;
+                return gesture.dy > 18 && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.25;
+            },
+            onPanResponderMove: (_, gesture) => {
+                if (gesture.dy > 0) viewerDismissY.setValue(Math.min(gesture.dy, height * 0.38));
+            },
+            onPanResponderRelease: (_, gesture) => {
+                if (gesture.dy > 110 || gesture.vy > 0.85) {
+                    Animated.timing(viewerDismissY, { toValue: height, duration: 180, useNativeDriver: true }).start(() => closeViewer());
+                } else {
+                    Animated.spring(viewerDismissY, { toValue: 0, friction: 7, tension: 90, useNativeDriver: true }).start();
+                }
+            },
+            onPanResponderTerminate: () => {
+                Animated.spring(viewerDismissY, { toValue: 0, friction: 7, tension: 90, useNativeDriver: true }).start();
+            },
+        })
+    ).current;
 
     const timerRef = useRef<NodeJS.Timeout | null>(null);
     const insets = useSafeAreaInsets();
@@ -842,6 +873,41 @@ function CapsuleDetailScreen() {
     const isSharedCapsule = capsule?.is_shared === true || totalMembers > 1 || (invites && invites.length > 0);
     // Ensure visibility for public shared capsules regardless of membership
     const showCollaborators = isSharedCapsule;
+
+    const handleLeaveCapsule = useCallback(() => {
+        if (!capsuleId || !userId || !isMember) return;
+        setShowOptions(false);
+
+        const execLeave = async () => {
+            try {
+                const { data, error } = await supabase.rpc('leave_capsule_v1', {
+                    target_capsule_id: capsuleId,
+                    requester_user_id: userId,
+                });
+
+                if (error) throw error;
+
+                DeviceEventEmitter.emit('CAPSULE_UPDATED', { capsuleId });
+                if (data?.status === 'deleted') {
+                    DeviceEventEmitter.emit('capsule_deleted', { capsuleId });
+                }
+                Alert.alert('Kapsely', t('detail.left_capsule_success') || 'Has abandonado la capsula.');
+                navigation.goBack();
+            } catch (error: any) {
+                Alert.alert(t('common.error'), error?.message || 'No se pudo abandonar la capsula.');
+            }
+        };
+
+        Alert.alert(
+            t('detail.leave_capsule') || 'Abandonar capsula',
+            t('detail.leave_capsule_confirm') || 'Dejaras de formar parte de esta capsula compartida.',
+            [
+                { text: t('common.cancel'), style: 'cancel' },
+                { text: t('detail.leave_capsule') || 'Abandonar', style: 'destructive', onPress: execLeave },
+            ]
+        );
+    }, [capsuleId, userId, isMember, navigation, t]);
+
     const [canBeOpened, setCanBeOpened] = useState(false);
     useEffect(() => {
         const checkReady = () => setCanBeOpened(capsule?.opens_at ? new Date(capsule.opens_at) <= new Date() : true);
@@ -985,17 +1051,31 @@ function CapsuleDetailScreen() {
             clearTimeout(sharedFinalizeTimeoutRef.current);
             sharedFinalizeTimeoutRef.current = null;
         }
-        setShowEpicOpening(false);
-        setCapsule((prev: any) => ({ ...prev, status: 'opened', is_opening: false }));
         try {
-            await supabase
-                .from('capsules')
-                .update({ status: 'opened', is_opening: false })
-                .eq('id', capsuleId)
-                .neq('status', 'opened');
-            DeviceEventEmitter.emit('CAPSULE_UPDATED', { id: capsuleId, status: 'opened' });
+            const { data: finalized, error } = await supabase.rpc('finalize_shared_capsule_opening_v1', {
+                target_capsule_id: capsuleId,
+            });
+            if (error) throw error;
+            if (finalized) {
+                setShowEpicOpening(false);
+                setCapsule((prev: any) => ({ ...prev, status: 'opened', is_opening: false, opening_at: null }));
+                DeviceEventEmitter.emit('CAPSULE_UPDATED', { id: capsuleId, status: 'opened' });
+            } else {
+                const { data: freshCapsule } = await supabase
+                    .from('capsules')
+                    .select('*')
+                    .eq('id', capsuleId)
+                    .single();
+                if (freshCapsule) setCapsule((prev: any) => ({ ...prev, ...freshCapsule }));
+            }
         } catch (err) {
             console.error('Error finalizing shared capsule opening:', err);
+            const { data: freshCapsule } = await supabase
+                .from('capsules')
+                .select('*')
+                .eq('id', capsuleId)
+                .single();
+            if (freshCapsule) setCapsule((prev: any) => ({ ...prev, ...freshCapsule }));
         }
     }, [capsuleId]);
 
@@ -1016,7 +1096,10 @@ function CapsuleDetailScreen() {
         }));
         try {
             if (isSharedCapsule) {
-                await supabase.from('capsules').update({ status: 'opened', is_opening: false }).eq('id', capsuleId);
+                const { error } = await supabase.rpc('finalize_shared_capsule_opening_v1', {
+                    target_capsule_id: capsuleId,
+                });
+                if (error) throw error;
             } else {
                 await supabase.rpc('complete_single_capsule_opening_v1', {
                     target_capsule_id: capsuleId,
@@ -1974,7 +2057,13 @@ function CapsuleDetailScreen() {
 
 
 
-    const openViewer = (index: number) => { setInitialIndex(index); setActiveViewerIndex(index); setViewerVisible(true); };
+    const openViewer = (index: number) => {
+        viewerDismissY.setValue(0);
+        setViewerScrollEnabled(true);
+        setInitialIndex(index);
+        setActiveViewerIndex(index);
+        setViewerVisible(true);
+    };
     const toggleAudio = (url: string) => setPlayingAudio(p => p === url ? null : url);
 
     const scrollToChat = useCallback(() => {
@@ -2501,6 +2590,12 @@ function CapsuleDetailScreen() {
                                 label: t('detail.invite_members') || 'Invite members', 
                                 onPress: () => { setShowOptions(false); setShowInviteModal(true); } 
                             }] : []),
+                            ...(isMember && isSharedCapsule ? [{
+                                icon: 'exit-outline',
+                                color: '#EF4444',
+                                label: t('detail.leave_capsule') || 'Abandonar capsula',
+                                onPress: handleLeaveCapsule,
+                            }] : []),
                             ...(!isOwner ? [{ icon: 'alert-circle-outline', color: D.textSec, label: t('detail.report_capsule'), onPress: handleReportCapsule }] : []),
                             ...(isOwner || (isMember && isSharedCapsule) ? [{ 
                                 icon: 'trash-outline', 
@@ -2663,8 +2758,17 @@ function CapsuleDetailScreen() {
 
             {/* Media viewer */}
             <Modal visible={viewerVisible} transparent animationType="fade">
-                <View style={ds.viewer}>
-                    <TouchableOpacity style={ds.viewerClose} onPress={() => setViewerVisible(false)}>
+                <Animated.View
+                    style={[
+                        ds.viewer,
+                        {
+                            transform: [{ translateY: viewerDismissY }],
+                            opacity: viewerDismissY.interpolate({ inputRange: [0, height * 0.38], outputRange: [1, 0.55], extrapolate: 'clamp' }),
+                        },
+                    ]}
+                    {...viewerDismissResponder.panHandlers}
+                >
+                    <TouchableOpacity style={ds.viewerClose} onPress={closeViewer}>
                         <Ionicons name="close" size={24} color="#fff" />
                     </TouchableOpacity>
                     <FlatList
@@ -2732,7 +2836,7 @@ function CapsuleDetailScreen() {
                             </View>
                         )}
                     />
-                </View>
+                </Animated.View>
             </Modal>
 
             {/* ══════════════════════════════════════════════════════════

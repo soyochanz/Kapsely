@@ -26,6 +26,7 @@ import { sendPushNotification } from '../utils/pushNotifications';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const { width, height } = Dimensions.get('window');
+const CREATION_WIDTH = Platform.OS === 'web' ? Math.min(width, 560) : width;
 const MIN_DAYS = 1;
 const MAX_DAYS = 365 * 5;
 const clampModelLayout = (model: any) => ({
@@ -653,7 +654,7 @@ const modalS = StyleSheet.create({
         paddingHorizontal: 16, gap: 16, paddingBottom: 20,
     },
     modelCard: {
-        width: (width - 32 - 16) / 2,
+        width: (CREATION_WIDTH - 32 - 16) / 2,
         backgroundColor: L.surfaceAlt,
         borderRadius: 24, borderWidth: 1.5, borderColor: L.border,
         paddingVertical: 12, paddingHorizontal: 12,
@@ -1444,7 +1445,7 @@ export default function CapsuleCreationScreen() {
     // ─── Navigation ───────────────────────────────────────────────────────────
     const goToStep = (next: Step, dir: number) => {
         Keyboard.dismiss();
-        slideAnim.setValue(dir * width * 0.22);
+        slideAnim.setValue(dir * CREATION_WIDTH * 0.22);
         setCurrentStep(next);
         Animated.spring(slideAnim, { toValue: 0, tension: 60, friction: 11, useNativeDriver: true }).start();
         scrollRef.current?.scrollTo({ y: 0, animated: false });
@@ -2441,7 +2442,7 @@ const s = StyleSheet.create({
     scroll: { flex: 1 },
     scrollContent: { paddingTop: 4 },
 
-    pageWrapper: { width, paddingHorizontal: 18, paddingTop: 6, paddingBottom: 16 },
+    pageWrapper: { width: CREATION_WIDTH, paddingHorizontal: 18, paddingTop: 6, paddingBottom: 16 },
 
     pageTitle: {
         fontSize: 34, fontFamily: Fonts.bold, color: L.text,
@@ -2528,7 +2529,7 @@ const s = StyleSheet.create({
 
     presetGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 14 },
     presetCard: {
-        width: (width - 36 - 20) / 3, backgroundColor: L.surface, borderRadius: 20, borderWidth: 1.5, borderColor: L.border,
+        width: (CREATION_WIDTH - 36 - 20) / 3, backgroundColor: L.surface, borderRadius: 20, borderWidth: 1.5, borderColor: L.border,
         paddingVertical: 18, paddingHorizontal: 8, alignItems: 'center', position: 'relative',
         shadowColor: L.shadow, shadowOpacity: 1, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1, overflow: 'hidden',
     },
@@ -2563,7 +2564,7 @@ const s = StyleSheet.create({
 
     summaryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 20 },
     summaryCard: {
-        width: (width - 36 - 10) / 2, flexDirection: 'row', alignItems: 'center', gap: 10,
+        width: (CREATION_WIDTH - 36 - 10) / 2, flexDirection: 'row', alignItems: 'center', gap: 10,
         backgroundColor: L.surface, borderRadius: 18, borderWidth: 1.5, borderColor: L.border,
         padding: 12, overflow: 'hidden',
     },

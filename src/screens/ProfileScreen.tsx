@@ -561,6 +561,56 @@ export default function ProfileScreen() {
         );
     }, [isOwnProfile, currentUserId, myAcceptedCaps]);
 
+    const canLeaveProfileCapsule = useCallback((cap: any) => {
+        return !!cap && !!currentUserId && cap.owner_id !== currentUserId && (
+            myAcceptedCaps.has(cap.id) ||
+            cap.is_member_capsule ||
+            (cap.invited_user_id === currentUserId && cap.invite_status === 'accepted')
+        );
+    }, [currentUserId, myAcceptedCaps]);
+
+    const handleLeaveCapsuleFromSheet = useCallback((cap: any) => {
+        if (!cap?.id || !currentUserId) return;
+        setShowCapsuleOptions(false);
+
+        const execLeave = async () => {
+            try {
+                const [inviteRes, legacyRes] = await Promise.all([
+                    supabase
+                        .from('capsule_invites')
+                        .delete()
+                        .eq('capsule_id', cap.id)
+                        .eq('user_id', currentUserId),
+                    supabase
+                        .from('capsules')
+                        .update({ invite_status: 'rejected' })
+                        .eq('id', cap.id)
+                        .eq('invited_user_id', currentUserId),
+                ]);
+
+                if (inviteRes.error) throw inviteRes.error;
+                if (legacyRes.error) throw legacyRes.error;
+
+                setSelectedCapsuleOptions(null);
+                DeviceEventEmitter.emit('CAPSULE_UPDATED', { capsuleId: cap.id });
+                queryClient.invalidateQueries({ queryKey: ['profile', targetUserId || currentUserId] });
+                queryClient.invalidateQueries({ queryKey: ['profile', currentUserId] });
+                Alert.alert('Kapsely', t('detail.left_capsule_success') || 'Has abandonado la capsula.');
+            } catch (error: any) {
+                Alert.alert(t('common.error'), error?.message || 'No se pudo abandonar la capsula.');
+            }
+        };
+
+        Alert.alert(
+            t('detail.leave_capsule') || 'Abandonar capsula',
+            t('detail.leave_capsule_confirm') || 'Dejaras de formar parte de esta capsula compartida.',
+            [
+                { text: t('common.cancel'), style: 'cancel' },
+                { text: t('detail.leave_capsule') || 'Abandonar', style: 'destructive', onPress: execLeave },
+            ]
+        );
+    }, [currentUserId, queryClient, targetUserId, t]);
+
     const handleDeleteCapsuleFromSheet = useCallback((cap: any) => {
         setShowCapsuleOptions(false);
         const execDelete = async () => {
@@ -1069,6 +1119,24 @@ export default function ProfileScreen() {
                                             <Ionicons name="image-outline" size={18} color={Colors.primary} />
                                         </View>
                                         <Text style={s.sheetItemText}>{t('profile.setAsCover')}</Text>
+                                        <Ionicons name="chevron-forward" size={16} color={Colors.textMuted} />
+                                    </TouchableOpacity>
+                                )}
+
+                                {canLeaveProfileCapsule(selectedCapsuleOptions) && (
+                                    <TouchableOpacity
+                                        style={s.sheetItem}
+                                        activeOpacity={0.7}
+                                        onPress={() => {
+                                            if (selectedCapsuleOptions) handleLeaveCapsuleFromSheet(selectedCapsuleOptions);
+                                        }}
+                                    >
+                                        <View style={[s.sheetItemIcon, { backgroundColor: Colors.error + '12' }]}>
+                                            <Ionicons name="exit-outline" size={18} color={Colors.error} />
+                                        </View>
+                                        <Text style={[s.sheetItemText, { color: Colors.error, fontFamily: Fonts.bold }]}>
+                                            {t('detail.leave_capsule') || 'Abandonar capsula'}
+                                        </Text>
                                         <Ionicons name="chevron-forward" size={16} color={Colors.textMuted} />
                                     </TouchableOpacity>
                                 )}

@@ -126,6 +126,9 @@ function SplashOpenAnimation({ onDone }: { onDone: () => void }) {
 
 export default function App() {
   const { width: viewportWidth } = useWindowDimensions();
+  const showWebDesktopShell = Platform.OS === 'web' && viewportWidth >= 760;
+  const showWebBrandPanel = viewportWidth >= 1180;
+  const showWebInfoPanel = viewportWidth >= 1260;
   const [fontsLoaded] = useFonts({ 
     Inter_300Light, Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold,
     Poppins_400Regular, Poppins_600SemiBold, Poppins_700Bold, Poppins_800ExtraBold,
@@ -350,20 +353,24 @@ export default function App() {
             ]}
           >
             <StatusBar style="dark" backgroundColor={Colors.background} />
-            {Platform.OS === 'web' && viewportWidth >= 900 ? (
+            {showWebDesktopShell ? (
               <View style={styles.webDesktopShell}>
-                <View style={styles.webBrandPanel}>
-                  <Image source={require('./assets/android-icon-foreground.png')} style={styles.webBrandLogo} resizeMode="contain" />
-                  <Text style={styles.webBrandName}>kapsely</Text>
-                  <Text style={styles.webBrandCopy}>Capsulas privadas, recuerdos compartidos y momentos que se abren cuando toca.</Text>
-                </View>
+                {showWebBrandPanel && (
+                  <View style={styles.webBrandPanel}>
+                    <Image source={require('./assets/android-icon-foreground.png')} style={styles.webBrandLogo} resizeMode="contain" />
+                    <Text style={styles.webBrandName}>kapsely</Text>
+                    <Text style={styles.webBrandCopy}>Capsulas privadas, recuerdos compartidos y momentos que se abren cuando toca.</Text>
+                  </View>
+                )}
                 <View style={styles.webAppFrame}>
                   {navigationContent}
                 </View>
-                <View style={styles.webInfoPanel}>
-                  <Text style={styles.webInfoTitle}>Web preview</Text>
-                  <Text style={styles.webInfoText}>Disenada para usar Kapsely comodamente desde ordenador sin perder la experiencia movil.</Text>
-                </View>
+                {showWebInfoPanel && (
+                  <View style={styles.webInfoPanel}>
+                    <Text style={styles.webInfoTitle}>Web preview</Text>
+                    <Text style={styles.webInfoText}>Disenada para usar Kapsely comodamente desde ordenador sin perder la experiencia movil.</Text>
+                  </View>
+                )}
               </View>
             ) : navigationContent}
             {showSplashOpen && <SplashOpenAnimation onDone={() => setShowSplashOpen(false)} />}
@@ -418,9 +425,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'stretch',
-    gap: 28,
-    paddingHorizontal: 36,
-    paddingVertical: 24,
+    gap: 22,
+    paddingHorizontal: 20,
+    paddingVertical: 8,
     backgroundColor: '#F7F5FE',
   },
   webBrandPanel: {
@@ -449,7 +456,8 @@ const styles = StyleSheet.create({
   webAppFrame: {
     flex: 1,
     maxWidth: 560,
-    minWidth: 420,
+    minWidth: 0,
+    height: '100%' as any,
     overflow: 'hidden',
     borderRadius: 30,
     borderWidth: 1,

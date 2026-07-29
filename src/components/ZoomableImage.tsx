@@ -108,8 +108,16 @@ const ZoomableImage = ({
     });
 
   const panGesture = Gesture.Pan()
+    .manualActivation(true)
     .minDistance(1)
     .maxPointers(1)
+    .onTouchesMove((_, state) => {
+      if (scale.value > 1.02) {
+        state.activate();
+      } else {
+        state.fail();
+      }
+    })
     .onStart(() => {
       if (scale.value > 1) {
         startInteractionIfNeeded();

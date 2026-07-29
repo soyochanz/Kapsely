@@ -52,6 +52,10 @@ export const CapsuleHero = React.memo(({
 }: CapsuleHeroProps) => {
     const canAddContent = isMember && (isBornOpen || (isSealed && !canBeOpened && !isOpening));
     const hasCapsuleCrowd = Number(followerCount || 0) > 49;
+    const requiredVotes = Math.max(1, Math.ceil(totalMembers / 2));
+    const openVoteText = isSharedCapsule && hasRequestedOpen
+        ? `${reqCount}/${requiredVotes}`
+        : (t('detail.unseal_now') || 'Abrir capsula');
     const emberPulse = React.useRef(new Animated.Value(0)).current;
 
     React.useEffect(() => {
@@ -168,7 +172,7 @@ export const CapsuleHero = React.memo(({
                                         <View style={{ flex: 1 }}>
                                             <Text style={[s.countdownLabel, { color: tint }]}>
                                                 {isSharedCapsule
-                                                    ? `${t('detail.unsealing_soon') || 'Abriéndose pronto'} · ${reqCount}/${totalMembers}`
+                                                    ? `${t('detail.unsealing_soon') || 'Abriéndose pronto'} · ${reqCount}/${requiredVotes}`
                                                     : (t('detail.unsealing_soon') || 'Abriéndose pronto')}
                                             </Text>
                                             {!!capsule.opening_at && (
@@ -179,16 +183,26 @@ export const CapsuleHero = React.memo(({
                                 ) : canBeOpened ? (
                                     <View style={s.unsealBtnWrap}>
                                         <TouchableOpacity
-                                            style={[s.unsealBtnGrad, { backgroundColor: tint }]}
+                                            style={[
+                                                s.unsealBtnGrad,
+                                                { backgroundColor: isSharedCapsule && hasRequestedOpen ? '#9CA3AF' : tint },
+                                                isSharedCapsule && hasRequestedOpen && s.unsealBtnDisabled,
+                                            ]}
                                             disabled={isSharedCapsule && hasRequestedOpen}
                                             onPress={handleRequestOpen}
                                         >
+                                            {isSharedCapsule && hasRequestedOpen && (
+                                                <Ionicons name="checkmark-circle" size={18} color="#fff" style={{ marginRight: 8 }} />
+                                            )}
                                             <Text style={s.unsealBtnText}>
                                                 {isSharedCapsule
                                                     ? (hasRequestedOpen ? (t('detail.requested') || 'Voto registrado') : (t('detail.unseal_now') || 'Abrir cápsula'))
                                                     : (t('detail.unseal_now') || 'Abrir cápsula')}
                                             </Text>
                                         </TouchableOpacity>
+                                        {isSharedCapsule && hasRequestedOpen && (
+                                            <Text style={s.openVoteCount}>{reqCount}/{requiredVotes}</Text>
+                                        )}
                                     </View>
                                 ) : (
                                     <View style={[s.countdownCard, { borderColor: tint + '30', backgroundColor: tint + '05' }]}>
@@ -265,7 +279,9 @@ const s = StyleSheet.create({
     ctaBlock: { width: '100%', alignItems: 'center', gap: 12, marginTop: 6 },
     unsealBtnWrap: { width: '90%', borderRadius: 24 },
     unsealBtnGrad: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, paddingVertical: 18, borderRadius: 24 },
+    unsealBtnDisabled: { opacity: 0.82 },
     unsealBtnText: { fontSize: 17, fontFamily: Fonts.bold, color: '#fff' },
+    openVoteCount: { marginTop: 8, textAlign: 'center', fontSize: 13, fontFamily: Fonts.bold, color: D.textMuted },
     countdownCard: { flexDirection: 'row', alignItems: 'center', gap: 14, borderRadius: 18, borderWidth: 1.5, padding: 14, width: '88%' },
     countdownIconWrap: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
     countdownLabel: { fontSize: 11, fontFamily: Fonts.semiBold, marginBottom: 2, opacity: 0.8 },

@@ -3,7 +3,7 @@ import {
     View, Text, StyleSheet, ScrollView, TouchableOpacity,
     StatusBar, Modal, Platform, Alert,
     Dimensions, Animated, Easing, ActivityIndicator, InteractionManager,
-    DeviceEventEmitter, AppState
+    DeviceEventEmitter, AppState, RefreshControl
 } from 'react-native';
 import { Image } from 'expo-image';
 
@@ -64,8 +64,12 @@ const PAGE_SIZE = 15;
 const FEED_BOOT_CACHE_PREFIX = '@kapsely_feed_boot_v4';
 const FEED_RPC_TIMEOUT_MS = 6500;
 const SIMPLE_FRONTEND_FEED = true;
-const DISABLE_FEED_IMPRESSIONS_UNTIL_STABLE = true;
+const DISABLE_FEED_IMPRESSIONS_UNTIL_STABLE = false;
 const SUPABASE_RELIEF_MODE = true;
+const SIMPLE_FEED_CANDIDATE_MULTIPLIER = 4;
+const SIMPLE_FEED_REFRESH_CANDIDATE_MULTIPLIER = 6;
+const SIMPLE_FEED_MAX_CANDIDATES = 90;
+const FEED_SIGNAL_LIMIT = 320;
 
 const withTimeout = <T,>(promise: PromiseLike<T>, ms: number, label: string): Promise<T> =>
     new Promise((resolve, reject) => {
@@ -80,6 +84,47 @@ const withTimeout = <T,>(promise: PromiseLike<T>, ms: number, label: string): Pr
                 reject(error);
             });
     });
+
+const getSafeArray = (value: any) => Array.isArray(value) ? value : [];
+
+const getNestedCapsuleOwnerId = (row: any) => {
+    const capsule = Array.isArray(row?.capsules) ? row.capsules[0] : row?.capsules;
+    return capsule?.owner_id || null;
+};
+
+const getTime = (value?: string | null) => {
+    if (!value) return 0;
+    const time = new Date(value).getTime();
+    return Number.isFinite(time) ? time : 0;
+};
+
+const getAgeDays = (timeMs: number) => timeMs > 0 ? Math.max(0, (Date.now() - timeMs) / 86400000) : 999;
+
+const getRecentSeenPenalty = (lastSeenMs: number, isRefresh: boolean) => {
+    if (!lastSeenMs) return 0;
+    const ageDays = getAgeDays(lastSeenMs);
+    if (ageDays < 1 / 24) return isRefresh ? 320 : 240;
+    if (ageDays < 1) return isRefresh ? 260 : 160;
+    if (ageDays < 3) return isRefresh ? 175 : 95;
+    if (ageDays < 7) return 70;
+    return 22;
+};
+
+const stableLightBoost = (value: string) => {
+    let hash = 0;
+    for (let i = 0; i < value.length; i += 1) {
+        hash = ((hash << 5) - hash + value.charCodeAt(i)) | 0;
+    }
+    return Math.abs(hash % 1200) / 100;
+};
+
+const getUploadBatchKey = (item: any) => {
+    if (item?.batch_id) return String(item.batch_id);
+    const marker = String(item?.caption || '').match(/!!b:([^\s]+)/);
+    return marker?.[1] || String(item?.id || Math.random());
+};
+
+const stripBatchMarker = (value?: string | null) => (value || '').replace(/!!b:[^\s]+/g, '').trim();
 
 const FILTER_KEYS: FilterType[] = ['all', 'closed', 'open'];
 const FILTER_META: Record<FilterType, { icon: string; label: (t: any) => string; iconColor?: string }> = {
@@ -254,6 +299,7 @@ export default function FeedScreen() {
     const [likedCapsules, setLikedCapsules] = useState<Set<string>>(new Set());
     const [followingSet, setFollowingSet] = useState<Set<string>>(new Set());
     const [participantCapsules, setParticipantCapsules] = useState<Set<string>>(new Set());
+    const [followedCapsules, setFollowedCapsules] = useState<Set<string>>(new Set());
 
     const [activeTab, setActiveTab] = useState<FeedTab>('following');
     const [activeFilter, setActiveFilter] = useState<FilterType>('all');
@@ -261,6 +307,7 @@ export default function FeedScreen() {
     const [stories, setStories] = useState<any[]>([]);
     const [shuffleSeed, setShuffleSeed] = useState(Date.now());
     const [isOffline, setIsOffline] = useState(false);
+    const [isPullRefreshing, setIsPullRefreshing] = useState(false);
     const [cachedFeedData, setCachedFeedData] = useState<any | null>(null);
     const [cachedFeedKey, setCachedFeedKey] = useState<string | null>(null);
     const [feedLoadTimedOut, setFeedLoadTimedOut] = useState(false);
@@ -277,6 +324,7 @@ export default function FeedScreen() {
         liked_ids: [],
         blocked_ids: [],
         participant_ids: [],
+        followed_capsule_ids: [],
     }), []);
 
     const runQueryOrDefault = useCallback(async <T,>(promise: PromiseLike<T>, ms: number, fallback: T): Promise<T> => {
@@ -387,12 +435,13 @@ export default function FeedScreen() {
                 const mediaRes = await withTimeout(
                     supabase
                         .from('capsule_items')
-                        .select('id, capsule_id, owner_id, media_url, media_type, thumbnail_url, created_at, profiles:owner_id(id, username, display_name, avatar_url, favorite_color, is_verified)')
+                        .select('id, capsule_id, owner_id, media_url, media_type, thumbnail_url, content, caption, batch_id, created_at, profiles:owner_id(id, username, display_name, avatar_url, favorite_color, is_verified)')
                         .in('capsule_id', capsuleIds)
                         .eq('is_story', false)
                         .neq('moderation_status', 'rejected')
                         .in('media_type', ['image', 'video'])
-                        .order('created_at', { ascending: false }),
+                        .order('created_at', { ascending: false })
+                        .limit(Math.min(900, Math.max(180, capsuleIds.length * 8))),
                     3000,
                     'feed fallback media'
                 );
@@ -488,12 +537,18 @@ export default function FeedScreen() {
     const fetchFeedSimpleFrontend = async (myId: string, pageParam: FeedCursor | null) => {
         const page = pageParam?.page ?? 0;
         const offset = page * PAGE_SIZE;
-        const candidateLimit = PAGE_SIZE * 3;
+        const isRefreshPage = !pageParam && refreshModeRef.current === 'pull_to_refresh';
+        const candidateLimit = Math.min(
+            PAGE_SIZE * (isRefreshPage ? SIMPLE_FEED_REFRESH_CANDIDATE_MULTIPLIER : SIMPLE_FEED_CANDIDATE_MULTIPLIER),
+            SIMPLE_FEED_MAX_CANDIDATES
+        );
 
         const [
             followingRes,
             participantRes,
             capsuleFollowRes,
+            myLikesRes,
+            recentImpressionsRes,
             blockedIds,
         ] = await Promise.all([
             runQueryOrDefault(
@@ -512,19 +567,60 @@ export default function FeedScreen() {
                 { data: [], error: null } as any
             ),
             runQueryOrDefault(
+                supabase
+                    .from('likes')
+                    .select('capsule_id')
+                    .eq('user_id', myId)
+                    .limit(FEED_SIGNAL_LIMIT),
+                1400,
+                { data: [], error: null } as any
+            ),
+            runQueryOrDefault(
+                supabase
+                    .from('feed_impressions')
+                    .select('capsule_id, feed_event_id, feed_item_key, clicked, opened, watched_seconds, shown_at, created_at')
+                    .eq('user_id', myId)
+                    .order('shown_at', { ascending: false })
+                    .limit(FEED_SIGNAL_LIMIT),
+                1400,
+                { data: [], error: null } as any
+            ),
+            runQueryOrDefault(
                 safetyService.getAllSafetyUserIds(myId).catch(() => []),
                 800,
                 [] as string[]
             ),
         ]);
 
-        const followingIds = (followingRes.data || []).map((f: any) => f.following_id);
-        const participantIds = (participantRes.data || []).map((p: any) => p.capsule_id);
-        const followedCapsuleIds = (capsuleFollowRes.data || []).map((c: any) => c.capsule_id);
+        const followingIds = getSafeArray(followingRes.data).map((f: any) => f.following_id).filter(Boolean);
+        const participantIds = getSafeArray(participantRes.data).map((p: any) => p.capsule_id).filter(Boolean);
+        const followedCapsuleIds = getSafeArray(capsuleFollowRes.data).map((c: any) => c.capsule_id).filter(Boolean);
+        const likedHistoryIds = getSafeArray(myLikesRes.data).map((like: any) => like.capsule_id).filter(Boolean);
         const ownerIds = Array.from(new Set([myId, ...followingIds]));
         const blockedSet = new Set(blockedIds || []);
         const followedCapsuleSet = new Set(followedCapsuleIds);
+        const likedHistorySet = new Set(likedHistoryIds);
+        const participantSet = new Set(participantIds);
         const followingSetLocal = new Set(followingIds);
+
+        const mutualByOwner = new Map<string, number>();
+        if (activeTab === 'explore' && followingIds.length > 0) {
+            const mutualRes = await runQueryOrDefault(
+                supabase
+                    .from('follows')
+                    .select('follower_id, following_id')
+                    .in('follower_id', followingIds.slice(0, 120))
+                    .neq('following_id', myId)
+                    .limit(900),
+                1500,
+                { data: [], error: null } as any
+            );
+
+            getSafeArray(mutualRes.data).forEach((row: any) => {
+                if (!row?.following_id || followingSetLocal.has(row.following_id) || blockedSet.has(row.following_id)) return;
+                mutualByOwner.set(row.following_id, (mutualByOwner.get(row.following_id) || 0) + 1);
+            });
+        }
 
         const statusFilter = activeFilter === 'open'
             ? 'opened'
@@ -532,46 +628,44 @@ export default function FeedScreen() {
                 ? 'sealed'
                 : null;
 
-        const buildCapsuleQuery = () => {
+        const buildCapsuleQuery = (rangeOffset = offset, limit = candidateLimit) => {
             let query = supabase
                 .from('capsules')
                 .select('*, profiles:owner_id(id, username, display_name, avatar_url, favorite_color, is_verified)')
                 .order('updated_at', { ascending: false })
-                .range(offset, offset + candidateLimit - 1);
+                .range(rangeOffset, rangeOffset + Math.max(1, limit) - 1);
 
             if (statusFilter) query = query.eq('status', statusFilter);
             return query;
         };
 
         const capsuleSources: any[] = [];
+        const addCapsuleSource = (query: any, timeout = 2500) => {
+            capsuleSources.push(runQueryOrDefault(query, timeout, { data: [], error: null } as any));
+        };
 
         if (activeTab === 'following') {
             if (ownerIds.length > 0) {
-                capsuleSources.push(
-                    runQueryOrDefault(
-                        buildCapsuleQuery().in('owner_id', ownerIds),
-                        2500,
-                        { data: [], error: null } as any
-                    )
-                );
+                addCapsuleSource(buildCapsuleQuery().in('owner_id', ownerIds));
             }
             if (followedCapsuleIds.length > 0) {
-                capsuleSources.push(
-                    runQueryOrDefault(
-                        buildCapsuleQuery().in('id', followedCapsuleIds),
-                        2500,
-                        { data: [], error: null } as any
-                    )
-                );
+                addCapsuleSource(buildCapsuleQuery(0, Math.min(candidateLimit, followedCapsuleIds.length)).in('id', followedCapsuleIds.slice(0, 120)));
             }
         } else {
-            capsuleSources.push(
-                runQueryOrDefault(
-                    buildCapsuleQuery().eq('is_public', true).neq('owner_id', myId),
-                    2500,
-                    { data: [], error: null } as any
-                )
-            );
+            addCapsuleSource(buildCapsuleQuery().eq('is_public', true).neq('owner_id', myId));
+
+            const friendOfFriendOwners = Array.from(mutualByOwner.entries())
+                .sort((a, b) => b[1] - a[1])
+                .map(([ownerId]) => ownerId)
+                .slice(0, 80);
+            if (friendOfFriendOwners.length > 0) {
+                addCapsuleSource(buildCapsuleQuery(0, candidateLimit).eq('is_public', true).in('owner_id', friendOfFriendOwners));
+            }
+
+            const directlyRelevantCapsules = Array.from(new Set([...followedCapsuleIds, ...likedHistoryIds, ...participantIds])).slice(0, 120);
+            if (directlyRelevantCapsules.length > 0) {
+                addCapsuleSource(buildCapsuleQuery(0, Math.min(candidateLimit, directlyRelevantCapsules.length)).in('id', directlyRelevantCapsules));
+            }
         }
 
         const capsuleResults = capsuleSources.length > 0
@@ -582,12 +676,30 @@ export default function FeedScreen() {
         const dedupedCapsules = Array.from(
             new Map(
                 rawCapsules
-                    .filter((capsule: any) => capsule?.id && !blockedSet.has(capsule.owner_id))
+                    .filter((capsule: any) => {
+                        if (!capsule?.id || blockedSet.has(capsule.owner_id)) return false;
+
+                        const directCapsuleAffinity =
+                            followedCapsuleSet.has(capsule.id)
+                            || likedHistorySet.has(capsule.id)
+                            || participantSet.has(capsule.id);
+
+                        if (activeTab === 'explore') {
+                            if (capsule.owner_id === myId) return false;
+                            return directCapsuleAffinity || (capsule.is_public === true && !followingSetLocal.has(capsule.owner_id));
+                        }
+
+                        return ownerIds.includes(capsule.owner_id) || directCapsuleAffinity;
+                    })
                     .map((capsule: any) => [capsule.id, capsule])
             ).values()
         );
 
         const capsuleIds = dedupedCapsules.map((c: any) => c.id);
+        const ownerByCapsuleId = new Map<string, string>();
+        dedupedCapsules.forEach((capsule: any) => {
+            if (capsule?.id && capsule?.owner_id) ownerByCapsuleId.set(capsule.id, capsule.owner_id);
+        });
 
         const [
             mediaRes,
@@ -600,12 +712,13 @@ export default function FeedScreen() {
                 runQueryOrDefault(
                     supabase
                         .from('capsule_items')
-                        .select('id, capsule_id, owner_id, media_url, media_type, thumbnail_url, created_at, profiles:owner_id(id, username, display_name, avatar_url, favorite_color, is_verified)')
+                        .select('id, capsule_id, owner_id, media_url, media_type, thumbnail_url, content, caption, batch_id, created_at, profiles:owner_id(id, username, display_name, avatar_url, favorite_color, is_verified)')
                         .in('capsule_id', capsuleIds)
                         .eq('is_story', false)
                         .neq('moderation_status', 'rejected')
                         .in('media_type', ['image', 'video'])
-                        .order('created_at', { ascending: false }),
+                        .order('created_at', { ascending: false })
+                        .limit(Math.min(900, Math.max(180, capsuleIds.length * 8))),
                     2500,
                     { data: [], error: null } as any
                 ),
@@ -620,7 +733,7 @@ export default function FeedScreen() {
                 runQueryOrDefault(
                     supabase
                         .from('comments')
-                        .select('capsule_id')
+                        .select('capsule_id, user_id, created_at')
                         .in('capsule_id', capsuleIds),
                     1800,
                     { data: [], error: null } as any
@@ -652,10 +765,41 @@ export default function FeedScreen() {
             ];
 
         const mediaByCapsule = new Map<string, any[]>();
-        (mediaRes.data || []).forEach((item: any) => {
-            const list = mediaByCapsule.get(item.capsule_id) || [];
-            if (list.length < 4) list.push(item);
-            mediaByCapsule.set(item.capsule_id, list);
+        const mediaBatchesByCapsule = new Map<string, any[]>();
+
+        getSafeArray(mediaRes.data).forEach((item: any) => {
+            if (!item?.capsule_id) return;
+
+            const latestList = mediaByCapsule.get(item.capsule_id) || [];
+            if (latestList.length < 4) latestList.push(item);
+            mediaByCapsule.set(item.capsule_id, latestList);
+
+            const batchKey = getUploadBatchKey(item);
+            const batches = mediaBatchesByCapsule.get(item.capsule_id) || [];
+            let batch = batches.find((entry: any) => entry.batchKey === batchKey);
+            if (!batch) {
+                batch = {
+                    batchKey,
+                    capsuleId: item.capsule_id,
+                    ownerId: item.owner_id,
+                    items: [],
+                    groupCount: 0,
+                    activityAt: 0,
+                };
+                batches.push(batch);
+            }
+
+            batch.groupCount += 1;
+            batch.activityAt = Math.max(batch.activityAt, getTime(item.created_at));
+            if (batch.items.length < 4) batch.items.push(item);
+            mediaBatchesByCapsule.set(item.capsule_id, batches);
+        });
+
+        mediaBatchesByCapsule.forEach((batches) => {
+            batches.sort((a: any, b: any) => b.activityAt - a.activityAt);
+            batches.forEach((batch: any) => {
+                batch.items.sort((a: any, b: any) => getTime(b.created_at) - getTime(a.created_at));
+            });
         });
 
         const countByCapsule = (rows: any[]) => {
@@ -670,6 +814,58 @@ export default function FeedScreen() {
         const likesByCapsule = countByCapsule(likesRes.data || []);
         const commentsByCapsule = countByCapsule(commentsRes.data || []);
         const followersByCapsule = countByCapsule(followersRes.data || []);
+        const userLikedCapsules = new Set<string>([
+            ...likedHistoryIds,
+            ...getSafeArray(likesRes.data)
+                .filter((like: any) => like.user_id === myId)
+                .map((like: any) => like.capsule_id)
+                .filter(Boolean),
+        ]);
+        const userCommentedCapsules = new Set<string>(
+            getSafeArray(commentsRes.data)
+                .filter((comment: any) => comment.user_id === myId)
+                .map((comment: any) => comment.capsule_id)
+                .filter(Boolean)
+        );
+
+        const addOwnerCount = (target: Map<string, number>, ownerId: string | null | undefined, amount = 1) => {
+            if (!ownerId) return;
+            target.set(ownerId, (target.get(ownerId) || 0) + amount);
+        };
+
+        const ownerLikeCounts = new Map<string, number>();
+        userLikedCapsules.forEach(capsuleId => addOwnerCount(ownerLikeCounts, ownerByCapsuleId.get(capsuleId)));
+
+        const ownerCommentCounts = new Map<string, number>();
+        userCommentedCapsules.forEach(capsuleId => addOwnerCount(ownerCommentCounts, ownerByCapsuleId.get(capsuleId)));
+
+        const ownerCapsuleFollowCounts = new Map<string, number>();
+        followedCapsuleIds.forEach(capsuleId => addOwnerCount(ownerCapsuleFollowCounts, ownerByCapsuleId.get(capsuleId)));
+
+        const lastSeenByKey = new Map<string, number>();
+        const lastSeenByCapsule = new Map<string, number>();
+        const ownerViewStats = new Map<string, { views: number; active: number; passive: number; watched: number }>();
+
+        getSafeArray(recentImpressionsRes.data).forEach((row: any) => {
+            const shownAt = getTime(row?.shown_at || row?.created_at);
+            if (!shownAt) return;
+
+            const key = row.feed_item_key || row.feed_event_id;
+            if (key) lastSeenByKey.set(key, Math.max(lastSeenByKey.get(key) || 0, shownAt));
+            if (row.capsule_id) lastSeenByCapsule.set(row.capsule_id, Math.max(lastSeenByCapsule.get(row.capsule_id) || 0, shownAt));
+
+            const ownerId = ownerByCapsuleId.get(row.capsule_id) || getNestedCapsuleOwnerId(row);
+            if (!ownerId) return;
+            const stats = ownerViewStats.get(ownerId) || { views: 0, active: 0, passive: 0, watched: 0 };
+            const watchedSeconds = Number(row.watched_seconds || 0);
+            const isActive = !!row.clicked || !!row.opened || watchedSeconds >= 3;
+            stats.views += 1;
+            stats.watched += Math.max(0, watchedSeconds);
+            if (isActive) stats.active += 1;
+            else stats.passive += 1;
+            ownerViewStats.set(ownerId, stats);
+        });
+
         const membersByCapsule = new Map<string, any[]>();
         dedupedCapsules.forEach((capsule: any) => {
             if (capsule?.id && capsule.profiles) {
@@ -684,61 +880,176 @@ export default function FeedScreen() {
             }
             membersByCapsule.set(member.capsule_id, list);
         });
-        const likedIds = Array.from(new Set(
-            (likesRes.data || [])
-                .filter((like: any) => like.user_id === myId)
-                .map((like: any) => like.capsule_id)
-                .filter(Boolean)
-        ));
+        const likedIds = Array.from(userLikedCapsules);
 
-        const scoreCapsule = (capsule: any) => {
-            const media = mediaByCapsule.get(capsule.id) || [];
-            const latestMediaAt = media[0]?.created_at ? new Date(media[0].created_at).getTime() : 0;
+        const scoreFeedActivity = (capsule: any, batch?: any) => {
+            const media = batch?.items || mediaByCapsule.get(capsule.id) || [];
+            const feedKey = batch
+                ? `batch:${capsule.id}:${batch.batchKey}`
+                : `capsule:${capsule.id}`;
+            const exactSeenAt = lastSeenByKey.get(feedKey) || 0;
+            const capsuleSeenAt = lastSeenByCapsule.get(capsule.id) || 0;
+            const latestMediaAt = batch?.activityAt || getTime(media[0]?.created_at);
             const activityAt = Math.max(
                 latestMediaAt,
-                capsule.updated_at ? new Date(capsule.updated_at).getTime() : 0,
-                capsule.created_at ? new Date(capsule.created_at).getTime() : 0
+                getTime(capsule.updated_at),
+                getTime(capsule.created_at),
+                getTime(capsule.opens_at)
             );
-            let score = 0;
-            if (capsule.owner_id === myId) score += 60;
-            if (followingSetLocal.has(capsule.owner_id)) score += 40;
-            if (followedCapsuleSet.has(capsule.id)) score += 55;
-            if (participantIds.includes(capsule.id)) score += 28;
-            if (capsule.status === 'opened') score += 35;
-            else score += 12;
-            if (media.length > 0) score += Math.min(media.length * 5, 20);
-            if (capsule.cover_url) score += 8;
-            score += Math.min(25, Math.max(0, (Date.now() - activityAt) < 1000 * 60 * 60 * 24 ? 25 : (Date.now() - activityAt) < 1000 * 60 * 60 * 24 * 3 ? 12 : 4));
-            return { score, activityAt };
+            const hasSeen = exactSeenAt > 0;
+            const ageDays = getAgeDays(activityAt);
+            const opensAt = getTime(capsule.opens_at);
+            const hoursUntilOpen = opensAt > Date.now() ? (opensAt - Date.now()) / 3600000 : 9999;
+            const likesCount = likesByCapsule.get(capsule.id) ?? Number(capsule.likes_count || 0);
+            const commentsCount = commentsByCapsule.get(capsule.id) ?? Number(capsule.comments_count || 0);
+            const followersCount = followersByCapsule.get(capsule.id) || 0;
+            const ownerStats = ownerViewStats.get(capsule.owner_id) || { views: 0, active: 0, passive: 0, watched: 0 };
+            const mutualCount = mutualByOwner.get(capsule.owner_id) || 0;
+            const isFollowedAuthor = followingSetLocal.has(capsule.owner_id);
+            const isFollowedCapsule = followedCapsuleSet.has(capsule.id);
+            const isLiked = userLikedCapsules.has(capsule.id);
+            const hasCommented = userCommentedCapsules.has(capsule.id);
+            const isParticipant = participantSet.has(capsule.id);
+
+            let score = stableLightBoost(`${shuffleSeed}:${feedSessionId.current}:${feedKey}`);
+
+            if (capsule.owner_id === myId) score += activeTab === 'following' ? 35 : -120;
+            if (isFollowedAuthor) score += activeTab === 'following' ? 75 : -20;
+            if (isFollowedCapsule) score += activeTab === 'explore' && !isFollowedAuthor ? 130 : 110;
+            if (isParticipant) score += 85;
+            if (isLiked) score += activeTab === 'explore' && !isFollowedAuthor ? 82 : 54;
+            if (hasCommented) score += 96;
+            score += Math.min(72, (ownerLikeCounts.get(capsule.owner_id) || 0) * 16);
+            score += Math.min(92, (ownerCommentCounts.get(capsule.owner_id) || 0) * 26);
+            score += Math.min(90, (ownerCapsuleFollowCounts.get(capsule.owner_id) || 0) * 24);
+            score += Math.min(70, ownerStats.views * 10);
+            score += Math.min(86, ownerStats.active * 24);
+
+            if (activeTab === 'explore') {
+                if (mutualCount > 0) score += 74 + Math.min(42, mutualCount * 8);
+                if (!isFollowedAuthor && (isFollowedCapsule || isLiked || hasCommented)) score += 48;
+                if (capsule.is_public) score += 12;
+            }
+
+            if (capsule.status === 'opened') {
+                score += media.length > 0 || capsule.cover_url ? 82 : 46;
+            } else {
+                score += 16;
+                if (hoursUntilOpen <= 12) score += 88;
+                else if (hoursUntilOpen <= 36) score += 58;
+                else if (hoursUntilOpen <= 168) score += 28;
+            }
+
+            if (media.length > 0) score += Math.min(media.length * 7, 28);
+            if (capsule.cover_url) score += 10;
+            score += ageDays < 0.25 ? 82 : ageDays < 1 ? 60 : ageDays < 3 ? 35 : ageDays < 7 ? 18 : 5;
+            score += Math.min(88, Math.log1p(likesCount) * 9 + Math.log1p(commentsCount) * 16 + Math.log1p(followersCount) * 12);
+
+            if (followersCount <= 2 && likesCount <= 3) score += 18;
+            if (isRefreshPage && !hasSeen) score += 46;
+            if (hasSeen) score -= getRecentSeenPenalty(exactSeenAt, isRefreshPage);
+            else if (batch && capsuleSeenAt > 0) score -= isRefreshPage ? 70 : 38;
+            if (ownerStats.passive >= 6 && ownerStats.active === 0 && !isFollowedCapsule && !isLiked) score -= 52;
+
+            const eventType = batch
+                ? 'item_batch_added'
+                : capsule.status === 'opened'
+                    ? 'capsule_opened'
+                    : hoursUntilOpen <= 168
+                        ? 'opening_soon'
+                        : 'capsule_created';
+
+            const relationshipReason = isFollowedCapsule
+                ? 'followed_capsule'
+                : isLiked
+                    ? 'liked_capsule'
+                    : hasCommented
+                        ? 'commented_capsule'
+                        : mutualCount > 0
+                            ? 'friend_of_friend'
+                            : isFollowedAuthor
+                                ? 'following_author'
+                                : 'fresh_public';
+
+            return {
+                score,
+                activityAt,
+                hasSeen,
+                lastSeenAt: exactSeenAt,
+                seenPenalty: getRecentSeenPenalty(exactSeenAt, isRefreshPage),
+                likesCount,
+                commentsCount,
+                followersCount,
+                eventType,
+                relationshipReason,
+                isFollowedAuthor,
+                isFollowedCapsule,
+                isLiked,
+                hasCommented,
+                isParticipant,
+                mutualCount,
+                ownerStats,
+                hasNewActivity: activityAt > Math.max(exactSeenAt, capsuleSeenAt),
+            };
         };
 
-        const ranked = dedupedCapsules
-            .map((capsule: any) => {
-                const media = mediaByCapsule.get(capsule.id) || [];
-                const { score, activityAt } = scoreCapsule(capsule);
+        const feedActivities = dedupedCapsules.flatMap((capsule: any) => {
+            const batches = mediaBatchesByCapsule.get(capsule.id) || [];
+            if (batches.length > 0) {
+                return batches.slice(0, 4).map((batch: any) => ({ capsule, batch }));
+            }
+            return [{ capsule, batch: null }];
+        });
+
+        const ranked = feedActivities
+            .map(({ capsule, batch }: any) => {
+                const media = batch?.items || mediaByCapsule.get(capsule.id) || [];
+                const latestItem = media[0] || null;
+                const scored = scoreFeedActivity(capsule, batch);
+                const feedKey = batch
+                    ? `batch:${capsule.id}:${batch.batchKey}`
+                    : `capsule:${capsule.id}`;
                 return {
                     ...capsule,
-                    id: `simple:${capsule.id}`,
-                    feed_item_key: `simple:${capsule.id}`,
-                    feed_event_id: `simple:${capsule.id}`,
-                    feed_type: 'capsule',
-                    event_type: capsule.status === 'opened' ? 'capsule_opened' : 'capsule_created',
+                    id: feedKey,
+                    feed_item_key: feedKey,
+                    feed_event_id: feedKey,
+                    feed_type: batch ? 'item' : 'capsule',
+                    event_type: scored.eventType,
+                    upload_batch_key: batch?.batchKey || null,
                     capsule_id: capsule.id,
-                    latest_item: media[0] || null,
+                    latest_item: latestItem ? {
+                        ...latestItem,
+                        caption: stripBatchMarker(latestItem.caption),
+                        group_count: batch?.groupCount || media.length,
+                    } : null,
                     collage_items: media,
                     shared_members: membersByCapsule.get(capsule.id) || [],
-                    posts_count: media.length,
-                    likes_count: likesByCapsule.get(capsule.id) || 0,
-                    comments_count: commentsByCapsule.get(capsule.id) || 0,
-                    capsule_followers_count: followersByCapsule.get(capsule.id) || 0,
-                    is_liked: likedIds.includes(capsule.id),
-                    is_followed_capsule: followedCapsuleSet.has(capsule.id),
-                    is_participant: participantIds.includes(capsule.id),
-                    has_seen: false,
-                    final_score: score,
-                    cursor_score: score,
-                    cursor_activity_date: new Date(activityAt || Date.now()).toISOString(),
-                    cursor_id: `simple:${capsule.id}`,
+                    posts_count: batch?.groupCount || media.length,
+                    likes_count: scored.likesCount,
+                    comments_count: scored.commentsCount,
+                    capsule_followers_count: scored.followersCount,
+                    is_liked: scored.isLiked,
+                    is_followed_author: scored.isFollowedAuthor,
+                    is_followed_capsule: scored.isFollowedCapsule,
+                    is_participant: scored.isParticipant,
+                    has_commented: scored.hasCommented,
+                    has_seen: scored.hasSeen,
+                    has_new_activity: scored.hasNewActivity,
+                    recent_seen_penalty: scored.seenPenalty,
+                    relationship_reason: scored.relationshipReason,
+                    is_friend_of_friend: scored.mutualCount > 0,
+                    mutual_friend_count: scored.mutualCount,
+                    viewer_author_views: scored.ownerStats.views,
+                    viewer_author_opens: scored.ownerStats.active,
+                    viewer_author_passive_views: scored.ownerStats.passive,
+                    viewer_author_likes: ownerLikeCounts.get(capsule.owner_id) || 0,
+                    viewer_author_comments: ownerCommentCounts.get(capsule.owner_id) || 0,
+                    viewer_author_capsule_follows: ownerCapsuleFollowCounts.get(capsule.owner_id) || 0,
+                    final_score: scored.score,
+                    cursor_score: scored.score,
+                    cursor_activity_date: new Date(scored.activityAt || Date.now()).toISOString(),
+                    cursor_id: feedKey,
                 };
             })
             .sort((a: any, b: any) => {
@@ -767,14 +1078,18 @@ export default function FeedScreen() {
             )
             : { data: [] as any[] };
 
-        return {
+        const result = {
             feed: pagedFeed,
             stories: (storiesRes.data || []).filter((story: any) => !blockedSet.has(story.owner_id)).map((story: any) => ({ ...story, is_read: false })),
             following_ids: followingIds,
             liked_ids: likedIds,
             blocked_ids: Array.from(blockedSet),
             participant_ids: participantIds,
+            followed_capsule_ids: followedCapsuleIds,
         };
+
+        if (!pageParam) refreshModeRef.current = 'initial_load';
+        return result;
     };
 
     // ─── Fetch Function ──────────────────────────────────────────────────────
@@ -930,6 +1245,7 @@ export default function FeedScreen() {
         fetchNextPage,
         hasNextPage,
         isFetchingNextPage,
+        isRefetching,
         status,
         refetch,
     } = useInfiniteQuery({
@@ -967,10 +1283,12 @@ export default function FeedScreen() {
             tab: activeTab,
             followingOwnerIds: followingSet,
             participantCapsuleIds: participantCapsules,
+            followedCapsuleIds: followedCapsules,
+            likedCapsuleIds: likedCapsules,
             sessionSeenKeys: trackedImpressions.current,
             sessionSeenCapsuleIds: seenCapsuleIdsRef.current,
         });
-    }, [rawCapsules, activeTab, followingSet, participantCapsules]);
+    }, [rawCapsules, activeTab, followingSet, participantCapsules, followedCapsules, likedCapsules]);
 
     useEffect(() => {
         if (!queryData?.pages?.[0]) return;
@@ -984,12 +1302,13 @@ export default function FeedScreen() {
     useEffect(() => {
         const firstPage = queryData?.pages?.[0] || (cachedFeedKey === feedCacheKey ? cachedFeedData?.pages?.[0] : null);
         if (firstPage) {
-            const { stories: storiesData, following_ids, liked_ids, blocked_ids, participant_ids } = firstPage;
+            const { stories: storiesData, following_ids, liked_ids, blocked_ids, participant_ids, followed_capsule_ids } = firstPage;
             
             setBlockedUserIds(blocked_ids || []);
             setFollowingSet(new Set(following_ids || []));
             setLikedCapsules(new Set(liked_ids || []));
             setParticipantCapsules(new Set(participant_ids || []));
+            setFollowedCapsules(new Set(followed_capsule_ids || []));
 
             if (currentUserId) {
                 processStoriesData(storiesData || [], currentUserId, blocked_ids || []);
@@ -999,7 +1318,7 @@ export default function FeedScreen() {
 
     const hasBootData = rawCapsules.length > 0;
     const isLoading = status === 'pending' && !hasBootData;
-    const isRefreshing = status === 'pending' && !!queryData;
+    const isRefreshing = isPullRefreshing || (isRefetching && !isFetchingNextPage && hasBootData);
     const isError = status === 'error';
 
     useEffect(() => {
@@ -1027,12 +1346,15 @@ export default function FeedScreen() {
                     position: typeof v.index === 'number' ? v.index : null,
                 });
             });
-    }, [currentUserId]);
+    }, [currentUserId, activeTab]);
 
     const pulseAnim = useRef(new Animated.Value(1)).current;
     const headerOpacity = useRef(new Animated.Value(0)).current;
     const headerSlide = useRef(new Animated.Value(-10)).current;
     const logoScale = useRef(new Animated.Value(0.88)).current;
+    const refreshPulse = useRef(new Animated.Value(0)).current;
+    const refreshSpin = useRef(new Animated.Value(0)).current;
+    const refreshShimmer = useRef(new Animated.Value(0)).current;
     const isFirstMount = useRef(true);
     const feedRequestId = useRef(0);
 
@@ -1054,6 +1376,58 @@ export default function FeedScreen() {
     useWebDragScroll(flatListRef);
     useWebDragScroll(storiesScrollRef);
     useWebDragScroll(filterScrollRef);
+
+    useEffect(() => {
+        if (!isRefreshing) {
+            refreshPulse.setValue(0);
+            refreshSpin.setValue(0);
+            refreshShimmer.setValue(0);
+            return;
+        }
+
+        refreshPulse.setValue(0);
+        refreshSpin.setValue(0);
+        refreshShimmer.setValue(0);
+
+        const intro = Animated.timing(refreshPulse, {
+            toValue: 1,
+            duration: 220,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+        });
+        const spinLoop = Animated.loop(
+            Animated.timing(refreshSpin, {
+                toValue: 1,
+                duration: 900,
+                easing: Easing.linear,
+                useNativeDriver: true,
+            })
+        );
+        const shimmerLoop = Animated.loop(
+            Animated.sequence([
+                Animated.timing(refreshShimmer, {
+                    toValue: 1,
+                    duration: 1050,
+                    easing: Easing.inOut(Easing.cubic),
+                    useNativeDriver: true,
+                }),
+                Animated.timing(refreshShimmer, {
+                    toValue: 0,
+                    duration: 0,
+                    useNativeDriver: true,
+                }),
+            ])
+        );
+
+        intro.start();
+        spinLoop.start();
+        shimmerLoop.start();
+
+        return () => {
+            spinLoop.stop();
+            shimmerLoop.stop();
+        };
+    }, [isRefreshing, refreshPulse, refreshSpin, refreshShimmer]);
 
     // ─── ATT ──────────────────────────────────────────────────────────────────
     useEffect(() => {
@@ -1413,13 +1787,21 @@ export default function FeedScreen() {
 
     const onRefresh = useCallback(async () => {
         const nextSeed = Date.now();
+        setIsPullRefreshing(true);
         setFeedLoadTimedOut(false);
         pinTopAfterRefreshRef.current = true;
         pinFeedToTop(false);
         refreshModeRef.current = 'pull_to_refresh';
         setShuffleSeed(nextSeed);
-        await flushImpressionsNow();
-        await queryClient.invalidateQueries({ queryKey: ['feed'] });
+        try {
+            await flushImpressionsNow();
+            await Promise.all([
+                queryClient.invalidateQueries({ queryKey: ['feed'] }),
+                new Promise(resolve => setTimeout(resolve, 850)),
+            ]);
+        } finally {
+            setIsPullRefreshing(false);
+        }
     }, [queryClient, flushImpressionsNow, pinFeedToTop]);
 
     useEffect(() => {
@@ -1581,7 +1963,8 @@ export default function FeedScreen() {
         const hasAccess = item.is_public
             || item.owner_id === currentUserId
             || participantCapsules.has(item.id)
-            || (item.capsule_id && participantCapsules.has(item.capsule_id));
+            || followedCapsules.has(item.id)
+            || (item.capsule_id && (participantCapsules.has(item.capsule_id) || followedCapsules.has(item.capsule_id)));
 
         return (
             <CapsuleCard
@@ -1600,7 +1983,7 @@ export default function FeedScreen() {
                 hideParticles
             />
         );
-    }, [currentUserId, followingSet, likedCapsules, participantCapsules, handleGlobalFollow, handleGlobalLike, recordFeedOpen, navigation]);
+    }, [currentUserId, followingSet, likedCapsules, participantCapsules, followedCapsules, handleGlobalFollow, handleGlobalLike, recordFeedOpen, navigation]);
 
     // ─── List Header ───────────────────────────────────────────────────────────
     const ListHeader = useMemo(() => (
@@ -1669,6 +2052,22 @@ export default function FeedScreen() {
 
     // ─── Header component ──────────────────────────────────────────────────────
     const headerPaddingTop = insets.top + 8;
+    const refreshSpinRotate = refreshSpin.interpolate({
+        inputRange: [0, 1],
+        outputRange: ['0deg', '360deg'],
+    });
+    const refreshCueScale = refreshPulse.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0.92, 1],
+    });
+    const refreshCueOpacity = refreshPulse.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0, 1],
+    });
+    const refreshShimmerX = refreshShimmer.interpolate({
+        inputRange: [0, 1],
+        outputRange: [-120, 140],
+    });
 
     return (
         <View style={s.root}>
@@ -1684,6 +2083,38 @@ export default function FeedScreen() {
             )}
 
             {/* ── Header ── */}
+            {isRefreshing && (
+                <Animated.View
+                    pointerEvents="none"
+                    style={[
+                        s.refreshCue,
+                        {
+                            top: headerPaddingTop + 104,
+                            opacity: refreshCueOpacity,
+                            transform: [{ scale: refreshCueScale }],
+                        },
+                    ]}
+                >
+                    <LinearGradient
+                        colors={[Colors.primary, '#10B981']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={s.refreshCueGradient}
+                    >
+                        <Animated.View style={[s.refreshIconRing, { transform: [{ rotate: refreshSpinRotate }] }]}>
+                            <Ionicons name="sparkles" size={15} color="#fff" />
+                        </Animated.View>
+                        <Text style={s.refreshCueText}>Actualizando feed</Text>
+                        <Animated.View
+                            style={[
+                                s.refreshShimmer,
+                                { transform: [{ translateX: refreshShimmerX }, { rotate: '18deg' }] },
+                            ]}
+                        />
+                    </LinearGradient>
+                </Animated.View>
+            )}
+
             <Animated.View
                 style={[
                     s.header,
@@ -1744,15 +2175,24 @@ export default function FeedScreen() {
                 numColumns={1}
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={[s.listContent, { paddingBottom: insets.bottom + 96 }]}
-                refreshing={isRefreshing}
-                onRefresh={onRefresh}
+                refreshControl={
+                    <RefreshControl
+                        refreshing={isRefreshing}
+                        onRefresh={onRefresh}
+                        tintColor={Colors.primary}
+                        colors={[Colors.primary, '#10B981']}
+                        progressBackgroundColor={Colors.surface}
+                        title="Actualizando feed"
+                        titleColor={Colors.textMuted}
+                    />
+                }
                 onEndReached={handleLoadMore}
                 onEndReachedThreshold={0.2}
                 ListHeaderComponent={ListHeader}
                 renderItem={renderItem}
                 onViewableItemsChanged={onViewableItemsChanged}
                 viewabilityConfig={{ itemVisiblePercentThreshold: 50, minimumViewTime: 800 }}
-                extraData={[likedCapsules, followingSet, participantCapsules, currentUserId]}
+                extraData={[likedCapsules, followingSet, participantCapsules, followedCapsules, currentUserId]}
                 drawDistance={height}
                 ListFooterComponent={() =>
                     isFetchingNextPage ? (
@@ -1894,6 +2334,57 @@ const s = StyleSheet.create({
     root: {
         flex: 1,
         backgroundColor: Colors.background,
+    },
+    refreshCue: {
+        position: 'absolute',
+        alignSelf: 'center',
+        zIndex: 30,
+        borderRadius: 24,
+        overflow: 'hidden',
+        ...Platform.select({
+            ios: {
+                shadowColor: Colors.primary,
+                shadowOffset: { width: 0, height: 8 },
+                shadowOpacity: 0.22,
+                shadowRadius: 14,
+            },
+            android: { elevation: 8 },
+            web: { boxShadow: '0px 10px 24px rgba(0,0,0,0.16)' },
+        }),
+    },
+    refreshCueGradient: {
+        minWidth: 188,
+        height: 42,
+        borderRadius: 24,
+        paddingHorizontal: 14,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        overflow: 'hidden',
+    },
+    refreshIconRing: {
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.5)',
+        backgroundColor: 'rgba(255,255,255,0.16)',
+    },
+    refreshCueText: {
+        color: '#fff',
+        fontSize: 12,
+        fontFamily: Fonts.bold,
+        letterSpacing: 0.2,
+    },
+    refreshShimmer: {
+        position: 'absolute',
+        top: -8,
+        bottom: -8,
+        width: 34,
+        backgroundColor: 'rgba(255,255,255,0.22)',
     },
 
     // ── Header ──
