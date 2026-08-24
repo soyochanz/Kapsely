@@ -17,6 +17,7 @@ export interface Notification {
     capsuleChainId?: string;
     capsuleOpensAt?: string;
     capsuleOwnerId?: string;
+    capsulePreview?: any;
     createdAt?: string;
     isExpired?: boolean;
     expiryDate?: Date;

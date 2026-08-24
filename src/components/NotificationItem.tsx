@@ -51,9 +51,9 @@ export default function NotificationItem({ notification, onMarkRead, onAcceptInv
         if (notification.type === 'chat_message' && notification.conversationId) {
             navigation.navigate('ChatDetail', { conversationId: notification.conversationId });
         } else if (notification.type === 'chat_message' && notification.capsuleId) {
-            navigation.navigate('CapsuleDetail', { capsuleId: notification.capsuleId, initialTab: 'Chat' });
+            navigation.navigate('CapsuleDetail', { capsuleId: notification.capsuleId, initialTab: 'Chat', initialCapsule: notification.capsulePreview });
         } else if (notification.capsuleId) {
-            navigation.navigate('CapsuleDetail', { capsuleId: notification.capsuleId });
+            navigation.navigate('CapsuleDetail', { capsuleId: notification.capsuleId, initialCapsule: notification.capsulePreview });
         } else if (notification.user?.id) {
             navigation.navigate('ExternalProfile', { targetUserId: notification.user.id });
         }

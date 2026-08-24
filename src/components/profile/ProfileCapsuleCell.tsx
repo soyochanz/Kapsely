@@ -77,7 +77,7 @@ export const ProfileCapsuleCell = React.memo(({
                     Alert.alert(t('profile.private_capsule'), t('profile.private_capsule_msg'));
                     return;
                 }
-                navigation.navigate('CapsuleDetail', { capsuleId: cap.id });
+                navigation.navigate('CapsuleDetail', { capsuleId: cap.id, initialCapsule: cap });
             }}
         >
             <View style={s.capsuleVisual}>

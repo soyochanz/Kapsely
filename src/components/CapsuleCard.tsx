@@ -309,7 +309,14 @@ const CapsuleCard = React.memo(({
         onOpen?.(capsule);
         // Navigation should use capsule_id for item events, falling back to id for capsule events
         const cid = (capsule as any).capsule_id || capsule.id;
-        navigation.navigate('CapsuleDetail', { capsuleId: cid });
+        navigation.navigate('CapsuleDetail', {
+            capsuleId: cid,
+            initialCapsule: {
+                ...capsule,
+                id: cid,
+                profiles: capsule.profiles || (capsule as any).owner_profile || latestItem?.profiles || null,
+            },
+        });
     };
 
     const uploaderProfile = latestItem?.profiles || null;

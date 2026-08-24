@@ -12,16 +12,24 @@ import { useTranslation } from 'react-i18next';
 import { Colors, Fonts, Spacing, BorderRadius } from '../theme';
 import SwipeableNotificationItem from '../components/SwipeableNotificationItem';
 import { Notification } from '../data/mockNotifications';
-import { supabase } from '../lib/supabase';
+import { getAuthSessionSnapshot, getAuthUserIdSnapshot, supabase } from '../lib/supabase';
 import { FlashList } from '@shopify/flash-list';
 import { useFocusEffect } from '@react-navigation/native';
 import { clearBadgeCount } from '../utils/pushNotifications';
 import { safetyService } from '../utils/safety';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width, height } = Dimensions.get('window');
 
 const AnyFlashList = FlashList as any;
 const INVITE_EXPIRY_MS = 48 * 60 * 60 * 1000;
+const NOTIFICATIONS_CACHE_TTL_MS = 10 * 60 * 1000;
+const notificationsMemoryCache = new Map<string, { savedAt: number; notifications: Notification[]; totalUnread: number }>();
+
+const reviveNotifications = (rows: any[]): Notification[] => rows.map(row => ({
+    ...row,
+    expiryDate: row.expiryDate ? new Date(row.expiryDate) : undefined,
+}));
 
 // ─── Ripple success animation component ──────────────────────────────────────
 function MarkAllRipple({ visible, onDone }: { visible: boolean; onDone: () => void }) {
@@ -86,11 +94,38 @@ const rippleS = StyleSheet.create({
 export default function NotificationsScreen() {
     const insets = useSafeAreaInsets();
     const { t } = useTranslation();
-    const [notifications, setNotifications] = useState<Notification[]>([]);
-    const [loading, setLoading] = useState(true);
+    const bootUserId = getAuthUserIdSnapshot() || getAuthSessionSnapshot()?.user?.id || null;
+    const bootCache = bootUserId ? notificationsMemoryCache.get(bootUserId) : null;
+    const validBootCache = bootCache && Date.now() - bootCache.savedAt < NOTIFICATIONS_CACHE_TTL_MS ? bootCache : null;
+    const [notifications, setNotifications] = useState<Notification[]>(validBootCache?.notifications || []);
+    const [loading, setLoading] = useState(!validBootCache);
     const [showRipple, setShowRipple] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
-    const [totalUnread, setTotalUnread] = useState(0);
+    const [totalUnread, setTotalUnread] = useState(validBootCache?.totalUnread || 0);
+    const notificationsRef = useRef<Notification[]>(validBootCache?.notifications || []);
+
+    useEffect(() => {
+        notificationsRef.current = notifications;
+    }, [notifications]);
+
+    useEffect(() => {
+        if (!bootUserId || validBootCache) return;
+        let alive = true;
+        AsyncStorage.getItem(`@notifications_cache_${bootUserId}`)
+            .then(raw => {
+                if (!alive || !raw) return;
+                const parsed = JSON.parse(raw);
+                if (Date.now() - Number(parsed.savedAt || 0) > NOTIFICATIONS_CACHE_TTL_MS) return;
+                const cachedRows = reviveNotifications(parsed.notifications || []);
+                notificationsMemoryCache.set(bootUserId, { ...parsed, notifications: cachedRows });
+                notificationsRef.current = cachedRows;
+                setNotifications(cachedRows);
+                setTotalUnread(Number(parsed.totalUnread || 0));
+                setLoading(false);
+            })
+            .catch(() => {});
+        return () => { alive = false; };
+    }, [bootUserId, validBootCache]);
 
     const scrollRef = useRef<ScrollView>(null);
 
@@ -123,25 +158,41 @@ export default function NotificationsScreen() {
     const PAGE_SIZE = 20;
 
     const loadNotifications = async (isRefresh = false) => {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) return;
+        let currentUserId = getAuthUserIdSnapshot() || getAuthSessionSnapshot()?.user?.id || null;
+        if (!currentUserId) {
+            const { data: { user } } = await supabase.auth.getUser();
+            currentUserId = user?.id || null;
+        }
+        if (!currentUserId) {
+            setLoading(false);
+            return;
+        }
 
         const startPage = isRefresh ? 0 : page;
 
         if (!isRefresh) setLoadingMore(true);
-        else setLoading(true);
+        else if (notificationsRef.current.length === 0) setLoading(true);
+
+        // Start the visible page immediately; metadata used for filtering can load alongside it.
+        const firstVisiblePagePromise = supabase
+            .from('notifications')
+            .select('id, type, sender_id, message, is_read, capsule_id, conversation_id, created_at, sender:sender_id(username, display_name, avatar_url, favorite_color), capsules(title, type, model, chain_id, opens_at, owner_id, status, description, cover_url, is_shared, created_at, is_opening, opening_at, opening_preview_expires_at, open_requests)')
+            .eq('user_id', currentUserId)
+            .order('created_at', { ascending: false })
+            .range(startPage * PAGE_SIZE, startPage * PAGE_SIZE + PAGE_SIZE - 1);
 
         const parallelResults = await Promise.all([
-            safetyService.getAllSafetyUserIds(user.id),
-            Promise.resolve(supabase.rpc('reject_expired_capsule_invites')).catch(() => ({ data: null, error: null })),
-            supabase.from('capsule_followers').select('capsule_id, created_at').eq('user_id', user.id),
-            supabase.from('capsule_invites').select('capsule_id').eq('user_id', user.id).eq('status', 'accepted'),
-            supabase.from('capsule_invites').select('capsule_id, expires_at, status, created_at').eq('user_id', user.id).eq('status', 'pending'),
+            safetyService.getAllSafetyUserIds(currentUserId),
+            supabase.from('capsule_followers').select('capsule_id, created_at').eq('user_id', currentUserId),
+            supabase.from('capsule_invites').select('capsule_id').eq('user_id', currentUserId).eq('status', 'accepted'),
+            supabase.from('capsule_invites').select('capsule_id, expires_at, status, created_at').eq('user_id', currentUserId).eq('status', 'pending'),
         ]);
+        // Maintenance must never delay the visible list.
+        void Promise.resolve(supabase.rpc('reject_expired_capsule_invites')).catch(() => null);
         const blocked = parallelResults[0] as string[];
-        const followedCapsulesResult = parallelResults[2] as any;
-        const participantCapsulesResult = parallelResults[3] as any;
-        const pendingInviteRowsResult = parallelResults[4] as any;
+        const followedCapsulesResult = parallelResults[1] as any;
+        const participantCapsulesResult = parallelResults[2] as any;
+        const pendingInviteRowsResult = parallelResults[3] as any;
         const followedCapsules = followedCapsulesResult.data || [];
         const followedCapsuleIds = new Set((followedCapsules || []).map((row: any) => row.capsule_id));
         const followedSinceByCapsule = new Map<string, string>(
@@ -163,23 +214,15 @@ export default function NotificationsScreen() {
         const { data: activeInviteCapsules } = activePendingCapsuleIds.length
             ? await supabase
                 .from('capsules')
-                .select('id, title, type, model, chain_id, opens_at, owner_id')
+                .select('id, title, type, model, chain_id, opens_at, owner_id, status, description, cover_url, is_shared, created_at, is_opening, opening_at, opening_preview_expires_at, open_requests, profiles:owner_id(id, username, display_name, avatar_url, favorite_color)')
                 .in('id', activePendingCapsuleIds)
             : { data: [] as any[] };
-        const ownerIds = Array.from(new Set((activeInviteCapsules || []).map((cap: any) => cap.owner_id).filter(Boolean)));
-        const { data: activeInviteOwners } = ownerIds.length
-            ? await supabase
-                .from('profiles')
-                .select('id, username, display_name, avatar_url, favorite_color')
-                .in('id', ownerIds)
-            : { data: [] as any[] };
         const capsuleById = new Map((activeInviteCapsules || []).map((cap: any) => [cap.id, cap]));
-        const ownerById = new Map((activeInviteOwners || []).map((profile: any) => [profile.id, profile]));
         const activeInviteNotifications: Notification[] = activePendingInvites
             .map((invite: any) => {
                 const cap = capsuleById.get(invite.capsule_id);
                 if (!cap) return null;
-                const owner = ownerById.get(cap.owner_id) || {};
+                const owner = cap.profiles || {};
                 const createdAt = invite.created_at || new Date().toISOString();
                 const expiryDate = invite.expires_at
                     ? new Date(invite.expires_at)
@@ -203,6 +246,7 @@ export default function NotificationsScreen() {
                     capsuleChainId: cap.chain_id,
                     capsuleOpensAt: cap.opens_at,
                     capsuleOwnerId: cap.owner_id,
+                    capsulePreview: cap,
                     createdAt,
                     isExpired: false,
                     expiryDate,
@@ -219,12 +263,14 @@ export default function NotificationsScreen() {
         while (mapped.length < PAGE_SIZE && nextPage < startPage + maxRawPages) {
             const start = nextPage * PAGE_SIZE;
             const end = start + PAGE_SIZE - 1;
-            const { data, error } = await supabase
-                .from('notifications')
-                .select('*, sender:sender_id(username, display_name, avatar_url, favorite_color), capsules(title, type, model, chain_id, opens_at, owner_id)')
-                .eq('user_id', user.id)
-                .order('created_at', { ascending: false })
-                .range(start, end);
+            const { data, error } = nextPage === startPage
+                ? await firstVisiblePagePromise
+                : await supabase
+                    .from('notifications')
+                    .select('id, type, sender_id, message, is_read, capsule_id, conversation_id, created_at, sender:sender_id(username, display_name, avatar_url, favorite_color), capsules(title, type, model, chain_id, opens_at, owner_id, status, description, cover_url, is_shared, created_at, is_opening, opening_at, opening_preview_expires_at, open_requests)')
+                    .eq('user_id', currentUserId)
+                    .order('created_at', { ascending: false })
+                    .range(start, end);
 
             if (error) {
                 firstError = error;
@@ -236,7 +282,7 @@ export default function NotificationsScreen() {
             nextPage += 1;
 
             const visibleRows: Notification[] = rawRows
-                .filter(n => {
+                .filter((n: any) => {
                     if (blocked.includes(n.sender_id) || n.conversation_id) return false;
                     if (['chat', 'message', 'capsule_chat', 'chat_message'].includes(n.type)) return false;
                     if (n.type === 'new_item') {
@@ -252,7 +298,7 @@ export default function NotificationsScreen() {
                     }
                     return true;
                 })
-                .map(n => {
+                .map((n: any) => {
                     const createdDate = new Date(n.created_at);
                     const pendingInvite = n.capsule_id ? pendingInvitesByCapsule.get(n.capsule_id) : null;
                     const expiryDate = pendingInvite?.expires_at
@@ -301,6 +347,7 @@ export default function NotificationsScreen() {
                         capsuleChainId: n.capsules?.chain_id,
                         capsuleOpensAt: n.capsules?.opens_at,
                         capsuleOwnerId: n.capsules?.owner_id,
+                        capsulePreview: n.capsules ? { ...n.capsules, id: n.capsule_id, profiles: n.sender_id === n.capsules.owner_id ? n.sender : undefined } : undefined,
                         createdAt: n.created_at,
                         isExpired: n.type === 'capsule_invite' && new Date() > expiryDate,
                         expiryDate,
@@ -323,16 +370,26 @@ export default function NotificationsScreen() {
         }
 
         if (isRefresh) {
-            setNotifications([...activeInviteNotifications, ...mapped]);
+            const nextNotifications = [...activeInviteNotifications, ...mapped];
+            setNotifications(nextNotifications);
+            notificationsRef.current = nextNotifications;
             setPage(nextPage);
             setHasMore(lastRawCount === PAGE_SIZE);
+
+            const cachePayload = {
+                savedAt: Date.now(),
+                notifications: nextNotifications,
+                totalUnread,
+            };
+            notificationsMemoryCache.set(currentUserId, cachePayload);
+            void AsyncStorage.setItem(`@notifications_cache_${currentUserId}`, JSON.stringify(cachePayload)).catch(() => {});
 
             // Expire invitations in DB without deleting history.
             const expiredIds = mapped.filter(n => n.type === 'capsule_invite' && n.isExpired).map(n => n.capsuleId).filter(Boolean);
             if (expiredIds.length > 0) {
                 supabase.from('capsule_invites')
                     .update({ status: 'rejected' })
-                    .eq('user_id', user.id)
+                    .eq('user_id', currentUserId)
                     .in('capsule_id', expiredIds)
                     .eq('status', 'pending')
                     .then(({ error }) => {
@@ -352,31 +409,39 @@ export default function NotificationsScreen() {
 
         // Fetch total unread count for the +20 logic
         if (isRefresh) {
-            const { data: { user } } = await supabase.auth.getUser();
-            if (user) {
-                const { count } = await supabase
+            const [unreadCountResult, unreadUploadsResult, unreadOpeningSoonResult] = await Promise.all([
+                supabase
                     .from('notifications')
                     .select('*', { count: 'exact', head: true })
-                    .eq('user_id', user.id)
+                    .eq('user_id', currentUserId)
                     .not('type', 'in', '("chat","message","capsule_chat","chat_message")')
-                    .eq('is_read', false);
-
-                const { data: unreadUploads } = await supabase
+                    .eq('is_read', false),
+                supabase
                     .from('notifications')
                     .select('id, capsule_id')
-                    .eq('user_id', user.id)
+                    .eq('user_id', currentUserId)
                     .eq('type', 'new_item')
-                    .eq('is_read', false);
-                const hiddenUploadUnread = (unreadUploads || []).filter((n: any) => !n.capsule_id || (!followedCapsuleIds.has(n.capsule_id) && !participantCapsuleIds.has(n.capsule_id))).length;
-                const { data: unreadOpeningSoon } = await supabase
+                    .eq('is_read', false),
+                supabase
                     .from('notifications')
                     .select('id, capsule_id')
-                    .eq('user_id', user.id)
+                    .eq('user_id', currentUserId)
                     .eq('type', 'opening_soon')
-                    .eq('is_read', false);
+                    .eq('is_read', false),
+            ]);
+                const count = unreadCountResult.count;
+                const unreadUploads = unreadUploadsResult.data;
+                const hiddenUploadUnread = (unreadUploads || []).filter((n: any) => !n.capsule_id || (!followedCapsuleIds.has(n.capsule_id) && !participantCapsuleIds.has(n.capsule_id))).length;
+                const unreadOpeningSoon = unreadOpeningSoonResult.data;
                 const hiddenOpeningSoonUnread = (unreadOpeningSoon || []).filter((n: any) => !n.capsule_id || !followedCapsuleIds.has(n.capsule_id)).length;
-                setTotalUnread(Math.max(0, (count || 0) - hiddenUploadUnread - hiddenOpeningSoonUnread));
-            }
+                const nextUnread = Math.max(0, (count || 0) - hiddenUploadUnread - hiddenOpeningSoonUnread);
+                setTotalUnread(nextUnread);
+                const cached = notificationsMemoryCache.get(currentUserId);
+                if (cached) {
+                    const updatedCache = { ...cached, totalUnread: nextUnread };
+                    notificationsMemoryCache.set(currentUserId, updatedCache);
+                    void AsyncStorage.setItem(`@notifications_cache_${currentUserId}`, JSON.stringify(updatedCache)).catch(() => {});
+                }
         }
     };
 
@@ -388,14 +453,15 @@ export default function NotificationsScreen() {
     useFocusEffect(useCallback(() => {
         setPage(0);
         setHasMore(true);
-        setNotifications([]);
-        loadNotifications(true);
+        void loadNotifications(true);
         if (Platform.OS !== 'web') clearBadgeCount();
     }, []));
 
     useEffect(() => {
-        const channel = supabase.channel('notifications_realtime')
-            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, () => loadNotifications(true))
+        const realtimeUserId = getAuthUserIdSnapshot() || getAuthSessionSnapshot()?.user?.id;
+        if (!realtimeUserId) return;
+        const channel = supabase.channel(`notifications_realtime_${realtimeUserId}`)
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${realtimeUserId}` }, () => loadNotifications(true))
             .subscribe();
         return () => { supabase.removeChannel(channel); };
     }, []);
@@ -535,7 +601,7 @@ export default function NotificationsScreen() {
 
             {/* ── LIST ────────────────────────────────────────────────── */}
             <View style={{ flex: 1 }}>
-                {loading && page === 0 ? (
+                {loading && notifications.length === 0 ? (
                     renderLoadingSkeleton()
                 ) : notifications.length === 0 ? (
                     <View style={s.emptyState}>

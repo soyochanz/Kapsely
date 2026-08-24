@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
     View, Text, StyleSheet, ScrollView, TouchableOpacity,
     TextInput, Dimensions, Animated, Easing, StatusBar, Alert, ActivityIndicator,
-    Modal, FlatList, KeyboardAvoidingView, Platform, Pressable, SectionList, Keyboard, InteractionManager,
+    Modal, FlatList, KeyboardAvoidingView, Platform, Pressable, SectionList, Keyboard,
     DeviceEventEmitter, Vibration, Share, PanResponder
 } from 'react-native';
 import { Image } from 'expo-image';
@@ -58,6 +58,18 @@ const D = {
 
 const CAPSULE_DETAIL_RPC_TIMEOUT_MS = 6500;
 const SIMPLE_FRONTEND_CAPSULE_DETAIL = true;
+const CAPSULE_DETAIL_MEMORY_TTL_MS = 5 * 60 * 1000;
+const capsuleDetailMemoryCache = new Map<string, { savedAt: number; data: any }>();
+
+const resolveCapsuleOwnerProfile = (value: any) => {
+    const candidate = value?.profiles || value?.owner_profile || value?.ownerProfile || value?.owner || null;
+    return Array.isArray(candidate) ? candidate[0] || null : candidate;
+};
+
+const normalizeCapsuleProfile = (value: any, fallback?: any) => value ? {
+    ...value,
+    profiles: resolveCapsuleOwnerProfile(value) || resolveCapsuleOwnerProfile(fallback) || null,
+} : value;
 const EPIC_SINGLE_OPEN_TOTAL_MS = 12900;
 
 const withTimeout = async <T,>(promise: PromiseLike<T>, ms: number, fallback: T): Promise<T> => {
@@ -463,6 +475,7 @@ const CollaboratorsBar = React.memo(({ owner, members, invites, tint, isMember, 
                                         opacity: m.isPending ? 0.3 : 1
                                     }}
                                     contentFit="contain"
+                                    cachePolicy="memory-disk"
                                     recyclingKey={`collab-${m.id}`}
                                 />
                                 {m.isPending && (
@@ -662,11 +675,21 @@ function CapsuleDetailScreen() {
     const { t } = useTranslation();
     const navigation = useNavigation<any>();
     const route = useRoute();
-    const { capsuleId }: any = route.params || {};
+    const { capsuleId, initialCapsule }: any = route.params || {};
+    const cachedDetailEntry = capsuleDetailMemoryCache.get(String(capsuleId));
+    const cachedDetail = cachedDetailEntry && Date.now() - cachedDetailEntry.savedAt < CAPSULE_DETAIL_MEMORY_TTL_MS
+        ? cachedDetailEntry.data
+        : null;
+    const bootCapsule = cachedDetail?.capsule || (initialCapsule
+        ? normalizeCapsuleProfile({ ...initialCapsule, id: initialCapsule.id || initialCapsule.capsule_id || capsuleId })
+        : null);
+    const bootItems = cachedDetail?.items || initialCapsule?.collage_items || initialCapsule?.items || (
+        initialCapsule?.latest_item ? [initialCapsule.latest_item] : []
+    );
 
-    const [capsule, setCapsule] = useState<any>(null);
-    const [items, setItems] = useState<any[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [capsule, setCapsule] = useState<any>(bootCapsule);
+    const [items, setItems] = useState<any[]>(bootItems);
+    const [loading, setLoading] = useState(!bootCapsule);
     const [isOpening, setIsOpening] = useState(false);
     const liveChatRef = useRef<LiveChatRef>(null);
     const localEmojiTriggerRef = useRef<((emoji: string) => void) | null>(null);
@@ -690,15 +713,15 @@ function CapsuleDetailScreen() {
     const [modelTint, setModelTint] = useState<string | null>(null);
     const [comment, setComment] = useState('');
     const [replyingToComment, setReplyingToComment] = useState<any>(null);
-    const [comments, setComments] = useState<any[]>([]);
+    const [comments, setComments] = useState<any[]>(cachedDetail?.latest_comments || []);
     const [commentsPage, setCommentsPage] = useState(0);
     const [hasMoreComments, setHasMoreComments] = useState(true);
     const [loadingMoreComments, setLoadingMoreComments] = useState(false);
     const COMMENTS_PAGE_SIZE = 6;
-    const [likeCount, setLikeCount] = useState(0);
-    const [isLiked, setIsLiked] = useState(false);
+    const [likeCount, setLikeCount] = useState<number>(Number(cachedDetail?.likes_count || 0));
+    const [isLiked, setIsLiked] = useState(!!cachedDetail?.is_liked);
     const [userId, setUserId] = useState<string | null>(null);
-    const [invites, setInvites] = useState<any[]>([]);
+    const [invites, setInvites] = useState<any[]>(cachedDetail?.invites || []);
     const [acceptedMembers, setAcceptedMembers] = useState<any[]>([]);
 
     useEffect(() => {
@@ -954,11 +977,8 @@ function CapsuleDetailScreen() {
 
     useFocusEffect(useCallback(() => {
         const controller = new AbortController();
-        const task = InteractionManager.runAfterInteractions(() => {
-            loadData(controller.signal);
-        });
+        void loadData(controller.signal);
         return () => {
-            task.cancel();
             controller.abort();
         };
     }, [capsuleId]));
@@ -1329,17 +1349,8 @@ function CapsuleDetailScreen() {
             .order('created_at', { ascending: false })
             .limit(COMMENTS_PAGE_SIZE);
 
-        const [
-            capsuleRes,
-            itemsRes,
-            invitesRes,
-            commentsRes,
-            likesCountRes,
-            myLikeRes,
-            capsuleFollowersRes,
-            isCapsuleFollowedRes,
-        ] = await Promise.all([
-            capsuleQuery,
+        const capsulePromise = Promise.resolve(capsuleQuery);
+        const secondaryPromise = Promise.all([
             itemsQuery,
             invitesQuery,
             commentsQuery,
@@ -1352,6 +1363,24 @@ function CapsuleDetailScreen() {
                 ? supabase.from('capsule_followers').select('id').eq('capsule_id', capsuleId).eq('user_id', myId).maybeSingle()
                 : Promise.resolve({ data: null } as any),
         ]);
+
+        // The core capsule is enough to paint the screen. Do not make it wait for
+        // media, comments, invites and social counters.
+        const capsuleRes = await capsulePromise;
+        if (capsuleRes.data && !signal?.aborted) {
+            setCapsule((previous: any) => normalizeCapsuleProfile({ ...previous, ...capsuleRes.data }, previous));
+            setLoading(false);
+        }
+
+        const [
+            itemsRes,
+            invitesRes,
+            commentsRes,
+            likesCountRes,
+            myLikeRes,
+            capsuleFollowersRes,
+            isCapsuleFollowedRes,
+        ] = await secondaryPromise;
 
         const ownerId = capsuleRes.data?.owner_id || null;
         const [ownerFollowersRes, isOwnerFollowedRes] = ownerId
@@ -1386,12 +1415,9 @@ function CapsuleDetailScreen() {
         const myId = getAuthUserIdSnapshot() || getAuthSessionSnapshot()?.user?.id || null;
         setUserId(myId);
 
-        let blocked: string[] = [];
-        if (myId) { 
-            blocked = await safetyService.getAllSafetyUserIds(myId); 
-            setBlockedUserIds(blocked); 
-        }
-        if (signal?.aborted) return;
+        const blockedPromise = myId
+            ? safetyService.getAllSafetyUserIds(myId).catch(() => [] as string[])
+            : Promise.resolve([] as string[]);
 
         let data: any = null;
         let error: any = null;
@@ -1418,6 +1444,10 @@ function CapsuleDetailScreen() {
             data = fallbackData;
             error = null;
         }
+
+        const blocked = await blockedPromise;
+        setBlockedUserIds(blocked);
+        if (signal?.aborted) return;
 
         if (error || !data) {
             if (error?.message?.includes('Abort') || error?.name === 'AbortError') return;
@@ -1460,7 +1490,8 @@ function CapsuleDetailScreen() {
             } : inv.profiles,
         }));
 
-        setCapsule({ ...capsuleData, delete_requests: delete_requests || [] });
+        const normalizedCapsule = normalizeCapsuleProfile({ ...capsuleData, delete_requests: delete_requests || [] }, capsule);
+        setCapsule(normalizedCapsule);
 
         const cfg = timerConfigManager.getConfig(capsuleData.model);
         setModelTint(cfg?.themeColor || MODEL_TINTS[capsuleData.model] || '#7C5CBF');
@@ -1484,12 +1515,13 @@ function CapsuleDetailScreen() {
 
         // Profile map is used for items, invites are set later consolidated
 
+        let normalizedItems: any[] = [];
         if (itemsData) {
-            const enriched = itemsData.map((item: any) => ({
+            normalizedItems = itemsData.map((item: any) => ({
                 ...item,
                 profiles: item.profiles || profileMap[item.owner_id]
             })).filter((i: any) => !blocked.includes(i.owner_id));
-            setItems(enriched);
+            setItems(normalizedItems);
         }
 
         setLikeCount(likes_count || 0);
@@ -1504,20 +1536,31 @@ function CapsuleDetailScreen() {
         }
 
         // Load comments: use initial from RPC, then setup for pagination
+        let normalizedComments: any[] = [];
         if (latest_comments) {
-            const filteredCms = latest_comments.filter((c: any) => !blocked.includes(c.user_id)).map((c: any) => ({
+            normalizedComments = latest_comments.filter((c: any) => !blocked.includes(c.user_id)).map((c: any) => ({
                 ...c,
                 myLike: c.my_like,
                 likeCount: c.like_count
             }));
-            setComments(filteredCms);
-            if (filteredCms.length < COMMENTS_PAGE_SIZE) setHasMoreComments(false);
+            setComments(normalizedComments);
+            if (normalizedComments.length < COMMENTS_PAGE_SIZE) setHasMoreComments(false);
         } else {
             setComments([]);
             setHasMoreComments(false);
         }
         setCommentsPage(0);
 
+        capsuleDetailMemoryCache.set(String(capsuleId), {
+            savedAt: Date.now(),
+            data: {
+                ...data,
+                capsule: normalizedCapsule,
+                items: normalizedItems,
+                invites: normalizedInvites,
+                latest_comments: normalizedComments,
+            },
+        });
         setLoading(false);
     };
 
@@ -2136,6 +2179,7 @@ function CapsuleDetailScreen() {
                                                             style={StyleSheet.absoluteFill}
                                                             blurRadius={Platform.OS === 'ios' ? 12 : 4}
                                                             cachePolicy="memory-disk"
+                                                            recyclingKey={`sealed-item-${pi.id}`}
                                                         />
                                                     )}
                                                     {Platform.OS === 'ios' ? (
@@ -2156,6 +2200,7 @@ function CapsuleDetailScreen() {
                                                         <Image 
                                                             source={{ uri: Colors.getAvatarUrl(pi.profiles.avatar_url, pi.profiles.display_name || pi.profiles.username) }} 
                                                             style={[ds.itemAuthorOverlay as any, { borderColor: tint + '40' }]} 
+                                                            cachePolicy="memory-disk"
                                                             recyclingKey={`item-avatar-${pi.profiles.id}`}
                                                         />
                                                     )}
@@ -2197,7 +2242,7 @@ function CapsuleDetailScreen() {
                                                             <Text style={ds.notePreviewText} numberOfLines={4}>{pi.content}</Text>
                                                         </View>
                                                     ) : (
-                                                        <Image source={{ uri: pi.thumbnail_url || pi.media_url }} style={ds.cellWrap as any} contentFit="cover" cachePolicy="memory-disk" transition={200} />
+                                                        <Image source={{ uri: pi.thumbnail_url || pi.media_url }} style={ds.cellWrap as any} contentFit="cover" cachePolicy="memory-disk" recyclingKey={`capsule-item-${pi.id}`} transition={80} />
                                                     )}
                                                     {pi.media_type === 'video' && (
                                                         <View style={ds.playBadge}><Ionicons name="play" size={10} color="#fff" /></View>
@@ -2209,6 +2254,7 @@ function CapsuleDetailScreen() {
                                                         <Image 
                                                             source={{ uri: Colors.getAvatarUrl(pi.profiles.avatar_url, pi.profiles.display_name || pi.profiles.username, pi.profiles.favorite_color) }} 
                                                             style={[ds.itemAuthorOverlay as any, { borderColor: '#fff' }]} 
+                                                            cachePolicy="memory-disk"
                                                             recyclingKey={`item-avatar-v-${pi.profiles.id}`}
                                                         />
                                                     )}
@@ -2448,6 +2494,12 @@ function CapsuleDetailScreen() {
         </View>
     );
 
+    const headerOwnerProfile = resolveCapsuleOwnerProfile(capsule);
+    const headerOwnerName = headerOwnerProfile?.display_name || headerOwnerProfile?.username || '';
+    const headerAvatarUrl = headerOwnerName
+        ? Colors.getAvatarUrl(headerOwnerProfile?.avatar_url, headerOwnerName, headerOwnerProfile?.favorite_color)
+        : null;
+
     return (
         <View style={ds.root}>
             <AudioController uri={playingAudio} onFinish={() => setPlayingAudio(null)} />
@@ -2463,20 +2515,26 @@ function CapsuleDetailScreen() {
                 </TouchableOpacity>
                 {totalMembers <= 1 ? (
                     <TouchableOpacity style={ds.headerCenter} activeOpacity={0.78} onPress={() => navigation.navigate('UserProfile', { targetUserId: capsule.owner_id })}>
-                        <Image 
-                            source={{ uri: Colors.getAvatarUrl(capsule.profiles?.avatar_url, capsule.profiles?.display_name || capsule.profiles?.username, capsule.profiles?.favorite_color) }} 
-                            style={[ds.headerAvatar as any, { borderColor: tint + '40' }]} 
-                            cachePolicy="memory-disk" 
-                            contentFit="cover" 
-                            transition={200} 
-                            recyclingKey={`header-avatar-${capsule.profiles?.id}`}
-                        />
+                        {headerAvatarUrl ? (
+                            <Image
+                                source={{ uri: headerAvatarUrl }}
+                                style={[ds.headerAvatar as any, { borderColor: tint + '40' }]}
+                                cachePolicy="memory-disk"
+                                contentFit="cover"
+                                transition={80}
+                                recyclingKey={`header-avatar-${headerOwnerProfile?.id || capsule.owner_id}`}
+                            />
+                        ) : (
+                            <View style={[ds.headerAvatar, { borderColor: tint + '40', backgroundColor: tint + '14', alignItems: 'center', justifyContent: 'center' }]}>
+                                <Ionicons name="hourglass-outline" size={15} color={tint} />
+                            </View>
+                        )}
                         <View style={{ flexShrink: 1 }}>
                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                                <Text style={ds.headerName} numberOfLines={1}>{capsule.profiles?.display_name || capsule.profiles?.username}</Text>
-                                {capsule.profiles?.is_verified && <VerifiedBadge size={10} />}
+                                <Text style={ds.headerName} numberOfLines={1}>{headerOwnerName || capsule.title}</Text>
+                                {headerOwnerProfile?.is_verified && <VerifiedBadge size={10} />}
                             </View>
-                            <Text style={ds.headerSub} numberOfLines={1}>{capsule.title}</Text>
+                            {!!headerOwnerName && <Text style={ds.headerSub} numberOfLines={1}>{capsule.title}</Text>}
                         </View>
                         {userId !== capsule.owner_id && (
                             <Pressable
@@ -2708,6 +2766,7 @@ function CapsuleDetailScreen() {
                                         <Image 
                                             source={{ uri: Colors.getAvatarUrl(u.avatar_url, u.display_name || u.username, u.favorite_color) }} 
                                             style={ds.modernUserAvatar as any} 
+                                            cachePolicy="memory-disk"
                                             recyclingKey={`search-user-${u.id}`}
                                         />
                                     </View>

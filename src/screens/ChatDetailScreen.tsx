@@ -487,7 +487,7 @@ const ChatCapsuleCard = memo(({ capsuleId, isMe }: { capsuleId: string; isMe: bo
     return (
         <TouchableOpacity
             activeOpacity={0.88}
-            onPress={() => navigation.navigate('CapsuleDetail', { capsuleId: capsule.id })}
+            onPress={() => navigation.navigate('CapsuleDetail', { capsuleId: capsule.id, initialCapsule: capsule })}
             style={{
                 width: 255,
                 backgroundColor: cardBg,
