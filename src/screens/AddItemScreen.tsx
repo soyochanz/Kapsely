@@ -12,7 +12,8 @@ import { useTranslation } from 'react-i18next';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as FileSystem from 'expo-file-system/legacy';
-import { Audio, Video, ResizeMode } from 'expo-av';
+import { Audio } from 'expo-av';
+import AppVideo from '../components/AppVideo';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import { BlurView } from 'expo-blur';
 import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from '../lib/supabase';
@@ -1218,8 +1219,7 @@ export default function AddItemScreen() {
             <Modal visible={!!previewVideo} transparent animationType="fade">
                 <View style={s.videoModal}>
                     {previewVideo && (
-                        <Video source={{ uri: previewVideo }} rate={1.0} volume={1.0} isMuted={false}
-                            resizeMode={ResizeMode.CONTAIN} shouldPlay useNativeControls style={s.videoFull} />
+                        <AppVideo uri={previewVideo} volume={1} contentFit="contain" shouldPlay nativeControls style={s.videoFull} />
                     )}
                     <TouchableOpacity style={s.videoClose} activeOpacity={0.7} onPress={() => setPreviewVideo(null)}>
                         <View style={s.videoCloseCircle}>
@@ -1241,13 +1241,12 @@ export default function AddItemScreen() {
                         <Text style={s.trimTitle}>{t('add.trim_video')}</Text>
 
                         {trimmingIndex !== null && mediaList[trimmingIndex] && (
-                            <Video source={{ uri: mediaList[trimmingIndex].uri }}
-                                rate={1.0} volume={1.0} isMuted={false}
-                                resizeMode={ResizeMode.CONTAIN}
+                            <AppVideo uri={mediaList[trimmingIndex].uri}
+                                volume={1} contentFit="contain"
                                 shouldPlay={trimSeekingValue === null}
-                                useNativeControls={false}
+                                nativeControls={false}
                                 style={s.trimPreview}
-                                positionMillis={trimSeekingValue !== null ? trimSeekingValue : trimStart}
+                                startPositionMillis={trimSeekingValue !== null ? trimSeekingValue : trimStart}
                             />
                         )}
 

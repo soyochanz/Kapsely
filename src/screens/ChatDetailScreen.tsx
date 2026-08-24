@@ -16,7 +16,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTranslation } from 'react-i18next';
 import { sendPushNotification } from '../utils/pushNotifications';
 import * as ImagePicker from 'expo-image-picker';
-import { Audio, Video } from 'expo-av';
+import { Audio } from 'expo-av';
+import AppVideo from '../components/AppVideo';
 import { optimizeImageForUpload } from '../utils/mediaOptimization';
 import { MODEL_IMAGES, MODEL_TINTS, MODEL_IMAGES_OPEN } from '../constants/models';
 import { timerConfigManager } from '../utils/timerConfig';
@@ -1136,7 +1137,7 @@ export default function ChatDetailScreen() {
                                     {/* Video */}
                                     {item.media_type === 'video' && (item.mediaUrl || item.media_url) && (
                                         <View style={{ width: 215, height: 215, borderRadius: 14, marginBottom: 4, overflow: 'hidden' }}>
-                                            <Video source={{ uri: item.mediaUrl || item.media_url }} style={{ width: '100%', height: '100%' }} useNativeControls isLooping resizeMode={"cover" as any} />
+                                            <AppVideo uri={item.mediaUrl || item.media_url} style={{ width: '100%', height: '100%' }} nativeControls loop contentFit="cover" />
                                         </View>
                                     )}
 

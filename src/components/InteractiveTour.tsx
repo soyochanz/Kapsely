@@ -16,7 +16,6 @@ export type TutorialStep =
     | 'WELCOME' 
     | 'PRESS_PLUS' 
     | 'SELECT_TYPE' 
-    | 'POST_YOURCAP' 
     | 'FINISHED';
 
 interface InteractiveTourProps {
@@ -127,32 +126,6 @@ export default function InteractiveTour({ step, onAction, onDismiss }: Interacti
                         <View style={styles.arrowUp} />
                     </Animated.View>
                 </View>
-            </View>
-        );
-    }
-
-    // --- STEP 4: POST YOURCAP ---
-    if (step === 'POST_YOURCAP') {
-        return (
-            <View style={[styles.pointerOverlay, { pointerEvents: 'box-none' }]}>
-                <View style={[styles.hintContainer, { top: height * 0.15 }]}>
-                    <Animated.View style={[styles.hintBox, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
-                        <Text style={styles.hintTitle}>Step 3: Share</Text>
-                        <Text style={styles.hintText}>Tap here to share a Story from one of your sealed capsules.</Text>
-                        <View style={styles.arrowUp} />
-                    </Animated.View>
-                </View>
-                
-                <Animated.View 
-                    style={[
-                        styles.highlightCircle, 
-                        { 
-                            top: 245, 
-                            left: 25, 
-                            transform: [{ scale: pulseAnim }] 
-                        }
-                    ]} 
-                />
             </View>
         );
     }

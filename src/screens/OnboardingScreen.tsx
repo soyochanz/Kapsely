@@ -453,7 +453,7 @@ export default function OnboardingScreen() {
                         <View style={s.stickerShelf}>
                             <View style={s.shelfItem}><Ionicons name="heart" size={24} color="#FF6B6B" /></View>
                             <View style={[s.shelfItem, { opacity: 0.3 }]}><Ionicons name="star" size={24} color="#FFD166" /></View>
-                            <View style={s.shelfItem}><Ionicons name="flash" size={24} color="#0EA5E9" /></View>
+                            <View style={s.shelfItem}><Ionicons name="images-outline" size={24} color="#0EA5E9" /></View>
                         </View>
                     </View>
                 );

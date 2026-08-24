@@ -131,29 +131,27 @@ export default function NotificationsScreen() {
         if (!isRefresh) setLoadingMore(true);
         else setLoading(true);
 
-        const blocked = await safetyService.getAllSafetyUserIds(user.id);
-        try {
-            await supabase.rpc('reject_expired_capsule_invites');
-        } catch {}
-        const { data: followedCapsules } = await supabase
-            .from('capsule_followers')
-            .select('capsule_id, created_at')
-            .eq('user_id', user.id);
+        const parallelResults = await Promise.all([
+            safetyService.getAllSafetyUserIds(user.id),
+            Promise.resolve(supabase.rpc('reject_expired_capsule_invites')).catch(() => ({ data: null, error: null })),
+            supabase.from('capsule_followers').select('capsule_id, created_at').eq('user_id', user.id),
+            supabase.from('capsule_invites').select('capsule_id').eq('user_id', user.id).eq('status', 'accepted'),
+            supabase.from('capsule_invites').select('capsule_id, expires_at, status, created_at').eq('user_id', user.id).eq('status', 'pending'),
+        ]);
+        const blocked = parallelResults[0] as string[];
+        const followedCapsulesResult = parallelResults[2] as any;
+        const participantCapsulesResult = parallelResults[3] as any;
+        const pendingInviteRowsResult = parallelResults[4] as any;
+        const followedCapsules = followedCapsulesResult.data || [];
         const followedCapsuleIds = new Set((followedCapsules || []).map((row: any) => row.capsule_id));
-        const followedSinceByCapsule = new Map((followedCapsules || []).map((row: any) => [row.capsule_id, row.created_at]));
-        const { data: participantCapsules } = await supabase
-            .from('capsule_invites')
-            .select('capsule_id')
-            .eq('user_id', user.id)
-            .eq('status', 'accepted');
+        const followedSinceByCapsule = new Map<string, string>(
+            (followedCapsules || []).map((row: any) => [row.capsule_id, row.created_at] as [string, string])
+        );
+        const participantCapsules = participantCapsulesResult.data || [];
         const participantCapsuleIds = new Set((participantCapsules || []).map((row: any) => row.capsule_id));
-        const { data: pendingInviteRows } = await supabase
-            .from('capsule_invites')
-            .select('capsule_id, expires_at, status, created_at')
-            .eq('user_id', user.id)
-            .eq('status', 'pending');
-        const pendingInvitesByCapsule = new Map(
-            (pendingInviteRows || []).map((invite: any) => [invite.capsule_id, invite])
+        const pendingInviteRows = pendingInviteRowsResult.data || [];
+        const pendingInvitesByCapsule = new Map<string, any>(
+            (pendingInviteRows || []).map((invite: any) => [invite.capsule_id, invite] as [string, any])
         );
         const activePendingInvites = (pendingInviteRows || []).filter((invite: any) => {
             const expiryDate = invite.expires_at

@@ -22,13 +22,12 @@ import { safetyService } from '../utils/safety';
 import { useWebDragScroll } from '../utils/useWebDragScroll';
 import { feedScrollBus } from '../utils/feedScrollBus';
 import { rankAndDiversifyFeed } from '../utils/feedRanking';
-import StoryViewer from '../components/StoryViewer';
 import InteractiveTour from '../components/InteractiveTour';
 import { sendPushNotification } from '../utils/pushNotifications';
 import { MODEL_IMAGES, MODEL_TINTS } from '../constants/models';
 import { timerConfigManager } from '../utils/timerConfig';
 
-type TutorialStep = 'IDLE' | 'WELCOME' | 'PRESS_PLUS' | 'SELECT_TYPE' | 'POST_YOURCAP' | 'FINISHED';
+type TutorialStep = 'IDLE' | 'WELCOME' | 'PRESS_PLUS' | 'SELECT_TYPE' | 'FINISHED';
 
 let requestTrackingPermissionsAsync: any = async () => ({ status: 'granted' });
 let getTrackingPermissionsAsync: any = async () => ({ status: 'granted' });
@@ -42,8 +41,6 @@ if (Platform.OS === 'ios') {
     }
 }
 
-import { FlashPicker } from '../components/FlashPicker';
-import { StoryBubble } from '../components/feed/StoryBubble';
 import { FilterChip } from '../components/feed/FilterChip';
 import CapsuleCard from '../components/CapsuleCard';
 
@@ -70,6 +67,8 @@ const SIMPLE_FEED_CANDIDATE_MULTIPLIER = 4;
 const SIMPLE_FEED_REFRESH_CANDIDATE_MULTIPLIER = 6;
 const SIMPLE_FEED_MAX_CANDIDATES = 90;
 const FEED_SIGNAL_LIMIT = 320;
+// Temporary performance switch: Flashes are removed from feed queries, UI and bundles.
+const FLASHES_ENABLED = false;
 
 const withTimeout = <T,>(promise: PromiseLike<T>, ms: number, label: string): Promise<T> =>
     new Promise((resolve, reject) => {
@@ -441,7 +440,7 @@ export default function FeedScreen() {
                         .neq('moderation_status', 'rejected')
                         .in('media_type', ['image', 'video'])
                         .order('created_at', { ascending: false })
-                        .limit(Math.min(900, Math.max(180, capsuleIds.length * 8))),
+                        .limit(Math.min(360, Math.max(80, capsuleIds.length * 4))),
                     3000,
                     'feed fallback media'
                 );
@@ -491,24 +490,6 @@ export default function FeedScreen() {
             membersByCapsule.set(member.capsule_id, list);
         });
 
-        let storiesData: any[] = [];
-        try {
-            const storiesRes = await withTimeout(
-                supabase
-                    .from('capsule_items')
-                    .select('*, profiles:owner_id(id, username, display_name, avatar_url, favorite_color, is_verified), capsules:capsule_id(id, title, type, model)')
-                    .eq('is_story', true)
-                    .gt('expires_at', new Date().toISOString())
-                    .order('created_at', { ascending: false })
-                    .limit(50),
-                3000,
-                'feed fallback stories'
-            );
-            storiesData = storiesRes.data || [];
-        } catch (error) {
-            console.warn('[Feed] Fallback stories timed out', error);
-        }
-
         return {
             feed: (capsulesData || []).map((capsule: any) => {
                 const media = mediaByCapsule.get(capsule.id) || [];
@@ -526,7 +507,7 @@ export default function FeedScreen() {
                     is_participant: participantIds.includes(capsule.id),
                 };
             }),
-            stories: (storiesData || []).map((story: any) => ({ ...story, is_read: false })),
+            stories: [],
             following_ids: followingIds,
             liked_ids: [],
             blocked_ids: blockedIds,
@@ -718,7 +699,7 @@ export default function FeedScreen() {
                         .neq('moderation_status', 'rejected')
                         .in('media_type', ['image', 'video'])
                         .order('created_at', { ascending: false })
-                        .limit(Math.min(900, Math.max(180, capsuleIds.length * 8))),
+                        .limit(Math.min(360, Math.max(80, capsuleIds.length * 4))),
                     2500,
                     { data: [], error: null } as any
                 ),
@@ -1059,28 +1040,9 @@ export default function FeedScreen() {
 
         const pagedFeed = ranked.slice(0, PAGE_SIZE);
 
-        const storyOwnerIds = activeTab === 'following'
-            ? ownerIds
-            : [myId];
-
-        const storiesRes = storyOwnerIds.length
-            ? await runQueryOrDefault(
-                supabase
-                    .from('capsule_items')
-                    .select('*, profiles:owner_id(id, username, display_name, avatar_url, favorite_color, is_verified), capsules:capsule_id(id, title, type, model)')
-                    .eq('is_story', true)
-                    .in('owner_id', storyOwnerIds)
-                    .gt('expires_at', new Date().toISOString())
-                    .order('created_at', { ascending: false })
-                    .limit(50),
-                1800,
-                { data: [], error: null } as any
-            )
-            : { data: [] as any[] };
-
         const result = {
             feed: pagedFeed,
-            stories: (storiesRes.data || []).filter((story: any) => !blockedSet.has(story.owner_id)).map((story: any) => ({ ...story, is_read: false })),
+            stories: [],
             following_ids: followingIds,
             liked_ids: likedIds,
             blocked_ids: Array.from(blockedSet),
@@ -1310,8 +1272,11 @@ export default function FeedScreen() {
             setParticipantCapsules(new Set(participant_ids || []));
             setFollowedCapsules(new Set(followed_capsule_ids || []));
 
-            if (currentUserId) {
+            if (FLASHES_ENABLED && currentUserId) {
                 processStoriesData(storiesData || [], currentUserId, blocked_ids || []);
+            } else {
+                setStories([]);
+                setMyStory(null);
             }
         }
     }, [queryData, cachedFeedData, cachedFeedKey, feedCacheKey, currentUserId]);
@@ -1634,18 +1599,6 @@ export default function FeedScreen() {
     }, [currentUserId, myStory]);
 
     // ─── Handlers ─────────────────────────────────────────────────────────────
-    const handleYourCapPress = useCallback(async () => {
-        if (tutorialStep === 'POST_YOURCAP') {
-            setTutorialStep('FINISHED');
-            AsyncStorage.setItem('hasSeenTutorialV2', 'true');
-        }
-        if (myStory) {
-            setActiveStory(myStory);
-            return;
-        }
-        setShowCapsulePicker(true);
-    }, [myStory, tutorialStep]);
-
     useEffect(() => {
         const init = async () => {
             if (!currentUserId) return;
@@ -1786,13 +1739,11 @@ export default function FeedScreen() {
     }, [currentUserId]);
 
     const onRefresh = useCallback(async () => {
-        const nextSeed = Date.now();
         setIsPullRefreshing(true);
         setFeedLoadTimedOut(false);
         pinTopAfterRefreshRef.current = true;
         pinFeedToTop(false);
         refreshModeRef.current = 'pull_to_refresh';
-        setShuffleSeed(nextSeed);
         try {
             await flushImpressionsNow();
             await Promise.all([
@@ -1988,33 +1939,6 @@ export default function FeedScreen() {
     // ─── List Header ───────────────────────────────────────────────────────────
     const ListHeader = useMemo(() => (
         <>
-            {/* Stories strip */}
-            <View style={s.storiesSection}>
-                <ScrollView
-                    ref={storiesScrollRef}
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={s.storiesContent}
-                >
-                    <StoryBubble key="your-cap" user={myStory || null} isOwn onPress={handleYourCapPress} />
-                    {stories
-                        .filter(u => u.owner_id !== currentUserId)
-                        .map(u => (
-                            <StoryBubble key={u.owner_id} user={u} onPress={() => setActiveStory(u)} />
-                        ))}
-                </ScrollView>
-            </View>
-
-            {/* Divider with subtle fade */}
-            <View style={s.storyDividerWrap}>
-                <LinearGradient
-                    colors={['transparent', Colors.border, 'transparent']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 0 }}
-                    style={s.storyDivider}
-                />
-            </View>
-
             {/* Filter chips */}
             <ScrollView
                 ref={filterScrollRef}
@@ -2048,7 +1972,7 @@ export default function FeedScreen() {
                 </Text>
             </View>
         </>
-    ), [stories, myStory, currentUserId, activeFilter, handleYourCapPress, handleFilterChange]);
+    ), [activeFilter, handleFilterChange]);
 
     // ─── Header component ──────────────────────────────────────────────────────
     const headerPaddingTop = insets.top + 8;
@@ -2265,30 +2189,6 @@ export default function FeedScreen() {
             />
 
             {/* ── Modals & Overlays ── */}
-            <FlashPicker
-                visible={showCapsulePicker}
-                onClose={() => setShowCapsulePicker(false)}
-                currentUserId={currentUserId}
-                participantCapsules={participantCapsules}
-                onStoryPublished={() => queryClient.invalidateQueries({ queryKey: ['feed'] })}
-            />
-
-            <StoryViewer
-                visible={!!activeStory}
-                userGroup={activeStory}
-                onClose={() => setActiveStory(null)}
-                onNextUser={() => {
-                    const idx = stories.findIndex(u => u.owner_id === activeStory?.owner_id);
-                    setActiveStory(idx < stories.length - 1 ? stories[idx + 1] : null);
-                }}
-                onPrevUser={() => {
-                    const idx = stories.findIndex(u => u.owner_id === activeStory?.owner_id);
-                    if (idx > 0) setActiveStory(stories[idx - 1]);
-                }}
-                onStoryRead={markStoryRead}
-                currentUserId={currentUserId || undefined}
-            />
-
             <InteractiveTour
                 step={tutorialStep}
                 onAction={(action: string) => { if (action === 'START') setTutorialStep('PRESS_PLUS'); }}

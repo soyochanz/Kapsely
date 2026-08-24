@@ -7,7 +7,8 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Audio, Video, ResizeMode } from 'expo-av';
+import { Audio } from 'expo-av';
+import AppVideo from '../components/AppVideo';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -537,14 +538,9 @@ const VideoWithTrim = React.memo(({ item, isActive, style }: { item: any; isActi
     const trim = parts[1] ? parts[1].split('-') : [];
     const trimStart = trim[0] ? parseInt(trim[0], 10) : 0;
     const trimEnd = trim[1] ? parseInt(trim[1], 10) : null;
-    const ref = useRef<any>(null);
-    const onStatus = (s: any) => {
-        if (trimEnd && s.positionMillis >= trimEnd) { ref.current?.pauseAsync(); ref.current?.setPositionAsync(trimStart); }
-    };
     return (
-        <Video ref={ref} source={{ uri: item.media_url }} rate={1} volume={1} isMuted={false}
-            resizeMode={ResizeMode.CONTAIN} shouldPlay={isActive} useNativeControls style={style}
-            positionMillis={trimStart} progressUpdateIntervalMillis={500} onPlaybackStatusUpdate={onStatus}
+        <AppVideo uri={item.media_url} volume={1} contentFit="contain" shouldPlay={isActive}
+            nativeControls style={style} startPositionMillis={trimStart} endPositionMillis={trimEnd}
         />
     );
 });

@@ -34,7 +34,6 @@ import VerifiedBadge from '../components/VerifiedBadge';
 import SupportModal from '../components/SupportModal';
 import { timerConfigManager } from '../utils/timerConfig';
 import { sendPushNotification } from '../utils/pushNotifications';
-import StoryViewer from '../components/StoryViewer';
 import { safetyService } from '../utils/safety';
 import { multiAccountService, SavedAccount } from '../utils/multiAccount';
 import AccountHub from '../components/AccountHub';
@@ -184,13 +183,7 @@ export default function ProfileScreen() {
                 .select('capsule_id, cover_url, capsules:capsule_id(*)')
                 .eq('user_id', idToLoad)
                 .eq('status', 'accepted'),
-            supabase
-                .from('capsule_items')
-                .select('*, capsules:capsule_id(id, title, type, model)')
-                .eq('owner_id', idToLoad)
-                .eq('is_story', true)
-                .gt('expires_at', new Date().toISOString())
-                .order('created_at', { ascending: false }),
+            Promise.resolve({ data: [] } as any),
             myId ? supabase.from('capsule_invites').select('capsule_id').eq('user_id', myId).eq('status', 'accepted') : Promise.resolve({ data: [] } as any),
             supabase.from('profile_stickers').select('*, stickers(*)').eq('user_id', idToLoad),
         ]);
@@ -341,12 +334,8 @@ export default function ProfileScreen() {
             setCoverMap(prev => ({ ...prev, ...newCoverMap }));
             setCapsuleMediaMap(prev => ({ ...prev, ...newMediaMap }));
 
-            if (displayProfileData.stories?.length > 0) {
-                const prof = displayProfileData.profile;
-                setUserStories({ ...prof, owner_id: prof.id, stories: displayProfileData.stories });
-            } else {
-                setUserStories(null);
-            }
+            // Flashes are temporarily disabled; never revive them from persisted profile cache.
+            setUserStories(null);
         }
     }, [displayProfileData]);
 
@@ -481,7 +470,6 @@ export default function ProfileScreen() {
     const feedbackAnim = useRef(new Animated.Value(0)).current;
     const [profileStickers, setProfileStickers] = useState<any[]>([]);
     const [userStories, setUserStories] = useState<any>(null);
-    const [activeStoryViewer, setActiveStoryViewer] = useState(false);
     const [isBlocked, setIsBlocked] = useState(false);
     const [showUserOptions, setShowUserOptions] = useState(false);
     const [showCapsuleOptions, setShowCapsuleOptions] = useState(false);
@@ -848,23 +836,7 @@ export default function ProfileScreen() {
     const joinYear = profile?.created_at ? new Date(profile.created_at).getFullYear() : '—';
 
     // Extracted so FlashList header always gets the latest closure (not a stale cached version)
-    const handleShowStories = useCallback(async () => {
-        if (!userStories) return;
-        try {
-            const ownerId = userStories.owner_id;
-            const { data: fullStories } = await supabase
-                .from('capsule_items')
-                .select('*, capsules:capsule_id(id, title, type, model)')
-                .eq('owner_id', ownerId)
-                .eq('is_story', true)
-                .gt('expires_at', new Date().toISOString())
-                .order('created_at', { ascending: true });
-            if (fullStories?.length) {
-                setUserStories((prev: any) => prev ? { ...prev, stories: fullStories } : prev);
-            }
-        } catch (_) {}
-        setActiveStoryViewer(true);
-    }, [userStories]);
+    const handleShowStories = useCallback(() => {}, []);
     const tabData = activeTab === 'all'
         ? [...openedCaps, ...sealedCaps].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
         : activeTab === 'sealed' ? sealedCaps : openedCaps;
@@ -1524,20 +1496,6 @@ export default function ProfileScreen() {
                 </Pressable>
             </Modal>
 
-            <StoryViewer
-                visible={activeStoryViewer}
-                userGroup={userStories}
-                currentUserId={currentUserId || undefined}
-                onClose={() => setActiveStoryViewer(false)}
-                onStoryRead={async (storyId) => {
-                    if (!currentUserId) return;
-                    await supabase.from('story_reads').upsert({ user_id: currentUserId, story_id: storyId }, { onConflict: 'user_id,story_id' });
-                    if (userStories) {
-                        const updated = userStories.stories.map((s: any) => s.id === storyId ? { ...s, is_read: true } : s);
-                        setUserStories({ ...userStories, stories: updated, all_read: updated.every((s: any) => s.is_read) });
-                    }
-                }}
-            />
         </View>
     );
 }

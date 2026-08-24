@@ -46,12 +46,6 @@ const TOUR_STEPS = (t: any) => [
         icon: 'calendar',
         color: Colors.primary,
     },
-    {
-        title: t('onboarding.step4_title'),
-        description: t('onboarding.step4_desc'),
-        icon: 'flash',
-        color: Colors.accent,
-    }
 ];
 
 interface OnboardingTourProps {

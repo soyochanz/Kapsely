@@ -41,10 +41,10 @@ import {
 import { Search as SearchView } from './components/Search';
 import CapsuleWithTimer from './components/CapsuleWithTimer';
 import { Notifications } from './components/Notifications';
-import { FlashBar } from './components/FlashBar';
 import { Sliders, ShieldCheck } from 'lucide-react';
 import { AdminPanel } from './components/AdminPanel';
 import VerifiedBadge from './components/VerifiedBadge';
+import { rankWebFeed } from './utils/feedRanking';
 
 const formatFeedEvent = (eventType: string) => {
   switch (eventType) {
@@ -102,7 +102,7 @@ const CapsuleShareFallback = ({ capsuleId }: { capsuleId: string }) => {
 function App() {
   const SIMPLE_FRONTEND_FEED = true;
   const SIMPLE_FRONTEND_PROFILE = true;
-  const DISABLE_FEED_METRICS_UNTIL_STABLE = true;
+  const DISABLE_FEED_METRICS_UNTIL_STABLE = false;
   const [session, setSession] = useState<any>(null);
   const [feed, setFeed] = useState<any[]>([]);
   const [stories, setStories] = useState<any[]>([]);
@@ -300,21 +300,19 @@ function App() {
       if (SIMPLE_FRONTEND_FEED && session?.user?.id) {
         const myId = session.user.id;
         const statusFilter = activeFilter === 'opened' ? 'opened' : activeFilter === 'sealed' ? 'sealed' : null;
-        const candidateLimit = PAGE_SIZE * 3;
+        const candidateLimit = PAGE_SIZE * (isLoadMore ? 6 : 4);
 
-        const [followingRes, followedCapsulesRes, storiesRes] = await Promise.all([
+        const [followingRes, followedCapsulesRes, participantRes, impressionsRes] = await Promise.all([
           supabase.from('follows').select('following_id').eq('follower_id', myId),
           supabase.from('capsule_followers').select('capsule_id').eq('user_id', myId),
-          supabase.from('capsule_items')
-            .select('*, profiles:owner_id(id, username, display_name, avatar_url, favorite_color, is_verified)')
-            .eq('is_story', true)
-            .gt('expires_at', new Date().toISOString())
-            .order('created_at', { ascending: false })
-            .limit(40),
+          supabase.from('capsule_invites').select('capsule_id').eq('user_id', myId).eq('status', 'accepted'),
+          supabase.from('feed_impressions').select('capsule_id').eq('user_id', myId).gte('shown_at', new Date(Date.now() - 7 * 86400000).toISOString()).limit(400),
         ]);
 
         const followingIds = (followingRes.data || []).map((row: any) => row.following_id);
         const followedCapsuleIds = (followedCapsulesRes.data || []).map((row: any) => row.capsule_id);
+        const participantCapsuleIds = (participantRes.data || []).map((row: any) => row.capsule_id);
+        const seenCapsuleIds = (impressionsRes.data || []).map((row: any) => row.capsule_id).filter(Boolean);
 
         let capsuleRows: any[] = [];
         if (feedTab === 'following') {
@@ -456,28 +454,29 @@ function App() {
               final_score: score,
               activity_date: activityDate,
             };
-          })
-          .sort((a: any, b: any) => b.final_score - a.final_score || +new Date(b.activity_date) - +new Date(a.activity_date));
+          });
+
+        const rankedFeed = rankWebFeed(mappedFeed, {
+          tab: feedTab,
+          viewerId: myId,
+          followingIds: new Set(followingIds),
+          followedCapsuleIds: new Set(followedCapsuleIds),
+          participantCapsuleIds: new Set(participantCapsuleIds),
+          seenCapsuleIds: new Set(seenCapsuleIds),
+          seed: feedSessionId.current,
+        });
 
         if (seq !== fetchSeq.current) return;
 
-        setFeed(mappedFeed.slice(0, PAGE_SIZE));
+        const visibleCount = isLoadMore ? Math.min(feed.length + PAGE_SIZE, rankedFeed.length) : PAGE_SIZE;
+        const visibleFeed = rankedFeed.slice(0, visibleCount);
+        setFeed(visibleFeed);
         setFeedCursor(null);
-        setHasNextPage(mappedFeed.length > PAGE_SIZE);
+        setHasNextPage(rankedFeed.length > visibleFeed.length);
+        recordImpressions(visibleFeed.slice(isLoadMore ? feed.length : 0), isLoadMore ? feed.length : 0).catch(() => {});
 
-        const storiesData = storiesRes.data || [];
-        const usersWithStories: any[] = [];
-        storiesData.forEach((s: any) => {
-          let group = usersWithStories.find(u => u.owner_id === s.owner_id);
-          if (!group) {
-            group = { ...s.profiles, owner_id: s.owner_id, stories: [] };
-            usersWithStories.push(group);
-          }
-          group.stories.push(s);
-        });
-        const processedStories = usersWithStories.sort((a, b) => (a.owner_id === myId ? -1 : b.owner_id === myId ? 1 : 0));
-        setStories(processedStories);
-        setMyStory(processedStories.find(u => u.owner_id === myId) || null);
+        setStories([]);
+        setMyStory(null);
         return;
       }
 
@@ -812,6 +811,9 @@ function App() {
             <button className="action-btn" style={{marginLeft: 'auto'}} onClick={shareCapsule}><Share2 size={22} /></button>
           </div>
           <div className="card-content">
+            {capsule.ranking_reason && (
+              <span className="ranking-reason"><Sparkles size={12} /> {capsule.ranking_reason}</span>
+            )}
             {capsule.event_type && capsule.event_type !== 'capsule_created' && (
               <span className="event-pill">{formatFeedEvent(capsule.event_type)}</span>
             )}
@@ -831,29 +833,46 @@ function App() {
     <div className="web-app-layout">
       <aside className="sidebar">
         <div className="sidebar-logo" onClick={() => { setActiveView('feed'); setViewingProfileId(null); }}>
-          Kapsely
+          <span className="brand-orbit"><Clock size={18} /></span>
+          <span className="brand-copy"><strong>Kapsely</strong><small>Recuerdos con futuro</small></span>
         </div>
         
         <div className="sidebar-nav">
+          <span className="nav-section-label">Descubrir</span>
           <button 
             className={`nav-item ${activeView === 'feed' && feedTab === 'following' && !viewingProfileId ? 'active' : ''}`} 
             onClick={() => { setActiveView('feed'); setFeedTab('following'); setViewingProfileId(null); }}
           >
-            <Home size={22} /> <span>Home</span>
+            <Home size={22} /> <span>Inicio</span>
           </button>
-          
+
+          <button
+            className={`nav-item ${activeView === 'feed' && feedTab === 'explore' && !viewingProfileId ? 'active' : ''}`}
+            onClick={() => { setActiveView('feed'); setFeedTab('explore'); setViewingProfileId(null); }}
+          >
+            <Compass size={22} /> <span>Explorar</span>
+          </button>
+
+          <button
+            className={`nav-item ${activeView === 'search' ? 'active' : ''}`}
+            onClick={() => { setActiveView('search'); setViewingProfileId(null); }}
+          >
+            <Search size={22} /> <span>Buscar</span>
+          </button>
+
+          <span className="nav-section-label">Tu espacio</span>
           <button 
             className={`nav-item ${activeView === 'chat' ? 'active' : ''}`} 
             onClick={() => { setActiveView('chat'); setViewingProfileId(null); }}
           >
-            <MessageCircle size={22} /> <span>Messages</span>
+            <MessageCircle size={22} /> <span>Mensajes</span>
           </button>
 
           <button 
             className={`nav-item ${activeView === 'notifications' ? 'active' : ''}`} 
             onClick={() => { setActiveView('notifications'); setViewingProfileId(null); }}
           >
-            <Bell size={22} /> <span>Notifications</span>
+            <Bell size={22} /> <span>Actividad</span>
           </button>
 
           <button 
@@ -861,7 +880,7 @@ function App() {
             onClick={() => { setActiveView('create'); setViewingProfileId(null); }}
           >
             <div className="create-icon-wrapper"><Plus size={22} /></div>
-            <span>Create</span>
+            <span>Nueva cápsula</span>
           </button>
 
           <button 
@@ -875,7 +894,7 @@ function App() {
                  <User size={18} />
                )}
             </div>
-            <span>Profile</span>
+            <span>Perfil</span>
           </button>
 
           {userProfile?.is_admin && (
@@ -893,7 +912,7 @@ function App() {
 
         <div className="sidebar-footer">
           <button className="nav-item logout-item" onClick={() => safeSignOut()}>
-            <LogOut size={20} /> <span>Logout</span>
+            <LogOut size={20} /> <span>Cerrar sesión</span>
           </button>
         </div>
       </aside>
@@ -901,8 +920,8 @@ function App() {
       <main className="main-content">
         <div className="desktop-topbar">
           <div>
-            <span className="topbar-kicker">Kapsely Web</span>
-            <h1>{viewingProfileId ? 'Profile' : activeView === 'feed' ? (feedTab === 'following' ? 'Home' : 'Explore') : activeView.charAt(0).toUpperCase() + activeView.slice(1)}</h1>
+            <span className="topbar-kicker">Tu cápsula del día</span>
+            <h1>{viewingProfileId ? 'Perfil' : activeView === 'feed' ? (feedTab === 'following' ? 'Inicio' : 'Explorar') : activeView === 'search' ? 'Buscar' : activeView === 'chat' ? 'Mensajes' : activeView === 'notifications' ? 'Actividad' : activeView.charAt(0).toUpperCase() + activeView.slice(1)}</h1>
           </div>
           <div className="topbar-actions">
             <button className="topbar-btn" onClick={() => { setActiveView('search'); setViewingProfileId(null); }}><Search size={18} /> Search</button>
@@ -928,21 +947,22 @@ function App() {
                 className="feed-main"
               >
                 <header className="feed-view-header">
+                  <div className={`feed-intro-card ${feedTab === 'explore' ? 'is-explore' : ''}`}>
+                    <div>
+                      <span className="feed-intro-eyebrow"><Sparkles size={14} /> {feedTab === 'explore' ? 'Descubrimiento personalizado' : 'Tu círculo, en orden inteligente'}</span>
+                      <h2>{feedTab === 'explore' ? 'Encuentra recuerdos fuera de tu burbuja' : 'Lo importante, sin perderte nada'}</h2>
+                      <p>{feedTab === 'explore' ? 'Mezclamos afinidad, frescura y calidad con espacio para nuevos creadores.' : 'Priorizamos a quienes sigues, tus cápsulas y la actividad que todavía no has visto.'}</p>
+                    </div>
+                    <div className="algorithm-badge"><span></span> Ranking activo</div>
+                  </div>
                   <div className="feed-tabs">
-                    <button className={`feed-tab-item ${feedTab === 'following' ? 'active' : ''}`} onClick={() => setFeedTab('following')}>Following</button>
-                    <button className={`feed-tab-item ${feedTab === 'explore' ? 'active' : ''}`} onClick={() => setFeedTab('explore')}>Explore</button>
+                    <button className={`feed-tab-item ${feedTab === 'following' ? 'active' : ''}`} onClick={() => setFeedTab('following')}>Siguiendo</button>
+                    <button className={`feed-tab-item ${feedTab === 'explore' ? 'active' : ''}`} onClick={() => setFeedTab('explore')}>Para ti</button>
                     <button className="feed-refresh-btn" onClick={() => fetchFeed(false, 'pull_to_refresh')} disabled={refreshing || loading}>
                       <RefreshCw size={16} className={refreshing ? 'spin-icon' : ''} />
-                      {refreshing ? 'Refreshing...' : 'Refresh'}
+                      {refreshing ? 'Actualizando...' : 'Actualizar'}
                     </button>
                   </div>
-
-                  <FlashBar 
-                    stories={stories} 
-                    myStory={myStory} 
-                    onPressMyStory={() => {}} 
-                    onPressStory={(group) => setActiveStoryGroup(group)} 
-                  />
 
                   <div className="filter-chips">
                     <button className={`chip ${activeFilter === 'all' ? 'active' : ''}`} onClick={() => setActiveFilter('all')}>Todo</button>
@@ -980,8 +1000,16 @@ function App() {
               </motion.div>
 
               <aside className="feed-right-sidebar">
+                <div className="sidebar-section feed-health-card">
+                  <div className="feed-health-head"><span>Tu feed ahora</span><Sparkles size={16} /></div>
+                  <div className="stats-grid">
+                    <div><strong>{dashboardStats.total}</strong><span>historias</span></div>
+                    <div><strong>{dashboardStats.opened}</strong><span>abiertas</span></div>
+                  </div>
+                  <p>Orden adaptado por afinidad, actividad reciente y variedad.</p>
+                </div>
                 <div className="sidebar-section">
-                  <h3 className="section-title">Suggestions</h3>
+                  <h3 className="section-title">Personas que inspiran</h3>
                   {suggestions.length === 0 && <p className="empty-side-note">Sin sugerencias por ahora.</p>}
                   {suggestions.map(user => (
                     <div key={user.id} className="suggestion-item">
